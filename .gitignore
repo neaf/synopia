@@ -9,3 +9,7 @@ node_modules/
 
 # Built app bundles
 *.app/
+
+# Synopia app: dev state and local-only fixtures
+app/.dev-state/
+app/backend/test/fixtures/local/
