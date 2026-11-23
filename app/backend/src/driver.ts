@@ -3,13 +3,18 @@
 // and during a turn reach the CLI in order. The only module that imports the SDK's `query`.
 // The process's stderr is kept in memory (the last 20 lines) for the failure toast, never logged.
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import type { CanUseTool, EffortLevel, Options, SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, EffortLevel, ModelInfo, Options, SDKControlInterruptResponse, SDKMessage, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 
 // The typed interrupt() takes no argument. On a CLI advertising CANCEL_QUEUED the driver passes
 // {cancelQueued: true} (plan section 6), which the typings don't list: see .ai-notes "Facts to check".
 export type QueryLike = AsyncIterable<SDKMessage> & {
   close?: () => void;
   interrupt?: (req?: { cancelQueued?: boolean }) => Promise<SDKControlInterruptResponse | undefined>;
+  // Slice 5: the menu and the model of a running process (the typed Query methods).
+  supportedCommands?: () => Promise<SlashCommand[]>;
+  supportedModels?: () => Promise<ModelInfo[]>;
+  setModel?: (model?: string) => Promise<void>;
+  applyFlagSettings?: (settings: { effortLevel?: EffortLevel | null }) => Promise<void>;
 };
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 export type Content = SDKUserMessage['message']['content'];
@@ -170,6 +175,25 @@ export class SessionProcess {
     this.done = true;
     this.input.end();
     this.events.onExit(error, this.ended);
+  }
+
+  // Slice 5: the slash menu and the model list from this process, while it runs.
+  menuSource(): { supportedCommands(): Promise<SlashCommand[]>; supportedModels(): Promise<ModelInfo[]> } | null {
+    const q = this.q;
+    if (this.done || !q.supportedCommands || !q.supportedModels) return null;
+    return { supportedCommands: () => (q.supportedCommands as () => Promise<SlashCommand[]>)(), supportedModels: () => (q.supportedModels as () => Promise<ModelInfo[]>)() };
+  }
+
+  // Slice 5: the model for the next responses (undefined: the default), and the effort
+  // (null: the model's default), through the typed setModel and applyFlagSettings.
+  async setModel(model: string | undefined): Promise<void> {
+    if (this.done || !this.q.setModel) throw new Error('no running process');
+    await this.q.setModel(model);
+  }
+
+  async setEffort(effort: string | null): Promise<void> {
+    if (this.done || !this.q.applyFlagSettings) throw new Error('no running process');
+    await this.q.applyFlagSettings({ effortLevel: effort && EFFORTS.includes(effort) ? effort as EffortLevel : null });
   }
 
   // Slice 4: stops one background subagent, shell or monitor (the typed Query.stopTask). A

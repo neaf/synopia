@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
-import type { ListSessionsOptions, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
+import type { ListSessionsOptions, SDKSessionInfo, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess } from './driver.ts';
 import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
@@ -97,7 +97,12 @@ type Active = {
   stream: StreamPreview;
   streamTimer: NodeJS.Timeout | null;
   idleTimer: NodeJS.Timeout | null;
+  choice: ModelChoice | null; // slice 5: a placeholder's model and effort, stored once it has its id
 };
+
+// Slice 5: the model and effort you chose for a session (state.json `models`). `default` is the
+// CLI's default model; an effort of null or missing is the model's default effort.
+export type ModelChoice = { model: string; effort?: string | null };
 
 export type SessionsOptions = {
   store: Store;
@@ -111,6 +116,8 @@ export type SessionsOptions = {
   // Slice 6 (the writer): a session's turn ended, and a stored session was opened.
   onTurnEnded?: (sid: string) => void;
   onOpened?: (sid: string) => void;
+  // Slice 5: a running process pushed a new command list (commands_changed).
+  onCommands?: (sid: string, commands: SlashCommand[]) => void;
 };
 
 export class Sessions {
@@ -248,6 +255,7 @@ export class Sessions {
     a.proc = null; // its exit is no failure
     a.needs.abortAll();
     proc?.close();
+    if (proc) this.ended(a);
     this.live.delete(id);
     const e = this.store.state.open.find((x) => x.id === id);
     if (e) {
@@ -292,6 +300,50 @@ export class Sessions {
       const n = r.stillQueued;
       this.views.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`);
     }
+  }
+
+  // Slice 5: the folder (absolute) and the running process's menu, for menu.ts.
+  cwdOf(sid: string): string | undefined {
+    return this.live.get(this.resolve(sid))?.cwd;
+  }
+
+  menuSource(sid: string): ReturnType<SessionProcess['menuSource']> {
+    return this.live.get(this.resolve(sid))?.proc?.menuSource() ?? null;
+  }
+
+  // The model and effort chosen for a session, or undefined when you never chose one.
+  choiceOf(sid: string): ModelChoice | undefined {
+    const id = this.resolve(sid);
+    return this.store.state.models[id] ?? this.live.get(id)?.choice ?? undefined;
+  }
+
+  // Slice 5: the model picker. Stored per session and passed at the next start; a running
+  // process gets setModel (when the model changed) and applyFlagSettings for the effort.
+  async setModel(sid: string, model: string, effort: string | null): Promise<SendResult> {
+    const a = this.live.get(this.resolve(sid));
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    if (!model) return { ok: false, error: 'No model was chosen.' };
+    const before = this.choiceOf(a.id);
+    const was = before ? before.model : this.views.facts(a.id)?.model ?? null;
+    const wasEffort = before ? before.effort ?? null : this.views.facts(a.id)?.effort ?? null;
+    const choice: ModelChoice = { model, effort: effort || null };
+    if (a.placeholder) a.choice = choice;
+    else {
+      this.store.state.models[a.id] = choice;
+      this.store.changed();
+    }
+    this.views.refresh(a.id);
+    this.log('sessions.setModel', { sid: a.id, model, effort: choice.effort ?? null, running: Boolean(a.proc) });
+    const proc = a.proc;
+    if (!proc || proc.done) return { ok: true, sid: a.id };
+    try {
+      if (model !== was) await proc.setModel(model === 'default' ? undefined : model);
+      if ((choice.effort ?? null) !== wasEffort || model !== was) await proc.setEffort(choice.effort ?? null);
+    } catch (e) {
+      this.log('driver.setModelFailed', { sid: a.id });
+      return { ok: false, error: `Synopia stored the model, but Claude didn't take it now: ${String((e as Error)?.message ?? e).slice(0, 200)}. It applies when the session starts again.` };
+    }
+    return { ok: true, sid: a.id };
   }
 
   // Slice 4: the Stop row. Background work lives inside the session's process, so with no
@@ -340,7 +392,10 @@ export class Sessions {
     for (const a of this.live.values()) {
       this.clearIdle(a);
       if (a.streamTimer) clearTimeout(a.streamTimer);
-      a.proc?.close();
+      if (a.proc) {
+        a.proc.close();
+        this.ended(a);
+      }
     }
     this.store.flush();
   }
@@ -353,7 +408,7 @@ export class Sessions {
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Active {
     const a: Active = {
-      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null,
+      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null,
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
       needs: new NeedsYou({
         show: (r) => this.views.setPending(a.id, r),
@@ -367,8 +422,21 @@ export class Sessions {
     this.live.set(id, a);
     this.views.open(id, { cwd });
     this.views.setStatus(id, a.status.status, a.status.at);
+    const ended = this.store.state.ended[id];
+    if (ended) this.views.processEnded(id, ended);
     if (!placeholder) this.opts.onOpened?.(id);
     return a;
+  }
+
+  // Slice 5: the process ended (close, idle end, quit, failure): what ran inside it stopped. Stored,
+  // so the transcript reads the same after a restart or a reopen.
+  private ended(a: Active): void {
+    const at = this.now();
+    if (!a.placeholder) {
+      this.store.state.ended[a.id] = at;
+      this.store.changed();
+    }
+    this.views.processEnded(a.id, at);
   }
 
   private statusChanged(a: Active, e: StatusEntry): void {
@@ -384,12 +452,13 @@ export class Sessions {
   private startOptions(a: Active): StartOptions {
     const st = this.store.state;
     const facts = this.views.facts(a.id);
-    const stored = st.models[a.id];
+    // Your choice wins whole (`default` is the CLI's default model); else what the session last used.
+    const chosen = st.models[a.id] ?? a.choice;
     return {
       cwd: a.cwd,
       resume: a.placeholder ? undefined : a.id,
-      model: stored?.model || facts?.model || st.settings.model || undefined,
-      effort: stored?.effort || facts?.effort || undefined,
+      model: chosen ? (chosen.model === 'default' ? undefined : chosen.model) : facts?.model || st.settings.model || undefined,
+      effort: chosen ? chosen.effort || undefined : facts?.effort || undefined,
       plan: facts?.permissionMode === 'plan',
       allowedTools: st.rules[a.id],
     };
@@ -422,6 +491,7 @@ export class Sessions {
     this.setStreamClear(a);
     const failed = !ended;
     this.log('driver.exit', { sid: a.id, ended, error: Boolean(error) });
+    this.ended(a);
     this.endNeeds(a);
     a.status.processEnded(failed);
     if (failed) {
@@ -438,7 +508,9 @@ export class Sessions {
     } else if (m.type === 'system' && m.subtype === 'session_state_changed') {
       a.status.stateChanged(String(m.state));
     } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {
-      this.log('driver.mode', { sid: a.id, mode: m.permissionMode }); // after a plan approval (S3-1: back to auto)
+      this.log('driver.mode', { sid: a.id, mode: m.permissionMode }); // after a plan approval (S3-1: back to auto), or a model switch
+    } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
+      this.opts.onCommands?.(a.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {
       this.setStreamClear(a);
       this.swap(a, m.new_conversation_id, 'reset');
@@ -464,11 +536,13 @@ export class Sessions {
     if (a.placeholder) {
       a.placeholder = false;
       st.open.push({ id: newId, cwd: a.cwd, openedAt: this.now(), closedAt: null });
+      if (a.choice) st.models[newId] = a.choice;
+      a.choice = null;
       st.layout = renameInLayout(st.layout, old, newId, true);
     } else {
       for (const e of st.open) if (e.id === old) e.id = newId;
       st.layout = renameInLayout(st.layout, old, newId, false);
-      for (const k of ['models', 'rules', 'status'] as const) {
+      for (const k of ['models', 'rules', 'status', 'ended'] as const) {
         const rec = st[k] as Record<string, unknown>;
         if (old in rec) { rec[newId] = rec[old]; delete rec[old]; }
       }

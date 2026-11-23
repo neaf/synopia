@@ -47,7 +47,13 @@ export type ViewsOptions = {
   written?: (sid: string) => { title?: string; now?: string } | undefined;
   // Slice 3: the card answer stored for a tool use, shown as your turn in the transcript.
   answerOf?: (toolUseId: string) => string | undefined;
+  // Slice 5: the model and effort you chose for a session (state.json `models`), shown over the transcript's.
+  choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
 };
+
+// The transcript's effort: a level, or {level} on some records.
+const effortOf = (e: unknown): string | null => typeof e === 'string' ? e
+  : e && typeof (e as { level?: unknown }).level === 'string' ? (e as { level: string }).level : null;
 
 const tilde = (p: string, home: string): string => (home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
 
@@ -178,8 +184,7 @@ export class Views {
     const s = this.live.get(id);
     if (!s) return undefined;
     const t = s.t;
-    const effort = typeof t.effort === 'string' ? t.effort
-      : t.effort && typeof (t.effort as { level?: unknown }).level === 'string' ? (t.effort as { level: string }).level : null;
+    const effort = effortOf(t.effort);
     const runningWork = [
       ...t.agents().filter((a) => a.running).map(() => 'subagent' as const),
       ...t.background().filter((b) => b.status === 'running').map((b) => b.kind),
@@ -227,6 +232,7 @@ export class Views {
     const t = s.t;
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
     const w = this.opts.written?.(s.id);
+    const ch = this.opts.choice?.(s.id);
     let statusAt = s.statusAt;
     if (!s.status) statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
     return {
@@ -239,8 +245,8 @@ export class Views {
       // From the transcript until a driver sets it: your turn. "Stopped" is read from the items by the page.
       status: s.status ?? 'idle',
       statusAt,
-      model: t.requestedModel ?? null,
-      effort: t.effort ?? null,
+      model: ch ? ch.model : t.requestedModel ?? null,
+      effort: ch ? ch.effort ?? null : effortOf(t.effort),
     };
   }
 
@@ -335,6 +341,15 @@ export class Views {
     if (!s) return;
     s.held = texts;
     this.broadcast({ t: 'session', id: sid, held: texts });
+  }
+
+  // Slice 5: the session's process ended at `at` (ms): its background work and subagents that
+  // were still running read as stopped, and pages get the changed ones.
+  processEnded(sid: string, at: number): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.t.processEnded(new Date(at).toISOString());
+    this.flush(s);
   }
 
   // Messages an interrupt cancelled, back to the session's message box.

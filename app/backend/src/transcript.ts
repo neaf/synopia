@@ -143,6 +143,8 @@ export class Transcript {
   private changedAgents = new Set<string>();
   private metaChanged = false;
   private answerOf: (toolUseId: string) => string | undefined;
+  // Slice 5: the session's process ended then (ISO): work started before it can't still run.
+  private ended: string | null = null;
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
   // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
@@ -175,10 +177,11 @@ export class Transcript {
 
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
-    const keep = this.agentMeta;
+    const keep = this.agentMeta, ended = this.ended;
     const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
+    this.ended = ended;
     this.metaChanged = true;
   }
 
@@ -351,6 +354,7 @@ export class Transcript {
           command: str(inp.command).slice(0, 300), timeout: inp.timeout_ms, persistent: Boolean(inp.persistent),
           start: ts, status: 'running', summary: '', end: null,
         });
+        this.stopIfEnded(tid);
         this.changedBg.add(tid);
       }
       if (name === 'AskUserQuestion') {
@@ -373,6 +377,32 @@ export class Transcript {
       }
       this.refreshTool(tid);
     });
+  }
+
+  // Slice 5: the session's process ended at `at` (close, idle end, quit, failure). Background shells,
+  // monitors and subagents live inside it, so those started before then and still running read as
+  // stopped. A notification that arrives later still wins.
+  processEnded(at: string): void {
+    if (this.ended && this.ended >= at) return;
+    this.ended = at;
+    for (const tid of this.bg.keys()) this.stopIfEnded(tid);
+    for (const [aid, a] of this.agentMeta) {
+      const tid = str(a.meta?.toolUseId);
+      if (tid) this.refreshTool(tid);
+      this.changedAgents.add(aid);
+    }
+  }
+
+  private endedBefore(ts: string | null | undefined): boolean {
+    return this.ended !== null && (!ts || ts <= this.ended);
+  }
+
+  private stopIfEnded(tid: string): void {
+    const b = this.bg.get(tid);
+    if (!b || b.status !== 'running' || this.notes.has(tid) || !this.endedBefore(b.start)) return;
+    b.status = 'stopped';
+    b.end = this.ended;
+    this.changedBg.add(tid);
   }
 
   private put(item: Item): Item {
@@ -406,7 +436,7 @@ export class Transcript {
     } else if (it && it.k === 'tool') {
       let state: string;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
-        state = note || !this.bgTool.get(tid) ? 'done' : 'running';
+        state = note || !this.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
       } else if (res !== undefined) state = res ? 'failed' : 'done';
       else state = 'running';
       const patch = this.patches.get(tid);
@@ -474,11 +504,22 @@ export class Transcript {
     const meta = a.meta ?? {};
     if (meta.finished === true) return false;
     const tid = str(meta.toolUseId);
-    if (!tid) return true;
     if (this.notes.has(tid)) return false;
+    if (this.endedAgent(id)) return false;
+    if (!tid) return true;
     const res = this.results.get(tid);
     if (res === undefined) return true;
     return !res && Boolean(this.bgTool.get(tid));
+  }
+
+  // A subagent that had not finished when the session's process ended (it started before then).
+  private endedAgent(id: string): boolean {
+    const a = this.agentMeta.get(id);
+    if (!a || this.ended === null || a.meta?.finished === true) return false;
+    const tid = str(a.meta?.toolUseId);
+    if (tid && this.notes.has(tid)) return false;
+    if (tid && this.results.get(tid) !== undefined && !(this.results.get(tid) === false && this.bgTool.get(tid))) return false; // its result came: finished
+    return this.endedBefore((tid && this.byId.get(tid)?.ts) || a.sub?.firstTs);
   }
 
   getAgent(id: string): Agent | undefined {
@@ -492,7 +533,7 @@ export class Transcript {
       id, type: str(meta.agentType) || 'subagent', fork: Boolean(meta.isFork), description,
       toolUseId: str(meta.toolUseId) || null, model: meta.model ?? null, depth: meta.spawnDepth ?? 1,
       finished: !running, running, review: /^for review:/i.test(description),
-      stopped: meta.stoppedByUser === true || status === 'stopped' || status === 'killed',
+      stopped: meta.stoppedByUser === true || status === 'stopped' || status === 'killed' || (!status && meta.finished !== true && this.endedAgent(id)),
       start: a.sub?.firstTs ?? null, end: a.sub?.lastTs ?? null, total: a.sub?.total ?? 0,
     };
   }

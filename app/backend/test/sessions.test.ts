@@ -37,12 +37,13 @@ function channel<T>() {
 type Call = {
   options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean;
   interrupts: unknown[]; reply: { still_queued: string[]; cancelled?: string[] } | undefined;
+  controls: [string, unknown][]; // slice 5: setModel and applyFlagSettings calls
 };
 function fakeQuery() {
   const calls: Call[] = [];
   const fn: QueryFn = ({ prompt, options }) => {
     const out = channel<SDKMessage>();
-    const call: Call = { options, inputs: [], out, closed: false, interrupts: [], reply: { still_queued: [] } };
+    const call: Call = { options, inputs: [], out, closed: false, interrupts: [], reply: { still_queued: [] }, controls: [] };
     calls.push(call);
     void (async () => {
       for await (const m of prompt) call.inputs.push(m);
@@ -51,6 +52,8 @@ function fakeQuery() {
     return Object.assign(out, {
       close: () => { call.closed = true; out.end(); },
       interrupt: async (req?: unknown) => { call.interrupts.push(req); return call.reply; },
+      setModel: async (m?: string) => { call.controls.push(['setModel', m]); },
+      applyFlagSettings: async (x: unknown) => { call.controls.push(['applyFlagSettings', x]); },
     });
   };
   return { calls, fn };
@@ -79,6 +82,7 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
   const views = new Views({
     claudeDir, clients: () => clients, home: root, pollMs: 0, watch: false,
     onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+    choice: (sid) => sessions?.choiceOf(sid),
   });
   const q = fakeQuery();
   sessions = new Sessions({ store, views, queryFn: q.fn, listFn: async () => past, home: root, ...extra });
@@ -695,4 +699,94 @@ test('quitCheck: running turns and the background work of running processes', as
   emit(t.q.calls[0], RESULT);
   await tick();
   assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [{ sid: BG, kind: 'monitor' }] });
+});
+
+test('process end: background work of a failed or quit process reads as stopped, also after a restart', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const BG = '33333333-0000-4000-8000-000000000003';
+  const dir = path.join(root, 'claude', 'projects', '-tmp-fixture');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
+  const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
+  await t.sessions.openSession(BG);
+  t.views.check();
+  const running = () => (t.views.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background.filter((b) => b.status === 'running').length;
+  assert.equal(running(), 1, 'the fixture monitor runs');
+  t.sessions.send(BG, 'go');
+  await tick();
+  emit(t.q.calls[0], init(BG));
+  await tick();
+  t.take();
+  t.q.calls[0].out.end(new Error('boom')); // the process fails
+  await tick();
+  assert.equal(running(), 0);
+  assert.ok(t.take('background').some((m) => (m.upsert as { status: string }[]).some((b) => b.status === 'stopped')), 'pages get it');
+  assert.deepEqual(t.sessions.quitCheck().background, []);
+  assert.equal(typeof t.store.state.ended[BG], 'number', 'stored');
+  t.sessions.stop();
+  t.views.stop();
+  // a restart: the transcript still says running, the stored end says stopped
+  const t2 = setup(root);
+  t2.store.state.open.push({ id: BG, cwd: path.join(root, 'scratch'), openedAt: 0, closedAt: null });
+  t2.store.state.ended[BG] = t.store.state.ended[BG];
+  t2.sessions.start();
+  t2.views.check();
+  const bg2 = (t2.views.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background;
+  assert.ok(bg2.some((b) => b.status === 'stopped') && !bg2.some((b) => b.status === 'running'));
+});
+
+test('process end: quit marks the work of every running process', async () => {
+  const t = setup();
+  const id = t.sessions.newSession();
+  t.sessions.send(id, 'hi');
+  await tick();
+  emit(t.q.calls[0], init(REAL));
+  await tick();
+  t.sessions.stop();
+  assert.equal(typeof t.store.state.ended[REAL], 'number');
+});
+
+test('model: a choice without a process is stored and passed at the next start; default passes no model', async () => {
+  const t = setup();
+  const id = t.sessions.newSession();
+  assert.deepEqual(await t.sessions.setModel(id, 'sonnet', 'low'), { ok: true, sid: id });
+  assert.equal(t.store.state.models[id], undefined, 'a placeholder is not stored');
+  t.sessions.send(id, 'hello');
+  await tick();
+  assert.equal(t.q.calls[0].options.model, 'sonnet');
+  assert.equal(t.q.calls[0].options.effort, 'low');
+  emit(t.q.calls[0], init(REAL));
+  await tick();
+  assert.deepEqual(t.store.state.models[REAL], { model: 'sonnet', effort: 'low' }, 'moves to the real id');
+  t.q.calls[0].out.end(); // the process ends
+  await tick();
+  await t.sessions.setModel(REAL, 'default', null);
+  t.sessions.send(REAL, 'again');
+  await tick();
+  assert.equal(t.q.calls[1].options.model, undefined, 'default: the CLI default, not the last requestedModel');
+  assert.equal(t.q.calls[1].options.effort, undefined);
+  assert.deepEqual(t.q.calls[1].controls, []);
+});
+
+test('model: a running process gets setModel and applyFlagSettings; an effort change alone no setModel', async () => {
+  const t = setup();
+  const id = t.sessions.newSession();
+  t.sessions.send(id, 'hello');
+  await tick();
+  emit(t.q.calls[0], init(REAL));
+  await tick();
+  t.take();
+  await t.sessions.setModel(REAL, 'sonnet', 'high');
+  assert.deepEqual(t.q.calls[0].controls, [['setModel', 'sonnet'], ['applyFlagSettings', { effortLevel: 'high' }]]);
+  assert.equal((t.views.meta(REAL) as { model: unknown }).model, 'sonnet', 'the meta shows the choice');
+  assert.equal((t.views.meta(REAL) as { effort: unknown }).effort, 'high');
+  t.q.calls[0].controls.length = 0;
+  await t.sessions.setModel(REAL, 'sonnet', 'low');
+  assert.deepEqual(t.q.calls[0].controls, [['applyFlagSettings', { effortLevel: 'low' }]]);
+  t.q.calls[0].controls.length = 0;
+  await t.sessions.setModel(REAL, 'default', null);
+  assert.deepEqual(t.q.calls[0].controls, [['setModel', undefined], ['applyFlagSettings', { effortLevel: null }]]);
+  assert.deepEqual(t.store.state.models[REAL], { model: 'default', effort: null });
+  assert.ok(t.take('session').some((m) => m.id === REAL && m.model === 'default'), 'pages get the change');
+  assert.equal((await t.sessions.setModel('nope', 'sonnet', null)).ok, false);
 });

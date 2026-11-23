@@ -379,3 +379,38 @@ test('live shapes: a notification by task id only, and a report sent as a user r
   assert.equal(t.getAgent('abc002')!.running, false);
   assert.equal(byId(t, 'toolu_la2').state, 'done');
 });
+
+test('process ended: running shells, monitors and subagents started before it read as stopped', () => {
+  const t = liveShapes();
+  t.pushAll([queued('l-q2', 11, '<task-notification>\n<task-id>abc002</task-id>\n<tool-use-id>toolu_la2</tool-use-id>\n<status>completed</status>\n<summary>Agent done</summary>\n<result>Done.</result>\n</task-notification>', 'task-notification')]);
+  t.takeChanges();
+  t.processEnded(at(20));
+  const ch = t.takeChanges();
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.status, b.end]), [['toolu_lsh', 'stopped', at(20)], ['toolu_lmon', 'stopped', at(20)]]);
+  assert.deepEqual(t.agents().map((a) => [a.id, a.running, a.finished, a.stopped]), [['abc001', false, true, true], ['abc002', false, true, false]], 'a finished one stays finished');
+  assert.equal(byId(t, 'toolu_la1').state, 'done', 'no longer "Running in the background"');
+  assert.deepEqual(ch.background.sort(), ['toolu_lmon', 'toolu_lsh']);
+  assert.ok(ch.agents.includes('abc001'));
+  // work started after the end runs; a late notification still wins
+  t.pushAll([
+    { type: 'assistant', uuid: 'l-a9', timestamp: at(30), message: { id: 'm9', content: [
+      { type: 'tool_use', id: 'toolu_new', name: 'Bash', input: { command: 'sleep 5', description: 'Later', run_in_background: true } }] } },
+    { type: 'user', uuid: 'l-n9', timestamp: at(31), origin: { kind: 'task-notification' },
+      message: { role: 'user', content: '<task-notification>\n<task-id>bsh01</task-id>\n<tool-use-id>toolu_lsh</tool-use-id>\n<status>completed</status>\n<summary>Done</summary>\n</task-notification>' } },
+  ]);
+  assert.equal(t.getBackground('toolu_new')!.status, 'running');
+  assert.equal(t.getBackground('toolu_lsh')!.status, 'completed');
+});
+
+test('process ended: kept across a rewrite, and applied to records read after it', () => {
+  const t = new Transcript({ home: HOME });
+  t.processEnded(at(20));
+  t.reset();
+  const fresh = liveShapes();
+  t.pushAll([
+    { type: 'assistant', uuid: 'l-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_lsh', name: 'Bash', input: { command: 'sleep 120', description: 'Sleep', run_in_background: true } }] } },
+  ]);
+  assert.equal(t.getBackground('toolu_lsh')!.status, 'stopped');
+  assert.equal(fresh.getBackground('toolu_lsh')!.status, 'running', 'without an end it still runs');
+});
