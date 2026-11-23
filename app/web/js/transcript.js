@@ -420,6 +420,6 @@ conv.addEventListener("toggle", e => {
 document.addEventListener("click", e => {
   const a = e.target.closest && e.target.closest("a[href]"); if (!a) return;
   e.preventDefault();
-  if (a.dataset.path) send({ t: "open", path: a.dataset.path });
+  if (a.dataset.path) { if (!previewClick(a, e)) send({ t: "open", path: a.dataset.path }); } // text: the preview (preview.js)
   else if (/^https?:/i.test(a.getAttribute("href"))) send({ t: "open", url: a.href });
 }, true);

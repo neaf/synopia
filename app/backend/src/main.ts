@@ -15,6 +15,8 @@ import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
+import { loadBat, previewFile } from './preview.ts';
+import { displayPath } from './paths.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
 import { Badge } from './badge.ts';
@@ -91,6 +93,8 @@ const views = new Views({
   onRunning: (sid, r) => sessions?.runningChanged(sid, r),
   onWorkEnded: (sid) => writer?.workEnded(sid),
 });
+// bat for the file preview, found once (plain text without it)
+const bat = loadBat({ log });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 // Slice 5: the slash menu and the model list per folder (the fake driver has its own).
 const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log, cacheFile: join(stateDir, 'menu-cache.json') });
@@ -180,6 +184,12 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     void sessions.stopTask(msg.sid, msg.taskId).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (msg.t === 'open') {
     openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-open'], log, onError: (text) => client.send({ t: 'toast', text }) });
+  } else if (msg.t === 'preview') { // a text file's read-only preview; anything else opens as `open` does
+    const toast = (text: string) => client.send({ t: 'toast', text });
+    void bat.then((b) => previewFile(msg.path, {
+      bat: b, log, display: (p) => displayPath(p, script?.home ?? homedir()), reply: (r) => client.send(r), toast,
+      open: (p) => openTarget({ path: p }, { dryRun: flags['dry-open'], log, onError: toast }),
+    }));
   } else if (msg.t === 'layout' && msg.layout && typeof msg.layout === 'object') {
     store.state.layout = reconcileLayout(msg.layout as Layout, store.state.layout, openEntries());
     store.changed();

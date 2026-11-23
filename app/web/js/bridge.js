@@ -86,6 +86,7 @@ function onMessage(m) {
     case "toast": stepAsked = null; toast(m.text); break; // a failed toolOutput replies with a toast
     case "toolOutput": applyToolOutput(m); break;
     case "recent": applyRecent(m); break;
+    case "preview": showPreview(m); break;
     case "restore": restoreTexts(m.sid, m.texts); break;
     default: break;
   }
