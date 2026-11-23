@@ -343,6 +343,15 @@ export class Views {
     this.broadcast({ t: 'session', id: sid, held: texts });
   }
 
+  // Slice 5: the session's process ended at `at` (ms): its background work and subagents that
+  // were still running read as stopped, and pages get the changed ones.
+  processEnded(sid: string, at: number): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.t.processEnded(new Date(at).toISOString());
+    this.flush(s);
+  }
+
   // Messages an interrupt cancelled, back to the session's message box.
   restore(sid: string, texts: string[]): void {
     if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });

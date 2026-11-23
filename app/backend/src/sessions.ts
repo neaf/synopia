@@ -255,6 +255,7 @@ export class Sessions {
     a.proc = null; // its exit is no failure
     a.needs.abortAll();
     proc?.close();
+    if (proc) this.ended(a);
     this.live.delete(id);
     const e = this.store.state.open.find((x) => x.id === id);
     if (e) {
@@ -391,7 +392,10 @@ export class Sessions {
     for (const a of this.live.values()) {
       this.clearIdle(a);
       if (a.streamTimer) clearTimeout(a.streamTimer);
-      a.proc?.close();
+      if (a.proc) {
+        a.proc.close();
+        this.ended(a);
+      }
     }
     this.store.flush();
   }
@@ -418,8 +422,21 @@ export class Sessions {
     this.live.set(id, a);
     this.views.open(id, { cwd });
     this.views.setStatus(id, a.status.status, a.status.at);
+    const ended = this.store.state.ended[id];
+    if (ended) this.views.processEnded(id, ended);
     if (!placeholder) this.opts.onOpened?.(id);
     return a;
+  }
+
+  // Slice 5: the process ended (close, idle end, quit, failure): what ran inside it stopped. Stored,
+  // so the transcript reads the same after a restart or a reopen.
+  private ended(a: Active): void {
+    const at = this.now();
+    if (!a.placeholder) {
+      this.store.state.ended[a.id] = at;
+      this.store.changed();
+    }
+    this.views.processEnded(a.id, at);
   }
 
   private statusChanged(a: Active, e: StatusEntry): void {
@@ -474,6 +491,7 @@ export class Sessions {
     this.setStreamClear(a);
     const failed = !ended;
     this.log('driver.exit', { sid: a.id, ended, error: Boolean(error) });
+    this.ended(a);
     this.endNeeds(a);
     a.status.processEnded(failed);
     if (failed) {
@@ -524,7 +542,7 @@ export class Sessions {
     } else {
       for (const e of st.open) if (e.id === old) e.id = newId;
       st.layout = renameInLayout(st.layout, old, newId, false);
-      for (const k of ['models', 'rules', 'status'] as const) {
+      for (const k of ['models', 'rules', 'status', 'ended'] as const) {
         const rec = st[k] as Record<string, unknown>;
         if (old in rec) { rec[newId] = rec[old]; delete rec[old]; }
       }

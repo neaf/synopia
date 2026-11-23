@@ -21,6 +21,8 @@ export type State = {
   rules: Record<string, string[]>;
   answers: Record<string, string>;
   status: Record<string, { status: string; at: number }>;
+  // Slice 5: when each session's last process ended (ms), so its background work then reads as stopped.
+  ended: Record<string, number>;
   written: Record<string, { title?: string; now?: string; at: number }>;
   settings: Settings;
 };
@@ -36,6 +38,7 @@ export function defaultState(): State {
     answers: {},
     status: {},
     written: {},
+    ended: {},
     settings: { newSessionCwd: '~/dev/demo-project', writerModel: 'haiku' },
   };
 }
@@ -75,7 +78,7 @@ export function normalize(raw: unknown): State {
   }
   s.layout = cleanLayout(raw.layout);
   if (isStrArr(raw.reviewed)) s.reviewed = [...raw.reviewed];
-  for (const k of ['models', 'rules', 'answers', 'status', 'written'] as const) {
+  for (const k of ['models', 'rules', 'answers', 'status', 'written', 'ended'] as const) {
     if (isObj(raw[k])) (s as Record<string, unknown>)[k] = raw[k];
   }
   if (isObj(raw.settings)) {
