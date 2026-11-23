@@ -20,13 +20,13 @@ export type Item = {
   qs?: Question[]; answer?: string | null; // ask
 };
 export type Background = {
-  toolUseId: string; kind: 'shell' | 'monitor'; description: string; command: string;
+  toolUseId: string; taskId: string | null; kind: 'shell' | 'monitor'; description: string; command: string;
   timeout: unknown; persistent: boolean; start: string | null;
   status: string; summary: string; end: string | null;
 };
 export type Agent = {
   id: string; type: string; fork: boolean; description: string; toolUseId: string | null;
-  model: unknown; depth: unknown; finished: boolean; running: boolean; review: boolean;
+  model: unknown; depth: unknown; finished: boolean; running: boolean; review: boolean; stopped: boolean;
   start: string | null; end: string | null; total: number;
 };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
@@ -68,7 +68,7 @@ export function toolLine(name: string, input: unknown, home: string): [string, s
   if (name === 'ScheduleWakeup') return ['Scheduled a check-in', str(inp.reason)];
   if (name === 'TaskOutput') return ['Checked a background task', ''];
   if (name === 'SendMessage') return ['Messaged a subagent', ''];
-  if (name === 'Monitor') return ['Watched', ''];
+  if (name === 'Monitor') return ['Watched', str(inp.description)];
   if (name.startsWith('mcp__')) {
     const parts = name.split('__');
     return [(parts[1] ?? '').split('_').join(' '), parts[parts.length - 1].split('_').join(' ')];
@@ -80,6 +80,7 @@ export function patchOf(tur: JsonRecord, home: string): Patch {
   let hunks = (Array.isArray(tur.structuredPatch) ? tur.structuredPatch : []).map(obj);
   if (!hunks.length && tur.type === 'create') {
     const lines = str(tur.content).split('\n');
+    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop(); // the final newline is not a line
     hunks = [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: lines.length, lines: lines.map((l) => '+' + l) }];
   }
   const linesOf = (h: JsonRecord): string[] => (Array.isArray(h.lines) ? h.lines.map(str) : []);
@@ -131,8 +132,10 @@ export class Transcript {
   private asks = new Set<string>();
   private answers = new Map<string, string>();
   private patches = new Map<string, Patch>();
-  private bgTool = new Map<string, boolean>(); // tool_use id -> input.run_in_background
+  private bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
   private notes = new Map<string, { status: string; summary: string; end: string | null }>();
+  private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
+  private reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
   private bg = new Map<string, Background>();
   private agentMeta = new Map<string, { meta: JsonRecord | null; sub: Transcript | null }>();
   private changed = new Set<string>();
@@ -222,6 +225,7 @@ export class Transcript {
         this.changed.add(this.lastYou.id);
       }
     }
+    if (t === 'attachment' && !(d.isSidechain && !this.sidechain)) this.queuedCommand(d, ts);
     if ((d.isSidechain && !this.sidechain) || (t !== 'user' && t !== 'assistant')) return;
     const uuid = str(d.uuid) || `${t}@${this.seq}`;
     const content = obj(d.message).content;
@@ -229,8 +233,30 @@ export class Transcript {
     else this.assistant(d, uuid, ts, content);
   }
 
+  // A task notification or a subagent's hand-back queued during a turn lands as an `attachment`
+  // record (`queued_command`, the text in `prompt`), not as a user record. Typed prompts queued
+  // the same way are left to the user records.
+  private queuedCommand(d: JsonRecord, ts: string | null): void {
+    const a = obj(d.attachment);
+    const prompt = str(a.prompt);
+    if (a.type !== 'queued_command' || !prompt) return;
+    if (!prompt.startsWith('<task-notification>') && !prompt.startsWith('<agent-message')) return;
+    this.user({ ...d, type: 'user' }, str(d.uuid) || `attachment@${this.seq}`, ts, prompt);
+  }
+
   private user(d: JsonRecord, uuid: string, ts: string | null, content: unknown): void {
     const tur = d.toolUseResult;
+    if (tur && typeof tur === 'object' && !Array.isArray(tur) && Array.isArray(content)) {
+      const first = content.find((b) => isBlock(b, 'tool_result'));
+      const tid = first && str(obj(first).tool_use_id);
+      const r = tur as JsonRecord;
+      if (tid) {
+        // An Agent launched in the background returns at once: its launch result isn't the end.
+        if (r.status === 'async_launched') this.bgTool.set(tid, true);
+        const task = str(r.backgroundTaskId) || str(r.taskId) || (r.status === 'async_launched' ? str(r.agentId) : '');
+        if (task) this.setTask(tid, task);
+      }
+    }
     if (tur && typeof tur === 'object' && !Array.isArray(tur) && str((tur as JsonRecord).filePath) && Array.isArray(content)) {
       const first = content.find((b) => isBlock(b, 'tool_result'));
       const tid = first && str(obj(first).tool_use_id);
@@ -254,20 +280,37 @@ export class Transcript {
     if (d.isMeta && !txt.startsWith(REPORT_PREFIX)) return;
     const images = Array.isArray(content) ? content.filter((b) => isBlock(b, 'image')).length : 0;
     for (const tn of txt.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
-      const m = /<tool-use-id>([^<]+)/.exec(tn[1]);
-      if (!m) continue;
+      const task = /<task-id>([^<]+)/.exec(tn[1]);
+      // A subagent woken again after its first end notifies by task id only.
+      const tid = /<tool-use-id>([^<]+)/.exec(tn[1])?.[1] ?? (task ? this.toolOfAgent(task[1]) : null);
       const st = /<status>([^<]+)/.exec(tn[1]);
+      if (!tid) continue; // a monitor's event: it keeps running
       const su = /<summary>([^<]+)/.exec(tn[1]);
-      this.notes.set(m[1], { status: st ? st[1] : 'completed', summary: su ? su[1] : '', end: ts });
-      this.refreshTool(m[1]);
+      if (task) this.setTask(tid, task[1]);
+      this.notes.set(tid, { status: st ? st[1] : 'completed', summary: su ? su[1] : '', end: ts });
+      // A subagent's last message comes back as <result>: its report, unless it sent one itself.
+      const res = /<result>([\s\S]*?)<\/result>/.exec(tn[1]);
+      const tool = this.byId.get(tid);
+      if (res && task && tool && (tool.name === 'Agent' || tool.name === 'Task') && !this.reportKind.has(task[1])) {
+        this.reportKind.set(task[1], 'result');
+        this.put({ id: `report:${task[1]}`, k: 'report', ts, agent: task[1], text: clip(res[1].trim(), 3000) });
+      }
+      this.refreshTool(tid);
     }
     if (txt.startsWith('<task-notification>')) return;
-    if (txt.startsWith(REPORT_PREFIX)) {
-      let body = txt.replace(/^[\s\S]*?The report follows:\s*/, '');
+    if (txt.startsWith(REPORT_PREFIX) || txt.startsWith('<agent-message')) {
+      let body = txt.includes('The report follows:')
+        ? txt.replace(/^[\s\S]*?The report follows:[ \t]*\r?\n?/, '')
+        : txt.replace(/^<agent-message[^>]*>\s*/, '');
       body = body.replace(/<\/agent-message>[\s\S]*$/, '');
       body = body.split(/\r?\n/).map((l) => (l.startsWith('  ') ? l.slice(2) : l)).join('\n');
-      const frm = /agent-message from="([0-9a-f]+)/.exec(txt);
-      this.put({ id: uuid, k: 'report', ts, agent: frm ? frm[1] : null, text: clip(body.trim(), 3000) });
+      const frm = /agent-message from="([0-9a-z]+)/.exec(txt);
+      const agent = frm ? frm[1] : null;
+      // A message from one of this session's own subagents is its report: one per subagent, in
+      // place of the <result> one. Messages from other sessions stay one item each.
+      const own = Boolean(agent && this.toolOfAgent(agent as string));
+      if (own) this.reportKind.set(agent as string, 'message');
+      this.put({ id: own ? `report:${agent}` : uuid, k: 'report', ts, agent, text: clip(body.trim(), 3000) });
       return;
     }
     if (txt.startsWith('<command-name>')) {
@@ -299,7 +342,7 @@ export class Transcript {
       this.bgTool.set(tid, Boolean(inp.run_in_background));
       if (name === 'Monitor' || (name === 'Bash' && inp.run_in_background)) {
         this.bg.set(tid, {
-          toolUseId: tid, kind: name === 'Monitor' ? 'monitor' : 'shell', description: str(inp.description),
+          toolUseId: tid, taskId: this.taskIds.get(tid) ?? null, kind: name === 'Monitor' ? 'monitor' : 'shell', description: str(inp.description),
           command: str(inp.command).slice(0, 300), timeout: inp.timeout_ms, persistent: Boolean(inp.persistent),
           start: ts, status: 'running', summary: '', end: null,
         });
@@ -374,6 +417,28 @@ export class Transcript {
     for (const [aid, a] of this.agentMeta) if (a.meta && a.meta.toolUseId === tid) this.changedAgents.add(aid);
   }
 
+  // The Agent tool_use id of one of this conversation's subagents (from its launch result or its meta).
+  private toolOfAgent(agentId: string): string | null {
+    if (!agentId) return null;
+    const meta = this.agentMeta.get(agentId)?.meta;
+    if (meta && str(meta.toolUseId)) return str(meta.toolUseId);
+    for (const [tid, task] of this.taskIds) {
+      const it = this.byId.get(tid);
+      if (task === agentId && it && (it.name === 'Agent' || it.name === 'Task')) return tid;
+    }
+    return null;
+  }
+
+  private setTask(tid: string, task: string): void {
+    if (this.taskIds.get(tid) === task) return;
+    this.taskIds.set(tid, task);
+    const b = this.bg.get(tid);
+    if (b) {
+      b.taskId = task;
+      this.changedBg.add(tid);
+    }
+  }
+
   background(): Background[] {
     return [...this.bg.values()];
   }
@@ -413,10 +478,12 @@ export class Transcript {
     const meta = a.meta ?? {};
     const description = str(meta.description);
     const running = this.agentRunning(id);
+    const status = this.notes.get(str(meta.toolUseId))?.status ?? '';
     return {
       id, type: str(meta.agentType) || 'subagent', fork: Boolean(meta.isFork), description,
       toolUseId: str(meta.toolUseId) || null, model: meta.model ?? null, depth: meta.spawnDepth ?? 1,
       finished: !running, running, review: /^for review:/i.test(description),
+      stopped: meta.stoppedByUser === true || status === 'stopped' || status === 'killed',
       start: a.sub?.firstTs ?? null, end: a.sub?.lastTs ?? null, total: a.sub?.total ?? 0,
     };
   }

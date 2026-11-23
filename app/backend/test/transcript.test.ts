@@ -134,7 +134,7 @@ test('background shell and monitors with task notifications', () => {
     ['toolu_bgsh1', 'shell', 'completed'], ['toolu_mon1', 'monitor', 'failed'], ['toolu_mon2', 'monitor', 'running'],
   ]);
   assert.deepEqual(bg[0], {
-    toolUseId: 'toolu_bgsh1', kind: 'shell', description: 'Build the demo', command: 'make demo-build',
+    toolUseId: 'toolu_bgsh1', taskId: 'bash_1', kind: 'shell', description: 'Build the demo', command: 'make demo-build',
     timeout: undefined, persistent: false, start: '2026-11-20T12:00:05.000Z',
     status: 'completed', summary: 'Build finished with 0 errors', end: '2026-11-20T12:05:00.000Z',
   });
@@ -185,7 +185,7 @@ test('subagents: meta, running rule, fork, For review and a file without meta', 
   const a1 = main.getAgent('aaaa0001')!;
   assert.deepEqual(a1, {
     id: 'aaaa0001', type: 'Explore', fork: false, description: 'Find the demo config', toolUseId: 'toolu_ag1',
-    model: 'haiku', depth: 1, finished: true, running: false, review: false,
+    model: 'haiku', depth: 1, finished: true, running: false, review: false, stopped: false,
     start: '2026-11-20T13:00:06.000Z', end: '2026-11-20T13:01:50.000Z', total: 2,
   });
   assert.equal(main.getAgent('aaaa0003')!.fork, true);
@@ -274,4 +274,89 @@ test('a subagent file seen before its meta', () => {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// The shapes a live session writes (made-up content): an Agent launched async, its hand-back and its
+// task notification queued during the turn as `attachment` records, background task ids from results.
+const at = (s: number) => `2026-11-21T10:00:${String(s).padStart(2, '0')}.000Z`;
+const queued = (uuid: string, s: number, prompt: string, kind: string): JsonRecord => ({
+  type: 'attachment', uuid, timestamp: at(s),
+  attachment: { type: 'queued_command', prompt, commandMode: kind === 'peer' ? 'prompt' : 'task-notification', origin: { kind } },
+});
+const result = (uuid: string, tid: string, tur: JsonRecord): JsonRecord => ({
+  type: 'user', uuid, timestamp: at(2), toolUseResult: tur,
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tid, content: 'ok' }] },
+});
+
+function liveShapes(): Transcript {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    { type: 'user', uuid: 'l-u1', timestamp: at(0), message: { role: 'user', content: 'Start the helpers' } },
+    { type: 'assistant', uuid: 'l-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_la1', name: 'Agent', input: { description: 'For review: Draft the notes', subagent_type: 'Explore' } },
+      { type: 'tool_use', id: 'toolu_la2', name: 'Agent', input: { description: 'Count files', subagent_type: 'Explore' } },
+      { type: 'tool_use', id: 'toolu_lsh', name: 'Bash', input: { command: 'sleep 120', description: 'Sleep', run_in_background: true } },
+      { type: 'tool_use', id: 'toolu_lmon', name: 'Monitor', input: { command: 'tail -f x.log', description: 'Watch the log', timeout_ms: 60000 } },
+    ] } },
+    result('l-r1', 'toolu_la1', { status: 'async_launched', agentId: 'abc001', description: 'd', prompt: 'p', outputFile: '/tmp/o' }),
+    result('l-r2', 'toolu_la2', { status: 'async_launched', agentId: 'abc002', description: 'd', prompt: 'p', outputFile: '/tmp/o' }),
+    result('l-r3', 'toolu_lsh', { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bsh01' }),
+    result('l-r4', 'toolu_lmon', { taskId: 'bmon1', timeoutMs: 60000 }),
+  ]);
+  t.setAgent('abc001', { agentType: 'Explore', description: 'For review: Draft the notes', toolUseId: 'toolu_la1', finished: false });
+  t.setAgent('abc002', { agentType: 'Explore', description: 'Count files', toolUseId: 'toolu_la2' });
+  return t;
+}
+
+test('live shapes: an async Agent runs until its notification; background task ids', () => {
+  const t = liveShapes();
+  assert.deepEqual(['toolu_la1', 'toolu_la2'].map((id) => byId(t, id).state), ['running', 'running']);
+  assert.deepEqual(t.agents().map((a) => [a.id, a.running]), [['abc001', true], ['abc002', true]]);
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.taskId, b.status]), [['toolu_lsh', 'bsh01', 'running'], ['toolu_lmon', 'bmon1', 'running']]);
+  assert.equal(byId(t, 'toolu_lmon').obj, 'Watch the log');
+});
+
+test('live shapes: hand-back and task notifications queued as attachments give one report each', () => {
+  const t = liveShapes();
+  t.takeChanges();
+  t.pushAll([
+    queued('l-q1', 10, '<agent-message from="abc001">\n[Subagent hand-back] Made-up preface. The report follows:\n  Notes are drafted.\n  - one point\n</agent-message>', 'peer'),
+    queued('l-q2', 11, '<task-notification>\n<task-id>abc001</task-id>\n<tool-use-id>toolu_la1</tool-use-id>\n<status>completed</status>\n<summary>Agent done</summary>\n<result>I handed back.</result>\n</task-notification>', 'task-notification'),
+    queued('l-q3', 12, '<task-notification>\n<task-id>abc002</task-id>\n<tool-use-id>toolu_la2</tool-use-id>\n<status>completed</status>\n<summary>Agent done</summary>\n<result>There are 3 files.\n</result>\n</task-notification>', 'task-notification'),
+    queued('l-q4', 13, '<task-notification>\n<task-id>bmon1</task-id>\n<summary>Monitor event</summary>\n<event>tick</event>\n</task-notification>', 'task-notification'),
+    { type: 'user', uuid: 'l-n5', timestamp: at(14), origin: { kind: 'task-notification' },
+      message: { role: 'user', content: '<task-notification>\n<task-id>bsh01</task-id>\n<tool-use-id>toolu_lsh</tool-use-id>\n<status>killed</status>\n<summary>Stopped</summary>\n</task-notification>' } },
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'report').map((r) => [r.id, r.agent, r.text]), [
+    ['report:abc001', 'abc001', 'Notes are drafted.\n- one point'],
+    ['report:abc002', 'abc002', 'There are 3 files.'],
+  ]);
+  assert.deepEqual(t.agents().map((a) => [a.id, a.running, a.review]), [['abc001', false, true], ['abc002', false, false]]);
+  assert.deepEqual(['toolu_la1', 'toolu_la2'].map((id) => byId(t, id).state), ['done', 'done']);
+  // a monitor's event keeps it running; the stopped shell is over
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.status]), [['toolu_lsh', 'killed'], ['toolu_lmon', 'running']]);
+  const ch = t.takeChanges();
+  assert.ok(ch.agents.includes('abc001') && ch.background.includes('toolu_lsh'));
+});
+
+test('live shapes: a result notification first, then the hand-back, keeps one report', () => {
+  const t = liveShapes();
+  t.pushAll([
+    queued('l-q2', 11, '<task-notification><task-id>abc001</task-id><tool-use-id>toolu_la1</tool-use-id><status>stopped</status><result>Partial.</result></task-notification>', 'task-notification'),
+    queued('l-q1', 12, '<agent-message from="abc001">\n[Subagent hand-back] The report follows:\n  Final.\n</agent-message>', 'peer'),
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'report').map((r) => [r.id, r.text]), [['report:abc001', 'Final.']]);
+  assert.equal(t.getAgent('abc001')!.stopped, true);
+});
+
+test('live shapes: a notification by task id only, and a report sent as a user record, stay one report', () => {
+  const t = liveShapes();
+  t.pushAll([
+    { type: 'user', uuid: 'l-n1', timestamp: at(20), message: { role: 'user', content: '<task-notification>\n<task-id>abc002</task-id>\n<status>completed</status>\n<result>Counted.</result>\n</task-notification>' } },
+    { type: 'user', uuid: 'l-m1', isMeta: true, timestamp: at(21), message: { role: 'user', content: 'Another Claude session sent a message: <agent-message from="abc002">\n[Subagent hand-back] The report follows:\n  Three files.\n</agent-message>' } },
+    { type: 'user', uuid: 'l-m2', isMeta: true, timestamp: at(22), message: { role: 'user', content: 'Another Claude session sent a message: <agent-message from="fff999">\nThe report follows:\n  From elsewhere.\n</agent-message>' } },
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'report').map((r) => [r.id, r.text]), [['report:abc002', 'Three files.'], ['l-m2', 'From elsewhere.']]);
+  assert.equal(t.getAgent('abc002')!.running, false);
+  assert.equal(byId(t, 'toolu_la2').state, 'done');
 });
