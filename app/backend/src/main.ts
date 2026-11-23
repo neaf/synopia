@@ -15,6 +15,7 @@ import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
 import type { Image } from './sessions.ts';
+import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
 import type { Layout, OpenEntry } from './store.ts';
 import type { Client, Server } from './server.ts';
@@ -75,6 +76,7 @@ let sessions: Sessions | null = null;
 const views = new Views({
   claudeDir, clients: () => server?.clients ?? noClients, home: script?.home, log,
   onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+  answerOf: (toolUseId) => store.state.answers[toolUseId],
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
@@ -112,6 +114,9 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
       : [];
     const r = sessions.send(msg.sid, typeof msg.text === 'string' ? msg.text : '', images, typeof msg.uuid === 'string' ? msg.uuid : undefined);
+    if (!r.ok) client.send({ t: 'toast', text: r.error });
+  } else if (sessions && msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
+    const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
     if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);

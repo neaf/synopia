@@ -3,7 +3,7 @@
 // and during a turn reach the CLI in order. The only module that imports the SDK's `query`.
 // The process's stderr is kept in memory (the last 20 lines) for the failure toast, never logged.
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import type { CanUseTool, EffortLevel, Options, PermissionResult, SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, EffortLevel, Options, SDKControlInterruptResponse, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 // The typed interrupt() takes no argument. On a CLI advertising CANCEL_QUEUED the driver passes
 // {cancelQueued: true} (plan section 6), which the typings don't list: see .ai-notes "Facts to check".
@@ -15,7 +15,6 @@ export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options:
 export type Content = SDKUserMessage['message']['content'];
 
 export const STATE_FLAG = 'CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS';
-export const DENY_MESSAGE = "Synopia can't answer this yet. Ask in plain text instead.";
 export const STDERR_LINES = 20;
 export const CANCEL_QUEUED = 'interrupt_cancel_queued_v1';
 const KEEP_SENT = 100; // texts kept by uuid, so cancelled messages can go back to the box
@@ -34,7 +33,8 @@ export type ProcessEvents = {
   onMessage: (m: SDKMessage) => void;
   // The message stream ended: `error` is null for a clean end. `ended` says whether end() or close() asked for it.
   onExit: (error: Error | null, ended: boolean) => void;
-  onDenied: (toolName: string) => void;
+  // Parks the request until its card is answered or its signal aborts (pending.ts). Never null.
+  canUseTool: CanUseTool;
 };
 
 // What an interrupt did: the texts of the messages it cancelled (they go back to the message
@@ -72,15 +72,6 @@ export function userMessage(content: Content, uuid: string): SDKUserMessage {
   return { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, uuid: uuid as SDKUserMessage['uuid'] };
 }
 
-// Until slice 3 answers cards, every canUseTool call is refused with a message the model reads,
-// so a session never hangs on a question nobody can answer.
-export function denyAll(onDenied: (toolName: string) => void): CanUseTool {
-  return async (toolName): Promise<PermissionResult> => {
-    onDenied(toolName);
-    return { behavior: 'deny', message: DENY_MESSAGE };
-  };
-}
-
 // The options of section 6: permissionMode unset (your own setting applies) except plan,
 // settingSources at its default, the state flag added to the inherited environment.
 export function buildOptions(o: StartOptions, canUseTool: CanUseTool, stderr: (data: string) => void): Options {
@@ -113,7 +104,7 @@ export class SessionProcess {
 
   constructor(start: StartOptions, events: ProcessEvents, queryFn: QueryFn = sdkQuery as QueryFn) {
     this.events = events;
-    const options = buildOptions(start, denyAll((name) => this.events.onDenied(name)), (d) => this.keepStderr(d));
+    const options = buildOptions(start, (name, input, o) => this.events.canUseTool(name, input, o), (d) => this.keepStderr(d));
     this.q = queryFn({ prompt: this.input, options });
     void this.read();
   }

@@ -15,6 +15,8 @@ import { SessionProcess } from './driver.ts';
 import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
 import type { StatusEntry } from './status.ts';
+import { NeedsYou } from './pending.ts';
+import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
 import type { Store, Layout } from './store.ts';
 import type { Log } from './log.ts';
@@ -91,6 +93,7 @@ type Active = {
   placeholder: boolean;
   proc: SessionProcess | null;
   status: SessionStatus;
+  needs: NeedsYou; // slice 3: parked canUseTool requests and the messages held behind them
   stream: StreamPreview;
   streamTimer: NodeJS.Timeout | null;
   idleTimer: NodeJS.Timeout | null;
@@ -216,7 +219,13 @@ export class Sessions {
         ...(text.trim() ? [{ type: 'text' as const, text }] : []),
       ]
       : text;
-    (a.proc as SessionProcess).push(content, uuid && UUID.test(uuid) ? uuid : randomUUID());
+    const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
+    if (a.needs.size) { // queued behind the card (plan section 6), pushed once it is answered
+      a.needs.hold({ content, uuid: id, text });
+      this.log('sessions.held', { sid: a.id, images: images.length });
+      return { ok: true, sid: a.id };
+    }
+    (a.proc as SessionProcess).push(content, id);
     this.clearIdle(a);
     a.status.turnStarted();
     this.log('sessions.send', { sid: a.id, images: images.length });
@@ -234,6 +243,7 @@ export class Sessions {
     if (a.streamTimer) clearTimeout(a.streamTimer);
     const proc = a.proc;
     a.proc = null; // its exit is no failure
+    a.needs.abortAll();
     proc?.close();
     this.live.delete(id);
     const e = this.store.state.open.find((x) => x.id === id);
@@ -273,6 +283,7 @@ export class Sessions {
       return;
     }
     this.log('driver.interrupt', { sid: a.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
+    this.endNeeds(a);
     if (r.restored.length) this.views.restore(a.id, r.restored);
     if (r.stillQueued) {
       const n = r.stillQueued;
@@ -295,6 +306,32 @@ export class Sessions {
     return { ok: true, sid: a.id };
   }
 
+  // Slice 3: a card's answer settles its canUseTool request. Session rules from "Always allow"
+  // are stored and passed back as allowedTools on resume; the labels the JSONL won't show
+  // ("Allow once", "Denied: …") are kept per tool-use id for the transcript. Messages held
+  // behind the last card go out after it.
+  answer(sid: string, requestId: string, answer: CardAnswer): SendResult {
+    const a = this.live.get(this.resolve(sid));
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    const r = a.needs.answer(requestId, answer);
+    if ('error' in r) return { ok: false, error: r.error };
+    const st = this.store.state;
+    if (r.rules.length) st.rules[a.id] = [...new Set([...(st.rules[a.id] ?? []), ...r.rules])];
+    if (r.label) st.answers[r.toolUseId] = r.label;
+    if (r.rules.length || r.label) this.store.changed();
+    this.log('sessions.answer', { sid: a.id, behavior: r.result.behavior, rules: r.rules.length });
+    if (!a.needs.size && a.proc) for (const h of a.needs.takeHeld()) a.proc.push(h.content as Content, h.uuid);
+    return { ok: true, sid: a.id };
+  }
+
+  // The turn ended with requests or held messages left (an interrupt, the process ending): the
+  // requests end and the held messages go back to the message box.
+  private endNeeds(a: Active): void {
+    a.needs.abortAll();
+    const texts = a.needs.takeHeld().map((h) => h.text).filter((t) => t.trim());
+    if (texts.length) this.views.restore(a.id, texts);
+  }
+
   // Quit: every process ends now.
   stop(): void {
     for (const a of this.live.values()) {
@@ -315,6 +352,14 @@ export class Sessions {
     const a: Active = {
       id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null,
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
+      needs: new NeedsYou({
+        show: (r) => this.views.setPending(a.id, r),
+        clear: (rid) => this.views.clearPending(a.id, rid),
+        count: (n) => a.status.setPending(n),
+        held: (texts) => this.views.setHeld(a.id, texts),
+        context: () => ({ cwd: this.tilde(a.cwd), modeBefore: this.views.facts(a.id)?.modeBeforePlan || 'auto' }),
+        now: this.now,
+      }),
     };
     this.live.set(id, a);
     this.views.open(id, { cwd });
@@ -356,9 +401,9 @@ export class Sessions {
     const proc: SessionProcess = new SessionProcess(start, {
       onMessage: (m) => { if (a.proc === proc) this.onMessage(a, m as Msg); },
       onExit: (error, ended) => this.onExit(a, proc, error, ended),
-      onDenied: (name) => {
-        this.log('driver.denied', { sid: a.id, tool: name });
-        this.views.toast(`Claude asked to use ${name}. Synopia can't answer this yet, so Claude was told to ask in plain text.`);
+      canUseTool: (name, input, o) => {
+        this.log('driver.ask', { sid: a.id, tool: name, agent: Boolean(o.agentID) });
+        return a.needs.park(name, input, o);
       },
     }, this.opts.queryFn);
     a.proc = proc;
@@ -373,6 +418,7 @@ export class Sessions {
     this.setStreamClear(a);
     const failed = !ended;
     this.log('driver.exit', { sid: a.id, ended, error: Boolean(error) });
+    this.endNeeds(a);
     a.status.processEnded(failed);
     if (failed) {
       const tail = proc.stderrTail();

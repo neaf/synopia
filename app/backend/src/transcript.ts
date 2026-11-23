@@ -142,10 +142,14 @@ export class Transcript {
   private changedBg = new Set<string>();
   private changedAgents = new Set<string>();
   private metaChanged = false;
+  private answerOf: (toolUseId: string) => string | undefined;
 
-  constructor(opts: { sidechain?: boolean; home?: string } = {}) {
+  // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
+  // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
+  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined } = {}) {
     this.sidechain = opts.sidechain ?? false;
     this.home = opts.home ?? os.homedir();
+    this.answerOf = opts.answerOf ?? (() => undefined);
   }
 
   get title(): string | null {
@@ -359,6 +363,8 @@ export class Transcript {
         this.asks.add(tid);
         this.put({ id: tid, k: 'ask', ts, qs, answer: null, state: 'pending' });
       } else {
+        // The plan sits in the transcript as Claude's reply (R6.6); the card holds only the decision.
+        if (name === 'ExitPlanMode' && str(inp.plan).trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(str(inp.plan)) });
         const [verb, o] = toolLine(name, inp, this.home);
         const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
         if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
@@ -403,9 +409,11 @@ export class Transcript {
       } else if (res !== undefined) state = res ? 'failed' : 'done';
       else state = 'running';
       const patch = this.patches.get(tid);
-      if (it.state !== state || it.patch !== patch) {
+      const answer = res !== undefined ? this.answerOf(tid) : undefined;
+      if (it.state !== state || it.patch !== patch || (answer && it.answer !== answer)) {
         it.state = state;
         if (patch) it.patch = patch;
+        if (answer) it.answer = answer;
         this.changed.add(tid);
       }
     }
