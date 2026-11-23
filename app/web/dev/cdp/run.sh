@@ -11,7 +11,7 @@ state="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-state.XXXXXX")"
 port="${SYNOPIA_CDP_PORT:-4791}"
 curl -s http://127.0.0.1:9334/json >/dev/null || { "$here/chrome.sh"; sleep 2; }
 start() { "$here/backend.sh" "$port" "$state" --fake --claude-dir "$fix" >/dev/null; }
-stop() { kill "$(cat "$state/pid")" 2>/dev/null; sleep 0.8; }
+stop() { local p; p="$(cat "$state/pid")"; kill "$p" 2>/dev/null; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; }
 start
 node "$here/$1.mjs" "$(cat "$state/url")" "$state"
 if [ "$1" = dnd ]; then stop; start; node "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart; fi

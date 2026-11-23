@@ -11,9 +11,11 @@ function setMode(m) {
   if (m === "insert" && document.activeElement !== ta) ta.focus();
   if (m === "normal" && document.activeElement === ta) ta.blur();
 }
+/* J/K and Cmd+Shift+[ ]: the next or previous shown session, in sidebar order (KEYS, from renderSide) */
 function stepSession(step) {
+  if (!KEYS.length) return;
   const i = KEYS.indexOf(current);
-  current = KEYS[(i + step + KEYS.length) % KEYS.length]; view = null; renderAll();
+  current = i < 0 ? KEYS[step > 0 ? 0 : KEYS.length - 1] : KEYS[(i + step + KEYS.length) % KEYS.length]; view = null; renderAll();
 }
 document.addEventListener("focusin", e => { if ((e.target.id === "msg" || e.target.id === "qa-own") && mode !== "insert") { mode = "insert"; paintMode(); } });
 document.addEventListener("focusout", e => { if (e.target.id === "msg" && mode !== "normal") { mode = "normal"; paintMode(); } });
@@ -21,7 +23,8 @@ document.addEventListener("keydown", e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
   const inMsg = e.target.id === "msg";
   if (inMsg) { if (e.key === "Escape") { e.preventDefault(); setMode("normal"); } return; }  // the slash menu takes the first Esc itself
-  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;  // group rename etc.
+  if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;  // group rename, the Open list's filter, a card's field
+  if (drag?.started) return; // dnd.js takes Esc; nothing else moves under a drag
   if (e.target.closest && e.target.closest("button") && e.key === " ") e.preventDefault();
   /* Esc, Esc interrupts a running turn; any other key dismisses the prompt (composer.js) */
   if (interruptAsk) {
@@ -41,7 +44,10 @@ document.addEventListener("keydown", e => {
     case "g": e.preventDefault(); if (log) log.scrollTop = 0; break;
     case "G": e.preventDefault(); if (log) log.scrollTop = log.scrollHeight; break;
     case "i": case "a": e.preventDefault(); setMode("insert"); break;
-    case "/": { e.preventDefault(); setMode("insert"); const ta = document.getElementById("msg"); ta.value = "/"; ta.dispatchEvent(new Event("input")); break; }
+    case "/": { // insert with the command menu open; a half-typed message stays as it is
+      e.preventDefault(); setMode("insert"); const ta = document.getElementById("msg");
+      if (ta && !ta.value) { ta.value = "/"; ta.dispatchEvent(new Event("input")); }
+      break; }
   }
 });
 
@@ -53,7 +59,7 @@ document.getElementById("new").onclick = () => { wantNew = true; send({ t: "newS
 document.addEventListener("keydown", e => {
   if (!(e.metaKey && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight"))) return;
   e.preventDefault();
-  const i = KEYS.indexOf(current); const step = e.code === "BracketRight" ? 1 : -1;
-  current = KEYS[(i + step + KEYS.length) % KEYS.length]; view = null; renderAll();
+  if (openListShown() || drag?.started) return; // the Open list and a drag keep the session behind them
+  stepSession(e.code === "BracketRight" ? 1 : -1);
 });
 function renderAll() { renderSide(); renderConv(); paintMode(); if (mode === "insert") (document.getElementById("qa-own") || document.getElementById("msg"))?.focus(); }
