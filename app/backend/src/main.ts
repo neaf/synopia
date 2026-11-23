@@ -14,6 +14,7 @@ import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
+import { Writer } from './writer.ts';
 import type { Image } from './sessions.ts';
 import type { Lock } from './lock.ts';
 import type { Layout, OpenEntry } from './store.ts';
@@ -75,10 +76,27 @@ let sessions: Sessions | null = null;
 const views = new Views({
   claudeDir, clients: () => server?.clients ?? noClients, home: script?.home, log,
   onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+  written: (sid) => store.state.written[sid],
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
-if (!fake) sessions = new Sessions({ store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined });
+// Slice 6: Claude-written titles and Now lines, after each turn and on open.
+const writer = fake ? null : new Writer({
+  store, stateDir, log,
+  source: {
+    title: (sid) => views.meta(sid)?.title,
+    turns: (sid) => views.turns(sid),
+    resolve: (sid) => sessions?.resolve(sid) ?? sid,
+    changed: (sid) => views.refresh(sid),
+  },
+});
+if (!fake) {
+  sessions = new Sessions({
+    store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined,
+    onTurnEnded: (sid) => writer?.turnEnded(sid),
+    onOpened: (sid) => writer?.opened(sid),
+  });
+}
 
 // The open sessions: state.json's open list, or every fixture session under --fake.
 function openEntries(): OpenEntry[] {
@@ -158,6 +176,7 @@ async function shutdown(reason: string) {
   stopping = true;
   log('backend.stop', { reason });
   fake?.stop();
+  writer?.stop();
   sessions?.stop();
   views.stop();
   store.close();

@@ -7,7 +7,7 @@ function rowHTML(s) {
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
       <span class="r-state">${st === "green" ? WORD.green : `${wordOf(s)}, ${age(s.statusAt)}`}</span>
-      <span class="r-now">${esc(s.now)}</span>
+      ${s.now ? `<span class="r-now">${esc(s.now)}</span>` : ""}
       ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
       ${(n => n ? `<span class="r-agent"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
       ${(n => n ? `<span class="r-agent r-review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(toReview(s).length)}

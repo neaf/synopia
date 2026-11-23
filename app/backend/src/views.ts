@@ -43,6 +43,8 @@ export type ViewsOptions = {
   watch?: boolean;
   // Each assistant record of a main conversation as it lands: its message id and block types.
   onAssistant?: (sid: string, messageId: string, blockTypes: string[]) => void;
+  // Slice 6: the title and Now line Claude wrote for a session (state.json `written`).
+  written?: (sid: string) => { title?: string; now?: string } | undefined;
 };
 
 const tilde = (p: string, home: string): string => (home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
@@ -221,12 +223,14 @@ export class Views {
   private metaOf(s: Live): SessionMeta {
     const t = s.t;
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
+    const w = this.opts.written?.(s.id);
     let statusAt = s.statusAt;
     if (!s.status) statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
     return {
       id: s.id,
-      title: t.title || first.split('\n')[0].slice(0, 80) || 'New session',
-      now: '',
+      // Section 10: your rename, then Claude's title, then the CLI's ai-title.
+      title: t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session',
+      now: w?.now ?? '',
       cwd: tilde(s.cwd, this.home),
       prs: t.prs,
       // From the transcript until a driver sets it: your turn. "Stopped" is read from the items by the page.
@@ -235,6 +239,28 @@ export class Views {
       model: t.requestedModel ?? null,
       effort: t.effort ?? null,
     };
+  }
+
+  // Slice 6: the turns the writer reads, oldest first: each prompt you typed and Claude's text
+  // until the next one. Undefined when the session isn't open.
+  turns(id: string): { you: string; claude: string }[] | undefined {
+    const s = this.live.get(id);
+    if (!s) return undefined;
+    const out: { you: string; claude: string }[] = [];
+    for (const i of s.t.items) {
+      if (i.k === 'you' && !i.interrupted) out.push({ you: i.text ?? '', claude: '' });
+      else if (i.k === 'claude' && out.length) {
+        const cur = out[out.length - 1];
+        cur.claude = cur.claude ? `${cur.claude}\n\n${i.text ?? ''}` : i.text ?? '';
+      }
+    }
+    return out;
+  }
+
+  // Slice 6: the written text changed; send `session` if the meta did.
+  refresh(id: string): void {
+    const s = this.live.get(id);
+    if (s) this.flush(s);
   }
 
   // The sessions part of `hello`: meta, status, subagents, background work and the stream preview.
