@@ -6,6 +6,7 @@ const [url, stateDir, phase] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, mouse } = c;
 await c.cdp('Page.navigate', { url });
+await sleep(1000); await c.key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
 await sleep(2000);
 const S = (p) => `[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id.startsWith('${p}'))`;
 const rect = async (sel) => ev(`(() => { const e = ${sel}; if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top, h: r.height, l: r.left }; })()`);

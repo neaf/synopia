@@ -6,11 +6,14 @@ const newUuid = () => crypto.randomUUID ? crypto.randomUUID() : "10000000-1000-4
 /* ---------- slash commands and /model, from the menu of the session's folder ---------- */
 const MENU = () => store.menu[cur()?.cwd ?? ""] || { models: [], commands: [] };
 const COMMANDS = () => MENU().commands.filter(c => !c.name.startsWith("__"));
-let modelValue = "default";
+/* the session's model (its choice, else the transcript's requestedModel) matched to a menu row by value or resolved id */
+const modelOf = s => { const v = s?.model; const ms = MENU().models; return (v && (ms.find(x => x.value === v) || ms.find(x => x.resolved === v))) || (!v ? ms.find(x => x.value === "default") : null) || null; };
+const modelValue = () => modelOf(cur())?.value ?? cur()?.model ?? "default";
 const modelName = () => {
-  const m = MENU().models.find(x => x.value === modelValue) || { name: "Default", description: "" };
-  const cm = (m.description || "").match(/currently ([^()]+)/);
-  return m.value === "default" && cm ? `Default (${cm[1].trim()})` : m.name;
+  const s = cur(), m = modelOf(s);
+  const cm = (m?.description || "").match(/currently ([^()]+)/);
+  const name = !m ? (s?.model || "Default") : m.value === "default" && cm ? `Default (${cm[1].trim()})` : m.name;
+  return s?.effort ? `${name}, ${s.effort} effort` : name;
 };
 function rank(list, q, key) {
   q = q.toLowerCase();
@@ -25,17 +28,27 @@ function rank(list, q, key) {
 }
 function attachSlash(ta, onModel) {
   const box = document.getElementById("slash");
-  let mode = null, items = [], sel = 0;
+  let mode = null, items = [], sel = 0, eff = null; // eff: the effort level picked on the selected model row
   const close = () => { box.hidden = true; mode = null; };
   const draw = () => {
     if (!items.length) { box.innerHTML = `<div class="head">No matching command</div>`; box.hidden = false; return; }
-    box.innerHTML = (mode === "model" ? `<div class="head">Choose a model for this session</div>` : "") + items.slice(0, 40).map((it, i) => mode === "model"
-      ? `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">${it.value === modelValue ? "❯ " : "  "}${esc(it.name)}</span><span class="d">${esc(it.description || "")}</span></div>`
+    box.innerHTML = (mode === "model" ? `<div class="head">Choose a model for this session${items.some(m => (m.effort || []).length) ? ", ← → for the effort" : ""}</div>` : "") + items.slice(0, 40).map((it, i) => mode === "model"
+      ? `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">${it.value === modelValue() ? "❯ " : "  "}${esc(it.name)}</span><span class="d">${esc(it.description || "")}</span>${i === sel && (it.effort || []).length ? effortRow(it) : ""}</div>`
       : `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">/${esc(it.name)}${it.hint ? ` <span class="h">${esc(it.hint)}</span>` : ""}</span><span class="d">${esc(it.description)}</span></div>`).join("");
     box.hidden = false;
     box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-    box.querySelectorAll(".it").forEach(el => el.onmousedown = e => { e.preventDefault(); sel = +el.dataset.i; pick(); });
+    box.querySelectorAll(".it").forEach(el => el.onmousedown = e => {
+      e.preventDefault(); const lv = e.target.closest("[data-eff]");
+      if (lv && +el.dataset.i === sel) eff = lv.dataset.eff; else if (+el.dataset.i !== sel) { sel = +el.dataset.i; eff = effortFor(items[sel]); }
+      pick();
+    });
+    /* in the model picker the pointer moves the selection, so the effort row follows it and can be clicked */
+    if (mode === "model") box.querySelectorAll(".it").forEach(el => el.onmousemove = () => { const i = +el.dataset.i; if (i !== sel) { sel = i; eff = effortFor(items[sel]); draw(); } });
   };
+  /* the effort levels of the selected model, a second row of choices; the chosen one is boxed */
+  const effortFor = m => { const s = cur(), lv = m?.effort || []; return s?.effort && lv.includes(s.effort) ? s.effort : null; };
+  const effortRow = m => `<span class="eff" role="radiogroup" aria-label="Effort"><span class="eff-l">Effort</span>${m.effort.map(l =>
+    `<span class="eff-o" role="radio" data-eff="${esc(l)}" aria-checked="${l === eff}">${esc(l)}</span>`).join("")}</span>`;
   const update = () => {
     if (mode === "model") return;
     const m = ta.value.match(/^\/(\S*)$/);
@@ -43,30 +56,39 @@ function attachSlash(ta, onModel) {
     mode = "cmd"; items = rank(COMMANDS(), m[1], c => c.name); sel = 0; draw();
   };
   const pick = () => {
-    const it = items[sel]; if (!it) return;
-    if (mode === "model") { modelValue = it.value; close(); ta.value = ""; onModel(it); return; }
-    if (it.name === "model") { mode = "model"; items = MENU().models; sel = Math.max(0, items.findIndex(m => m.value === modelValue)); ta.value = "/model "; draw(); return; }
+    const it = items[sel];
+    if (!it) { if (mode === "cmd" && ta.value.trim() === "/model") openModels(); return; } // a menu without the /model row
+    if (mode === "model") { close(); ta.value = ""; onModel(it, (it.effort || []).includes(eff) ? eff : null); return; }
+    if (it.name === "model") { openModels(); return; }
     ta.value = `/${it.name} `; close(); ta.focus();
   };
+  const openModels = () => {
+    mode = "model"; items = MENU().models; sel = Math.max(0, items.findIndex(m => m.value === modelValue())); eff = effortFor(items[sel]); ta.value = "/model "; draw();
+  };
+  ta.openModels = openModels;
   ta.addEventListener("input", update);
   ta.addEventListener("keydown", e => {
     if (box.hidden) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopImmediatePropagation(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; draw(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopImmediatePropagation(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; if (mode === "model") eff = effortFor(items[sel]); draw(); }
+    else if (mode === "model" && (e.key === "ArrowLeft" || e.key === "ArrowRight") && (items[sel]?.effort || []).length) {
+      e.preventDefault(); e.stopImmediatePropagation();
+      const lv = items[sel].effort, i = lv.indexOf(eff), step = e.key === "ArrowRight" ? 1 : -1;
+      eff = i < 0 ? lv[step > 0 ? 0 : lv.length - 1] : lv[Math.min(lv.length - 1, Math.max(0, i + step))]; draw();
+    }
     else if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) { e.preventDefault(); e.stopImmediatePropagation(); pick(); }
     else if (e.key === "Escape") { e.preventDefault(); e.stopImmediatePropagation(); close(); if (ta.value.startsWith("/model")) ta.value = ""; }
   }, true);
-  ta.addEventListener("blur", () => setTimeout(close, 120));
+  ta.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== ta) close(); }, 120)); // the model button refocuses it
 }
 
 function renderAttachments() {
   const box = conv.querySelector(".composer .attach"); if (!box) return;
   box.innerHTML = attachments.map((src, i) => `<figure><img src="${src}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("");
 }
+/* the header's model button and /model open the same picker */
 function openModelPicker() {
-  const ta = document.getElementById("msg");
-  ta.value = "/model"; ta.focus(); ta.dispatchEvent(new Event("input"));
-  const it = [...document.querySelectorAll("#slash .it")].find(x => x.textContent.startsWith("/model"));
-  it?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  const ta = document.getElementById("msg"); if (!ta) return;
+  ta.focus(); ta.openModels?.();
 }
 /* ---------- Esc, Esc: the message box turns into "Interrupt?" while a turn runs (R9.4) ---------- */
 let interruptAsk = null; // the session id the prompt is for
@@ -113,15 +135,15 @@ function mountComposer(s) {
   const ta = document.getElementById("msg");
   interruptAsk = null;
   renderAttachments();
-  attachSlash(ta, m => {
-    s.items.push({ id: `local:${Date.now()}`, k: "tool", ts: new Date().toISOString(), verb: "Model", obj: `set to ${m.name}`, name: "model", state: "done" });
-    toast(`Model set to ${m.name} for this session. Applying it to Claude comes with a later task.`);
-    renderHeader(); renderLog();
+  /* a pick is stored per session (the backend's session message updates the header) and applied to a running process (setModel, the effort through applyFlagSettings) */
+  attachSlash(ta, (m, effort) => {
+    send({ t: "setModel", sid: s.id, model: m.value, effort }); // the header shows it once stored; a running CLI also writes "/model …" to the transcript
   });
   /* Enter sends the text and the pasted images (base64 PNG or JPEG, 5 MB each) to the session's input.
      s.id follows the session when its id changes (a new session's real id), so the message reaches it. */
   const sendMsg = () => {
     if (!ta.value.trim() && !attachments.length) return;
+    if (ta.value.trim() === "/model" && !attachments.length) { openModelPicker(); return; } // typed in full: the picker, not a message
     const images = [];
     for (const url of attachments) {
       const m = /^data:(image\/(?:png|jpeg));base64,(.*)$/.exec(url);

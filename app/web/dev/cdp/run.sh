@@ -13,6 +13,6 @@ curl -s http://127.0.0.1:9334/json >/dev/null || { "$here/chrome.sh"; sleep 2; }
 start() { "$here/backend.sh" "$port" "$state" --fake --claude-dir "$fix" >/dev/null; }
 stop() { local p; p="$(cat "$state/pid")"; kill "$p" 2>/dev/null; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; }
 start
-node "$here/$1.mjs" "$(cat "$state/url")" "$state"
+node "$here/$1.mjs" "$(cat "$state/url")" "$state"; [ "$1" = menu ] && echo "picker shot: $state/menu-picker.png"
 if [ "$1" = dnd ]; then stop; start; node "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart; fi
 stop
