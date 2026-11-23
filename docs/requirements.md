@@ -105,7 +105,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - code blocks
   - bare URLs and markdown links are clickable and open in the browser
 - R5.11 Claude's questions and your answers render in the transcript. Answered questions appear as your turn.
-- R5.12 Opening a subagent shows its own transcript in the same pane, with a breadcrumb back to the session.
+- R5.12 Opening a subagent shows its own transcript in the same pane, with a breadcrumb back to the session. Its message box writes to the main conversation: the user asks the main session to orchestrate its subagents, and it messages them itself. Messaging a subagent directly is rejected (2026-11-23).
 
 ### 5.3 Message box
 - R5.13 One line: `❯` and the field, centred; it grows for long messages. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
@@ -283,6 +283,5 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 
 ## 14. Not decided yet
 
-- Messaging a running subagent directly from its view: the CLI can, and the SDK path is unverified.
 - Notifications: a Dock badge with the needs-you count, and a notification when a session asks something. Deferred until after the first version.
 - The stale or disconnected, rate-limited, compacting, credentials-expired and queued states are designed (status storyboard) but not wired to data.
