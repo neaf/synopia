@@ -3,6 +3,7 @@
 #   app/web/dev/cdp/run.sh dnd     drop rules (R4.5), then a backend restart and the restored layout
 #   app/web/dev/cdp/run.sh keys    keys and modes (R9)
 #   app/web/dev/cdp/run.sh menu    slash menu and model picker (R5.14, R3.7)
+#   app/web/dev/cdp/run.sh csp     the page under its CSP, the H1 payload, an injected handler blocked
 # Starts headless Chrome on 9334 if it isn't up. Prints "N/M pass" and the failures.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

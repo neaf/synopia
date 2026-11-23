@@ -30,7 +30,7 @@ function railHTML(s, A) {
   const past = all.filter(x => !x.running).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
   const now = all.filter(x => x.running).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  const attrs = x => x.agent ? `data-agent="${x.agent.id}" aria-current="${!!(A && A.id === x.agent.id)}"${x.running ? ` aria-expanded="${openBg === x.key}"` : ""}` : `data-bg="${x.key}" aria-expanded="${openBg === x.key}"`;
+  const attrs = x => x.agent ? `data-agent="${esc(x.agent.id)}" aria-current="${!!(A && A.id === x.agent.id)}"${x.running ? ` aria-expanded="${openBg === x.key}"` : ""}` : `data-bg="${esc(x.key)}" aria-expanded="${openBg === x.key}"`;
   const detail = x => {
     if (openBg !== x.key) return "";
     if (x.agent) return x.running ? `<div class="bw-detail">${stopRow(x)}</div>` : "";
@@ -41,7 +41,7 @@ function railHTML(s, A) {
     <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${esc(WORD[stateOf(s)])}</span></button>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
-        <button class="btn quiet rv-done" data-reviewed="${x.agent.id}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
+        <button class="btn quiet rv-done" data-reviewed="${esc(x.agent.id)}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
     <div class="now">
       <h3>Running <span class="cnt">${now.length ? `${now.length} in the background` : ""}</span></h3>
       ${now.length ? now.map(x => `<button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}`).join("") : `<p class="none">Nothing running in the background.</p>`}

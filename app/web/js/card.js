@@ -7,8 +7,8 @@ const qstate = {}; // ask key -> { qi, oi, picks: {qi: [labels]}, own: {qi: text
    decisionReason, defaultToNo, always (the "Always allow" text, null when hidden), suggestions} ---------- */
 const FILE_TOOLS = ["Edit", "Write", "NotebookEdit", "Read"];
 /* who asks: Claude, or the subagent the request came from */
-const askerOf = r => { const s = store.sessions.get(current), A = r.agentId && s && agentById(s, r.agentId); return A ? `Subagent “${A.description}”` : r.agentId ? "A subagent" : "Claude"; };
-const wantsTo = r => r.toolName === "Bash" ? "run a command" : r.toolName === "Read" ? "read a file" : FILE_TOOLS.includes(r.toolName) ? "change a file" : `use ${r.toolName}`;
+const askerOf = r => { const s = store.sessions.get(current), A = r.agentId && s && agentById(s, r.agentId); return A ? `Subagent “${esc(A.description)}”` : r.agentId ? "A subagent" : "Claude"; };
+const wantsTo = r => r.toolName === "Bash" ? "run a command" : r.toolName === "Read" ? "read a file" : FILE_TOOLS.includes(r.toolName) ? "change a file" : `use ${esc(r.toolName)}`;
 function askOf(r) {
   const base = { id: r.id, k: "ask", ts: new Date(r.since).toISOString(), state: "pending", kind: r.kind === "question" ? undefined : r.kind, request: r };
   const inp = r.input || {};
