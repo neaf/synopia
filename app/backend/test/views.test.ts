@@ -212,3 +212,22 @@ test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', 
   written = { title: 'Counting fixture lines' };
   assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Counting fixture lines', 'Count the lines']);
 });
+
+test('subagents: read from the folder scan; a finished, quiet one only now and then (L6)', () => {
+  const { views } = setup(CLAUDE);
+  views.open(AGENTS);
+  type Inner = { live: Map<string, { t: { agentRunning: (id: string) => boolean }; watcher: { scan: () => void }; children: Map<string, { tailer: { check: () => boolean } }> }> };
+  const s = (views as unknown as Inner).live.get(AGENTS)!;
+  const counts = new Map<string, number>();
+  for (const [aid, c] of s.children) {
+    const check = c.tailer.check.bind(c.tailer);
+    c.tailer.check = () => { counts.set(aid, (counts.get(aid) ?? 0) + 1); return check(); };
+  }
+  for (let i = 0; i < 40; i++) s.watcher.scan();
+  const running = [...s.children.keys()].filter((aid) => s.t.agentRunning(aid));
+  const finished = [...s.children.keys()].filter((aid) => !s.t.agentRunning(aid));
+  assert.ok(finished.length > 0);
+  for (const aid of running) assert.equal(counts.get(aid), 40, `${aid} runs: read at every scan`);
+  for (const aid of finished) assert.ok((counts.get(aid) ?? 0) <= 8, `${aid} finished: read ${counts.get(aid)} times in 40 scans`);
+  views.stop();
+});

@@ -25,7 +25,9 @@ export type SessionMeta = {
 };
 
 type Sub = { sid: string; agent: string | null; from: number };
-type Child = { t: Transcript; tailer: Tailer };
+type Child = { t: Transcript; tailer: Tailer; calm: number; skip: number }; // calm: scans with nothing new
+const CALM_SCANS = 3;
+const SLOW_SCANS = 10;
 type Live = {
   id: string; path: string | null; cwd: string; t: Transcript;
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
@@ -126,8 +128,10 @@ export class Views {
       onAgent: (aid, afile) => {
         const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf });
         s.t.setAgent(aid, undefined, t);
+        // No timer or watch of its own: the folder's watcher reads it after each scan (onScan).
         const tailer = new Tailer(afile, {
-          ...tail,
+          pollMs: 0,
+          watch: false,
           onRecords: (records) => {
             t.pushAll(records);
             s.t.setAgent(aid, undefined); // its total, start and end changed
@@ -139,12 +143,20 @@ export class Views {
             this.queue(s);
           },
         });
-        s.children.set(aid, { t, tailer });
+        s.children.set(aid, { t, tailer, calm: 0, skip: 0 });
         tailer.start();
       },
       onMeta: (aid, meta) => {
         s.t.setAgent(aid, meta);
         this.queue(s);
+      },
+      // Running subagents are read at every scan; a finished one whose file stopped growing only
+      // every SLOW_SCANS scans (it can be woken again).
+      onScan: () => {
+        for (const [aid, c] of s.children) {
+          if (!s.t.agentRunning(aid) && c.calm >= CALM_SCANS && ++c.skip % SLOW_SCANS !== 0) continue;
+          c.calm = c.tailer.check() ? 0 : c.calm + 1;
+        }
       },
     }, tail).start();
   }

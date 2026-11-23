@@ -220,6 +220,8 @@ if (!flags['no-parent']) {
   process.stdin.resume();
 }
 
+// The ready line first: the shell loads the page while the open sessions' transcripts are read
+// (a large one in slices, tail.ts), so the window isn't blank until every file is parsed.
+process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
 if (fake) fake.start(claudeDir);
 else sessions?.start();
-process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
