@@ -185,3 +185,130 @@ test('model: a new session with no choice shows settings.model, not the CLI defa
   views.open('new-1', { cwd: '/tmp/x' });
   assert.equal((views.sessions() as { id: string; model: unknown }[]).find((s) => s.id === 'new-1')!.model, 'haiku');
 });
+
+test('earlier: pages of 160 before an id, down to the first, then nothing', () => {
+  const id = 'eeeeeeee-0000-4000-8000-00000000000e';
+  let body = '';
+  for (let i = 0; i < 400; i++) body += you(i);
+  const dir = tempSession(id, body);
+  const { clients, views } = setup(dir);
+  const c = client(), other = client();
+  clients.add(c);
+  clients.add(other);
+  views.open(id);
+  views.check(); // the first read's changes go out before the pages view it
+  views.view(c, id, null);
+  views.view(other, id, null);
+  c.take();
+  other.take();
+  const ids = (m: Msg) => (m.upsert as { id: string }[]).map((i) => i.id);
+
+  // Before the oldest shown (u240): u80 to u239, in order, marked prepend.
+  assert.equal(views.earlier(c, id, null, 'u240'), 160);
+  const [p1] = c.take('items');
+  assert.equal(p1.prepend, true);
+  assert.equal(p1.reset, false);
+  assert.equal(p1.total, 400);
+  assert.deepEqual(ids(p1), Array.from({ length: 160 }, (_, i) => `u${80 + i}`));
+
+  // The next page stops at the first item: 80 left.
+  assert.equal(views.earlier(c, id, null, 'u80'), 80);
+  const [p2] = c.take('items');
+  assert.equal(ids(p2)[0], 'u0');
+  assert.equal(ids(p2).length, 80);
+  // At the start of history there is nothing before u0 (the page shows no link then).
+  views.earlier(c, id, null, 'u0');
+  assert.deepEqual(c.take('items').map(ids), [[]]);
+  // An id not in the transcript, or another conversation than the one viewed: no reply.
+  assert.equal(views.earlier(c, id, null, 'nope'), 0);
+  assert.equal(views.earlier(c, id, 'aaaa0001', 'u80'), 0);
+  assert.equal(c.take().length, 0);
+
+  // Later items still arrive as upserts, on both pages.
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  fs.appendFileSync(file, you(400));
+  views.check();
+  assert.deepEqual(c.take('items').map(ids), [['u400']]);
+  assert.deepEqual(other.take('items').map(ids), [['u400']]);
+
+  // A rewrite resets the loaded range back to the last 160.
+  let again = '';
+  for (let i = 0; i < 300; i++) again += you(i);
+  fs.writeFileSync(file + '.new', again);
+  fs.renameSync(file + '.new', file);
+  views.check();
+  const [reset] = c.take('items');
+  assert.equal(reset.reset, true);
+  assert.equal(ids(reset).length, 160);
+  assert.equal(ids(reset)[0], 'u140');
+  // So does a new `view`.
+  views.earlier(c, id, null, 'u140');
+  c.take();
+  views.view(c, id, null);
+  assert.equal(ids(c.take('items')[0])[0], 'u140');
+  views.stop();
+});
+
+test('earlier: an item loaded earlier gets its upserts, only on the page that loaded it', () => {
+  const id = 'efefefef-0000-4000-8000-0000000000ef';
+  let body = line({
+    type: 'assistant', uuid: 'a0', timestamp: '2026-11-20T10:00:00.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_old', name: 'Bash', input: { command: 'sleep 1' } }] },
+  });
+  for (let i = 1; i < 200; i++) body += you(i);
+  const dir = tempSession(id, body);
+  const { clients, views } = setup(dir);
+  const c = client(), other = client();
+  clients.add(c);
+  clients.add(other);
+  views.open(id);
+  views.check();
+  views.view(c, id, null);
+  views.view(other, id, null);
+  views.earlier(c, id, null, (c.take('items')[0].upsert as { id: string }[])[0].id);
+  other.take();
+  assert.equal((c.take('items')[0].upsert as { id: string }[])[0].id, 'toolu_old');
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), line({
+    type: 'user', uuid: 'r0', timestamp: '2026-11-20T10:00:01.000Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_old', content: 'ok' }] },
+  }));
+  views.check();
+  const [up] = c.take('items');
+  assert.deepEqual((up.upsert as { id: string; state: string }[]).map((i) => [i.id, i.state]), [['toolu_old', 'done']]);
+  assert.equal(other.take('items').length, 0);
+  views.stop();
+});
+
+test('earlier: a subagent view pages its own transcript', () => {
+  const id = 'fefefefe-0000-4000-8000-0000000000fe';
+  const dir = tempSession(id, you(0));
+  const sub = path.join(dir, 'projects', '-tmp-x', id, 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  let body = '';
+  for (let i = 0; i < 250; i++) {
+    body += line({
+      type: 'assistant', uuid: `s${i}`, timestamp: '2026-11-20T10:01:00.000Z', isSidechain: true, agentId: 'bbbb0001',
+      message: { role: 'assistant', content: [{ type: 'text', text: `step ${i}` }] },
+    });
+  }
+  fs.writeFileSync(path.join(sub, 'agent-bbbb0001.jsonl'), body);
+  const { clients, views } = setup(dir);
+  const c = client();
+  clients.add(c);
+  views.open(id);
+  views.check();
+  views.view(c, id, 'bbbb0001');
+  const [reset] = c.take('items');
+  const shown = reset.upsert as { id: string; text: string }[];
+  assert.equal(reset.total, 250);
+  assert.equal(shown.length, 160);
+  assert.equal(shown[0].text, 'step 90');
+  // The main conversation's `earlier` doesn't answer for the subagent view.
+  assert.equal(views.earlier(c, id, null, shown[0].id), 0);
+  assert.equal(views.earlier(c, id, 'bbbb0001', shown[0].id), 90);
+  const [p] = c.take('items');
+  assert.equal(p.agent, 'bbbb0001');
+  assert.equal(p.prepend, true);
+  assert.deepEqual((p.upsert as { text: string }[]).map((i) => i.text), Array.from({ length: 90 }, (_, i) => `step ${i}`));
+  views.stop();
+});

@@ -52,6 +52,7 @@ function onMessage(m) {
     case "items": {
       if (!applyItems(m)) break;
       if (!isViewed(m.sid, m.agent)) break;
+      if (m.prepend) { renderLogKeepingPlace(); break; } // earlier items: the card and header don't change
       render("log", "card", "header"); // the header drops its Now line while a new session is empty
       runHooks(m);
       break;
