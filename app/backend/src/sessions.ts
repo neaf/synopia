@@ -148,7 +148,7 @@ export class Sessions {
 
   // The sessions with a running turn, for the quit check.
   running(): string[] {
-    return [...this.live.values()].filter((a) => a.status.working).map((a) => a.id);
+    return [...this.live.values()].filter((a) => a.proc && a.status.working).map((a) => a.id);
   }
 
   // An empty session in settings.newSessionCwd. It isn't stored until system/init gives its id.
@@ -221,6 +221,40 @@ export class Sessions {
     a.status.turnStarted();
     this.log('sessions.send', { sid: a.id, images: images.length });
     return { ok: true, sid: a.id };
+  }
+
+  // Close (R3.6): marks it closed and ends its process now, background work included (the page
+  // asked first when something ran). It stays in its layout group, hidden; the Open list lists it
+  // again, and reopening it puts it back there. A placeholder is simply dropped.
+  close(sid: string): SendResult {
+    const id = this.resolve(sid);
+    const a = this.live.get(id);
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    this.clearIdle(a);
+    if (a.streamTimer) clearTimeout(a.streamTimer);
+    const proc = a.proc;
+    a.proc = null; // its exit is no failure
+    proc?.close();
+    this.live.delete(id);
+    const e = this.store.state.open.find((x) => x.id === id);
+    if (e) {
+      e.closedAt = this.now();
+      this.store.changed();
+    }
+    this.views.close(id);
+    this.log('sessions.close', { sid: id, running: Boolean(proc && !proc.done) });
+    return { ok: true, sid: id };
+  }
+
+  // For the shell's quit check: the sessions with a running turn and the background work
+  // (subagents, shells, monitors) that lives in a running process.
+  quitCheck(): { running: string[]; background: { sid: string; kind: string }[] } {
+    const background: { sid: string; kind: string }[] = [];
+    for (const a of this.live.values()) {
+      if (!a.proc) continue;
+      for (const kind of this.views.facts(a.id)?.runningWork ?? []) background.push({ sid: a.id, kind });
+    }
+    return { running: this.running(), background };
   }
 
   // Esc, Esc: stops the foreground turn; background work keeps running (perTaskStopAffordance).

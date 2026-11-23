@@ -27,14 +27,14 @@ function loadLayout() {
   };
 }
 const saveLayout = () => { store.layout = JSON.parse(JSON.stringify(layout)); send({ t: "layout", layout }); };
+/* Closed sessions keep their place in the layout, hidden (plan section 11), so one reopened from the
+   Open list comes back where it was. Open sessions found nowhere go to "Not in a group". */
 function reconcile() {
-  const live = new Set(data.map(s => s.id));
-  layout.groups.forEach(g => g.ids = g.ids.filter(id => live.has(id)));
-  layout.others = layout.others.filter(id => live.has(id));
   const placed = new Set([...layout.groups.flatMap(g => g.ids), ...layout.others]);
   data.forEach(s => { if (!placed.has(s.id)) layout.others.push(s.id); });
   layout.groups = layout.groups.filter(g => g.ids.length);
 }
+const shown = ids => ids.filter(id => store.sessions.has(id));
 function removeId(id) { layout.groups.forEach(g => g.ids = g.ids.filter(x => x !== id)); layout.others = layout.others.filter(x => x !== id); }
 const listOf = id => layout.groups.find(g => g.ids.includes(id))?.ids || (layout.others.includes(id) ? layout.others : null);
 let renaming = null;
@@ -44,9 +44,10 @@ function renderSide() {
   reconcile();
   const c = st => data.filter(s => stateOf(s) === st).length;
   const byId = id => data.find(s => s.id === id);
-  KEYS = [...layout.groups.flatMap(g => g.ids), ...layout.others];
+  const groups = layout.groups.map(g => ({ ...g, ids: shown(g.ids) })).filter(g => g.ids.length), others = shown(layout.others);
+  KEYS = [...groups.flatMap(g => g.ids), ...others];
   let html = "";
-  for (const g of layout.groups) {
+  for (const g of groups) {
     html += `<section class="group tree" data-group="${g.id}">
       <div class="th">
         ${renaming === g.id ? `<input class="g-input" id="g-input" value="${esc(g.name)}" aria-label="Group name">` : `<span class="g-name" title="Double-click to rename">${esc(g.name)}</span>`}
@@ -54,8 +55,8 @@ function renderSide() {
       ${g.ids.map(id => rowHTML(byId(id))).join("")}
     </section>`;
   }
-  if (layout.groups.length || layout.others.length) html += `<section class="group tree others" data-group="others"><div class="th"><span class="g-name">Not in a group</span></div>
-    ${layout.others.length ? layout.others.map(id => rowHTML(byId(id))).join("") : `<div class="g-empty" data-drop-group="others">Drop a session here to take it out of its group</div>`}</section>`;
+  if (groups.length || others.length) html += `<section class="group tree others" data-group="others"><div class="th"><span class="g-name">Not in a group</span></div>
+    ${others.length ? others.map(id => rowHTML(byId(id))).join("") : `<div class="g-empty" data-drop-group="others">Drop a session here to take it out of its group</div>`}</section>`;
   const el = document.getElementById("groups"); el.innerHTML = html;
   el.querySelectorAll(".row").forEach(b => { b.onclick = () => { current = b.dataset.id; view = null; renderAll(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
@@ -66,6 +67,21 @@ function renderSide() {
     inp.onkeydown = e => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); };
     inp.onblur = () => done(true);
   }
+}
+/* "Close session": hides it and ends its process. When a turn or background work runs, ask first. */
+function closeSession(s) {
+  if (!s) return;
+  const n = k => bgOf(s).filter(b => bgState(b) === "running" && b.kind === k).length;
+  const plural = (c, one, many) => c ? [`${c} ${c === 1 ? one : many}`] : [];
+  const work = [...plural(agentsOf(s).filter(a => !a.finished).length, "subagent", "subagents"),
+    ...plural(n("shell"), "background shell", "background shells"), ...plural(n("monitor"), "monitor", "monitors")];
+  const turn = s.status === "busy" || s.status === "waiting";
+  const list = work.length > 1 ? `${work.slice(0, -1).join(", ")} and ${work.at(-1)}` : work[0];
+  if (turn || work.length) {
+    const what = turn && list ? `Claude is working, and ${list} will stop.` : turn ? "Claude is working, and its turn will stop." : `${list} will stop.`;
+    if (!confirm(`Close “${s.title}”? ${what[0].toUpperCase()}${what.slice(1)}`)) return;
+  }
+  send({ t: "close", sid: s.id });
 }
 /* the footer's Open line: the list of past sessions (open-list.js) */
 document.getElementById("open").onclick = () => showOpenList();

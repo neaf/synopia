@@ -482,3 +482,90 @@ test('interrupt: an idle session or one without a process is left alone', async 
   await t.sessions.interrupt(REAL);
   assert.deepEqual(t.q.calls[0].interrupts, []);
 });
+
+test('close: ends the process, sends removed, hides it in its group; reopening puts it back there', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  writePast(path.join(root, 'claude'), cwd);
+  const past = [info(PAST, { cwd, lastModified: 5000 })];
+  const t = setup(root, past);
+  await t.sessions.openSession(PAST);
+  const st = t.store.state;
+  st.layout = { groups: [{ id: 'g1', name: 'Work', ids: ['x', PAST] }], others: [] };
+  t.sessions.send(PAST, 'go');
+  await tick();
+  emit(t.q.calls[0], init(PAST));
+  await tick();
+  t.take();
+  assert.deepEqual(t.sessions.close(PAST), { ok: true, sid: PAST });
+  await tick();
+  assert.equal(t.q.calls[0].closed, true, 'the process ends now');
+  assert.deepEqual(t.take('removed'), [{ t: 'removed', id: PAST }]);
+  assert.equal(t.take('toast').length, 0, 'a close is not a failure');
+  assert.equal(typeof st.open[0].closedAt, 'number');
+  assert.deepEqual(st.layout.groups[0].ids, ['x', PAST], 'it keeps its place, hidden');
+  assert.equal(t.sessions.has(PAST), false);
+  assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), [PAST], 'the Open list has it again');
+  t.store.flush();
+
+  // after a restart it stays closed
+  const t2 = setup(root, past);
+  t2.sessions.start();
+  assert.deepEqual(t2.views.ids(), []);
+  assert.equal(t2.sessions.send(PAST, 'x').ok, false);
+
+  // reopening it: back in its group, the same open[] entry
+  await t2.sessions.openSession(PAST);
+  assert.deepEqual(t2.views.ids(), [PAST]);
+  assert.equal(t2.store.state.open.length, 1);
+  assert.equal(t2.store.state.open[0].closedAt, null);
+  assert.deepEqual(t2.store.state.layout.groups[0].ids, ['x', PAST]);
+});
+
+test('close: a placeholder is dropped and never stored', () => {
+  const t = setup();
+  const ph = t.sessions.newSession();
+  t.take();
+  assert.equal(t.sessions.close(ph).ok, true);
+  assert.deepEqual(t.take('removed'), [{ t: 'removed', id: ph }]);
+  assert.equal(t.store.state.open.length, 0);
+});
+
+test('idle end: the process ends after the idle time, not while background work runs, and the next message resumes', async () => {
+  const t = setup(undefined, [], { idleMs: 30 });
+  const ph = t.sessions.newSession();
+  t.sessions.send(ph, 'hi');
+  await tick();
+  emit(t.q.calls[0], init(REAL));
+  emit(t.q.calls[0], RESULT);
+  await tick();
+  assert.equal(t.q.calls[0].inputs.length, 1);
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(t.sessions.quitCheck().running.length, 0);
+  t.take();
+  assert.equal(t.take('toast').length, 0);
+  t.sessions.send(REAL, 'again');
+  await tick();
+  assert.equal(t.q.calls.length, 2, 'a new process');
+  assert.equal(t.q.calls[1].options.resume, REAL);
+});
+
+test('quitCheck: running turns and the background work of running processes', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const BG = '33333333-0000-4000-8000-000000000003';
+  const dir = path.join(root, 'claude', 'projects', '-tmp-fixture');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
+  const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
+  await t.sessions.openSession(BG);
+  assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [] }, 'no process, nothing stops');
+  t.sessions.send(BG, 'go');
+  await tick();
+  const c = t.sessions.quitCheck();
+  assert.deepEqual(c.running, [BG]);
+  assert.deepEqual(c.background, [{ sid: BG, kind: 'monitor' }]);
+  emit(t.q.calls[0], init(BG));
+  emit(t.q.calls[0], RESULT);
+  await tick();
+  assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [{ sid: BG, kind: 'monitor' }] });
+});

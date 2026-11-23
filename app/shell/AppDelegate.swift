@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let page = PageView()
   private let backend = Backend()
   private var quitting = false
+  private var skipQuitCheck = false // SIGTERM quits without asking
   private var sigterm: DispatchSourceSignal?
 
   func applicationDidFinishLaunching(_ n: Notification) {
@@ -15,7 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // Not called straight from the handler: terminate's .terminateLater loop
     // would run inside a main-queue block, and the main-queue callbacks that
     // end it could never run. A run-loop perform avoids that.
-    source.setEventHandler { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0) }
+    source.setEventHandler { [weak self] in
+      self?.skipQuitCheck = true
+      NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
+    }
     source.resume()
     sigterm = source
 
@@ -58,18 +62,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     return .terminateLater
   }
 
-  /// S2-3 fills this in: when `GET /api/quit-check` lists running turns or
-  /// background work, show the NSAlert ("Quit Synopia? 2 sessions are working
-  /// and 1 background shell will stop.") and pass the user's answer to `done`.
-  /// Until then it fetches the check and always lets the quit go ahead.
+  private struct QuitCheck: Decodable {
+    struct Work: Decodable { let kind: String }
+    let running: [String]
+    let background: [Work]
+  }
+
+  /// When `GET /api/quit-check` lists running turns or background work, an
+  /// NSAlert asks first ("Quit Synopia? 2 sessions are working and 1
+  /// background shell will stop."). A failed check doesn't block the quit, and
+  /// SIGTERM (a script, a logout) never asks.
   private func confirmQuitIfWorking(_ done: @escaping (Bool) -> Void) {
-    guard let r = backend.ready,
+    guard !skipQuitCheck, let r = backend.ready,
           let url = URL(string: "http://127.0.0.1:\(r.port)/api/quit-check?token=\(r.token)") else { return done(true) }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2
-    URLSession.shared.dataTask(with: req) { _, _, _ in
-      DispatchQueue.main.async { done(true) }
+    URLSession.shared.dataTask(with: req) { data, _, _ in
+      let check = data.flatMap { try? JSONDecoder().decode(QuitCheck.self, from: $0) }
+      DispatchQueue.main.async {
+        guard let check, let text = AppDelegate.quitText(check) else { return done(true) }
+        let alert = NSAlert()
+        alert.messageText = text
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: self.window) { done($0 == .alertFirstButtonReturn) }
+      }
     }.resume()
+  }
+
+  /// "Quit Synopia? 2 sessions are working and 1 background shell will stop.", or nil when nothing runs.
+  private static func quitText(_ c: QuitCheck) -> String? {
+    func count(_ n: Int, _ one: String, _ many: String) -> String? { n == 0 ? nil : "\(n) \(n == 1 ? one : many)" }
+    let kinds = c.background.map(\.kind)
+    let work = [
+      count(kinds.filter { $0 == "subagent" }.count, "subagent", "subagents"),
+      count(kinds.filter { $0 == "shell" }.count, "background shell", "background shells"),
+      count(kinds.filter { $0 == "monitor" }.count, "monitor", "monitors"),
+    ].compactMap { $0 }
+    let n = c.running.count
+    if n == 0 && work.isEmpty { return nil }
+    let turns = n == 0 ? nil : n == 1 ? "1 session is working" : "\(n) sessions are working"
+    let list = work.count > 1 ? work.dropLast().joined(separator: ", ") + " and " + work.last! : work.first
+    switch (turns, list) {
+    case let (t?, l?): return "Quit Synopia? \(t) and \(l) will stop."
+    case let (t?, nil): return "Quit Synopia? \(t) and will stop."
+    case let (nil, l?): return "Quit Synopia? \(l) will stop."
+    default: return nil
+    }
   }
 
   private func restartBackend() {

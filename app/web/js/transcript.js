@@ -302,7 +302,7 @@ conv.addEventListener("click", e => {
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { view = null; renderConv(); }
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
-  else if (t.hasAttribute("data-close")) toast("Closing a session comes with a later task.");
+  else if (t.hasAttribute("data-close")) closeSession(cur());
   else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
   else if (t.id === "model-label") openModelPicker();
 });
