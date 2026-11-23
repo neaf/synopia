@@ -180,6 +180,7 @@ Server to page:
 | `pending` | `sid`, `request` (`{id, kind: question\|permission\|plan, agentId, since, …}`) or `cleared: id` | canUseTool parked or settled |
 | `stream` | `sid`, `text` (the partial reply so far), or `clear` | while a reply is written |
 | `recent` | `sessions[]` (`id`, `title`, `cwd`, `lastModified`) | reply to `listRecent` |
+| `preview` | `path`, `display` (with `~`), `lang`, `html` (bat's GitHub colours as escaped `<span style>` runs, one line per `\n`), `lines`, `truncated` (past 5,000 lines or 2 MB), `size` | reply to `preview` |
 | `menu` | `cwd`, `commands[]`, `models[]` | first view of a folder |
 | `restore` | `sid`, `texts[]` | messages cancelled by an interrupt, back to the message box |
 | `toast` | `text` | failures you must see |
@@ -202,6 +203,7 @@ Page to server:
 | `layout` | `layout` | replaces the stored layout |
 | `reviewed` | `agentId` | adds a reviewed mark |
 | `open` | `path` or `url` | opens a file or an `https?` URL |
+| `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does; a bad path gets `toast` |
 
 Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`:
 - the record `uuid`, with `:<block index>` for a block inside a record;

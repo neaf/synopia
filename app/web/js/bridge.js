@@ -85,6 +85,7 @@ function onMessage(m) {
     }
     case "toast": toast(m.text); break;
     case "recent": applyRecent(m); break;
+    case "preview": showPreview(m); break;
     case "restore": restoreTexts(m.sid, m.texts); break;
     default: break;
   }

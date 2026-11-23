@@ -99,7 +99,9 @@ These requirements come from a day of prototyping against the user's real sessio
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
   - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts.
-  - Clicking the path opens the file. The user often opens HTML artifacts.
+  - Clicking the path of a text or source file opens a read-only, syntax-highlighted preview over the main area, not an external app. It has the path, the language and the line count, an "Open in app" button that opens the file with its default app, and Close. Opened from Files changed, it starts at the diff's first changed line, softly marked. Keys while it is shown: Esc closes it (before any other Esc), j/k scroll a line, g/G go to the top and bottom, ⌘F or `/` finds, Enter or n go to the next match. A click outside closes it.
+  - HTML files keep opening in the browser, because the user often opens HTML artifacts. Alt-click on an HTML path shows its source in the preview.
+  - Images, PDFs, binaries and other files open as before: with their default app, or revealed in Finder.
   - Clicking the counts opens the diff, with line numbers from the stored patch, red and green rows.
 - R5.10 Markdown renders as the CLI does:
   - bold
