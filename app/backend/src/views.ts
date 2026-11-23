@@ -47,6 +47,8 @@ export type ViewsOptions = {
   written?: (sid: string) => { title?: string; now?: string } | undefined;
   // Slice 3: the card answer stored for a tool use, shown as your turn in the transcript.
   answerOf?: (toolUseId: string) => string | undefined;
+  // The plan text an answered plan card showed (state.json `plans`).
+  planOf?: (toolUseId: string) => string | undefined;
   // Slice 5: the model and effort you chose for a session (state.json `models`), shown over the transcript's.
   choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
@@ -81,7 +83,7 @@ export class Views {
     if (this.live.has(id)) return;
     const file = init.path ?? findTranscript(this.opts.claudeDir, id);
     const s: Live = {
-      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf }),
+      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, stream: null, pending: [], held: [],
       sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
@@ -122,7 +124,7 @@ export class Views {
     }).start();
     s.watcher = new SubagentWatcher(sessionDirOf(file), {
       onAgent: (aid, afile) => {
-        const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf });
+        const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf });
         s.t.setAgent(aid, undefined, t);
         const tailer = new Tailer(afile, {
           ...tail,

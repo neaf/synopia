@@ -463,3 +463,20 @@ test('a tool you denied, or a plan you sent back, reads as denied, not failed', 
   assert.deepEqual(['toolu_p', 'toolu_d', 'toolu_e'].map((id) => byId(t, id).state), ['denied', 'denied', 'failed']);
   assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
 });
+
+test('plan: the text the card showed wins over an older one in the JSONL', () => {
+  const plans: Record<string, string> = {};
+  const t = new Transcript({ home: HOME, planOf: (id) => plans[id] });
+  const ask = { type: 'assistant', uuid: 'p-a1', timestamp: at(1), message: { id: 'm1', content: [
+    { type: 'tool_use', id: 'toolu_pl', name: 'ExitPlanMode', input: { plan: 'Write "draft".' } }] } };
+  t.pushAll([ask]);
+  assert.equal(byId(t, 'plan:toolu_pl').text, 'Write "draft".');
+  plans.toolu_pl = 'Write "final".'; // stored when you answered the card
+  t.takeChanges();
+  t.pushAll([{ type: 'user', uuid: 'p-u1', timestamp: at(2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_pl', content: 'ok' }] } }]);
+  assert.equal(byId(t, 'plan:toolu_pl').text, 'Write "final".');
+  assert.ok(t.takeChanges().items.includes('plan:toolu_pl'), 'pages get it');
+  const again = new Transcript({ home: HOME, planOf: (id) => plans[id] }); // after a restart
+  again.pushAll([ask]);
+  assert.equal(byId(again, 'plan:toolu_pl').text, 'Write "final".');
+});

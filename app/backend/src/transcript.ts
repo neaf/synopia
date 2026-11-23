@@ -150,11 +150,15 @@ export class Transcript {
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
   // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
-  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined } = {}) {
+  // `planOf`: the plan text an answered plan card showed; the JSONL's ExitPlanMode input can be an
+  // older revision (the CLI reads the plan file when it asks).
+  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined; planOf?: (toolUseId: string) => string | undefined } = {}) {
     this.sidechain = opts.sidechain ?? false;
     this.home = opts.home ?? os.homedir();
     this.answerOf = opts.answerOf ?? (() => undefined);
+    this.planOf = opts.planOf ?? (() => undefined);
   }
+  private planOf: (toolUseId: string) => string | undefined;
 
   get title(): string | null {
     return this.customTitle || this.aiTitle;
@@ -180,7 +184,7 @@ export class Transcript {
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
     const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed;
-    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf });
+    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
     this.ended = ended;
@@ -373,7 +377,8 @@ export class Transcript {
         this.put({ id: tid, k: 'ask', ts, qs, answer: null, state: 'pending' });
       } else {
         // The plan sits in the transcript as Claude's reply (R6.6); the card holds only the decision.
-        if (name === 'ExitPlanMode' && str(inp.plan).trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(str(inp.plan)) });
+        const plan = name === 'ExitPlanMode' ? this.planOf(tid) ?? str(inp.plan) : '';
+        if (plan.trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(plan) });
         const [verb, o] = toolLine(name, inp, this.home);
         const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
         if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
@@ -453,6 +458,12 @@ export class Transcript {
       else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
       else state = 'running';
       const patch = this.patches.get(tid);
+      const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
+      const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
+      if (plan && planItem && planItem.text !== clip(plan)) {
+        planItem.text = clip(plan);
+        this.changed.add(planItem.id);
+      }
       if (it.state !== state || it.patch !== patch || (answer && it.answer !== answer)) {
         it.state = state;
         if (patch) it.patch = patch;

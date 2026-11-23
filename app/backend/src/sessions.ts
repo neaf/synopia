@@ -373,7 +373,8 @@ export class Sessions {
     const st = this.store.state;
     if (r.rules.length) st.rules[a.id] = [...new Set([...(st.rules[a.id] ?? []), ...r.rules])];
     if (r.label) st.answers[r.toolUseId] = r.label;
-    if (r.rules.length || r.label) this.store.changed();
+    if (r.plan) st.plans[r.toolUseId] = r.plan; // the plan you answered, as the card showed it
+    if (r.rules.length || r.label || r.plan) this.store.changed();
     this.log('sessions.answer', { sid: a.id, behavior: r.result.behavior, rules: r.rules.length });
     if (!a.needs.size && a.proc) for (const h of a.needs.takeHeld()) a.proc.push(h.content as Content, h.uuid);
     return { ok: true, sid: a.id };

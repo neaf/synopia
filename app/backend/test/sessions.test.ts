@@ -361,6 +361,16 @@ test('needs you: a message sent while a card waits is held, and pushed once the 
   assert.equal(t.store.state.answers['tu-1'], 'Denied: not now');
 });
 
+test('needs you: a plan answer stores the plan text the card showed', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1');
+  void t.canUseTool('ExitPlanMode', { plan: '1. Write "final"', planFilePath: '/tmp/p.md' }, a.o);
+  await tick();
+  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'changes', text: 'shorter' }).ok, true);
+  assert.equal(t.store.state.plans['tu-1'], '1. Write "final"');
+  assert.equal(t.store.state.answers['tu-1'], 'Changes: shorter');
+});
+
 test('needs you: Always allow stores session rules, passed back as allowedTools on the next start', async () => {
   const t = await waitingSession();
   const a = askOpts('1', { suggestions: [READ_SUGGESTION, { type: 'addDirectories', directories: ['/tmp/x'], destination: 'session' }] as Opts['suggestions'] });
