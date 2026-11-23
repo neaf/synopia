@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { JsonRecord } from './tail.ts';
+import { displayIn } from './paths.ts';
 
 export type Hunk = { o: number; n: number; lines: string[] };
 export type Patch = {
@@ -42,8 +43,9 @@ export function clip(s: string, n = MAX_TEXT): string {
   return s.length <= n ? s : s.slice(0, n) + '\n\n[cut: message continues]';
 }
 
+// Paths as the page shows them (paths.ts): /tmp and home as you know them, home as `~`.
 function tilde(p: string, home: string): string {
-  return home ? p.split(home).join('~') : p;
+  return displayIn(p, home);
 }
 
 export function toolLine(name: string, input: unknown, home: string): [string, string] {

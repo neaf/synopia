@@ -14,6 +14,7 @@ import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import type { Status } from './status.ts';
+import { displayPath } from './paths.ts';
 
 export type { Status } from './status.ts';
 export const WINDOW = 160;
@@ -61,7 +62,7 @@ export type ViewsOptions = {
 const effortOf = (e: unknown): string | null => typeof e === 'string' ? e
   : e && typeof (e as { level?: unknown }).level === 'string' ? (e as { level: string }).level : null;
 
-const tilde = (p: string, home: string): string => (home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
+const tilde = (p: string, home: string): string => displayPath(p, home);
 
 export class Views {
   private opts: ViewsOptions;

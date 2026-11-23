@@ -21,6 +21,7 @@ import type { Views } from './views.ts';
 import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { displayPath } from './paths.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -197,7 +198,7 @@ export class Sessions {
       // Open list names it as the sidebar did.
       const written = this.store.state.written[s.sessionId]?.title;
       const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
-      if (q && !title.toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
+      if (q && !title.toLowerCase().includes(q) && !this.tilde(s.cwd).toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
       out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
       if (out.length === RECENT) break;
     }
@@ -668,7 +669,7 @@ export class Sessions {
   }
 
   private tilde(p: string): string {
-    return p.startsWith(this.home + '/') ? '~' + p.slice(this.home.length) : p;
+    return displayPath(p, this.home);
   }
 }
 
