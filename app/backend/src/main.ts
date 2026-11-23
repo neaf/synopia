@@ -83,6 +83,7 @@ const views = new Views({
   planOf: (toolUseId) => store.state.plans[toolUseId],
   choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
   defaultModel: () => store.state.settings.model,
+  onWorkEnded: (sid) => writer?.workEnded(sid),
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 // Slice 5: the slash menu and the model list per folder (the fake driver has its own).
@@ -96,6 +97,7 @@ const writer = fake ? null : new Writer({
     turns: (sid) => views.turns(sid),
     resolve: (sid) => sessions?.resolve(sid) ?? sid,
     changed: (sid) => views.refresh(sid),
+    work: (sid) => views.work(sid),
   },
 });
 if (!fake) {

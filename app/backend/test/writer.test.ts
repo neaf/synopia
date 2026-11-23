@@ -196,6 +196,31 @@ test('a turn that ends during a call writes again afterwards', async () => {
   store.close();
 });
 
+test('a background item ending writes again after the debounce, with the work as it is now', async () => {
+  const dir = tmp('synopia-writer-');
+  const store = openStore(dir);
+  const q = fakeQuery(good);
+  const { src } = source(turns3);
+  let work = ['shell “npm test”: running'];
+  const w = new Writer({ store, source: { ...src, work: () => work }, stateDir: dir, queryFn: q.fn, debounceMs: 30 });
+  w.turnEnded('s1');
+  await wait(10);
+  work = ['shell “npm test”: killed'];
+  w.workEnded('s1'); // within the debounce: one call
+  await wait(80);
+  assert.equal(q.calls.length, 1);
+  assert.match(q.calls[0].prompt, /<work>\nshell “npm test”: killed\n<\/work>\n<\/transcript>/);
+  w.workEnded('s1');
+  await wait(80);
+  assert.equal(q.calls.length, 2, 'between turns too');
+  w.workEnded('gone'); // a closed session isn't written
+  await wait(80);
+  assert.equal(q.calls.length, 2);
+  assert.ok(!buildPrompt('t', turns3).includes('<work>'), 'no block without background work');
+  w.stop();
+  store.close();
+});
+
 test('stop aborts the running call, and nothing is written from it (L8)', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);

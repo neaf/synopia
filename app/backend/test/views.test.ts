@@ -231,3 +231,22 @@ test('subagents: read from the folder scan; a finished, quiet one only now and t
   for (const aid of finished) assert.ok((counts.get(aid) ?? 0) <= 8, `${aid} finished: read ${counts.get(aid)} times in 40 scans`);
   views.stop();
 });
+
+test('work: a background shell ending between turns tells the writer, and its line says so', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000cf';
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 90', description: 'Wait a while', run_in_background: true } }] },
+  }));
+  const ended: string[] = [];
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: HOME, pollMs: 0, watch: false, onWorkEnded: (sid) => ended.push(sid) });
+  views.open(id);
+  views.check();
+  assert.deepEqual(ended, [], 'reading it running is no end');
+  assert.deepEqual(views.work(id), ['shell “Wait a while”: running']);
+  views.taskEnded(id, 'toolu_bg', 'killed', '');
+  assert.deepEqual(ended, [id]);
+  assert.deepEqual(views.work(id), ['shell “Wait a while”: killed']);
+  views.taskEnded(id, 'toolu_bg', 'killed', '');
+  assert.deepEqual(ended, [id], 'once');
+});

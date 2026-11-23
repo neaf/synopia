@@ -35,6 +35,7 @@ type Live = {
   status: Status | null; statusAt: number; stream: string | null; pending: PendingRequest[]; held: string[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
   finder: NodeJS.Timeout | null;
+  working: Set<string>; // background work and subagents seen running, to tell when one ends
 };
 
 export type ViewsOptions = {
@@ -56,6 +57,8 @@ export type ViewsOptions = {
   choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
   defaultModel?: () => string | undefined;
+  // A background shell, monitor or subagent of the session stopped running.
+  onWorkEnded?: (sid: string) => void;
 };
 
 // The transcript's effort: a level, or {level} on some records.
@@ -89,7 +92,7 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null, working: new Set(),
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
@@ -295,6 +298,25 @@ export class Views {
     return out;
   }
 
+  // For the writer: the background work that runs now, and what ended since your last message,
+  // one line each ("shell “npm test”: running"). Empty without any.
+  work(id: string): string[] | undefined {
+    const s = this.live.get(id);
+    if (!s) return undefined;
+    const lastYou = [...s.t.items].reverse().find((i) => i.k === 'you')?.ts ?? '';
+    const recent = (end: string | null) => !lastYou || (end !== null && end >= lastYou);
+    const out: string[] = [];
+    for (const b of s.t.background()) {
+      if (b.status !== 'running' && !recent(b.end)) continue;
+      out.push(`${b.kind} “${(b.description || b.command).slice(0, 80)}”: ${b.status === 'completed' ? 'finished' : b.status}`);
+    }
+    for (const a of s.t.agents()) {
+      if (!a.running && !recent(a.end)) continue;
+      out.push(`${a.fork ? 'fork' : 'subagent'} “${a.description.slice(0, 80)}”: ${a.running ? 'running' : a.stopped ? 'stopped' : 'finished'}`);
+    }
+    return out;
+  }
+
   // Slice 6: the written text changed; send `session` if the meta did.
   refresh(id: string): void {
     const s = this.live.get(id);
@@ -438,6 +460,16 @@ export class Views {
     if (ch.background.length) {
       this.broadcast({ t: 'background', sid: s.id, upsert: ch.background.map((id) => s.t.getBackground(id)).filter(Boolean) });
     }
+    // A shell, monitor or subagent that was running ended (often between turns): the writer
+    // looks again, as after a turn, so the Now line doesn't keep saying it runs.
+    let ended = false;
+    const track = (key: string, running: boolean) => {
+      if (running) s.working.add(key);
+      else if (s.working.delete(key)) ended = true;
+    };
+    for (const id of ch.background) { const b = s.t.getBackground(id); if (b) track(`b:${id}`, b.status === 'running'); }
+    for (const id of ch.agents) { const a = s.t.getAgent(id); if (a) track(`a:${id}`, a.running); }
+    if (ended) this.opts.onWorkEnded?.(s.id);
     const childChanges = new Map<string, string[]>();
     for (const [aid, c] of s.children) childChanges.set(aid, c.t.takeChanges().items);
     for (const [client, sub] of this.liveSubs()) {
