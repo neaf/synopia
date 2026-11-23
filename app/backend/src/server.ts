@@ -39,6 +39,28 @@ const TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
+// The page's Content-Security-Policy, sent on every response. Scripts from the page's own files only (no
+// inline script, no eval); the socket and http to this backend's own origin; Google Fonts for the CSS and
+// the font files the page loads; pasted images as data: URLs. Style attributes stay allowed
+// (style-src-attr): the markup sets positions and marks with them, and they can't run script.
+// index.html repeats it as a meta tag, without the port, for when the header is missing.
+export function contentSecurityPolicy(origin: string): string {
+  const ws = origin.replace(/^http/, 'ws');
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' https://fonts.googleapis.com",
+    "style-src-attr 'unsafe-inline'",
+    "font-src 'self' https://fonts.gstatic.com",
+    "img-src 'self' data:",
+    `connect-src 'self' ${origin} ${ws}`,
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
 export function tokenMatches(token: string, given: unknown): boolean {
   if (typeof given !== 'string') return false;
   const a = Buffer.from(token);
@@ -81,12 +103,14 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
   const clients = new Set<Client>();
   let host = '';
   let origin = '';
+  let csp = '';
 
   const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     if (req.headers.host !== host) return deny(res, 403);
     const url = new URL(req.url ?? '/', origin);
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', csp);
 
     if (url.pathname.startsWith('/api/')) {
       if (!tokenMatches(opts.token, url.searchParams.get('token'))) return deny(res, 403);
@@ -182,6 +206,7 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
   const port = typeof addr === 'object' && addr ? addr.port : opts.port;
   host = `127.0.0.1:${port}`;
   origin = `http://${host}`;
+  csp = contentSecurityPolicy(origin);
   log('server.listening', { port });
 
   return {

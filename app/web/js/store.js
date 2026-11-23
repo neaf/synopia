@@ -70,7 +70,11 @@ function applyRemoved(m) { store.sessions.delete(m.id); store.pending.delete(m.i
 function applyItems(m) {
   const s = store.sessions.get(m.sid); if (!s) return null;
   const target = m.agent ? agentById(s, m.agent) : s; if (!target) return null;
-  if (m.reset) target.items = m.upsert.slice(); else upsertById(target.items, m.upsert);
+  if (m.reset) target.items = m.upsert.slice();
+  else if (m.prepend) { // `earlier`: the items before the oldest shown, never twice
+    const have = new Set(target.items.map(i => i.id));
+    target.items = m.upsert.filter(i => !have.has(i.id)).concat(target.items);
+  } else upsertById(target.items, m.upsert);
   target.total = m.total;
   return target;
 }

@@ -41,7 +41,7 @@ document.addEventListener("keydown", e => {
     case "K": e.preventDefault(); stepSession(-1); break;
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;
     case "k": e.preventDefault(); log?.scrollBy({ top: -60 }); break;
-    case "g": e.preventDefault(); if (log) log.scrollTop = 0; break;
+    case "g": e.preventDefault(); if (log) { if (log.scrollTop <= 0) loadEarlier(); else log.scrollTop = 0; } break; // at the top: earlier items
     case "G": e.preventDefault(); if (log) log.scrollTop = log.scrollHeight; break;
     case "i": case "a": e.preventDefault(); setMode("insert"); break;
     case "/": { // insert with the command menu open; a half-typed message stays as it is

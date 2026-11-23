@@ -81,6 +81,10 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .log { overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; }
 .log-inner { max-width: 150ch; }
 .earlier { color: var(--ink-3); margin: 0 0 11px; }
+/* "Show 160 earlier": a quiet link in the line's own grey, darker on hover */
+.earlier button { all: unset; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2.5px; }
+.earlier button:hover { color: var(--ink-2); text-decoration-color: currentColor; }
+.earlier button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 
 /* transcript: mono, gutter glyphs like the CLI */
 .log, .composer textarea, .status { font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }

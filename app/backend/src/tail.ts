@@ -15,6 +15,19 @@ export type TailOptions = {
 };
 
 const NL = 0x0a;
+const CHUNK = 4 << 20;
+// start() reads a backlog this big per event-loop turn, so a large transcript never holds up the
+// sockets (or the ready line) for the whole file.
+export const SLICE_BYTES = 4 << 20;
+
+// One read buffer per size for every tailer: a read and its parse are synchronous, and feed()
+// copies what it keeps, so the buffer is free again when check() returns.
+const buffers = new Map<number, Buffer>();
+const bufferOf = (n: number): Buffer => {
+  let b = buffers.get(n);
+  if (!b) buffers.set(n, (b = Buffer.allocUnsafe(n)));
+  return b;
+};
 
 export class Tailer {
   readonly path: string;
@@ -28,6 +41,8 @@ export class Tailer {
   private timer: NodeJS.Timeout | null = null;
   private watchers: fs.FSWatcher[] = [];
   private watchedIno = -1;
+  private slicing = false;
+  private stopped = false;
 
   constructor(file: string, opts: TailOptions) {
     this.path = file;
@@ -35,7 +50,7 @@ export class Tailer {
   }
 
   start(): this {
-    this.check();
+    this.catchUp();
     const pollMs = this.opts.pollMs ?? 1000;
     if (pollMs > 0) {
       this.timer = setInterval(() => this.check(), pollMs);
@@ -46,19 +61,46 @@ export class Tailer {
   }
 
   stop(): void {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     for (const w of this.watchers) w.close();
     this.watchers = [];
   }
 
-  // Reads whatever is new. Returns true when it read bytes or reset.
+  // True while start() still reads the backlog in slices.
+  get catchingUp(): boolean {
+    return this.slicing;
+  }
+
+  // The backlog, SLICE_BYTES per turn of the event loop. A small file is read at once, in start().
+  private catchUp(): void {
+    if (this.stopped) {
+      this.slicing = false;
+      return;
+    }
+    this.slicing = true;
+    if (this.step(SLICE_BYTES).more) {
+      setImmediate(() => this.catchUp());
+      return;
+    }
+    this.slicing = false;
+  }
+
+  // Reads whatever is new. Returns true when it read bytes or reset. While the backlog is read in
+  // slices, the slices cover it.
   check(): boolean {
+    if (this.slicing) return false;
+    return this.step(Infinity).changed;
+  }
+
+  private step(budget: number): { changed: boolean; more: boolean } {
+    let more = false;
     let st: fs.Stats;
     try {
       st = fs.statSync(this.path);
     } catch {
-      return false; // not there (yet, or mid-replace): the next trigger tries again
+      return { changed: false, more }; // not there (yet, or mid-replace): the next trigger tries again
     }
     let changed = false;
     const rewritten = st.ino !== this.ino || st.size < this.offset ||
@@ -69,21 +111,27 @@ export class Tailer {
       changed = true;
     }
     this.ino = st.ino;
-    if (st.size === this.offset && !rewritten) return changed;
+    if (st.size === this.offset && !rewritten) return { changed, more };
     let fd: number;
     try {
       fd = fs.openSync(this.path, 'r');
     } catch {
-      return changed;
+      return { changed, more };
     }
     try {
-      const chunk = Buffer.allocUnsafe(this.opts.chunkBytes ?? 4 << 20);
+      const chunk = bufferOf(this.opts.chunkBytes ?? CHUNK);
+      let got = 0;
       for (;;) {
         const n = fs.readSync(fd, chunk, 0, chunk.length, this.offset);
         if (n > 0) {
           this.offset += n;
           this.feed(chunk, n);
           changed = true;
+          got += n;
+          if (got >= budget) {
+            more = true;
+            break;
+          }
           continue;
         }
         const now = fs.fstatSync(fd);
@@ -97,7 +145,7 @@ export class Tailer {
       fs.closeSync(fd);
     }
     if (this.watchers.length && this.ino !== this.watchedIno) this.arm();
-    return changed;
+    return { changed, more };
   }
 
   private resetState(): void {
@@ -165,6 +213,9 @@ export class Tailer {
 export type SubagentEvents = {
   onAgent: (agentId: string, file: string) => void;
   onMeta: (agentId: string, meta: JsonRecord) => void;
+  // After every scan (its poll, or a write in either folder): the caller reads its subagents'
+  // files then, so they need no timer or watch of their own.
+  onScan?: () => void;
 };
 
 // Watches `<session>/subagents/`, which may be created after the session starts.
@@ -227,6 +278,7 @@ export class SubagentWatcher {
         this.events.onAgent(m[1], path.join(this.dir, name));
       }
     }
+    this.events.onScan?.();
   }
 
   private readMeta(id: string, file: string): void {

@@ -110,6 +110,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - bare URLs and markdown links are clickable and open in the browser
 - R5.11 Claude's questions and your answers render in the transcript. Answered questions appear as your turn.
 - R5.12 Opening a subagent shows its own transcript in the same pane, with a breadcrumb back to the session. Its message box writes to the main conversation: the user asks the main session to orchestrate its subagents, and it messages them itself. Messaging a subagent directly is rejected (2026-11-23).
+- R5.12a A long transcript shows its last 160 items under a quiet link, "Show 160 earlier (N more)". Clicking it, or `g` at the top, loads the 160 before them without moving what you're reading; subagent transcripts too (2026-11-23).
 
 ### 5.3 Message box
 - R5.13 One line: `❯` and the field, centred; it grows for long messages. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
@@ -227,7 +228,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - Normal mode is the default:
     - J/K: next or previous session.
     - j/k: scroll the transcript, or move the card cursor while a card waits.
-    - g/G: top or bottom of the transcript.
+    - g/G: top or bottom of the transcript; g at the top loads earlier items (R5.12a).
     - i/a: insert.
     - `/`: insert with the command menu open.
   - Insert mode: typing goes to the message box, or to a field in the card. Esc returns to normal; the first Esc closes the command menu.

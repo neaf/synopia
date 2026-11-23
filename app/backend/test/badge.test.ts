@@ -77,3 +77,9 @@ test('badge: emits only when the count changes, debounced', async () => {
   badge.stop();
   views.stop();
 });
+
+test('badge: only needs you counts among the statuses; signed out and the turn states do not', () => {
+  const sessions: BadgeSession[] = ['waiting', 'signedout', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle'].map((status, i) => ({ id: `s${i}`, status }));
+  assert.equal(badgeCount({ sessions: () => sessions, pending: () => [], reviewed: () => [] }), 1);
+  assert.equal(badgeCount({ sessions: () => sessions, pending: () => [{ sid: 's1' }], reviewed: () => [] }), 2, 'a request on a signed-out session still needs you');
+});

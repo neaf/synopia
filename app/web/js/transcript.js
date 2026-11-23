@@ -12,7 +12,7 @@ function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  return `<div class="ln tool ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
+  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
 }
 function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
@@ -68,7 +68,7 @@ function filesHTML(patches, key) { // key: stable diff ids, so an open diff stay
   for (const [root, files] of roots) {
     body += `<div class="root">${esc(root)}</div><div class="flist">`;
     for (const f of files) {
-      const id = `diff-${key}-${fileSeq++}`;
+      const id = esc(`diff-${key}-${fileSeq++}`);
       body += `<div class="frow"><span class="dim">⎿</span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
         <button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
         <div class="diff" id="${id}" hidden>${f.list.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
@@ -87,7 +87,7 @@ function tookLive(ms) {
   const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
 }
-const live = (startIso, ms) => `<span data-live="${startIso}">${tookLive(ms)}</span>`;
+const live = (startIso, ms) => `<span data-live="${esc(startIso)}">${tookLive(ms)}</span>`;
 let view = null; // null = the session; otherwise an agent id inside the current session
 const agentsOf = s => s.agents || [];
 const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
@@ -97,7 +97,7 @@ const agentType = a => a.fork ? "fork" : (a.type || "agent");
 function waveHTML(tools, s) {
   const rows = tools.map(t => ({ t, a: agentByTool(s, t.toolUseId) }));
   const markOf = a => !a ? "done" : !a.finished ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
-  const nameOf = (t, a) => a ? `<button class="alink" data-agent="${a.id}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span>${esc(t.obj)}</span>`;
+  const nameOf = (t, a) => a ? `<button class="alink" data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span>${esc(t.obj)}</span>`;
   const time = a => a ? (a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
@@ -147,7 +147,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
-      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`]);
+      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
       out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`]);
@@ -175,7 +175,7 @@ const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<d
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
    compacting, rate limited or no updates instead, and say a message you sent is queued. */
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${word}</b> <span class="dim">${extra || (t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   if (stateOf(s) !== "green") return "";
   const t = [...s.items].reverse().find(x => x.k === "tool");
@@ -185,18 +185,18 @@ function liveLine(s, A) {
 function phaseText(s) {
   const d = s.statusDetail || {};
   if (s.status === "compacting") return "Summing up the conversation to free space";
-  if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${d.retry.attempt}${d.retry.max ? ` of ${d.retry.max}` : ""}` : "Retrying by itself";
+  if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
   if (s.status === "stale") return `Nothing for ${age(s.statusAt)}; the session may be gone`;
   if (s.status === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
   if (s.status === "busy" && d.queued) return queuedText(d.queued);
   return "";
 }
 /* an age that the 1 s timer keeps current */
-const age = ms => `<span data-age="${ms}">${dur(ms)}</span>`;
+const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
 /* a countdown to a time (the rate-limit retry) that the same timer keeps current: "in 38s", then "now" */
 const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
-const until = at => `<span data-until="${at}">${left(at)}</span>`;
-const queuedText = n => `${n === 1 ? "Your message is" : `${n} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
+const until = at => `<span data-until="${esc(at)}">${esc(left(at))}</span>`;
+const queuedText = n => `${n === 1 ? "Your message is" : `${esc(n)} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
 function statusLine(s) {
   const st = stateOf(s);
   const last = [...s.items].reverse();
@@ -256,7 +256,7 @@ function renderHeader() {
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title">${esc(s.title)}</h2>
         ${isEmpty(s) || !s.now ? "" : `<p class="c-now">Now: ${esc(s.now)}</p>`}
-        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${p}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
+        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button><button class="btn" data-close>Close session</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
   document.getElementById("msg").placeholder = `Message ${s.title}, / for commands`;
@@ -267,12 +267,39 @@ function logEntries(s, A) {
   const items = A ? (A.items || []) : withPending(s.items, requestsOf(s));
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
-  if (hidden > 0) out.push(["earlier", `<p class="earlier">… ${hidden} earlier items not shown</p>`]);
+  if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   out.push(["live", liveLine(s, A)]);
   return out;
+}
+/* Earlier items: the server sends the page's last 160; the link asks for the 160 before the oldest
+   shown (`earlier`, plan section 5), and they come back as `items` with `prepend`. */
+const EARLIER = 160;
+let earlierAsked = null; // "<sid>|<agent>|<before>" until its reply, so a second click sends nothing
+const earlierHTML = hidden => `<p class="earlier"><button data-earlier>Show ${Math.min(EARLIER, +hidden)} earlier</button>${hidden > EARLIER ? ` (${+hidden} more)` : ""}</p>`;
+function loadEarlier() {
+  const s = cur(); if (!s || !mounted) return false;
+  const A = view && agentById(s, view), t = A || s, items = t.items || [];
+  if (!items.length || (t.total || 0) <= items.length) return false;
+  const key = `${s.id}|${view || ""}|${items[0].id}`;
+  if (earlierAsked !== key) { earlierAsked = key; send({ t: "earlier", sid: s.id, agent: view || null, before: items[0].id }); }
+  return true;
+}
+/* Renders the log after a prepend so the block you were reading stays where it was on screen. */
+function renderLogKeepingPlace() {
+  earlierAsked = null;
+  const log = document.getElementById("log"); if (!log) return renderLog();
+  const inner = log.querySelector(".log-inner"), top = log.getBoundingClientRect().top;
+  // a day separator's key moves with the first item of its day, so the anchor is an item's block
+  const anchor = [...inner.children].find(el => !/^(earlier|day:)/.test(el.dataset.key) && el.getBoundingClientRect().bottom > top);
+  const key = anchor?.dataset.key, off = anchor ? anchor.getBoundingClientRect().top - top : 0;
+  const height = log.scrollHeight, was = log.scrollTop;
+  renderLog();
+  const el = key && [...inner.children].find(c => c.dataset.key === key);
+  if (el) log.scrollTop += el.getBoundingClientRect().top - top - off;
+  else log.scrollTop = was + log.scrollHeight - height; // the block was regrouped: keep the distance from the end
 }
 /* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
 function renderLog() {
@@ -323,9 +350,10 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-agent], [data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
-  if (t.matches(".fc")) {
+  if (t.hasAttribute("data-earlier")) loadEarlier();
+  else if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
     e.preventDefault(); e.stopPropagation();

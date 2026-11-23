@@ -2,7 +2,7 @@
 
 > 🧭 **What:** milestone 1 makes the prototype real. You open Synopia as its own app on your machine. You start sessions in it, or open ones you've closed in the terminal, and chat in them with everything the prototype shows. You can stop using the terminal.
 > **In scope:** new sessions, opening a past session, transcripts with subagents and background work, files and diffs, the needs-you cards answered through the SDK, Claude-written titles and "Now" lines, keys and modes (including interrupt), the per-session model, drag-and-drop groups, Close session, the app icon.
-> **Out of scope:** any knowledge of terminal sessions, Dock badge and notifications, drift detection and "Split into a new session", the closing note with loose ends, new worktrees, Claude's first grouping suggestion, messaging a running subagent, loading earlier items, the stale, rate-limited, compacting, credentials-expired and queued states.
+> **Out of scope:** any knowledge of terminal sessions, Dock badge and notifications, drift detection and "Split into a new session", the closing note with loose ends, new worktrees, Claude's first grouping suggestion, messaging a running subagent, the stale, rate-limited, compacting, credentials-expired and queued states.
 > **Sources:** `docs/requirements.md` (behaviour), `prototype/app.html` (look), `spike/FINDINGS.md` (SDK), `spike/native-shell/` (shell), `export_transcripts.py` (reference parser), `.ai-notes/app/README.md` (handover). Read at `150ed5d` on 2026-11-23. The source digests and the decisions sit in `.attack-plan/synopia-m1/`.
 
 ## Contents
@@ -151,7 +151,7 @@ Node 22.13 with TypeScript run by `--experimental-strip-types`. There's no build
   - "Worked for 5s, done 02:24 PM";
   - day separators;
   - the "Recommended" tag;
-  - "… N earlier items not shown";
+  - the "… N earlier items not shown" line, now a quiet link "Show 160 earlier (N more)" (section 7);
   - image thumbnails in the composer;
   - the last four PR numbers in the header, from the `pr-link` records.
 - **Fonts:** the prototype's Google Fonts link stays as it is. JetBrains Mono NL is used when installed, as now.
@@ -174,7 +174,7 @@ Server to page:
 | `hello` | `sessions[]` (meta and status, no items), `layout`, `reviewed[]`, `menu`, `settings`, `pending[]` | after `auth` |
 | `session` | `id`, `replaces` (the placeholder id, once), and the changed fields: `title`, `now`, `cwd`, `prs`, `status`, `statusAt`, `model`, `effort`, `bg` counts, `toReview` | on change |
 | `removed` | `id` | closed |
-| `items` | `sid`, `agent` (null for the main conversation), `upsert[]` (items with `id`), `total`, `reset` | after a tail read; `reset` on first view and after a file is rewritten |
+| `items` | `sid`, `agent` (null for the main conversation), `upsert[]` (items with `id`), `total`, `reset`, `prepend` | after a tail read; `reset` on first view and after a file is rewritten; `prepend` in reply to `earlier`, with the items before the oldest shown, oldest first |
 | `agents` | `sid`, `upsert[]` (the subagent fields the page reads today) | a new subagent file or a meta change |
 | `background` | `sid`, `upsert[]` | launch or notification |
 | `pending` | `sid`, `request` (`{id, kind: question\|permission\|plan, agentId, since, …}`) or `cleared: id` | canUseTool parked or settled |
@@ -189,6 +189,7 @@ Page to server:
 | Type | Fields | Effect |
 |---|---|---|
 | `view` | `sid`, `agent` | subscribes to items for that session or subagent and gets `items` with `reset` |
+| `earlier` | `sid`, `agent`, `before` (the oldest item id shown) | gets the 160 items before it as `items` with `prepend`; nothing when it isn't the viewed conversation or `before` is gone |
 | `send` | `sid`, `text`, `images[]` (base64 PNG or JPEG, at most 5 MB each), `uuid` | pushes to the session's input, starting `query()` when none runs |
 | `answer` | `sid`, `requestId`, `answer` | settles the pending canUseTool |
 | `interrupt` | `sid` | interrupts the turn |
@@ -247,7 +248,8 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
   - Triggers: `fs.watch` on the file and the folder, plus a 1 s size poll, because watch events on macOS can merge or drop.
   - A subagent file seen before its `.meta.json` shows with the type "subagent" until the meta arrives. The session folder is watched, so a `subagents/` folder created later is picked up.
   - The poll compares size and mtime, so a rewrite to the same size still resets.
-- **First read:** the whole file is parsed once and kept in memory as items. The largest transcript on this machine is 55 MB with lines up to 60 KB. Slice 1 times its first view (target under 2 s) and measures the memory. The page gets the last 160 items, with `total` for "… N earlier items not shown".
+- **First read:** the whole file is parsed once and kept in memory as items. The largest transcript on this machine is 55 MB with lines up to 60 KB. Slice 1 times its first view (target under 2 s) and measures the memory. The page gets the last 160 items, with `total` for the "Show 160 earlier (N more)" link.
+- **Earlier items:** the link, or `g` at the top of the log, sends `earlier` with the oldest item id shown. The server slices the 160 items before it from memory (no re-read), sends them with `prepend`, and widens that page's window to them, so upserts of those items reach it too. The page puts them first, skipping ids it has, and keeps the block you were reading at the same place on screen. Subagent views page the same way. A `reset` (a rewrite or a new `view`) goes back to the last 160. Near the start the link reads "Show 37 earlier"; at the first item it's gone.
 - **Records to items** (`transcript.ts`): this is a port of `export_transcripts.py` lines 101 to 252, keeping its rules:
   - which user records are prompts, reports, slash commands or noise;
   - the tool verb table;

@@ -185,3 +185,194 @@ test('model: a new session with no choice shows settings.model, not the CLI defa
   views.open('new-1', { cwd: '/tmp/x' });
   assert.equal((views.sessions() as { id: string; model: unknown }[]).find((s) => s.id === 'new-1')!.model, 'haiku');
 });
+
+test('earlier: pages of 160 before an id, down to the first, then nothing', () => {
+  const id = 'eeeeeeee-0000-4000-8000-00000000000e';
+  let body = '';
+  for (let i = 0; i < 400; i++) body += you(i);
+  const dir = tempSession(id, body);
+  const { clients, views } = setup(dir);
+  const c = client(), other = client();
+  clients.add(c);
+  clients.add(other);
+  views.open(id);
+  views.check(); // the first read's changes go out before the pages view it
+  views.view(c, id, null);
+  views.view(other, id, null);
+  c.take();
+  other.take();
+  const ids = (m: Msg) => (m.upsert as { id: string }[]).map((i) => i.id);
+
+  // Before the oldest shown (u240): u80 to u239, in order, marked prepend.
+  assert.equal(views.earlier(c, id, null, 'u240'), 160);
+  const [p1] = c.take('items');
+  assert.equal(p1.prepend, true);
+  assert.equal(p1.reset, false);
+  assert.equal(p1.total, 400);
+  assert.deepEqual(ids(p1), Array.from({ length: 160 }, (_, i) => `u${80 + i}`));
+
+  // The next page stops at the first item: 80 left.
+  assert.equal(views.earlier(c, id, null, 'u80'), 80);
+  const [p2] = c.take('items');
+  assert.equal(ids(p2)[0], 'u0');
+  assert.equal(ids(p2).length, 80);
+  // At the start of history there is nothing before u0 (the page shows no link then).
+  views.earlier(c, id, null, 'u0');
+  assert.deepEqual(c.take('items').map(ids), [[]]);
+  // An id not in the transcript, or another conversation than the one viewed: no reply.
+  assert.equal(views.earlier(c, id, null, 'nope'), 0);
+  assert.equal(views.earlier(c, id, 'aaaa0001', 'u80'), 0);
+  assert.equal(c.take().length, 0);
+
+  // Later items still arrive as upserts, on both pages.
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  fs.appendFileSync(file, you(400));
+  views.check();
+  assert.deepEqual(c.take('items').map(ids), [['u400']]);
+  assert.deepEqual(other.take('items').map(ids), [['u400']]);
+
+  // A rewrite resets the loaded range back to the last 160.
+  let again = '';
+  for (let i = 0; i < 300; i++) again += you(i);
+  fs.writeFileSync(file + '.new', again);
+  fs.renameSync(file + '.new', file);
+  views.check();
+  const [reset] = c.take('items');
+  assert.equal(reset.reset, true);
+  assert.equal(ids(reset).length, 160);
+  assert.equal(ids(reset)[0], 'u140');
+  // So does a new `view`.
+  views.earlier(c, id, null, 'u140');
+  c.take();
+  views.view(c, id, null);
+  assert.equal(ids(c.take('items')[0])[0], 'u140');
+  views.stop();
+});
+
+test('earlier: an item loaded earlier gets its upserts, only on the page that loaded it', () => {
+  const id = 'efefefef-0000-4000-8000-0000000000ef';
+  let body = line({
+    type: 'assistant', uuid: 'a0', timestamp: '2026-11-20T10:00:00.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_old', name: 'Bash', input: { command: 'sleep 1' } }] },
+  });
+  for (let i = 1; i < 200; i++) body += you(i);
+  const dir = tempSession(id, body);
+  const { clients, views } = setup(dir);
+  const c = client(), other = client();
+  clients.add(c);
+  clients.add(other);
+  views.open(id);
+  views.check();
+  views.view(c, id, null);
+  views.view(other, id, null);
+  views.earlier(c, id, null, (c.take('items')[0].upsert as { id: string }[])[0].id);
+  other.take();
+  assert.equal((c.take('items')[0].upsert as { id: string }[])[0].id, 'toolu_old');
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), line({
+    type: 'user', uuid: 'r0', timestamp: '2026-11-20T10:00:01.000Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_old', content: 'ok' }] },
+  }));
+  views.check();
+  const [up] = c.take('items');
+  assert.deepEqual((up.upsert as { id: string; state: string }[]).map((i) => [i.id, i.state]), [['toolu_old', 'done']]);
+  assert.equal(other.take('items').length, 0);
+  views.stop();
+});
+
+test('earlier: a subagent view pages its own transcript', () => {
+  const id = 'fefefefe-0000-4000-8000-0000000000fe';
+  const dir = tempSession(id, you(0));
+  const sub = path.join(dir, 'projects', '-tmp-x', id, 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  let body = '';
+  for (let i = 0; i < 250; i++) {
+    body += line({
+      type: 'assistant', uuid: `s${i}`, timestamp: '2026-11-20T10:01:00.000Z', isSidechain: true, agentId: 'bbbb0001',
+      message: { role: 'assistant', content: [{ type: 'text', text: `step ${i}` }] },
+    });
+  }
+  fs.writeFileSync(path.join(sub, 'agent-bbbb0001.jsonl'), body);
+  const { clients, views } = setup(dir);
+  const c = client();
+  clients.add(c);
+  views.open(id);
+  views.check();
+  views.view(c, id, 'bbbb0001');
+  const [reset] = c.take('items');
+  const shown = reset.upsert as { id: string; text: string }[];
+  assert.equal(reset.total, 250);
+  assert.equal(shown.length, 160);
+  assert.equal(shown[0].text, 'step 90');
+  // The main conversation's `earlier` doesn't answer for the subagent view.
+  assert.equal(views.earlier(c, id, null, shown[0].id), 0);
+  assert.equal(views.earlier(c, id, 'bbbb0001', shown[0].id), 90);
+  const [p] = c.take('items');
+  assert.equal(p.agent, 'bbbb0001');
+  assert.equal(p.prepend, true);
+  assert.deepEqual((p.upsert as { text: string }[]).map((i) => i.text), Array.from({ length: 90 }, (_, i) => `step ${i}`));
+  views.stop();
+});
+test('rekey: a card, the held messages and the stream preview move to the new id (L5)', () => {
+  const { views } = setup(CLAUDE);
+  views.open('new-2', { cwd: '/tmp/x' });
+  views.setPending('new-2', { id: 'r1', kind: 'question', since: 1 });
+  views.setHeld('new-2', ['wait']);
+  views.setStream('new-2', 'Partly');
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000cd';
+  views.rekey('new-2', id);
+  assert.deepEqual(views.pending().map((p) => [p.sid, p.request.id]), [[id, 'r1']]);
+  views.clearPending(id, 'r1');
+  assert.deepEqual(views.pending(), []);
+  const s = (views.sessions() as { id: string; held: string[]; stream: string | null }[]).find((x) => x.id === id)!;
+  assert.deepEqual([s.held, s.stream], [['wait'], 'Partly']);
+});
+
+test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000ce';
+  const dir = tempSession(id, you(1) + line({ type: 'ai-title', aiTitle: 'Count the lines', sessionId: id }));
+  const clients = new Set<Client>();
+  let written: { title?: string } | undefined;
+  const views = new Views({ claudeDir: dir, clients: () => clients, home: HOME, pollMs: 0, watch: false, written: () => written });
+  views.open(id);
+  assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Count the lines', '']);
+  written = { title: 'Counting fixture lines' };
+  assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Counting fixture lines', 'Count the lines']);
+});
+
+test('subagents: read from the folder scan; a finished, quiet one only now and then (L6)', () => {
+  const { views } = setup(CLAUDE);
+  views.open(AGENTS);
+  type Inner = { live: Map<string, { t: { agentRunning: (id: string) => boolean }; watcher: { scan: () => void }; children: Map<string, { tailer: { check: () => boolean } }> }> };
+  const s = (views as unknown as Inner).live.get(AGENTS)!;
+  const counts = new Map<string, number>();
+  for (const [aid, c] of s.children) {
+    const check = c.tailer.check.bind(c.tailer);
+    c.tailer.check = () => { counts.set(aid, (counts.get(aid) ?? 0) + 1); return check(); };
+  }
+  for (let i = 0; i < 40; i++) s.watcher.scan();
+  const running = [...s.children.keys()].filter((aid) => s.t.agentRunning(aid));
+  const finished = [...s.children.keys()].filter((aid) => !s.t.agentRunning(aid));
+  assert.ok(finished.length > 0);
+  for (const aid of running) assert.equal(counts.get(aid), 40, `${aid} runs: read at every scan`);
+  for (const aid of finished) assert.ok((counts.get(aid) ?? 0) <= 8, `${aid} finished: read ${counts.get(aid)} times in 40 scans`);
+  views.stop();
+});
+
+test('work: a background shell ending between turns tells the writer, and its line says so', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000cf';
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 90', description: 'Wait a while', run_in_background: true } }] },
+  }));
+  const ended: string[] = [];
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: HOME, pollMs: 0, watch: false, onWorkEnded: (sid) => ended.push(sid) });
+  views.open(id);
+  views.check();
+  assert.deepEqual(ended, [], 'reading it running is no end');
+  assert.deepEqual(views.work(id), ['shell “Wait a while”: running']);
+  views.taskEnded(id, 'toolu_bg', 'killed', '');
+  assert.deepEqual(ended, [id]);
+  assert.deepEqual(views.work(id), ['shell “Wait a while”: killed']);
+  views.taskEnded(id, 'toolu_bg', 'killed', '');
+  assert.deepEqual(ended, [id], 'once');
+});

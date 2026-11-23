@@ -21,12 +21,16 @@ export type NeedsYouHooks = {
   count: (n: number) => void; // the status: needs you while n > 0
   held: (texts: string[]) => void; // the "Queued until you answer the card above" lines
   context: () => { cwd: string; modeBefore: string }; // the session's folder (with ~) and the mode before plan mode
+  // The last request ended by an answer or its own signal (a stopped subagent, a cancelled tool)
+  // with messages held: the caller pushes them. Not called from abortAll, which restores them.
+  drained?: () => void;
   now?: () => number;
 };
 
 export class NeedsYou {
   private list: Parked[] = [];
   private queue: Held[] = [];
+  private aborting = false;
   private hooks: NeedsYouHooks;
 
   constructor(hooks: NeedsYouHooks) {
@@ -93,7 +97,12 @@ export class NeedsYou {
 
   // Every request ends (an interrupt the CLI didn't signal, the process ending).
   abortAll(): void {
-    for (const p of [...this.list]) this.drop(p, { behavior: 'deny', message: INTERRUPTED, interrupt: true });
+    this.aborting = true;
+    try {
+      for (const p of [...this.list]) this.drop(p, { behavior: 'deny', message: INTERRUPTED, interrupt: true });
+    } finally {
+      this.aborting = false;
+    }
   }
 
   // A message sent while a card waits.
@@ -117,6 +126,7 @@ export class NeedsYou {
     p.resolve(result);
     this.hooks.clear(p.request.id);
     this.hooks.count(this.list.length);
+    if (!this.list.length && this.queue.length && !this.aborting) this.hooks.drained?.();
   }
 }
 

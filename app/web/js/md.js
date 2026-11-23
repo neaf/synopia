@@ -1,6 +1,9 @@
 /* Md: small helpers and the markdown renderer (split from prototype/app.html). */
 /* ---------- helpers ---------- */
-const esc = s => (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/* every string that goes into HTML, as text or as an attribute, passes through esc (all five characters) */
+const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+/* back from esc, for a URL found in escaped text that is escaped again as an attribute */
+const unesc = s => s.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 function dur(ms) {
   const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
   if (m < 60) return `${m} min`;
@@ -12,13 +15,19 @@ const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
 function md(src) {
   const out = []; const lines = (src || "").split("\n"); let i = 0;
-  const inline = s => esc(s)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
-    .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
-    /* bare URLs become links too; existing links are left alone, trailing punctuation stays outside */
-    .split(/(<a [^>]*>.*?<\/a>)/).map((part, i) => i % 2 ? part : part.replace(/(^|[\s(>])(https?:\/\/[^\s<]+?)([.,;:!?)]*(?=\s|<|$))/g,
-      (m, pre, url, tail) => `${pre}<a href="${url}" target="_blank" rel="noreferrer">${url}</a>${tail}`)).join("");
+  /* Code spans and [text](url) links are cut out of the raw text first and built from escaped parts, so no
+     later step runs inside them or their attributes; the rest is escaped, then bold and bare URLs are added. */
+  const inline = s => {
+    const keep = [], put = html => `\u0001${keep.push(html) - 1}\u0001`;
+    const link = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noreferrer">${text}</a>`;
+    const bold = t => t.replace(/\*\*([^*\u0001]+)\*\*/g, "<b>$1</b>");
+    /* bare URLs become links too, in code spans as well (as the prototype does); trailing punctuation stays outside */
+    const bare = t => t.replace(/(^|[\s(>])(https?:\/\/[^\s<\u0001]+?)([.,;:!?)]*(?=\s|<|\u0001|$))/g, (m, pre, url, tail) => `${pre}${link(unesc(url), url)}${tail}`);
+    const raw = (s || "").replace(/\u0001/g, "")
+      .replace(/`([^`]+)`/g, (m, c) => put(`<code>${bare(esc(c))}</code>`))
+      .replace(/\[([^\]\u0001]+)\]\((https?:[^)\s\u0001]+)\)/g, (m, t, url) => put(link(url, bold(esc(t)))));
+    return bare(bold(esc(raw))).replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);
+  };
   while (i < lines.length) {
     const l = lines[i];
     if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue; }

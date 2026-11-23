@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
@@ -84,6 +84,35 @@ test('serves the page', async () => {
   assert.equal(res.body, '<p>index</p>');
   assert.equal((await get('/css/app.css')).body, 'body{}');
   assert.equal((await get('/nope.js')).status, 404);
+});
+
+test('every response carries the strict CSP, naming its own origin', async () => {
+  const csp = await new Promise<string>((ok, fail) => {
+    request({ host: '127.0.0.1', port: server.port, path: '/' }, (res) => {
+      res.resume();
+      ok(String(res.headers['content-security-policy'] ?? ''));
+    }).on('error', fail).end();
+  });
+  const dir = (name: string) => csp.split('; ').find((d) => d.startsWith(name + ' ')) ?? '';
+  assert.equal(dir('default-src'), "default-src 'self'");
+  assert.equal(dir('script-src'), "script-src 'self'");
+  assert.ok(!/unsafe-(inline|eval)/.test(dir('script-src')));
+  assert.equal(dir('connect-src'), `connect-src 'self' ${server.origin} ws://127.0.0.1:${server.port}`);
+  assert.equal(dir('img-src'), "img-src 'self' data:");
+  assert.match(dir('style-src'), /fonts\.googleapis\.com/);
+  assert.match(dir('font-src'), /fonts\.gstatic\.com/);
+});
+
+test('the real page has no inline script and repeats the CSP as a meta tag', () => {
+  const web = join(import.meta.dirname, '..', '..', 'web');
+  for (const f of ['index.html', 'check.html']) {
+    const html = readFileSync(join(web, f), 'utf8');
+    assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), `${f}: inline script`);
+    assert.ok(!/<style/i.test(html), `${f}: inline style element`);
+    assert.ok(!/\son[a-z]+=/i.test(html), `${f}: inline handler`);
+  }
+  const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(readFileSync(join(web, 'index.html'), 'utf8'));
+  assert.ok(meta && meta[1].includes("script-src 'self';") && meta[1].includes("default-src 'self'"));
 });
 
 test('path traversal is refused', async () => {

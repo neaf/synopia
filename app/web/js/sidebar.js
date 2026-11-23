@@ -2,7 +2,7 @@
 /* ---------- sidebar ---------- */
 let KEYS = [];
 function rowHTML(s) {
-  return `<button class="row" data-id="${s.id}" data-state="${toneOf(s)}" aria-current="${s.id === current}">
+  return `<button class="row" data-id="${esc(s.id)}" data-state="${toneOf(s)}" aria-current="${s.id === current}">
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
       <span class="r-state">${rowWord(s)}</span>
@@ -19,12 +19,12 @@ function rowHTML(s) {
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
 function rowWord(s) {
   const st = stateOf(s), d = s.statusDetail || {}, n = d.queued;
-  if (st === "red") return `${wordOf(s)}, ${age(s.statusAt)}`;
-  if (s.status === "busy") return n ? `Working, ${n} message${n > 1 ? "s" : ""} queued` : WORD.green;
+  if (st === "red") return `${esc(wordOf(s))}, ${age(s.statusAt)}`;
+  if (s.status === "busy") return n ? `Working, ${esc(n)} message${n > 1 ? "s" : ""} queued` : WORD.green;
   if (s.status === "compacting") return "Compacting context";
   if (s.status === "retrying") return `Rate limited, retrying${d.retry ? ` ${until(d.retry.at)}` : ""}`;
   if (s.status === "stale") return `No updates for ${age(s.statusAt)}`;
-  return `${wordOf(s)}, ${age(s.statusAt)}`;
+  return `${esc(wordOf(s))}, ${age(s.statusAt)}`;
 }
 /* ---------- layout: groups and order are yours; the backend stores it (state.json), nothing is in localStorage ---------- */
 let layout = null; // null until hello; renderSide copies it from the store
@@ -57,7 +57,7 @@ function renderSide() {
   KEYS = [...groups.flatMap(g => g.ids), ...others];
   let html = "";
   for (const g of groups) {
-    html += `<section class="group tree" data-group="${g.id}">
+    html += `<section class="group tree" data-group="${esc(g.id)}">
       <div class="th">
         ${renaming === g.id ? `<input class="g-input" id="g-input" value="${esc(g.name)}" aria-label="Group name">` : `<span class="g-name" title="Double-click to rename">${esc(g.name)}</span>`}
       </div>
