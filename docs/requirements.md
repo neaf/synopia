@@ -21,6 +21,10 @@ These requirements come from a day of prototyping against the user's real sessio
 - R2.3 Auth is whatever the user's Claude Code settings use. Today that's Amazon Bedrock through `~/.claude/settings.json` `env`, with an AWS SSO refresh. Synopia never prints or stores credentials.
 - R2.4 The user's skills, slash commands, `CLAUDE.md`, hooks and subagent definitions load as they do in the CLI.
 - R2.5 The app has an icon and a favicon (section 13).
+- R2.6 The Dock icon shows a badge with the number of things waiting on the user (decided 2026-11-23):
+  - each open session that needs you (a pending question, permission or plan: the red "Needs you" of R6.1)
+  - each deliverable waiting for review (a finished `For review: ` subagent not yet marked reviewed, R10.1; the same count as "N to review" in the sidebar)
+  - Closed sessions don't count. At 0 there is no badge. No notifications: they were rejected (2026-11-23).
 
 ## 3. Sessions
 
@@ -283,5 +287,4 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 
 ## 14. Not decided yet
 
-- A Dock badge with the needs-you count. Deferred until after the first version. Notifications when a session asks something are rejected (2026-11-23).
 - The stale or disconnected, rate-limited, compacting, credentials-expired and queued states are designed (status storyboard) but not wired to data.

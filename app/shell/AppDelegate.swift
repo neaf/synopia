@@ -45,6 +45,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       guard let self, !self.quitting else { return }
       self.window.contentView = BackendDownView(message: line) { [weak self] in self?.restartBackend() }
     }
+    // The Dock badge: sessions that need you plus deliverables to review (R2.6), none at 0.
+    backend.onBadge = { n in NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil }
     backend.start()
     NSApp.activate(ignoringOtherApps: true)
   }

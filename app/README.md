@@ -32,4 +32,6 @@ open --env SYNOPIA_STATE_DIR=/tmp/s --env SYNOPIA_SNAPSHOT=/tmp/s.png build/Syno
 pkill -TERM -x Synopia            # quits without asking, backend and CLI processes included
 ```
 
+Add `--env SYNOPIA_FAKE=$PWD/app/backend/test/fixtures/claude` to play the fake driver over the fixtures (no model calls). The shell prints `Synopia shell: badge N` on stderr for each Dock badge change (run `build/Synopia.app/Contents/MacOS/Synopia` directly to see it).
+
 Notes, facts settled and what is left: `.ai-notes/app/README.md`.

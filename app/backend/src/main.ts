@@ -1,5 +1,6 @@
 // The Synopia backend. Started by the shell (stdin is its lifetime) or by
-// app/dev.sh with --no-parent. Prints one stdout line: {"port":…,"token":…}.
+// app/dev.sh with --no-parent. Prints {"port":…,"token":…} as its first stdout line, then a
+// {"badge":N} line each time the Dock badge's count changes.
 import { parseArgs } from 'node:util';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -16,9 +17,11 @@ import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
+import { Badge } from './badge.ts';
 import type { Image } from './sessions.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
+import type { BadgeSession } from './badge.ts';
 import type { Layout, OpenEntry } from './store.ts';
 import type { Client, Server } from './server.ts';
 
@@ -75,6 +78,7 @@ let server: Server | undefined;
 const noClients = new Set<Client>();
 const script = flags.fake ? loadScript(claudeDir) : null;
 let sessions: Sessions | null = null;
+let badge: Badge | null = null;
 const views = new Views({
   claudeDir, clients: () => server?.clients ?? noClients, home: script?.home, log,
   onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
@@ -83,6 +87,7 @@ const views = new Views({
   planOf: (toolUseId) => store.state.plans[toolUseId],
   choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
   defaultModel: () => store.state.settings.model,
+  onChange: () => badge?.changed(),
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 // Slice 5: the slash menu and the model list per folder (the fake driver has its own).
@@ -161,6 +166,7 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
     if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);
     store.changed();
+    badge?.changed();
   } else if (sessions && msg.t === 'stopTask' && typeof msg.sid === 'string' && typeof msg.taskId === 'string') {
     void sessions.stopTask(msg.sid, msg.taskId).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (msg.t === 'open') {
@@ -203,6 +209,7 @@ async function shutdown(reason: string) {
   stopping = true;
   log('backend.stop', { reason });
   fake?.stop();
+  badge?.stop();
   writer?.stop();
   sessions?.stop();
   views.stop();
@@ -223,3 +230,9 @@ if (!flags['no-parent']) {
 if (fake) fake.start(claudeDir);
 else sessions?.start();
 process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
+// The Dock badge (requirements R2.6): one line per change of the count, after the first line.
+badge = new Badge({
+  source: { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed },
+  emit: (n) => { log('badge', { n }); process.stdout.write(JSON.stringify({ badge: n }) + '\n'); },
+});
+badge.changed();

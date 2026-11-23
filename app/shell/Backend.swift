@@ -1,5 +1,5 @@
-// Spawns the Node backend with stdin as a pipe. The backend prints one stdout
-// line {"port":…,"token":…} and exits when its stdin closes, so closing the
+// Spawns the Node backend with stdin as a pipe. The backend prints a first stdout
+// line {"port":…,"token":…}, then {"badge":N} lines (the Dock badge), and exits when its stdin closes, so closing the
 // pipe (or the shell dying) ends it.
 import Foundation
 
@@ -22,11 +22,14 @@ struct ShellError: Error, CustomStringConvertible {
 
 final class Backend {
   struct Ready: Decodable { let port: Int; let token: String }
+  struct Badge: Decodable { let badge: Int }
 
   /// Called on the main queue once the stdout line arrives.
   var onReady: ((Ready) -> Void)?
   /// Called on the main queue when the process exits unexpectedly, with its last stderr line.
   var onExit: ((String) -> Void)?
+  /// Called on the main queue with the count of each {"badge":N} line, and with 0 at each start.
+  var onBadge: ((Int) -> Void)?
 
   private(set) var ready: Ready?
   private var process: Process?
@@ -41,6 +44,7 @@ final class Backend {
     ready = nil
     stdoutBuffer = Data()
     lock.lock(); stderrBuffer = Data(); stderrLines = []; lock.unlock()
+    onBadge?(0)  // a restarted backend counts from 0 again
 
     let config: BackendConfig
     do { config = try BackendConfig.load() } catch {
@@ -55,6 +59,10 @@ final class Backend {
     // backend at another state folder, so checks never touch the real one.
     if let dir = ProcessInfo.processInfo.environment["SYNOPIA_STATE_DIR"], !dir.isEmpty {
       p.arguments?.append(contentsOf: ["--state-dir", dir])
+    }
+    // SYNOPIA_FAKE=<fixture claude dir> plays the fake driver over that tree (checks, no model calls).
+    if let dir = ProcessInfo.processInfo.environment["SYNOPIA_FAKE"], !dir.isEmpty {
+      p.arguments?.append(contentsOf: ["--fake", "--claude-dir", dir])
     }
     let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
     p.standardInput = inPipe
@@ -113,17 +121,25 @@ final class Backend {
   }
 
   private func readStdout(_ chunk: Data) {
-    guard ready == nil else { return }
     stdoutBuffer.append(chunk)
-    guard let nl = stdoutBuffer.firstIndex(of: 0x0A) else { return }
-    let line = Data(stdoutBuffer[stdoutBuffer.startIndex..<nl])
-    stdoutBuffer = Data()
-    guard let r = try? JSONDecoder().decode(Ready.self, from: line) else {
-      report(exit: "The backend printed an unexpected first line.")
-      return
+    while let nl = stdoutBuffer.firstIndex(of: 0x0A) {
+      let line = Data(stdoutBuffer[stdoutBuffer.startIndex..<nl])
+      stdoutBuffer.removeSubrange(stdoutBuffer.startIndex...nl)
+      guard ready != nil else {
+        guard let r = try? JSONDecoder().decode(Ready.self, from: line) else {
+          report(exit: "The backend printed an unexpected first line.")
+          return
+        }
+        ready = r
+        onReady?(r)
+        continue
+      }
+      // Later lines: the Dock badge. Anything else is ignored.
+      if let b = try? JSONDecoder().decode(Badge.self, from: line) {
+        FileHandle.standardError.write(Data("Synopia shell: badge \(b.badge)\n".utf8))
+        onBadge?(b.badge)
+      }
     }
-    ready = r
-    onReady?(r)
   }
 
   private func readStderr(_ chunk: Data) {
