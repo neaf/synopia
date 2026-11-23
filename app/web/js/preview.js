@@ -11,18 +11,22 @@ const PV_HTML = /\.html?$/i;
 function previewClick(a, e) {
   const p = a.dataset.path;
   if (!p || (PV_HTML.test(p) && !e.altKey)) return false;
-  pv.want = { path: p, line: pvFirstChange(a), back: a };
+  pv.want = { path: p, back: a, ...pvChanges(a) };
   send({ t: "preview", path: p });
   return true;
 }
-/* the new-file line number of the first changed line in the row's diff, or 0 */
-function pvFirstChange(a) {
-  const d = a.closest(".frow")?.nextElementSibling;
-  if (!d || !d.matches(".diff")) return 0;
-  const first = d.querySelector(".dl.a, .dl.d"); if (!first) return 0;
-  if (first.matches(".a")) return +first.querySelector(".no").textContent || 0;
-  const before = first.previousElementSibling; // a deletion: the line after the context above it
-  return before && before.matches(".dl.c") ? (+before.querySelector(".no").textContent || 0) + 1 : +first.querySelector(".no").textContent || 0;
+/* the lines the row's diff changed, in the new file: added lines, and for a deletion the line after it.
+   The preview tints them like the diff and starts at the first. */
+function pvChanges(a) {
+  const d = a.closest(".frow")?.nextElementSibling, added = new Set(), cut = new Set();
+  if (d && d.matches(".diff")) d.querySelectorAll(".dl.a, .dl.d").forEach(r => {
+    if (r.matches(".a")) { const n = +r.querySelector(".no").textContent; if (n) added.add(n); return; }
+    if (r.previousElementSibling?.matches(".dl.d")) return; // one mark per run of deletions
+    const before = r.previousElementSibling, n = before && before.matches(".dl.c, .dl.a") ? (+before.querySelector(".no").textContent || 0) + 1 : 1;
+    cut.add(n);
+  });
+  const first = Math.min(...added, ...cut);
+  return { added, cut, first: Number.isFinite(first) ? first : 0 };
 }
 
 function pvBuild() {
@@ -51,7 +55,7 @@ function showPreview(m) {
   if (!pv.want || m.path !== pv.want.path) return;
   if (!pv.el) pvBuild();
   const want = pv.want; pv.want = null;
-  pv.path = m.path; pv.line = want.line && want.line <= m.lines ? want.line : 0; pv.back = want.back;
+  pv.path = m.path; pv.line = want.first && want.first <= m.lines ? want.first : 0; pv.back = want.back;
   document.getElementById("pv-path").innerHTML = `<bdi>${esc(m.display || m.path)}</bdi>`; // rtl: a long path loses its start, not its name
   document.getElementById("pv-path").title = m.path;
   const n = Number(m.lines) || 0, count = `${n.toLocaleString()} line${n === 1 ? "" : "s"}`;
@@ -60,12 +64,13 @@ function showPreview(m) {
   const rows = String(m.html ?? "").split("\n").slice(0, n || 1);
   const box = document.getElementById("pv-lines");
   box.style.setProperty("--nw", `${String(rows.length).length + 2}ch`);
-  box.innerHTML = rows.map((h, i) => `<div class="pl${i + 1 === pv.line ? " hit" : ""}"><span class="no">${i + 1}</span><span class="tx">${h || " "}</span></div>`).join("");
+  const added = want.added || new Set(), cut = want.cut || new Set();
+  box.innerHTML = rows.map((h, i) => `<div class="pl${added.has(i + 1) ? " chg" : ""}${cut.has(i + 1) ? " cut" : ""}"><span class="no">${i + 1}</span><span class="tx">${h || " "}</span></div>`).join("");
   pvCloseFind(); pv.el.hidden = false;
   setMode("normal");
   const code = document.getElementById("pv-code");
   code.scrollLeft = 0;
-  const hit = box.querySelector(".pl.hit");
+  const hit = pv.line ? box.children[pv.line - 1] : null; // the first changed line
   code.scrollTop = hit ? Math.max(0, hit.offsetTop - code.clientHeight / 3) : 0;
   pv.el.querySelector(".pv-panel").focus({ preventScroll: true });
 }
