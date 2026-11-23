@@ -46,3 +46,7 @@ The user's global rules (from `~/dev/agent-harness`) apply:
 
 - Draft for review: `docs/technical-plan.md`. Decisions, digests and critic reviews: `.attack-plan/synopia-m1/` (ledger.md holds the author's answers Q1-Q11).
 - Big changes from this handover: Synopia is unaware of the terminal (no pid files, no take-over); transcripts come from JSONL tailing for every session; sessions keep the user's `auto` mode; SDK and CLI used through their documented surface only.
+
+## Build status
+
+- S1-1 (branch `s1-1`): `app/backend` with pinned `@anthropic-ai/claude-agent-sdk` 0.3.330 and `ws` 8.23.0; `npm ci` installs cleanly on this machine and brings the `claude-agent-sdk-darwin-arm64` package with its `claude` binary (about 364 MB). `main.ts`, `server.ts` (Host/Origin at the upgrade, auth frame, 32 MB maxPayload, `hello`, `/api/quit-check`), `lock.ts` (pid file, stale lock taken over), `log.ts`, `store.ts` (defaults, debounced atomic write, `reconcileLayout`), placeholder `app/web/index.html`, `app/dev.sh`, `app/check.sh`. `hello` carries `menu: {}` until `menu.ts`; `sessions` and `pending` are empty. Close code 4001 means a failed auth.
