@@ -168,18 +168,25 @@ export class Views {
   }
 
   // What a driver needs from the transcript to start a process.
-  facts(id: string): { model: string | null; effort: string | null; permissionMode: string | null; working: boolean } | undefined {
+  facts(id: string): {
+    model: string | null; effort: string | null; permissionMode: string | null; working: boolean; runningWork: ('subagent' | 'shell' | 'monitor')[];
+  } | undefined {
     const s = this.live.get(id);
     if (!s) return undefined;
     const t = s.t;
     const effort = typeof t.effort === 'string' ? t.effort
       : t.effort && typeof (t.effort as { level?: unknown }).level === 'string' ? (t.effort as { level: string }).level : null;
+    const runningWork = [
+      ...t.agents().filter((a) => a.running).map(() => 'subagent' as const),
+      ...t.background().filter((b) => b.status === 'running').map((b) => b.kind),
+    ];
     return {
+      runningWork,
       model: typeof t.requestedModel === 'string' ? t.requestedModel : null,
       effort,
       permissionMode: t.permissionMode,
       // a subagent or background shell or monitor still running
-      working: t.agents().some((a) => a.running) || t.background().some((b) => b.status === 'running'),
+      working: runningWork.length > 0,
     };
   }
 
@@ -291,6 +298,11 @@ export class Views {
 
   toast(text: string): void {
     this.broadcast({ t: 'toast', text });
+  }
+
+  // Messages an interrupt cancelled, back to the session's message box.
+  restore(sid: string, texts: string[]): void {
+    if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });
   }
 
   private transcriptOf(sid: string, agent: string | null): Transcript | null {

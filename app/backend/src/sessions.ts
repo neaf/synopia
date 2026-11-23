@@ -3,12 +3,16 @@
 // a conversation_reset moves a session to a new id. Both swaps keep an alias, so a late `send`
 // or `view` with an old id reaches the session. A session without a running process resumes
 // on its next message. Statuses come from status.ts and are stored with their age.
+// The Open list comes from the SDK's listSessions(); opening a past session adds it to the open
+// list, and it resumes on its first message.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
+import type { ListSessionsOptions, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess } from './driver.ts';
-import type { Content, QueryFn, StartOptions } from './driver.ts';
+import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
 import type { StatusEntry } from './status.ts';
 import type { Views } from './views.ts';
@@ -22,6 +26,9 @@ export const IMAGE_TYPES = ['image/png', 'image/jpeg'];
 const STREAM_MS = 50; // at most one stream preview per this many ms and session
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const RECENT = 50;
+export type ListFn = (opts?: ListSessionsOptions) => Promise<SDKSessionInfo[]>;
+export type Recent = { id: string; title: string; cwd: string; lastModified: number };
 export type Image = { mediaType: string; data: string };
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
@@ -94,6 +101,7 @@ export type SessionsOptions = {
   views: Views;
   log?: Log;
   queryFn?: QueryFn; // tests inject a fake; the default is the SDK's query
+  listFn?: ListFn; // the same for listSessions
   home?: string;
   now?: () => number;
   idleMs?: number;
@@ -108,6 +116,7 @@ export class Sessions {
   private now: () => number;
   private live = new Map<string, Active>();
   private aliases = new Map<string, string>();
+  private recent = new Map<string, Recent>(); // the last Open list, for openSession's folder
 
   constructor(opts: SessionsOptions) {
     this.opts = opts;
@@ -139,7 +148,7 @@ export class Sessions {
 
   // The sessions with a running turn, for the quit check.
   running(): string[] {
-    return [...this.live.values()].filter((a) => a.status.working).map((a) => a.id);
+    return [...this.live.values()].filter((a) => a.proc && a.status.working).map((a) => a.id);
   }
 
   // An empty session in settings.newSessionCwd. It isn't stored until system/init gives its id.
@@ -148,6 +157,48 @@ export class Sessions {
     this.add(id, this.expand(this.store.state.settings.newSessionCwd), true, null);
     this.log('sessions.new', { sid: id });
     return id;
+  }
+
+  // The Open list: past sessions from listSessions(), newest first, without the open ones,
+  // matching the filter on title or folder, at most RECENT. A session without a folder can't
+  // resume, so it isn't listed.
+  async listRecent(filter = ''): Promise<Recent[]> {
+    const q = filter.trim().toLowerCase();
+    const all = await (this.opts.listFn ?? sdkListSessions)();
+    const out: Recent[] = [];
+    for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
+      if (!s.cwd || this.has(s.sessionId)) continue;
+      const title = titleOf(s);
+      if (q && !title.toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
+      out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
+      if (out.length === RECENT) break;
+    }
+    for (const r of out) this.recent.set(r.id, r);
+    return out.map((r) => ({ ...r, cwd: this.tilde(r.cwd) }));
+  }
+
+  // Adds a past session to the open list (or reopens a closed one, which keeps its place in the
+  // layout). Its transcript shows at once; it resumes on its first message.
+  async openSession(id: string): Promise<SendResult> {
+    if (this.has(id)) return { ok: true, sid: this.resolve(id) };
+    if (!UUID.test(id)) return { ok: false, error: "That isn't a session id." };
+    if (!this.recent.has(id)) await this.listRecent();
+    const r = this.recent.get(id);
+    if (!r) return { ok: false, error: 'That session is no longer in the Open list.' };
+    if (this.has(id)) return { ok: true, sid: this.resolve(id) };
+    const st = this.store.state;
+    const e = st.open.find((x) => x.id === id);
+    if (e) {
+      e.closedAt = null;
+      e.cwd = r.cwd;
+    } else {
+      st.open.push({ id, cwd: r.cwd, openedAt: this.now(), closedAt: null });
+    }
+    st.layout = renameInLayout(st.layout, id, id, true);
+    this.store.changed();
+    this.add(id, r.cwd, false, restored(st.status[id]) ?? { status: 'idle', at: r.lastModified });
+    this.log('sessions.open', { sid: id, reopened: Boolean(e) });
+    return { ok: true, sid: id };
   }
 
   send(sid: string, text: string, images: Image[] = [], uuid?: string): SendResult {
@@ -170,6 +221,63 @@ export class Sessions {
     a.status.turnStarted();
     this.log('sessions.send', { sid: a.id, images: images.length });
     return { ok: true, sid: a.id };
+  }
+
+  // Close (R3.6): marks it closed and ends its process now, background work included (the page
+  // asked first when something ran). It stays in its layout group, hidden; the Open list lists it
+  // again, and reopening it puts it back there. A placeholder is simply dropped.
+  close(sid: string): SendResult {
+    const id = this.resolve(sid);
+    const a = this.live.get(id);
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    this.clearIdle(a);
+    if (a.streamTimer) clearTimeout(a.streamTimer);
+    const proc = a.proc;
+    a.proc = null; // its exit is no failure
+    proc?.close();
+    this.live.delete(id);
+    const e = this.store.state.open.find((x) => x.id === id);
+    if (e) {
+      e.closedAt = this.now();
+      this.store.changed();
+    }
+    this.views.close(id);
+    this.log('sessions.close', { sid: id, running: Boolean(proc && !proc.done) });
+    return { ok: true, sid: id };
+  }
+
+  // For the shell's quit check: the sessions with a running turn and the background work
+  // (subagents, shells, monitors) that lives in a running process.
+  quitCheck(): { running: string[]; background: { sid: string; kind: string }[] } {
+    const background: { sid: string; kind: string }[] = [];
+    for (const a of this.live.values()) {
+      if (!a.proc) continue;
+      for (const kind of this.views.facts(a.id)?.runningWork ?? []) background.push({ sid: a.id, kind });
+    }
+    return { running: this.running(), background };
+  }
+
+  // Esc, Esc: stops the foreground turn; background work keeps running (perTaskStopAffordance).
+  // Messages the interrupt cancelled go back to the message box through `restore`. A CLI
+  // without the cancel capability runs them afterwards, and the toast says so.
+  async interrupt(sid: string): Promise<void> {
+    const a = this.live.get(this.resolve(sid));
+    if (!a?.proc || !a.status.working) return;
+    a.status.interrupted();
+    let r: InterruptResult;
+    try {
+      r = await a.proc.interrupt();
+    } catch (e) {
+      this.log('driver.interruptFailed', { sid: a.id });
+      this.views.toast(`Synopia couldn't interrupt Claude: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+      return;
+    }
+    this.log('driver.interrupt', { sid: a.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
+    if (r.restored.length) this.views.restore(a.id, r.restored);
+    if (r.stillQueued) {
+      const n = r.stillQueued;
+      this.views.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`);
+    }
   }
 
   // Quit: every process ends now.
@@ -354,6 +462,12 @@ export class Sessions {
 }
 
 type Msg = { type: string; subtype?: string; [k: string]: unknown };
+
+// The Open list's title (plan section 6): the custom title, else the summary, else the first prompt.
+export function titleOf(s: SDKSessionInfo): string {
+  const t = [s.customTitle, s.summary, s.firstPrompt].find((x) => typeof x === 'string' && x.trim()) ?? '';
+  return t.trim().split('\n')[0].slice(0, 120) || 'Untitled session';
+}
 
 // Replaces an id in the layout; `add` puts a new id under "Not in a group" when it wasn't there.
 export function renameInLayout(layout: Layout, old: string, id: string, add: boolean): Layout {

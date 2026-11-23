@@ -37,7 +37,9 @@ function onMessage(m) {
       if (m.replaces) renamed(m.replaces, m.id);
       applySession(m);
       if (!had && wantNew && m.id.startsWith("new-")) { wantNew = false; current = m.id; view = null; mode = "insert"; renderAll(); break; }
+      if (wantOpen === m.id) { wantOpen = null; current = m.id; view = null; renderAll(); break; } // opened from the Open list
       if (!current) pickCurrent();
+      syncInterrupt(); // the turn ended under the "Interrupt?" prompt
       if (!had || !mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
       break;
@@ -81,7 +83,9 @@ function onMessage(m) {
       break;
     }
     case "toast": toast(m.text); break;
-    default: break; // recent, restore: later tasks
+    case "recent": applyRecent(m); break;
+    case "restore": restoreTexts(m.sid, m.texts); break;
+    default: break;
   }
 }
 

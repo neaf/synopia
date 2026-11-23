@@ -23,6 +23,14 @@ document.addEventListener("keydown", e => {
   if (inMsg) { if (e.key === "Escape") { e.preventDefault(); setMode("normal"); } return; }  // the slash menu takes the first Esc itself
   if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;  // group rename etc.
   if (e.target.closest && e.target.closest("button") && e.key === " ") e.preventDefault();
+  /* Esc, Esc interrupts a running turn; any other key dismisses the prompt (composer.js) */
+  if (interruptAsk) {
+    if (/^(Shift|Meta|Control|Alt|CapsLock)$/.test(e.key)) return;
+    e.preventDefault();
+    if (e.key === "Escape") confirmInterrupt(); else dismissInterrupt();
+    return;
+  }
+  if (e.key === "Escape" && canInterrupt(cur())) { e.preventDefault(); askInterrupt(); return; }
   if (qaKeys(e)) return;
   const log = document.getElementById("log");
   switch (e.key) {

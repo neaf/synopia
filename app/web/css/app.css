@@ -192,6 +192,31 @@ details.fold .body { margin-top: 5.5px; }
 .slash .it[aria-selected="true"] { background: #DDF4FF; }
 .slash .it[aria-selected="true"] .n { color: var(--link); }
 .slash .head { color: var(--ink-3); padding: 2px 10px 3.5px; }
+/* "Interrupt?": the message box asks before Esc, Esc stops the turn; what you typed stays underneath */
+.int-ask { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+.int-ask b { color: var(--red); font-weight: 700; }
+.composer.asking .int-ask { display: block; }
+.composer.asking textarea, .composer.asking .attach { visibility: hidden; }
+body[data-mode] .composer.asking > .g { color: var(--red); }
+/* the Open list: past sessions over the main area, rows drawn like the command menu's */
+.app > .side { grid-column: 1; grid-row: 1; }
+.app > .conv { grid-column: 2; grid-row: 1; }
+.open-list { grid-column: 2; grid-row: 1; z-index: 6; background: var(--canvas); padding: 9px; min-height: 0; display: flex; }
+.open-list[hidden] { display: none; }
+.ol-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ol-head { padding: 11px 14.5px; border-bottom: 1px solid var(--line-2); }
+.ol-filter { border-bottom: 1px solid var(--line-2); }
+.ol-filter input { font-family: var(--mono); font-size: 12px; line-height: 1.45; width: 100%; background: none; border: 0; outline: none; padding: 0; color: var(--ink); }
+.ol-list { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 3.5px 0; }
+.ol-it { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 40ch) 10ch; gap: 2ch; padding: 2px 14.5px; cursor: pointer; }
+.ol-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ol-it .f, .ol-it .a { color: var(--ink-3); }
+.ol-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+.ol-it:hover { background: var(--sub); }
+.ol-it[aria-selected="true"] { background: #DDF4FF; }
+.ol-it[aria-selected="true"] .n { color: var(--link); }
+.ol-empty { color: var(--ink-3); margin: 0; padding: 5.5px 14.5px; }
+.ol-keys { margin: 0; padding: 6.5px 14.5px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--ink-3); }
 
 /* background work panel, like a play queue turned upside down:
    past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */
@@ -488,6 +513,10 @@ body:not(.is-dragging) .g-empty { display: none; }
 .side-foot { border-top-color: #373E47; color: #9198A1; }
 .side-foot .btn { background: #2D333B; border-color: #444C56; color: #E6EDF3; }
 .side-foot .btn:hover { background: #373E47; }
+/* the Open line sits under "New session", quiet */
+.side-foot { flex-direction: column; align-items: flex-end; gap: 4px; }
+.side-foot .btn.quiet { background: none; border-color: transparent; color: #9198A1; }
+.side-foot .btn.quiet:hover { background: #2D333B; color: #E6EDF3; }
 .side-head h1 { color: #F0F6FC; }
 .summary { color: #9198A1; }
 .summary .r b { color: #FF7B72; } .summary .a b { color: #E3B341; } .summary .g b { color: #56D364; }

@@ -27,6 +27,7 @@ const { values: flags } = parseArgs({
     port: { type: 'string' },
     'no-parent': { type: 'boolean', default: false },
     fake: { type: 'boolean', default: false },
+    'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
   },
   strict: true,
 });
@@ -74,7 +75,8 @@ const views = new Views({
   onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
-if (!fake) sessions = new Sessions({ store, views, log });
+const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
+if (!fake) sessions = new Sessions({ store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined });
 
 // The open sessions: state.json's open list, or every fixture session under --fake.
 function openEntries(): OpenEntry[] {
@@ -87,6 +89,22 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     views.view(client, sessions ? sessions.resolve(msg.sid) : msg.sid, typeof msg.agent === 'string' ? msg.agent : null);
   } else if (sessions && msg.t === 'newSession') {
     sessions.newSession();
+  } else if (sessions && msg.t === 'listRecent') {
+    const s = sessions;
+    s.listRecent(typeof msg.filter === 'string' ? msg.filter : '').then(
+      (list) => client.send({ t: 'recent', filter: msg.filter ?? '', sessions: list }),
+      (e) => { log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') }); client.send({ t: 'recent', filter: msg.filter ?? '', sessions: [], error: true }); },
+    );
+  } else if (sessions && msg.t === 'openSession' && typeof msg.id === 'string') {
+    sessions.openSession(msg.id).then(
+      (r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); },
+      () => client.send({ t: 'toast', text: "Synopia couldn't read the list of past sessions." }),
+    );
+  } else if (sessions && msg.t === 'close' && typeof msg.sid === 'string') {
+    const r = sessions.close(msg.sid);
+    if (!r.ok) client.send({ t: 'toast', text: r.error });
+  } else if (sessions && msg.t === 'interrupt' && typeof msg.sid === 'string') {
+    void sessions.interrupt(msg.sid);
   } else if (sessions && msg.t === 'send' && typeof msg.sid === 'string') {
     const images = Array.isArray(msg.images)
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
@@ -118,7 +136,7 @@ try {
       settings: store.state.settings,
       pending: views.pending(),
     }),
-    quitCheck: () => ({ running: sessions?.running() ?? [], background: [] }),
+    quitCheck: () => sessions?.quitCheck() ?? { running: [], background: [] },
     onMessage,
   });
 } catch (e) {
