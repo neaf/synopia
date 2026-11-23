@@ -3,29 +3,22 @@
 /* ---------- Claude's pending question ---------- */
 /* ---------- Claude's questions: one at a time, steps on top, j/k + Space, h/l between questions ---------- */
 const qstate = {}; // ask key -> { qi, oi, picks: {qi: [labels]}, own: {qi: text}, target: qi|null }
-/* ---------- pending requests to asks: {id, kind, toolName, toolUseId, since, input, cwd, suggestions, …} ---------- */
-const WHERE = { session: "in this session", localSettings: "in this project (.claude/settings.local.json)", projectSettings: "in this project (.claude/settings.json)", userSettings: "everywhere (~/.claude/settings.json)", cliArg: "for this run" };
-const ruleText = r => r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName;
-/* what "Always allow" remembers, and for how long: one clause per update entry */
-function alwaysText(suggestions) {
-  return suggestions.map((u, i) => {
-    const where = WHERE[u.destination] || "";
-    if (/Rules$/.test(u.type)) return `${i ? "and " : ""}${u.behavior === "deny" ? "Always deny" : "Always allow"} ${(u.rules || []).map(ruleText).join(", ")} ${where}`.trim();
-    if (u.type === "setMode") return `${i ? "and " : ""}switch to ${u.mode === "acceptEdits" ? "accept edits" : u.mode}`;
-    if (u.type === "addDirectories") return `${i ? "and " : ""}allow access to ${(u.directories || []).join(", ")}`;
-    return "";
-  }).filter(Boolean).join(", ") + ".";
-}
+/* ---------- pending requests to asks: {id, kind, toolName, toolUseId, agentId, since, input, cwd, description, title,
+   decisionReason, defaultToNo, always (the "Always allow" text, null when hidden), suggestions} ---------- */
+const FILE_TOOLS = ["Edit", "Write", "NotebookEdit", "Read"];
+/* who asks: Claude, or the subagent the request came from */
+const askerOf = r => { const s = store.sessions.get(current), A = r.agentId && s && agentById(s, r.agentId); return A ? `Subagent “${A.description}”` : r.agentId ? "A subagent" : "Claude"; };
+const wantsTo = r => r.toolName === "Bash" ? "run a command" : r.toolName === "Read" ? "read a file" : FILE_TOOLS.includes(r.toolName) ? "change a file" : `use ${r.toolName}`;
 function askOf(r) {
   const base = { id: r.id, k: "ask", ts: new Date(r.since).toISOString(), state: "pending", kind: r.kind === "question" ? undefined : r.kind, request: r };
   const inp = r.input || {};
   if (r.kind === "permission") {
-    const cmd = inp.command || inp.file_path || inp.notebook_path || r.toolName;
-    const why = inp.description || r.description || r.title || "";
-    const always = !r.suppressAlwaysAllowRule && (r.suggestions || []).length;
-    return { ...base, cmd, qs: [{ header: r.toolName === "Bash" ? "Run command" : r.toolName, multi: false,
-      pre: `<code class="cmd"><span class="ps">$ </span>${esc(cmd)}</code><p class="why2"><span class="who">In ${esc(r.cwd || "")}. Claude says:</span> ${esc(why)}</p>`,
-      opts: [["Allow once", "Runs this command now. Claude asks again next time."], ...(always ? [["Always allow", alwaysText(r.suggestions)]] : [])],
+    const bash = r.toolName === "Bash", cmd = inp.command || inp.file_path || inp.notebook_path || inp.url || inp.pattern || r.toolName;
+    /* Claude's reason (input.description), else the CLI's (a Read's options.description is only the path) */
+    const said = inp.description || "", why = said || r.decisionReason || r.title || (r.description !== cmd ? r.description : "") || "";
+    return { ...base, cmd, startOi: r.defaultToNo ? (r.always ? 2 : 1) : 0, qs: [{ header: bash ? "Run command" : r.toolName, multi: false,
+      pre: `<code class="cmd">${bash ? `<span class="ps">$ </span>` : ""}${esc(cmd)}</code><p class="why2"><span class="who">In ${esc(r.cwd || "")}.${said ? " Claude says:" : ""}</span> ${esc(why)}</p>`,
+      opts: [["Allow once", bash ? "Runs this command now. Claude asks again next time." : "Allows it this time. Claude asks again next time."], ...(r.always ? [["Always allow", r.always]] : [])],
       otherLabel: "Deny", otherHint: "Press i to tell Claude why or what to do instead (optional)", otherPrefix: "Denied", otherEmptyOk: true, otherPlaceholder: "Why, or what to do instead (optional), Enter denies, Esc cancels" }] };
   }
   if (r.kind === "plan") return { ...base, plan: inp.plan || "", qs: [{ header: "Plan", multi: false, q: "Approve the plan above?",
@@ -33,25 +26,33 @@ function askOf(r) {
     otherLabel: "Ask for changes", otherHint: "Press i and say what to change", otherPrefix: "Changes", otherPlaceholder: "What should change, Enter sends it with your answer, Esc cancels" }] };
   return { ...base, qs: (inp.questions || []).map(q => ({ q: q.question, header: q.header, multi: !!q.multiSelect, opts: (q.options || []).map(o => [o.label, o.description || ""]) })) };
 }
-/* The items with the session's pending requests as asks: a request replaces the transcript's ask for the
-   same tool use, the others go at the end, a plan after its text. */
+/* The items with the session's pending requests as asks: a request takes the place of its tool (or the
+   transcript's ask) for the same tool use, the others go at the end, a plan after its text. */
 function withPending(items, requests) {
   if (!requests.length) return items;
   const asks = requests.map(askOf), byTool = new Map(asks.map(a => [a.request.toolUseId, a]));
-  const out = items.map(it => it.k === "ask" && it.state === "pending" && byTool.has(it.id) ? byTool.get(it.id) : it);
+  const ids = new Set(items.map(it => it.id));
+  const plans = new Map(asks.filter(a => a.plan).map(a => [`plan:${a.request.toolUseId}`, a.plan]));
+  /* the plan as the request has it: the CLI reads it from the plan file, which a revision may have changed */
+  const out = items.map(it => (it.k === "ask" && it.state === "pending" || it.k === "tool" && it.state === "running") && byTool.has(it.id) ? byTool.get(it.id) : plans.has(it.id) ? { ...it, text: plans.get(it.id) } : it);
   for (const a of asks) {
     if (out.includes(a)) continue;
-    if (a.plan) out.push({ id: `plan:${a.id}`, k: "claude", ts: a.ts, text: a.plan });
+    if (a.plan && !ids.has(`plan:${a.request.toolUseId}`)) out.push({ id: `plan:${a.id}`, k: "claude", ts: a.ts, text: a.plan });
     out.push(a);
   }
   return out;
 }
 const pendingAsk = s => { const r = requestsOf(s)[0]; return r ? askOf(r) : null; };
 const askKey = (s, a) => `${s.id}:${a.id}`;
-const qs = (s, a) => (qstate[askKey(s, a)] ||= { qi: 0, oi: 0, picks: {}, own: {}, notes: {}, target: null, noteRow: null });
+const qs = (s, a) => (qstate[askKey(s, a)] ||= { qi: 0, oi: a.startOi || 0, picks: {}, own: {}, notes: {}, target: null, noteRow: null });
 const answered = (st, qi) => (st.picks[qi] || []).length > 0 || !!(st.own[qi] || "").trim();
 const answerOf = (st, qi) => (st.own[qi] || "").trim() || (st.picks[qi] || []).map(l => l.replace(/\s*\(recommended\)\s*$/i, "")).join(", ") + ((st.notes || {})[qi] ? `, note: ${st.notes[qi]}` : "");
 const allAnswered = (st, a) => a.qs.every((q, qi) => answered(st, qi));
+/* "1 of 3" when several requests wait (the card shows the oldest), and "k of N answered" for several questions */
+function prog(s, a, done, n) {
+  const all = requestsOf(s).length, t = [all > 1 ? `1 of ${all}` : "", n > 1 ? `${done} of ${n} answered` : ""].filter(Boolean).join(", ");
+  return t ? `<span class="prog">${t}</span>` : "";
+}
 function qaHTML(s, a) {
   const st = qs(s, a), n = a.qs.length, done = a.qs.filter((q, qi) => answered(st, qi)).length;
   if (st.qi >= n) st.qi = n - 1;
@@ -75,7 +76,7 @@ function qaHTML(s, a) {
             : `<span class="d">${esc(r.d)}${r.noting ? `<input class="qa-own qa-note" id="qa-own" value="${esc(note)}" placeholder="Add a note to this answer, Enter saves, Esc cancels" aria-label="Note">` : r.note ? `<span class="qnote">Note: ${esc(r.note)}</span>` : ""}</span>`}</button>`; }).join("")}</div></div></div>`;
   };
   return `<div class="qa-card" aria-label="Claude's questions">
-    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${a.kind === "permission" ? "Claude wants to run a command" : a.kind === "plan" ? "Claude wrote a plan and waits for your approval" : `Claude asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(s.statusAt)}</span>${n > 1 ? `<span class="prog">${done} of ${n} answered</span>` : ""}</div>
+    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${askerOf(a.request)} ${a.kind === "permission" ? `wants to ${wantsTo(a.request)}` : a.kind === "plan" ? "wrote a plan and waits for your approval" : `asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(a.request.since)}</span>${prog(s, a, done, n)}</div>
     <div class="qbody">${a.qs.map(item).join("")}</div>
     <div class="nd-foot"><span class="hint"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>Space</kbd> pick</span><span><kbd>i</kbd> type</span><span><kbd>Enter</kbd> send</span></span>
       <button class="btn ${allAnswered(st, a) ? "primary" : ""}" id="qa-send" ${allAnswered(st, a) ? "" : "disabled"}>${a.kind ? "Send" : `Send answer${n > 1 ? "s" : ""}`}</button></div>
@@ -102,10 +103,16 @@ function qaPick(s, a) {
   else st.picks[st.qi] = [l];
 }
 const answerText = a => a.plainAnswer || "";
-/* The answer goes to the server, which settles the request (slice 3 turns it into the canUseTool result). */
+/* The answer goes to the server, which turns it into the canUseTool result (answers.ts): one shape per card. */
+function cardAnswer(st, a) {
+  const pick = (st.picks[0] || [])[0], own = st.own[0] || "", after = p => own.startsWith(p + ": ") ? own.slice(p.length + 2) : "";
+  if (a.kind === "permission") return pick === "Allow once" ? { choice: "once" } : pick === "Always allow" ? { choice: "always" } : { choice: "deny", text: after("Denied") };
+  if (a.kind === "plan") return pick === "Approve" ? { choice: "approve" } : { choice: "changes", text: after("Changes") };
+  return { questions: a.qs.map((q, qi) => ({ picks: st.picks[qi] || [], own: (st.own[qi] || "").trim(), note: (st.notes || {})[qi] || "" })) };
+}
 function answerAsk(s, a) {
   const st = qs(s, a);
-  send({ t: "answer", sid: s.id, requestId: a.id, answer: { answers: a.qs.map((q, qi) => answerOf(st, qi)), picks: st.picks, own: st.own, notes: st.notes } });
+  send({ t: "answer", sid: s.id, requestId: a.id, answer: cardAnswer(st, a) });
   delete qstate[askKey(s, a)];
   mode = "normal"; paintMode();
 }

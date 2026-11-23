@@ -109,6 +109,8 @@ test('answers: the Always allow text has one clause per update entry, with where
   assert.equal(alwaysText([{ type: 'removeDirectories', directories: ['/tmp/a'], destination: 'session' }]), 'Remove access to /tmp/a for this session.');
   assert.equal(alwaysText([{ type: 'replaceRules', rules: [{ toolName: 'Edit' }], behavior: 'ask', destination: 'localSettings' }]), 'Always ask before Edit in this project (.claude/settings.local.json).');
   assert.equal(alwaysText([{ type: 'removeRules', rules: [{ toolName: 'Edit' }], behavior: 'allow', destination: 'userSettings' }]), 'Forget Edit everywhere (~/.claude/settings.json).');
+  assert.equal(alwaysText([rule('session'), { type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '//tmp/**' }], behavior: 'allow', destination: 'session' }]),
+    'Always allow Bash(npm run test:*), Read(//tmp/**) for this session.', 'neighbouring rule entries read as one clause');
   assert.equal(alwaysText([]), '');
 });
 

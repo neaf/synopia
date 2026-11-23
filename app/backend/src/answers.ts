@@ -43,9 +43,22 @@ function tilde(p: string, home: string): string {
   return home && (p === home || p.startsWith(home + '/')) ? '~' + p.slice(home.length) : p;
 }
 
+// Neighbouring addRules entries with the same behaviour and place read as one clause (the CLI
+// suggests a path and its /private realpath as two entries).
+function mergeRules(suggestions: PermissionUpdate[]): PermissionUpdate[] {
+  const out: PermissionUpdate[] = [];
+  for (const u of suggestions) {
+    const prev = out[out.length - 1];
+    if (u.type === 'addRules' && prev?.type === 'addRules' && prev.behavior === u.behavior && prev.destination === u.destination) {
+      out[out.length - 1] = { ...prev, rules: [...prev.rules, ...u.rules] };
+    } else out.push(u);
+  }
+  return out;
+}
+
 // What "Always allow" remembers and for how long (R6.5): one clause per update entry.
 export function alwaysText(suggestions: PermissionUpdate[], home = ''): string {
-  const clauses = suggestions.map((u) => {
+  const clauses = mergeRules(suggestions).map((u) => {
     const where = WHERE[u.destination] ?? '';
     const w = where ? ` ${where}` : '';
     if (u.type === 'addRules' || u.type === 'replaceRules') {

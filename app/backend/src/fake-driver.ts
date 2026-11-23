@@ -8,6 +8,8 @@ import type { Views, Status, PendingRequest } from './views.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { alwaysText } from './answers.ts';
+import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 
 export type FakeStep = {
   at: number; // ms after start
@@ -97,7 +99,12 @@ export class FakeDriver {
   apply(step: FakeStep): void {
     const at = Date.now() - (step.ago ?? 0);
     if (step.status) this.views.setStatus(step.sid, step.status, at);
-    if (step.pending) this.views.setPending(step.sid, { ...step.pending, since: at } as PendingRequest);
+    if (step.pending) {
+      // The "Always allow" text, as pending.ts builds it for a real request.
+      const sug = Array.isArray(step.pending.suggestions) ? step.pending.suggestions as PermissionUpdate[] : [];
+      const always = step.pending.always !== undefined ? step.pending.always : sug.length && !step.pending.suppressAlwaysAllowRule ? alwaysText(sug) : null;
+      this.views.setPending(step.sid, { ...step.pending, since: at, always } as PendingRequest);
+    }
     if (step.clear) this.views.clearPending(step.sid, step.clear);
     if (step.stream !== undefined) this.views.setStream(step.sid, step.stream);
     if (step.toast) this.views.toast(step.toast);

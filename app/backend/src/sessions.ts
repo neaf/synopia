@@ -433,6 +433,8 @@ export class Sessions {
       a.status.turnStarted();
     } else if (m.type === 'system' && m.subtype === 'session_state_changed') {
       a.status.stateChanged(String(m.state));
+    } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {
+      this.log('driver.mode', { sid: a.id, mode: m.permissionMode }); // after a plan approval (S3-1: back to auto)
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {
       this.setStreamClear(a);
       this.swap(a, m.new_conversation_id, 'reset');

@@ -176,7 +176,7 @@ export class Transcript {
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
     const keep = this.agentMeta;
-    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home });
+    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
     this.metaChanged = true;
@@ -238,13 +238,14 @@ export class Transcript {
   }
 
   // A task notification or a subagent's hand-back queued during a turn lands as an `attachment`
-  // record (`queued_command`, the text in `prompt`), not as a user record. Typed prompts queued
-  // the same way are left to the user records.
+  // record (`queued_command`, the text in `prompt`), not as a user record. So does a message you
+  // sent during a turn (`commandMode: 'prompt'`; slice 3 saw no user record for it), so it shows too.
   private queuedCommand(d: JsonRecord, ts: string | null): void {
     const a = obj(d.attachment);
     const prompt = str(a.prompt);
     if (a.type !== 'queued_command' || !prompt) return;
-    if (!prompt.startsWith('<task-notification>') && !prompt.startsWith('<agent-message')) return;
+    const typed = a.commandMode === 'prompt' && !prompt.startsWith('<');
+    if (!typed && !prompt.startsWith('<task-notification>') && !prompt.startsWith('<agent-message')) return;
     this.user({ ...d, type: 'user' }, str(d.uuid) || `attachment@${this.seq}`, ts, prompt);
   }
 
