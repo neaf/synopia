@@ -1,0 +1,2 @@
+{"type":"user","uuid":"aaaa0001-u1","timestamp":"2026-11-20T13:00:06.000Z","isSidechain":true,"agentId":"aaaa0001","sessionId":"44444444-0000-4000-8000-000000000004","message":{"role":"user","content":"Find the demo config."}}
+{"type":"assistant","uuid":"aaaa0001-a1","timestamp":"2026-11-20T13:01:50.000Z","isSidechain":true,"agentId":"aaaa0001","sessionId":"44444444-0000-4000-8000-000000000004","message":{"role":"assistant","content":[{"type":"text","text":"It is in demo.toml."}]}}

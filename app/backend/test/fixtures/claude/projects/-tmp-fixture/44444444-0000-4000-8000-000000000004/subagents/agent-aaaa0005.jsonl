@@ -1,0 +1,2 @@
+{"type":"user","uuid":"aaaa0005-u1","timestamp":"2026-11-20T13:00:10.000Z","isSidechain":true,"agentId":"aaaa0005","sessionId":"44444444-0000-4000-8000-000000000004","message":{"role":"user","content":"A subagent whose meta has not arrived."}}
+{"type":"assistant","uuid":"aaaa0005-a1","timestamp":"2026-11-20T13:00:40.000Z","isSidechain":true,"agentId":"aaaa0005","sessionId":"44444444-0000-4000-8000-000000000004","message":{"role":"assistant","content":[{"type":"text","text":"Still here."}]}}

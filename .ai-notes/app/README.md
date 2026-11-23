@@ -46,3 +46,12 @@ The user's global rules (from `~/dev/agent-harness`) apply:
 
 - Draft for review: `docs/technical-plan.md`. Decisions, digests and critic reviews: `.attack-plan/synopia-m1/` (ledger.md holds the author's answers Q1-Q11).
 - Big changes from this handover: Synopia is unaware of the terminal (no pid files, no take-over); transcripts come from JSONL tailing for every session; sessions keep the user's `auto` mode; SDK and CLI used through their documented surface only.
+
+## Build status
+
+- S1-4 (core): `app/backend/src/tail.ts` (Tailer: offset tailing, partial-line buffer, reset on shrink, inode change or same-size rewrite; SubagentWatcher) and `src/transcript.ts` (Transcript reducer, `findTranscript`, `sessionDirOf`), fixtures under `test/fixtures/claude/projects/-tmp-fixture/`, 25 tests pass. A synthetic 50 MB file parses in well under 2 s (about 50-300 ms). On Node 22.13 `node --test test/` fails (a directory isn't accepted): run `node --experimental-strip-types --test` from `app/backend`, or pass `'test/*.test.ts'`. `view`/`items` wiring and `fake-driver.ts` still to do.
+
+## Facts to check
+
+- `system` record with `subtype: "turn_duration"`: the name of the duration field (code reads `durationMs`, a number).
+- `permission-mode` record: the name of the mode field (code reads `permissionMode`).

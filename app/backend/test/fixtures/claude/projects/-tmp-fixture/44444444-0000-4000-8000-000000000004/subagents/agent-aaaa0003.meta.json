@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Try the other approach",
+  "toolUseId": "toolu_ag3",
+  "spawnDepth": 1,
+  "isFork": true,
+  "finished": false
+}
