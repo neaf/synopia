@@ -247,6 +247,25 @@ test('long text is clipped as in the reference parser', () => {
   assert.equal(clip('short'), 'short');
 });
 
+test('slice 3: a plan shows as Claude\'s reply, and a stored card answer lands on the tool once its result does', () => {
+  const answers: Record<string, string> = { 'tu-bash': 'Allow once' };
+  const t = new Transcript({ home: HOME, answerOf: (id) => answers[id] });
+  t.push({ type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [
+    { type: 'tool_use', id: 'tu-plan', name: 'ExitPlanMode', input: { plan: '1. Read it\n2. Fix it', planFilePath: '/tmp/p.md' } },
+  ] } });
+  assert.deepEqual([byId(t, 'plan:tu-plan').k, byId(t, 'plan:tu-plan').text], ['claude', '1. Read it\n2. Fix it']);
+  assert.equal(byId(t, 'tu-plan').k, 'tool');
+  t.push({ type: 'assistant', uuid: 'a2', message: { id: 'm2', content: [{ type: 'tool_use', id: 'tu-bash', name: 'Bash', input: { command: 'ls' } }] } });
+  assert.equal(byId(t, 'tu-bash').answer, undefined, 'no answer before the result');
+  t.push({ type: 'user', uuid: 'u2', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-bash', content: 'ok' }] } });
+  assert.equal(byId(t, 'tu-bash').answer, 'Allow once');
+  // A rewritten file resets the reader; the stored answers still apply on the re-read.
+  t.reset();
+  t.push({ type: 'assistant', uuid: 'a2', message: { id: 'm2', content: [{ type: 'tool_use', id: 'tu-bash', name: 'Bash', input: { command: 'ls' } }] } });
+  t.push({ type: 'user', uuid: 'u2', message: { content: [{ type: 'tool_result', tool_use_id: 'tu-bash', content: 'ok' }] } });
+  assert.equal(byId(t, 'tu-bash').answer, 'Allow once');
+});
+
 test('findTranscript finds projects/*/<id>.jsonl, or null', () => {
   assert.equal(findTranscript(CLAUDE, ID.ask), path.join(CLAUDE, 'projects', '-tmp-fixture', `${ID.ask}.jsonl`));
   assert.equal(findTranscript(CLAUDE, 'nope'), null);

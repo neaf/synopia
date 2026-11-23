@@ -70,7 +70,8 @@ function openModelPicker() {
 }
 /* ---------- Esc, Esc: the message box turns into "Interrupt?" while a turn runs (R9.4) ---------- */
 let interruptAsk = null; // the session id the prompt is for
-const canInterrupt = s => Boolean(s) && stateOf(s) === "green";
+/* a running turn, or one waiting on a card (Esc with no in-place field open, plan section 6) */
+const canInterrupt = s => Boolean(s) && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting");
 function askInterrupt() {
   const box = conv.querySelector(".dock .composer"); if (!box) return;
   interruptAsk = current;

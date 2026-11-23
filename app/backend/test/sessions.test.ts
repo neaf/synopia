@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Views } from '../src/views.ts';
 import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
-import { DENY_MESSAGE, STATE_FLAG } from '../src/driver.ts';
+import { STATE_FLAG } from '../src/driver.ts';
 import type { QueryFn } from '../src/driver.ts';
 import { openStore } from '../src/store.ts';
 import type { Client } from '../src/server.ts';
@@ -245,19 +245,146 @@ test('sessions: a session whose last permission mode is plan resumes in plan mod
   assert.equal(a.q.calls[0].options.permissionMode, 'plan');
 });
 
-test('sessions: canUseTool denies with a message, and toasts', async () => {
-  const { sessions, q, take } = setup();
-  const ph = sessions.newSession();
-  sessions.send(ph, 'hi');
+type Opts = Parameters<CanUseTool>[2];
+function askOpts(id: string, extra: Partial<Opts> = {}) {
+  const ctl = new AbortController();
+  return { ctl, o: { signal: ctl.signal, toolUseID: `tu-${id}`, requestId: `rq-${id}`, ...extra } as Opts };
+}
+async function waitingSession() {
+  const t = setup();
+  const ph = t.sessions.newSession();
+  t.sessions.send(ph, 'go');
+  emit(t.q.calls[0], init(REAL));
   await tick();
-  take();
-  const canUseTool = q.calls[0].options.canUseTool as CanUseTool;
-  const r = await canUseTool('AskUserQuestion', { questions: [] }, { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' } as Parameters<CanUseTool>[2]);
-  assert.deepEqual(r, { behavior: 'deny', message: DENY_MESSAGE });
-  assert.equal(DENY_MESSAGE, "Synopia can't answer this yet. Ask in plain text instead.");
-  const toasts = take('toast');
-  assert.equal(toasts.length, 1);
-  assert.match(String(toasts[0].text), /AskUserQuestion/);
+  t.take();
+  return { ...t, call: t.q.calls[0], canUseTool: t.q.calls[0].options.canUseTool as CanUseTool };
+}
+const BASH_SUGGESTION = { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'localSettings' };
+const READ_SUGGESTION = { type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '//tmp/x/**' }], behavior: 'allow', destination: 'session' };
+
+test('needs you: canUseTool parks requests in arrival order, the status is needs you until the last is answered', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1', { suggestions: [BASH_SUGGESTION] as Opts['suggestions'], description: 'Runs the tests' });
+  const b = askOpts('2', { agentID: 'agent-7' });
+  let ra: unknown = null; let rb: unknown = null;
+  void t.canUseTool('Bash', { command: 'npm test', description: 'Run the tests' }, a.o).then((r) => (ra = r));
+  void t.canUseTool('AskUserQuestion', { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }] }, b.o).then((r) => (rb = r));
+  await tick();
+  const got = t.take();
+  const pend = got.filter((m) => m.t === 'pending');
+  assert.deepEqual(pend.map((m) => (m.request as { id: string }).id), ['rq-1', 'rq-2']);
+  const r1 = pend[0].request as Record<string, unknown>;
+  assert.equal(r1.kind, 'permission');
+  assert.equal(r1.toolName, 'Bash');
+  assert.equal(r1.toolUseId, 'tu-1');
+  assert.equal(r1.cwd, '~/scratch');
+  assert.equal(r1.always, 'Always allow Bash(npm test) in this project (.claude/settings.local.json).');
+  assert.equal((pend[1].request as Record<string, unknown>).kind, 'question');
+  assert.equal((pend[1].request as Record<string, unknown>).agentId, 'agent-7');
+  assert.equal(got.filter((m) => m.t === 'session').at(-1)?.status, 'waiting', 'needs you wins over running');
+  // A reload gets them again in hello, oldest first.
+  assert.deepEqual(t.views.pending().map((p) => p.request.id), ['rq-1', 'rq-2']);
+
+  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'once' }).ok, true);
+  await tick();
+  assert.deepEqual(ra, { behavior: 'allow', updatedInput: { command: 'npm test', description: 'Run the tests' }, decisionClassification: 'user_temporary' });
+  assert.equal(rb, null);
+  assert.equal(t.store.state.answers['tu-1'], 'Allow once');
+  const after = t.take();
+  assert.deepEqual(after.filter((m) => m.t === 'pending').map((m) => m.cleared), ['rq-1']);
+  assert.equal(after.filter((m) => m.t === 'session').length, 0, 'still needs you: one request left');
+  assert.deepEqual(t.views.pending().map((p) => p.request.id), ['rq-2']);
+
+  assert.equal(t.sessions.answer(REAL, 'rq-2', { questions: [{ picks: ['B'], note: 'because' }] }).ok, true);
+  await tick();
+  assert.deepEqual((rb as { updatedInput: Record<string, unknown> }).updatedInput.answers, { 'Which?': 'B' });
+  assert.equal(t.take('session').at(-1)?.status, 'busy');
+  assert.equal(t.sessions.answer(REAL, 'rq-2', { choice: 'once' }).ok, false, 'an answered request is gone');
+});
+
+test('needs you: a request ends when its signal aborts, on interrupt and when the process ends', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1');
+  let ra: unknown = null;
+  void t.canUseTool('Bash', { command: 'ls' }, a.o).then((r) => (ra = r));
+  await tick();
+  a.ctl.abort();
+  await tick();
+  assert.equal((ra as { behavior: string }).behavior, 'deny');
+  assert.equal(t.views.pending().length, 0);
+  assert.equal(t.take('pending').at(-1)?.cleared, 'rq-1');
+
+  // An interrupt ends what is left and sends back the messages held behind the card.
+  const b = askOpts('2');
+  let rb: unknown = null;
+  void t.canUseTool('ExitPlanMode', { plan: '1. Do it' }, b.o).then((r) => (rb = r));
+  await tick();
+  assert.equal(t.sessions.send(REAL, 'wait, one more thing').ok, true);
+  assert.deepEqual(t.take('session').at(-1)?.held, ['wait, one more thing']);
+  await t.sessions.interrupt(REAL);
+  assert.equal((rb as { behavior: string }).behavior, 'deny');
+  assert.equal(t.views.pending().length, 0);
+  const got = t.take();
+  assert.deepEqual(got.filter((m) => m.t === 'restore').map((m) => m.texts), [['wait, one more thing']]);
+  assert.equal(t.call.inputs.length, 1, 'the held message was never pushed');
+
+  // The process ends with a request open.
+  const c = askOpts('3');
+  void t.canUseTool('AskUserQuestion', { questions: [] }, c.o);
+  await tick();
+  assert.equal(t.views.pending().length, 1);
+  t.call.out.end();
+  await tick();
+  assert.equal(t.views.pending().length, 0);
+  assert.notEqual(t.take('session').at(-1)?.status, 'waiting');
+});
+
+test('needs you: a message sent while a card waits is held, and pushed once the card is answered', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1');
+  void t.canUseTool('Bash', { command: 'ls' }, a.o);
+  await tick();
+  t.sessions.send(REAL, 'first');
+  t.sessions.send(REAL, 'second');
+  await tick();
+  assert.equal(t.call.inputs.length, 1);
+  assert.deepEqual(t.views.sessions().find((s) => (s as { id: string }).id === REAL)?.['held' as never], ['first', 'second']);
+  t.take();
+  t.sessions.answer(REAL, 'rq-1', { choice: 'deny', text: 'not now' });
+  await tick();
+  assert.deepEqual(t.call.inputs.slice(1).map((m) => m.message.content), ['first', 'second']);
+  assert.deepEqual(t.take('session').find((m) => 'held' in m)?.held, []);
+  assert.equal(t.store.state.answers['tu-1'], 'Denied: not now');
+});
+
+test('needs you: Always allow stores session rules, passed back as allowedTools on the next start', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1', { suggestions: [READ_SUGGESTION, { type: 'addDirectories', directories: ['/tmp/x'], destination: 'session' }] as Opts['suggestions'] });
+  let ra: unknown = null;
+  void t.canUseTool('Read', { file_path: '/tmp/x/a.txt' }, a.o).then((r) => (ra = r));
+  await tick();
+  const req = t.take('pending')[0].request as Record<string, unknown>;
+  assert.equal(req.always, 'Always allow Read(//tmp/x/**) for this session, and allow access to /tmp/x for this session.');
+  t.sessions.answer(REAL, 'rq-1', { choice: 'always' });
+  await tick();
+  assert.deepEqual((ra as { updatedPermissions: unknown }).updatedPermissions, req.suggestions);
+  assert.deepEqual(t.store.state.rules[REAL], ['Read(//tmp/x/**)']);
+  assert.equal(t.store.state.answers['tu-1'], 'Always allow');
+  t.call.out.end();
+  await tick();
+  t.sessions.send(REAL, 'again');
+  await tick();
+  assert.deepEqual(t.q.calls[1].options.allowedTools, ['Read(//tmp/x/**)']);
+});
+
+test('needs you: suppressAlwaysAllowRule hides Always allow and refuses it', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1', { suggestions: [BASH_SUGGESTION] as Opts['suggestions'], suppressAlwaysAllowRule: true });
+  void t.canUseTool('Bash', { command: 'npm test' }, a.o);
+  await tick();
+  assert.equal((t.take('pending')[0].request as Record<string, unknown>).always, null);
+  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'always' }).ok, false);
+  assert.equal(t.views.pending().length, 1, 'still waiting');
 });
 
 test('sessions: statuses go working, then your turn; a failed process is failed and toasts', async () => {

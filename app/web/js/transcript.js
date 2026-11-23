@@ -136,6 +136,10 @@ function itemsHTML(items, sessionBusy, s) {
     out.push([`you:${key}`, `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`]); turnStart = ts; turnKey = key; turnMs = null;
   };
   for (const it of items) {
+    /* your answer to a permission or plan card shows as your turn, before the tool it let run (R6.7) */
+    if (it.k === "tool" && it.answer) { prompt(esc(it.answer), it.ts, `ans:${it.id}`); lastTs = it.ts; }
+    /* a plan whose process ended before you answered (plan section 7) */
+    if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
     flush();
@@ -143,14 +147,15 @@ function itemsHTML(items, sessionBusy, s) {
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
       out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`]);
-    } else if (it.k === "ask" && it.state === "pending") {
+    } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
-      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`]);
+      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
       const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
       out.push([it.id, `<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`]);
+      if (it.state === "pending") { out.push([`na:${it.id}`, notAnswered()]); continue; }
       if (it.state === "answered") {
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}</p>`).join("") : md(it.answer);
         lastTs = it.ts; prompt(txt, it.ts, `ans:${it.id}`); continue;
@@ -162,6 +167,9 @@ function itemsHTML(items, sessionBusy, s) {
   if (waiting) flushFiles(); else if (!sessionBusy) endTurn(); else flushFiles();
   return out;
 }
+const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
+/* messages sent while a card waits: held behind it, sent once you answer */
+const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
   const line = (mark, t) => `<div class="ln liveln"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
@@ -241,6 +249,7 @@ function logEntries(s, A) {
   const out = [];
   if (hidden > 0) out.push(["earlier", `<p class="earlier">… ${hidden} earlier items not shown</p>`]);
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
+  if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   out.push(["live", liveLine(s, A)]);
   return out;

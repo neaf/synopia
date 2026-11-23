@@ -29,7 +29,7 @@ type Child = { t: Transcript; tailer: Tailer };
 type Live = {
   id: string; path: string | null; cwd: string; t: Transcript;
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
-  status: Status | null; statusAt: number; stream: string | null; pending: PendingRequest[];
+  status: Status | null; statusAt: number; stream: string | null; pending: PendingRequest[]; held: string[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
   finder: NodeJS.Timeout | null;
 };
@@ -45,6 +45,8 @@ export type ViewsOptions = {
   onAssistant?: (sid: string, messageId: string, blockTypes: string[]) => void;
   // Slice 6: the title and Now line Claude wrote for a session (state.json `written`).
   written?: (sid: string) => { title?: string; now?: string } | undefined;
+  // Slice 3: the card answer stored for a tool use, shown as your turn in the transcript.
+  answerOf?: (toolUseId: string) => string | undefined;
 };
 
 const tilde = (p: string, home: string): string => (home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
@@ -71,9 +73,9 @@ export class Views {
     if (this.live.has(id)) return;
     const file = init.path ?? findTranscript(this.opts.claudeDir, id);
     const s: Live = {
-      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home }),
+      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf }),
       tailer: null, watcher: null, children: new Map(),
-      status: null, statusAt: 0, stream: null, pending: [],
+      status: null, statusAt: 0, stream: null, pending: [], held: [],
       sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
     };
     this.live.set(id, s);
@@ -112,7 +114,7 @@ export class Views {
     }).start();
     s.watcher = new SubagentWatcher(sessionDirOf(file), {
       onAgent: (aid, afile) => {
-        const t = new Transcript({ sidechain: true, home: this.home });
+        const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf });
         s.t.setAgent(aid, undefined, t);
         const tailer = new Tailer(afile, {
           ...tail,
@@ -171,7 +173,7 @@ export class Views {
 
   // What a driver needs from the transcript to start a process.
   facts(id: string): {
-    model: string | null; effort: string | null; permissionMode: string | null; working: boolean; runningWork: ('subagent' | 'shell' | 'monitor')[];
+    model: string | null; effort: string | null; permissionMode: string | null; modeBeforePlan: string | null; working: boolean; runningWork: ('subagent' | 'shell' | 'monitor')[];
   } | undefined {
     const s = this.live.get(id);
     if (!s) return undefined;
@@ -187,6 +189,7 @@ export class Views {
       model: typeof t.requestedModel === 'string' ? t.requestedModel : null,
       effort,
       permissionMode: t.permissionMode,
+      modeBeforePlan: t.lastNonPlanMode,
       // a subagent or background shell or monitor still running
       working: runningWork.length > 0,
     };
@@ -266,7 +269,7 @@ export class Views {
   // The sessions part of `hello`: meta, status, subagents, background work and the stream preview.
   sessions(): object[] {
     return [...this.live.values()].map((s) => ({
-      ...this.metaOf(s), agents: s.t.agents(), background: s.t.background(), stream: s.stream,
+      ...this.metaOf(s), agents: s.t.agents(), background: s.t.background(), stream: s.stream, held: s.held,
     }));
   }
 
@@ -324,6 +327,14 @@ export class Views {
 
   toast(text: string): void {
     this.broadcast({ t: 'toast', text });
+  }
+
+  // Slice 3: the messages sent while a card waits, held behind it ("Queued until you answer the card above").
+  setHeld(sid: string, texts: string[]): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.held = texts;
+    this.broadcast({ t: 'session', id: sid, held: texts });
   }
 
   // Messages an interrupt cancelled, back to the session's message box.
