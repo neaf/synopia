@@ -27,6 +27,10 @@
 // shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
 // and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
 // QUIET_MS) is working too. Sessions with no driver status use transcriptStatus().
+// A card in another process (R6.8, 2026-11-24): with no process of Synopia's, a transcript whose
+// thread (main or a running subagent's) ends on an AskUserQuestion or ExitPlanMode with no result
+// (Transcript.pendingAsk) is needs you, over working; its age counts from the tool_use. It clears
+// when the result lands. An ask our own process left behind (a crash) is not one: "Not answered".
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.
 // Without CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS (no `session_state_changed` seen yet), a turn
@@ -34,6 +38,7 @@
 // `at` is the backend's clock when the status last changed (for stale: when the last message
 // came); the caller stores it.
 import type { SDKAssistantMessageError, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { PendingAsk } from './transcript.ts';
 
 export type Status = 'busy' | 'idle' | 'waiting' | 'stopped' | 'failed' | 'signedout' | 'stale' | 'retrying' | 'compacting';
 type Outcome = 'idle' | 'stopped' | 'failed';
@@ -48,8 +53,9 @@ export const STALE_MS = 15 * 60_000;
 // 30 min: an open turn by the transcript alone, with no tool waiting for its result, that hasn't
 // changed for this long is your turn (its process may have crashed).
 export const QUIET_MS = 30 * 60_000;
-// What runs by the transcript: subagents and forks, the main turn, and when it last changed (ms).
-export type Running = { agents: number; turn: boolean; lastAt: number };
+// What runs by the transcript: subagents and forks, the main turn, and when it last changed (ms),
+// and the question or plan it waits on (null or absent: none).
+export type Running = { agents: number; turn: boolean; lastAt: number; ask?: PendingAsk | null };
 export const AUTH_ERRORS: readonly SDKAssistantMessageError[] = ['authentication_failed', 'cloud_credential_error'];
 export type Timer = (fn: () => void, ms: number) => () => void;
 const realTimer: Timer = (fn, ms) => {
@@ -86,6 +92,7 @@ export class SessionStatus {
   private pending = 0;
   private agents = 0; // background subagents and forks running, from the transcript
   private external = false; // a main turn running in another process, from the transcript
+  private ask: PendingAsk | null = null; // a question or plan waiting in another process, from the transcript
   private stopping = false; // an interrupt was sent and its result hasn't come yet
   private signedOut: boolean;
   private compacting = false;
@@ -205,6 +212,7 @@ export class SessionStatus {
       this.signedOut = false;
     }
     this.external = turn;
+    this.ask = external && r.ask ? r.ask : null;
     this.update();
   }
 
@@ -240,7 +248,7 @@ export class SessionStatus {
     const now = this.now();
     const silentFor = this.staleMs + (this.retry ? Math.max(0, this.retry.at - this.last) : 0);
     const stale = this.running && this.pending === 0 && now - this.last >= silentFor;
-    const next: Status = this.pending > 0 ? 'waiting'
+    const next: Status = this.pending > 0 || this.ask ? 'waiting'
       : this.signedOut ? 'signedout'
         : !this.running ? (this.agents > 0 || this.external ? 'busy' : this.outcome)
           : stale ? 'stale' : this.retry ? 'retrying' : this.compacting ? 'compacting' : 'busy';
@@ -248,8 +256,11 @@ export class SessionStatus {
     if (next === 'busy' && this.queued.length) detail.queued = this.queued.length;
     if (next === 'retrying' && this.retry) detail.retry = { ...this.retry };
     this.armStale(next, silentFor - (now - this.last));
-    if (next === this.status && sameDetail(detail, this.detail)) return;
-    if (next !== this.status) this.at = next === 'stale' ? this.last : now;
+    // another process's card: its age counts from the tool_use, a new card's from its own
+    const askAt = next === 'waiting' && this.pending === 0 && this.ask ? this.ask.since || now : null;
+    if (next === this.status && sameDetail(detail, this.detail) && (askAt === null || askAt === this.at)) return;
+    if (askAt !== null) this.at = askAt;
+    else if (next !== this.status) this.at = next === 'stale' ? this.last : now;
     this.status = next;
     this.detail = detail;
     this.onChange({ status: next, at: this.at, detail });
@@ -273,9 +284,9 @@ export class SessionStatus {
 }
 
 // The status of a session no driver set (the transcript alone): working while its subagents or
-// forks or its main turn run, else your turn.
+// forks or its main turn run, else your turn. A question or plan waiting there is needs you.
 export function transcriptStatus(r: Running): Status {
-  return r.agents > 0 || r.turn ? 'busy' : 'idle';
+  return r.ask ? 'waiting' : r.agents > 0 || r.turn ? 'busy' : 'idle';
 }
 
 function num(v: unknown): number {

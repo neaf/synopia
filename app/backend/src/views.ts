@@ -10,7 +10,7 @@ import os from 'node:os';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord } from './tail.ts';
 import { Transcript, findTranscript, sessionDirOf, readResult } from './transcript.ts';
-import type { Item } from './transcript.ts';
+import type { Item, PendingAsk } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -26,6 +26,7 @@ export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'pl
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   status: Status; statusAt: number; statusDetail: StatusDetail; model: unknown; effort: unknown;
+  ask: PendingAsk | null;
 };
 
 type Sub = { sid: string; agent: string | null; from: number };
@@ -273,7 +274,7 @@ export class Views {
   // What runs now by the transcript (nothing when it isn't open): subagents and forks, the main turn.
   running(id: string): Running {
     const s = this.live.get(id);
-    return s ? runningOf(s.t) : { agents: 0, turn: false, lastAt: 0 };
+    return s ? runningOf(s.t) : { agents: 0, turn: false, lastAt: 0, ask: null };
   }
 
   private metaOf(s: Live): SessionMeta {
@@ -281,11 +282,14 @@ export class Views {
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
     const w = this.opts.written?.(s.id);
     const ch = this.opts.choice?.(s.id);
+    const ran = runningOf(t);
+    const status = s.status ?? transcriptStatus(ran);
     let statusAt = s.statusAt;
     if (!s.status) {
       statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
       // your turn after background subagents: its age counts from when the last one finished
       for (const a of t.agents()) if (a.end && !a.running) statusAt = Math.max(statusAt, Date.parse(a.end) || 0);
+      if (ran.ask?.since) statusAt = ran.ask.since;
     }
     // Section 10: your rename, then Claude's title, then the CLI's ai-title.
     const title = t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session';
@@ -301,9 +305,13 @@ export class Views {
       // From the transcript until a driver sets it: working while subagents or forks run, else your
       // turn, or the main turn runs in another process (status.ts transcriptStatus). "Stopped" is read
       // from the items by the page.
-      status: s.status ?? transcriptStatus(runningOf(t)),
+      status,
       statusAt,
       statusDetail: s.statusDetail,
+      // R6.8: the question or plan another process asks, which the page shows read-only. Only while
+      // it is what makes the session need you: not with a request of ours, nor for an ask our own
+      // process left behind (status.ts gives that no waiting, and the page reads "Not answered").
+      ask: status === 'waiting' && !s.pending.length ? ran.ask ?? null : null,
       model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
     };
@@ -522,7 +530,7 @@ export class Views {
       this.broadcast({ t: 'session', ...meta });
     }
     const ran = runningOf(s.t);
-    const ranKey = `${ran.agents}:${ran.turn}`;
+    const ranKey = `${ran.agents}:${ran.turn}:${ran.ask?.toolUseId ?? ''}`;
     if (ranKey !== s.ran) {
       s.ran = ranKey;
       this.opts.onRunning?.(s.id, ran);
@@ -577,7 +585,7 @@ export class Views {
 // What runs by the transcript: the subagents and forks still running by its rule (shells and
 // monitors aren't counted), and its main turn (Transcript.turnRunning, quiet after QUIET_MS).
 function runningOf(t: Transcript): Running {
-  return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(Date.now(), QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0 };
+  return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(Date.now(), QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk() };
 }
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {

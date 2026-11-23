@@ -155,6 +155,9 @@ These requirements come from a day of prototyping against the user's real sessio
 - R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place).
 - R6.7 Answers appear in the transcript as your turn ("Allow once", "Denied: …", "Changes: …").
 - R6.8 Detection: a session needs you while it has a pending `canUseTool` request: a question, a permission or a plan.
+  - It also needs you, with no Synopia process, while its transcript ends a thread (the main conversation or a subagent) on a question or plan (AskUserQuestion or ExitPlanMode) that has no result yet: another Claude Code process asks it. This beats working, the Dock badge counts it, its age counts from the question, and it clears when the answer lands.
+  - The message panel then shows the card read-only: the red "Needs you" header with the reason and "for N min", every question open with its options (Recommended, descriptions, checkboxes for a multi-select), or the plan's two decisions under the plan in the transcript. It has no cursor, selection or keys, and its footer is one quiet line: "Asked in another Claude Code process. Answer it there." The transcript line says "Waiting for you: …, asked in another process". Once answered, the card goes and the answer shows as your turn.
+  - A session Synopia drives keeps the interactive card. A question its own process left without a request (after a crash) stays "Not answered (Synopia quit)".
 - R6.9 Rejected:
   - showing all questions at once
   - horizontal tabs

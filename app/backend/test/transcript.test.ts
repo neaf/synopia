@@ -618,3 +618,35 @@ test('turn: "for tool use" is a tool you turned down, and Claude carrying on kee
   assert.equal(t.turnRunning(NOW, QUIET), false);
   assert.equal(t.items.at(-1)?.text, '[Request interrupted by user]', 'the page reads this last item as stopped by you');
 });
+
+const askUse = (id: string) => ({ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions: [
+  { question: 'Which layout?', header: 'Layout', multiSelect: false, options: [{ label: 'Two columns (Recommended)', description: 'Side by side' }, { label: 'One column', description: '' }] },
+] } });
+
+test('pending ask: a question with no result waits, from its tool_use; its result clears it; a plan too', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('u1', 'Go', ago(10)), replied('a1', ago(9), [{ type: 'text', text: 'One question.' }, askUse('toolu_q1')])]);
+  assert.deepEqual(t.pendingAsk(), { kind: 'question', toolUseId: 'toolu_q1', agentId: null, since: NOW - 9 * 60_000,
+    qs: [{ q: 'Which layout?', header: 'Layout', multi: false, opts: [['Two columns (Recommended)', 'Side by side'], ['One column', '']] }] });
+  t.pushAll([toolResult('r1', ago(8), 'toolu_q1', { content: 'User has answered your questions: "Which layout?"="One column".' })]);
+  assert.equal(t.pendingAsk(), null, 'answered');
+  t.pushAll([replied('a2', ago(7), [{ type: 'tool_use', id: 'toolu_p1', name: 'ExitPlanMode', input: { plan: '1. Do it.' } }])]);
+  assert.deepEqual(t.pendingAsk(), { kind: 'plan', toolUseId: 'toolu_p1', agentId: null, since: NOW - 7 * 60_000, plan: '1. Do it.' });
+  t.pushAll([replied('a3', ago(6), [bashUse('toolu_b9')])]);
+  assert.equal(t.pendingAsk(), null, 'only the latest assistant record counts');
+  t.pushAll([replied('a4', ago(5), [askUse('toolu_q2')])]);
+  t.processEnded(ago(4));
+  assert.equal(t.pendingAsk(), null, 'a process that ended after it took the card with it');
+});
+
+test('pending ask: a running subagent that asks', () => {
+  const main = new Transcript({ home: HOME });
+  main.pushAll([typed('u1', 'Go', ago(10)), replied('a1', ago(9), [{ type: 'tool_use', id: 'toolu_ag1', name: 'Agent', input: { description: 'Pick one', prompt: 'x' } }])]);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.pushAll([{ ...replied('s1', ago(8), [askUse('toolu_sq1')]), isSidechain: true }]);
+  main.setAgent('ag0001', { agentType: 'general-purpose', description: 'Pick one', toolUseId: 'toolu_ag1' }, sub);
+  assert.equal(main.pendingAsk()?.agentId, 'ag0001');
+  assert.equal(main.pendingAsk()?.toolUseId, 'toolu_sq1');
+  sub.pushAll([{ ...toolResult('s2', ago(7), 'toolu_sq1'), isSidechain: true }]);
+  assert.equal(main.pendingAsk(), null);
+});

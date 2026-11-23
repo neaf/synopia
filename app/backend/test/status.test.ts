@@ -312,3 +312,23 @@ test('status: a main turn another process runs is working; ours or none is not; 
   assert.equal(s.status, 'idle', 'the old stopped is history once another process ran a turn');
   assert.equal(transcriptStatus(turn), 'busy');
 });
+
+test('status: a question another process asks is needs you over working, aged from its tool_use; its result clears it', () => {
+  const { s, seen, clock } = clocked({ status: 'idle', at: 5 });
+  const ask = { kind: 'question' as const, toolUseId: 'toolu_q1', agentId: null, since: clock.t - 120_000 };
+  const asking = { agents: 0, turn: true, lastAt: clock.t, ask };
+  s.setRunning(asking, false);
+  assert.notEqual(s.status, 'waiting', 'our own process left it (or drives it): no card of ours waits, "Not answered"');
+  s.setRunning(asking, true);
+  assert.equal(s.status, 'waiting', 'the open turn would say working; the question wins');
+  assert.equal(seen.at(-1)?.at, clock.t - 120_000, 'its age counts from the tool_use');
+  clock.t += 60_000;
+  s.setRunning({ ...asking, ask: { ...ask, toolUseId: 'toolu_q2', since: clock.t } }, true);
+  assert.equal(seen.at(-1)?.at, clock.t, 'a new question counts from its own tool_use');
+  s.setRunning({ ...asking, ask: null }, true);
+  assert.equal(s.status, 'busy', 'answered there: the turn goes on');
+  s.setRunning({ agents: 1, turn: false, lastAt: clock.t, ask: { ...ask, kind: 'plan', agentId: 'ag1' } }, true);
+  assert.equal(s.status, 'waiting', "a subagent's plan too");
+  assert.equal(transcriptStatus(asking), 'waiting', 'a session no driver set reads it from its transcript');
+  assert.equal(transcriptStatus({ ...asking, ask: null }), 'busy');
+});
