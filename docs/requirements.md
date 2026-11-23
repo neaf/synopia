@@ -25,6 +25,11 @@ These requirements come from a day of prototyping against the user's real sessio
   - each open session that needs you (a pending question, permission or plan: the red "Needs you" of R6.1)
   - each deliverable waiting for review (a finished `For review: ` subagent not yet marked reviewed, R10.1; the same count as "N to review" in the sidebar)
   - Closed sessions don't count. At 0 there is no badge. No notifications: they were rejected (2026-11-23).
+- R2.7 The window has an integrated title bar, the unified look of Slack and Linear (decided 2026-11-24):
+  - no visible title bar: the traffic lights sit over the dark sidebar's top-left, and the strip they sit in shows the sidebar colour over the sidebar and the canvas over the main area. The window keeps the title "Synopia" for Mission Control and the Window menu.
+  - a drag on the top strip moves the window, and a double-click on it does what the system setting "Double-click a window's title bar to" says (zoom, minimise or nothing). Nothing interactive sits under the strip, and a drag anywhere below it (sidebar drag and drop) never moves the window.
+  - the sidebar's "Synopia" heading sits below the traffic lights.
+  - in fullscreen there is no strip and no inset. In a browser the page looks as before.
 
 ## 3. Sessions
 
