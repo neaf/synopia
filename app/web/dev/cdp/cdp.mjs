@@ -11,6 +11,8 @@ export async function connect(port = +(process.env.SYNOPIA_CHROME_PORT || 9334))
   ws.on('message', (d) => { const m = JSON.parse(d); if (waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); } else if (m.method) listeners.forEach((f) => f(m)); });
   const cdp = (method, params = {}) => new Promise((r) => { const id = ++n; waiting.set(id, r); ws.send(JSON.stringify({ id, method, params })); });
   const ev = async (expr) => { const r = await cdp('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true }); if (r.result.exceptionDetails) return 'EXC ' + JSON.stringify(r.result.exceptionDetails.exception?.description); return r.result.result.value; };
+  // with the display asleep or another tab in front the page reports hidden: no frames, and each mouse event waits ~5 s
+  await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
   const results = [];
   const check = (name, ok, extra = '') => { results.push((ok ? 'pass' : 'FAIL') + ' ' + name + (extra && !ok ? ' ' + extra : '')); };
   // a real key press through CDP

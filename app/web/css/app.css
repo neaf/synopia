@@ -616,6 +616,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 .r-agent b, .r-agent .ind { flex: none; }
 .r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .r-agent .ind { margin: 0; }
+/* a sub-line opening or closing (sidebar.js tweenLines) clips to its tweened height */
+.r-main > .tw { overflow: hidden; }
+.r-main > .r-gone { pointer-events: none; }
 
 .composer { padding: 9px 14px; }
 .composer { align-items: center; }

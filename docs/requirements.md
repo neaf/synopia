@@ -188,7 +188,8 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 8. Status and kind vocabulary
 
-- R8.1 Motion only on running things, and it always moves: linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes.
+- R8.1 Running things always move: their motion is linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes, on a running mark.
+  - Layout transitions are other motion and allowed: a sidebar sub-line that appears tweens the row's height open, then fades in; one that leaves fades out, then the height closes. About 150 ms a step, instant with reduced motion. A line whose text alone changes (a timer, a count) doesn't animate.
 - R8.2 Session status marks:
   - working: agent mark turning. Also while the main turn is over but background subagents or forks still run, in every open session. Also while another process (a terminal) runs the session's main turn, read from its transcript: a tool waiting for its result, or a turn opened by a prompt and not yet ended. A turn that changed nothing for 30 minutes, with no tool waiting, is your turn.
   - working with a message queued: the same mark with a blue centre, "Working, 1 message queued". The message was sent during the turn and Claude hasn't read it yet.
