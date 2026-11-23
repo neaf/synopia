@@ -262,7 +262,11 @@ export class Views {
     const out: { you: string; claude: string }[] = [];
     for (const i of s.t.items) {
       if (i.k === 'you' && !i.interrupted) out.push({ you: i.text ?? '', claude: '' });
-      else if (i.k === 'claude' && out.length) {
+      else if (i.k === 'you' && out.length) {
+        // An Esc Esc interrupt: say so, or the writer reads the turn as still waiting on its tool.
+        const cur = out[out.length - 1];
+        cur.claude = cur.claude ? `${cur.claude}\n\n(You interrupted this turn.)` : '(You interrupted this turn.)';
+      } else if (i.k === 'claude' && out.length) {
         const cur = out[out.length - 1];
         cur.claude = cur.claude ? `${cur.claude}\n\n${i.text ?? ''}` : i.text ?? '';
       }
