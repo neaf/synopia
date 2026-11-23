@@ -12,7 +12,7 @@ function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  return `<div class="ln tool ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
+  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
 }
 function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
@@ -68,7 +68,7 @@ function filesHTML(patches, key) { // key: stable diff ids, so an open diff stay
   for (const [root, files] of roots) {
     body += `<div class="root">${esc(root)}</div><div class="flist">`;
     for (const f of files) {
-      const id = `diff-${key}-${fileSeq++}`;
+      const id = esc(`diff-${key}-${fileSeq++}`);
       body += `<div class="frow"><span class="dim">⎿</span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
         <button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
         <div class="diff" id="${id}" hidden>${f.list.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
@@ -87,7 +87,7 @@ function tookLive(ms) {
   const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
 }
-const live = (startIso, ms) => `<span data-live="${startIso}">${tookLive(ms)}</span>`;
+const live = (startIso, ms) => `<span data-live="${esc(startIso)}">${tookLive(ms)}</span>`;
 let view = null; // null = the session; otherwise an agent id inside the current session
 const agentsOf = s => s.agents || [];
 const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
@@ -97,7 +97,7 @@ const agentType = a => a.fork ? "fork" : (a.type || "agent");
 function waveHTML(tools, s) {
   const rows = tools.map(t => ({ t, a: agentByTool(s, t.toolUseId) }));
   const markOf = a => !a ? "done" : !a.finished ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
-  const nameOf = (t, a) => a ? `<button class="alink" data-agent="${a.id}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span>${esc(t.obj)}</span>`;
+  const nameOf = (t, a) => a ? `<button class="alink" data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span>${esc(t.obj)}</span>`;
   const time = a => a ? (a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
@@ -147,7 +147,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
-      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`]);
+      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
       out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`]);
@@ -179,7 +179,7 @@ function liveLine(s, A) {
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
 /* an age that the 1 s timer keeps current */
-const age = ms => `<span data-age="${ms}">${dur(ms)}</span>`;
+const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
 function statusLine(s) {
   const st = stateOf(s);
   const last = [...s.items].reverse();
@@ -238,7 +238,7 @@ function renderHeader() {
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title">${esc(s.title)}</h2>
         ${isEmpty(s) || !s.now ? "" : `<p class="c-now">Now: ${esc(s.now)}</p>`}
-        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${p}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
+        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button><button class="btn" data-close>Close session</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
   document.getElementById("msg").placeholder = `Message ${s.title}, / for commands`;

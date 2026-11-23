@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, existsSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -27,6 +27,17 @@ test('a stale lock from a dead process is taken over', () => {
   writeFileSync(join(dir, 'backend.lock'), String(dead));
   const lock = acquireLock(dir);
   lock.release();
+});
+
+test('the lock appears with its pid in it, never empty, and leaves no temp file (L8)', () => {
+  const dir = tmp();
+  const lock = acquireLock(dir);
+  assert.equal(readFileSync(join(dir, 'backend.lock'), 'utf8'), String(process.pid));
+  assert.deepEqual(readdirSync(dir), ['backend.lock']);
+  assert.throws(() => acquireLock(dir), LockedError);
+  assert.deepEqual(readdirSync(dir), ['backend.lock'], 'a refused try cleans up too');
+  lock.release();
+  assert.deepEqual(readdirSync(dir), []);
 });
 
 test('a second backend on the same state folder exits, the first exits on stdin close', async () => {

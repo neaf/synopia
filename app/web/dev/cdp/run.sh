@@ -4,6 +4,7 @@
 #   app/web/dev/cdp/run.sh keys    keys and modes (R9)
 #   app/web/dev/cdp/run.sh menu    slash menu and model picker (R5.14, R3.7)
 #   app/web/dev/cdp/run.sh earlier loading earlier items, on a long transcript generated into the temp state
+#   app/web/dev/cdp/run.sh csp     the page under its CSP, the H1 payload, an injected handler blocked
 # Starts headless Chrome on 9334 if it isn't up. Prints "N/M pass" and the failures.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"

@@ -88,10 +88,11 @@ const views = new Views({
   choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
   defaultModel: () => store.state.settings.model,
   onChange: () => badge?.changed(),
+  onWorkEnded: (sid) => writer?.workEnded(sid),
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 // Slice 5: the slash menu and the model list per folder (the fake driver has its own).
-const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log });
+const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log, cacheFile: join(stateDir, 'menu-cache.json') });
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
 // Slice 6: Claude-written titles and Now lines, after each turn and on open.
 const writer = fake ? null : new Writer({
@@ -101,6 +102,7 @@ const writer = fake ? null : new Writer({
     turns: (sid) => views.turns(sid),
     resolve: (sid) => sessions?.resolve(sid) ?? sid,
     changed: (sid) => views.refresh(sid),
+    work: (sid) => views.work(sid),
   },
 });
 if (!fake) {
@@ -117,7 +119,7 @@ if (!fake) {
 
 // The open sessions: state.json's open list, or every fixture session under --fake.
 function openEntries(): OpenEntry[] {
-  if (!fake) return store.state.open;
+  if (!fake) return sessions ? sessions.layoutEntries() : store.state.open;
   return views.ids().map((id) => ({ id, cwd: views.meta(id)?.cwd ?? '', openedAt: 0, closedAt: null }));
 }
 
@@ -214,6 +216,7 @@ async function shutdown(reason: string) {
   fake?.stop();
   badge?.stop();
   writer?.stop();
+  menus?.stop();
   sessions?.stop();
   views.stop();
   store.close();
@@ -230,9 +233,11 @@ if (!flags['no-parent']) {
   process.stdin.resume();
 }
 
+// The ready line first: the shell loads the page while the open sessions' transcripts are read
+// (a large one in slices, tail.ts), so the window isn't blank until every file is parsed.
+process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
 if (fake) fake.start(claudeDir);
 else sessions?.start();
-process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
 // The Dock badge (requirements R2.6): one line per change of the count, after the first line.
 badge = new Badge({
   source: { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed },

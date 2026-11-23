@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Tailer, SubagentWatcher } from '../src/tail.ts';
+import { Tailer, SubagentWatcher, SLICE_BYTES } from '../src/tail.ts';
 import type { JsonRecord } from '../src/tail.ts';
 import { Transcript } from '../src/transcript.ts';
 
@@ -167,4 +167,39 @@ test('first read of a 50 MB transcript takes under 2 s', (t) => {
   assert.ok(tr.total > 4000, `items ${tr.total}`);
   assert.equal(tr.get(`t${10}`)?.state, 'done');
   assert.ok(ms < 2000, `first read took ${Math.round(ms)} ms`);
+});
+
+test('start reads a large backlog in slices, letting the event loop run between them (L7)', async (t) => {
+  const file = path.join(tmp(t), 'big.jsonl');
+  const line = JSON.stringify({ type: 'user', text: 'made-up filler '.repeat(200) }) + '\n';
+  fs.writeFileSync(file, line.repeat(Math.ceil((SLICE_BYTES * 2.5) / line.length)));
+  const size = fs.statSync(file).size;
+  const { tail, got } = tailer(file);
+  let ticked = false;
+  setImmediate(() => (ticked = true));
+  tail.start();
+  assert.ok(tail.offset <= SLICE_BYTES + (4 << 20) && tail.offset < size, 'start returned after one slice');
+  assert.equal(tail.catchingUp, true);
+  assert.equal(tail.check(), false, 'a poll or watch event leaves it to the slices');
+  await until(() => !tail.catchingUp);
+  assert.ok(ticked, 'other callbacks ran in between');
+  assert.equal(tail.offset, size);
+  assert.equal(got.length, size / line.length);
+  // a small file is read at once
+  const small = path.join(tmp(t), 'small.jsonl');
+  fs.writeFileSync(small, line.repeat(3));
+  const s = tailer(small);
+  s.tail.start();
+  assert.equal(s.got.length, 3);
+  assert.equal(s.tail.catchingUp, false);
+});
+
+test('the subagent watcher calls onScan after every scan, so its subagents need no timers (L6)', (t) => {
+  const dir = path.join(tmp(t), 'session');
+  fs.mkdirSync(path.join(dir, 'subagents'), { recursive: true });
+  let scans = 0;
+  const w = new SubagentWatcher(dir, { onAgent: () => {}, onMeta: () => {}, onScan: () => scans++ }, { pollMs: 0, watch: false });
+  w.start();
+  w.scan();
+  assert.equal(scans, 2);
 });

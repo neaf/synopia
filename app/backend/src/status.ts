@@ -39,6 +39,7 @@ export class SessionStatus {
   private outcome: Outcome;
   private pending = 0;
   private stopping = false; // an interrupt was sent and its result hasn't come yet
+  private resulted = false; // the running turn's result came (with the state flag, idle follows it)
 
   constructor(init: StatusEntry | null, onChange: (e: StatusEntry) => void, now: () => number = Date.now) {
     this.onChange = onChange;
@@ -55,24 +56,38 @@ export class SessionStatus {
   // The driver pushed a message, or a turn began (system/init comes at the start of each turn).
   turnStarted(): void {
     this.running = true;
+    this.resulted = false;
     this.update();
   }
 
   stateChanged(state: string): void {
     this.flag = true;
-    if (state === 'running' || state === 'requires_action') this.running = true;
-    else if (state === 'idle') this.running = false;
+    if (state === 'running' || state === 'requires_action') {
+      if (!this.running) this.resulted = false;
+      this.running = true;
+    } else if (state === 'idle') {
+      this.running = false;
+      this.stopping = false; // an interrupt after the turn's result had nothing to stop
+    }
     this.update();
   }
 
   // You interrupted the turn: the result that ends it is "stopped by you", whatever its subtype.
+  // Not once the turn's result came (between it and idle): that turn is over, the next isn't stopped.
   interrupted(): void {
+    if (this.resulted) return;
     this.stopping = true;
+  }
+
+  // The interrupt never reached the CLI: the turn's result is its own.
+  interruptFailed(): void {
+    this.stopping = false;
   }
 
   result(r: ResultLike): void {
     this.outcome = this.stopping ? 'stopped' : outcomeOf(r);
     this.stopping = false;
+    this.resulted = true;
     if (!this.flag) this.running = false;
     this.update();
   }

@@ -131,6 +131,11 @@ export class SessionProcess {
     return { cancelQueued, restored, stillQueued: (r?.still_queued ?? []).filter((u) => this.sent.has(u)).length };
   }
 
+  // Its input is closed (end or close): a push is dropped, so the caller waits for the exit.
+  get ending(): boolean {
+    return this.ended;
+  }
+
   // Lets the process end once its turn is over (the input closes).
   end(): void {
     this.ended = true;

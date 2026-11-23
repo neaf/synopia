@@ -83,7 +83,7 @@ function attachSlash(ta, onModel) {
 
 function renderAttachments() {
   const box = conv.querySelector(".composer .attach"); if (!box) return;
-  box.innerHTML = attachments.map((src, i) => `<figure><img src="${src}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("");
+  box.innerHTML = attachments.map((src, i) => `<figure><img src="${esc(src)}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("");
 }
 /* the header's model button and /model open the same picker */
 function openModelPicker() {

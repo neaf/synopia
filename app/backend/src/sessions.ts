@@ -18,9 +18,10 @@ import type { StatusEntry } from './status.ts';
 import { NeedsYou } from './pending.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
-import type { Store, Layout } from './store.ts';
+import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { displayPath } from './paths.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -98,6 +99,8 @@ type Active = {
   streamTimer: NodeJS.Timeout | null;
   idleTimer: NodeJS.Timeout | null;
   choice: ModelChoice | null; // slice 5: a placeholder's model and effort, stored once it has its id
+  interrupting: boolean; // an interrupt is on its way: held messages go back to the box, not to Claude
+  afterExit: { content: Content; uuid: string; text: string }[]; // sent while the process was ending (idle end)
 };
 
 // Slice 5: the model and effort you chose for a session (state.json `models`). `default` is the
@@ -159,6 +162,14 @@ export class Sessions {
     return this.live.has(this.resolve(id));
   }
 
+  // The ids a stored layout may hold: the open list and the new sessions not stored yet, so a
+  // placeholder dragged into a group keeps its place until init renames it there.
+  layoutEntries(): OpenEntry[] {
+    const placeholders = [...this.live.values()].filter((a) => a.placeholder)
+      .map((a) => ({ id: a.id, cwd: a.cwd, openedAt: 0, closedAt: null }));
+    return [...this.store.state.open, ...placeholders];
+  }
+
   // The sessions with a running turn, for the quit check.
   running(): string[] {
     return [...this.live.values()].filter((a) => a.proc && a.status.working).map((a) => a.id);
@@ -180,12 +191,14 @@ export class Sessions {
     const all = await (this.opts.listFn ?? sdkListSessions)();
     const out: Recent[] = [];
     for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
-      if (!s.cwd || this.has(s.sessionId)) continue;
+      // Only an id that is open itself: after a /clear the old id is an alias of the new one, but
+      // its conversation is a past session of its own (R3.2).
+      if (!s.cwd || this.live.has(s.sessionId)) continue;
       // A session Synopia closed keeps the title Claude wrote for it (section 10's order), so the
       // Open list names it as the sidebar did.
       const written = this.store.state.written[s.sessionId]?.title;
       const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
-      if (q && !title.toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
+      if (q && !title.toLowerCase().includes(q) && !this.tilde(s.cwd).toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
       out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
       if (out.length === RECENT) break;
     }
@@ -196,12 +209,19 @@ export class Sessions {
   // Adds a past session to the open list (or reopens a closed one, which keeps its place in the
   // layout). Its transcript shows at once; it resumes on its first message.
   async openSession(id: string): Promise<SendResult> {
-    if (this.has(id)) return { ok: true, sid: this.resolve(id) };
+    if (this.live.has(id)) return { ok: true, sid: id };
     if (!UUID.test(id)) return { ok: false, error: "That isn't a session id." };
     if (!this.recent.has(id)) await this.listRecent();
     const r = this.recent.get(id);
     if (!r) return { ok: false, error: 'That session is no longer in the Open list.' };
-    if (this.has(id)) return { ok: true, sid: this.resolve(id) };
+    if (this.live.has(id)) return { ok: true, sid: id };
+    // The id names this conversation again, not the one a reset moved it to: page messages with it
+    // reach it, and older ids that led through it keep leading where they did.
+    if (this.aliases.has(id)) {
+      const to = this.resolve(id);
+      for (const [k, v] of this.aliases) if (v === id) this.aliases.set(k, to);
+      this.aliases.delete(id);
+    }
     const st = this.store.state;
     const e = st.open.find((x) => x.id === id);
     if (e) {
@@ -225,6 +245,7 @@ export class Sessions {
       if (Buffer.byteLength(im.data, 'base64') > MAX_IMAGE_BYTES) return { ok: false, error: 'An image is over 5 MB. Send a smaller one.' };
     }
     if (!text.trim() && !images.length) return { ok: false, error: 'Nothing to send.' };
+    const ending = Boolean(a.proc?.ending);
     if (!a.proc && !this.startProcess(a)) return { ok: false, error: `Folder ${this.tilde(a.cwd)} no longer exists` };
     const content: Content = images.length
       ? [
@@ -236,6 +257,13 @@ export class Sessions {
     if (a.needs.size) { // queued behind the card (plan section 6), pushed once it is answered
       a.needs.hold({ content, uuid: id, text });
       this.log('sessions.held', { sid: a.id, images: images.length });
+      return { ok: true, sid: a.id };
+    }
+    if (ending) { // the idle end closed its input: the message goes to a new process once this one exits
+      a.afterExit.push({ content, uuid: id, text });
+      this.clearIdle(a);
+      a.status.turnStarted();
+      this.log('sessions.afterExit', { sid: a.id, images: images.length });
       return { ok: true, sid: a.id };
     }
     (a.proc as SessionProcess).push(content, id);
@@ -256,6 +284,7 @@ export class Sessions {
     if (a.streamTimer) clearTimeout(a.streamTimer);
     const proc = a.proc;
     a.proc = null; // its exit is no failure
+    a.afterExit = [];
     a.needs.abortAll();
     proc?.close();
     if (proc) this.ended(a);
@@ -288,14 +317,18 @@ export class Sessions {
     const a = this.live.get(this.resolve(sid));
     if (!a?.proc || !a.status.working) return;
     a.status.interrupted();
+    a.interrupting = true;
     let r: InterruptResult;
     try {
       r = await a.proc.interrupt();
     } catch (e) {
+      a.interrupting = false;
+      a.status.interruptFailed(); // the next turn's result is its own, not "stopped"
       this.log('driver.interruptFailed', { sid: a.id });
       this.views.toast(`Synopia couldn't interrupt Claude: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
       return;
     }
+    a.interrupting = false;
     this.log('driver.interrupt', { sid: a.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
     this.endNeeds(a);
     if (r.restored.length) this.views.restore(a.id, r.restored);
@@ -379,8 +412,21 @@ export class Sessions {
     if (r.plan) st.plans[r.toolUseId] = r.plan; // the plan you answered, as the card showed it
     if (r.rules.length || r.label || r.plan) this.store.changed();
     this.log('sessions.answer', { sid: a.id, behavior: r.result.behavior, rules: r.rules.length });
-    if (!a.needs.size && a.proc) for (const h of a.needs.takeHeld()) a.proc.push(h.content as Content, h.uuid);
-    return { ok: true, sid: a.id };
+    return { ok: true, sid: a.id }; // the held messages went out from the drained hook
+  }
+
+  // No card waits any more (the last was answered, or ended by its own signal), or the turn ended:
+  // the messages held behind the cards go to Claude. `newTurn`: no turn runs to take them in.
+  private releaseHeld(a: Active, newTurn: boolean): void {
+    if (a.needs.size || a.interrupting || !a.proc || a.proc.done || a.proc.ending) return;
+    const held = a.needs.takeHeld();
+    if (!held.length) return;
+    for (const h of held) a.proc.push(h.content as Content, h.uuid);
+    if (newTurn) {
+      this.clearIdle(a);
+      a.status.turnStarted();
+    }
+    this.log('sessions.released', { sid: a.id, n: held.length, newTurn });
   }
 
   // The turn ended with requests or held messages left (an interrupt, the process ending): the
@@ -412,13 +458,14 @@ export class Sessions {
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Active {
     const a: Active = {
-      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null,
+      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [],
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
       needs: new NeedsYou({
         show: (r) => this.views.setPending(a.id, r),
         clear: (rid) => this.views.clearPending(a.id, rid),
         count: (n) => a.status.setPending(n),
         held: (texts) => this.views.setHeld(a.id, texts),
+        drained: () => this.releaseHeld(a, false),
         context: () => ({ cwd: this.tilde(a.cwd), modeBefore: this.views.facts(a.id)?.modeBeforePlan || 'auto' }),
         now: this.now,
       }),
@@ -507,6 +554,15 @@ export class Sessions {
       const why = tail.length ? tail[tail.length - 1] : error?.message || 'it exited';
       this.views.toast(`Claude stopped unexpectedly: ${why.slice(0, 300)}`);
     }
+    // Messages sent while it was ending start the next process (resumed), in order.
+    const next = a.afterExit.splice(0);
+    if (!next.length || this.live.get(a.id) !== a) return;
+    if (!this.startProcess(a)) {
+      this.views.restore(a.id, next.map((m) => m.text).filter((t) => t.trim()));
+      return;
+    }
+    for (const m of next) (a.proc as SessionProcess | null)?.push(m.content, m.uuid);
+    a.status.turnStarted();
   }
 
   private onMessage(a: Active, m: Msg): void {
@@ -533,6 +589,7 @@ export class Sessions {
       this.setStreamClear(a);
       a.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined });
       this.opts.onTurnEnded?.(a.id);
+      this.releaseHeld(a, true); // held behind a card that is gone: they are the next turn
     }
   }
 
@@ -612,7 +669,7 @@ export class Sessions {
   }
 
   private tilde(p: string): string {
-    return p.startsWith(this.home + '/') ? '~' + p.slice(this.home.length) : p;
+    return displayPath(p, this.home);
   }
 }
 

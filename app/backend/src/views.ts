@@ -15,24 +15,28 @@ import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import type { Status } from './status.ts';
+import { displayPath } from './paths.ts';
 
 export type { Status } from './status.ts';
 export const WINDOW = 160;
 
 export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'plan'; since: number; [k: string]: unknown };
 export type SessionMeta = {
-  id: string; title: string; now: string; cwd: string; prs: unknown[];
+  id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   status: Status; statusAt: number; model: unknown; effort: unknown;
 };
 
 type Sub = { sid: string; agent: string | null; from: number };
-type Child = { t: Transcript; tailer: Tailer };
+type Child = { t: Transcript; tailer: Tailer; calm: number; skip: number }; // calm: scans with nothing new
+const CALM_SCANS = 3;
+const SLOW_SCANS = 10;
 type Live = {
   id: string; path: string | null; cwd: string; t: Transcript;
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
   status: Status | null; statusAt: number; stream: string | null; pending: PendingRequest[]; held: string[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
   finder: NodeJS.Timeout | null;
+  working: Set<string>; // background work and subagents seen running, to tell when one ends
 };
 
 export type ViewsOptions = {
@@ -56,13 +60,15 @@ export type ViewsOptions = {
   defaultModel?: () => string | undefined;
   // After each message to the pages (the Dock badge recounts from it, debounced).
   onChange?: () => void;
+  // A background shell, monitor or subagent of the session stopped running.
+  onWorkEnded?: (sid: string) => void;
 };
 
 // The transcript's effort: a level, or {level} on some records.
 const effortOf = (e: unknown): string | null => typeof e === 'string' ? e
   : e && typeof (e as { level?: unknown }).level === 'string' ? (e as { level: string }).level : null;
 
-const tilde = (p: string, home: string): string => (home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
+const tilde = (p: string, home: string): string => displayPath(p, home);
 
 export class Views {
   private opts: ViewsOptions;
@@ -89,7 +95,7 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null, working: new Set(),
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
@@ -129,8 +135,10 @@ export class Views {
       onAgent: (aid, afile) => {
         const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf });
         s.t.setAgent(aid, undefined, t);
+        // No timer or watch of its own: the folder's watcher reads it after each scan (onScan).
         const tailer = new Tailer(afile, {
-          ...tail,
+          pollMs: 0,
+          watch: false,
           onRecords: (records) => {
             t.pushAll(records);
             s.t.setAgent(aid, undefined); // its total, start and end changed
@@ -142,12 +150,20 @@ export class Views {
             this.queue(s);
           },
         });
-        s.children.set(aid, { t, tailer });
+        s.children.set(aid, { t, tailer, calm: 0, skip: 0 });
         tailer.start();
       },
       onMeta: (aid, meta) => {
         s.t.setAgent(aid, meta);
         this.queue(s);
+      },
+      // Running subagents are read at every scan; a finished one whose file stopped growing only
+      // every SLOW_SCANS scans (it can be woken again).
+      onScan: () => {
+        for (const [aid, c] of s.children) {
+          if (!s.t.agentRunning(aid) && c.calm >= CALM_SCANS && ++c.skip % SLOW_SCANS !== 0) continue;
+          c.calm = c.tailer.check() ? 0 : c.calm + 1;
+        }
       },
     }, tail).start();
   }
@@ -173,6 +189,10 @@ export class Views {
     const n = this.live.get(newId) as Live;
     n.status = s.status;
     n.statusAt = s.statusAt;
+    // the driver's state moves too: a card still up, the messages held behind it, the preview
+    n.pending = s.pending;
+    n.held = s.held;
+    n.stream = s.stream;
     const meta = this.metaOf(n);
     n.sent = JSON.stringify(meta);
     this.broadcast({ t: 'session', replaces: oldId, ...meta });
@@ -242,10 +262,14 @@ export class Views {
     const ch = this.opts.choice?.(s.id);
     let statusAt = s.statusAt;
     if (!s.status) statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
+    // Section 10: your rename, then Claude's title, then the CLI's ai-title.
+    const title = t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session';
     return {
       id: s.id,
-      // Section 10: your rename, then Claude's title, then the CLI's ai-title.
-      title: t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session',
+      title,
+      // R3.4: the CLI's own name for it (its ai-title), shown small in the header so you recognise
+      // it from the terminal; left out while it is the title itself.
+      name: t.aiTitle && t.aiTitle !== title ? t.aiTitle : '',
       now: w?.now ?? '',
       cwd: tilde(s.cwd, this.home),
       prs: t.prs,
@@ -273,6 +297,25 @@ export class Views {
         const cur = out[out.length - 1];
         cur.claude = cur.claude ? `${cur.claude}\n\n${i.text ?? ''}` : i.text ?? '';
       }
+    }
+    return out;
+  }
+
+  // For the writer: the background work that runs now, and what ended since your last message,
+  // one line each ("shell “npm test”: running"). Empty without any.
+  work(id: string): string[] | undefined {
+    const s = this.live.get(id);
+    if (!s) return undefined;
+    const lastYou = [...s.t.items].reverse().find((i) => i.k === 'you')?.ts ?? '';
+    const recent = (end: string | null) => !lastYou || (end !== null && end >= lastYou);
+    const out: string[] = [];
+    for (const b of s.t.background()) {
+      if (b.status !== 'running' && !recent(b.end)) continue;
+      out.push(`${b.kind} “${(b.description || b.command).slice(0, 80)}”: ${b.status === 'completed' ? 'finished' : b.status}`);
+    }
+    for (const a of s.t.agents()) {
+      if (!a.running && !recent(a.end)) continue;
+      out.push(`${a.fork ? 'fork' : 'subagent'} “${a.description.slice(0, 80)}”: ${a.running ? 'running' : a.stopped ? 'stopped' : 'finished'}`);
     }
     return out;
   }
@@ -438,6 +481,16 @@ export class Views {
     if (ch.background.length) {
       this.broadcast({ t: 'background', sid: s.id, upsert: ch.background.map((id) => s.t.getBackground(id)).filter(Boolean) });
     }
+    // A shell, monitor or subagent that was running ended (often between turns): the writer
+    // looks again, as after a turn, so the Now line doesn't keep saying it runs.
+    let ended = false;
+    const track = (key: string, running: boolean) => {
+      if (running) s.working.add(key);
+      else if (s.working.delete(key)) ended = true;
+    };
+    for (const id of ch.background) { const b = s.t.getBackground(id); if (b) track(`b:${id}`, b.status === 'running'); }
+    for (const id of ch.agents) { const a = s.t.getAgent(id); if (a) track(`a:${id}`, a.running); }
+    if (ended) this.opts.onWorkEnded?.(s.id);
     const childChanges = new Map<string, string[]>();
     for (const [aid, c] of s.children) childChanges.set(aid, c.t.takeChanges().items);
     for (const [client, sub] of this.liveSubs()) {

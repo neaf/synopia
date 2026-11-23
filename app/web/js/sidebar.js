@@ -3,7 +3,7 @@
 let KEYS = [];
 function rowHTML(s) {
   const st = stateOf(s);
-  return `<button class="row" data-id="${s.id}" data-state="${st}" aria-current="${s.id === current}">
+  return `<button class="row" data-id="${esc(s.id)}" data-state="${st}" aria-current="${s.id === current}">
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
       <span class="r-state">${st === "green" ? WORD.green : `${wordOf(s)}, ${age(s.statusAt)}`}</span>
@@ -48,7 +48,7 @@ function renderSide() {
   KEYS = [...groups.flatMap(g => g.ids), ...others];
   let html = "";
   for (const g of groups) {
-    html += `<section class="group tree" data-group="${g.id}">
+    html += `<section class="group tree" data-group="${esc(g.id)}">
       <div class="th">
         ${renaming === g.id ? `<input class="g-input" id="g-input" value="${esc(g.name)}" aria-label="Group name">` : `<span class="g-name" title="Double-click to rename">${esc(g.name)}</span>`}
       </div>

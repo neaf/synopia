@@ -312,3 +312,67 @@ test('earlier: a subagent view pages its own transcript', () => {
   assert.deepEqual((p.upsert as { text: string }[]).map((i) => i.text), Array.from({ length: 90 }, (_, i) => `step ${i}`));
   views.stop();
 });
+test('rekey: a card, the held messages and the stream preview move to the new id (L5)', () => {
+  const { views } = setup(CLAUDE);
+  views.open('new-2', { cwd: '/tmp/x' });
+  views.setPending('new-2', { id: 'r1', kind: 'question', since: 1 });
+  views.setHeld('new-2', ['wait']);
+  views.setStream('new-2', 'Partly');
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000cd';
+  views.rekey('new-2', id);
+  assert.deepEqual(views.pending().map((p) => [p.sid, p.request.id]), [[id, 'r1']]);
+  views.clearPending(id, 'r1');
+  assert.deepEqual(views.pending(), []);
+  const s = (views.sessions() as { id: string; held: string[]; stream: string | null }[]).find((x) => x.id === id)!;
+  assert.deepEqual([s.held, s.stream], [['wait'], 'Partly']);
+});
+
+test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000ce';
+  const dir = tempSession(id, you(1) + line({ type: 'ai-title', aiTitle: 'Count the lines', sessionId: id }));
+  const clients = new Set<Client>();
+  let written: { title?: string } | undefined;
+  const views = new Views({ claudeDir: dir, clients: () => clients, home: HOME, pollMs: 0, watch: false, written: () => written });
+  views.open(id);
+  assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Count the lines', '']);
+  written = { title: 'Counting fixture lines' };
+  assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Counting fixture lines', 'Count the lines']);
+});
+
+test('subagents: read from the folder scan; a finished, quiet one only now and then (L6)', () => {
+  const { views } = setup(CLAUDE);
+  views.open(AGENTS);
+  type Inner = { live: Map<string, { t: { agentRunning: (id: string) => boolean }; watcher: { scan: () => void }; children: Map<string, { tailer: { check: () => boolean } }> }> };
+  const s = (views as unknown as Inner).live.get(AGENTS)!;
+  const counts = new Map<string, number>();
+  for (const [aid, c] of s.children) {
+    const check = c.tailer.check.bind(c.tailer);
+    c.tailer.check = () => { counts.set(aid, (counts.get(aid) ?? 0) + 1); return check(); };
+  }
+  for (let i = 0; i < 40; i++) s.watcher.scan();
+  const running = [...s.children.keys()].filter((aid) => s.t.agentRunning(aid));
+  const finished = [...s.children.keys()].filter((aid) => !s.t.agentRunning(aid));
+  assert.ok(finished.length > 0);
+  for (const aid of running) assert.equal(counts.get(aid), 40, `${aid} runs: read at every scan`);
+  for (const aid of finished) assert.ok((counts.get(aid) ?? 0) <= 8, `${aid} finished: read ${counts.get(aid)} times in 40 scans`);
+  views.stop();
+});
+
+test('work: a background shell ending between turns tells the writer, and its line says so', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000cf';
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 90', description: 'Wait a while', run_in_background: true } }] },
+  }));
+  const ended: string[] = [];
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: HOME, pollMs: 0, watch: false, onWorkEnded: (sid) => ended.push(sid) });
+  views.open(id);
+  views.check();
+  assert.deepEqual(ended, [], 'reading it running is no end');
+  assert.deepEqual(views.work(id), ['shell “Wait a while”: running']);
+  views.taskEnded(id, 'toolu_bg', 'killed', '');
+  assert.deepEqual(ended, [id]);
+  assert.deepEqual(views.work(id), ['shell “Wait a while”: killed']);
+  views.taskEnded(id, 'toolu_bg', 'killed', '');
+  assert.deepEqual(ended, [id], 'once');
+});
