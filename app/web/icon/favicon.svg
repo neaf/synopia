@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <title>Synopia</title>
+  <!-- paper tile; the dark edge separates it from light tab bars, the white body from dark ones -->
+  <rect x=".5" y=".5" width="31" height="31" rx="7.5" fill="#FFFFFF" stroke="#1F2328" stroke-opacity=".42"/>
+  <circle cx="16" cy="16" r="9.5" fill="none" stroke="#116329" stroke-width="4"/>
+  <circle cx="16" cy="16" r="4" fill="#116329"/>
+</svg>

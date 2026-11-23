@@ -9,3 +9,7 @@ node_modules/
 
 # Built app bundles
 *.app/
+
+# The port reads fixture data only through dev/compare.sh temp copies
+app/web/transcripts.js
+app/web/menu.js

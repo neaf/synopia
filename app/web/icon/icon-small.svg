@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Synopia (16 to 64 px)</title>
+  <!-- Small-size master for the 16, 32 and 64 px renditions: thicker ring, darker greens, firmer tile edge. -->
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E8EBEF"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity=".32"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)" filter="url(#shadow)"/>
+  <rect x="104" y="104" width="816" height="816" rx="181" fill="none" stroke="#1F2328" stroke-opacity=".3" stroke-width="10"/>
+  <g fill="none" stroke-linecap="round">
+    <circle cx="512" cy="512" r="226" stroke="#9FD3AE" stroke-width="112"/>
+    <circle cx="512" cy="512" r="226" stroke="#116329" stroke-width="112" pathLength="100" stroke-dasharray="42 58" transform="rotate(-150 512 512)"/>
+  </g>
+  <circle cx="512" cy="512" r="104" fill="#116329"/>
+</svg>

@@ -46,3 +46,7 @@ The user's global rules (from `~/dev/agent-harness`) apply:
 
 - Draft for review: `docs/technical-plan.md`. Decisions, digests and critic reviews: `.attack-plan/synopia-m1/` (ledger.md holds the author's answers Q1-Q11).
 - Big changes from this handover: Synopia is unaware of the terminal (no pid files, no take-over); transcripts come from JSONL tailing for every session; sessions keep the user's `auto` mode; SDK and CLI used through their documented surface only.
+
+## Build status
+
+- S1-3 (branch s1-3): the page is split into `app/web/` (index.html, css/app.css, js/*.js as classic scripts, icon/), still fed by `transcripts.js` and `menu.js`. Headless screenshots on the hand-written fixture (`app/web/dev/compare.sh`) match the prototype in 4 states; the only difference is the dropped "N open sessions" footer. Line map and drops in `app/web/dev/PORT.md`. `.slash` CSS kept: the slash menu uses it.

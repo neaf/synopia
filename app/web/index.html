@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia</title>
+<link rel="icon" type="image/svg+xml" href="icon/favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icon/favicon-32.png">
+<link rel="apple-touch-icon" href="icon/icon-256.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side" aria-label="Open sessions">
+    <div class="side-head"><h1>Synopia</h1></div>
+    <div class="side-scroll" id="groups"></div>
+    <div class="side-foot"><button class="btn" id="new">New session</button></div>
+  </aside>
+  <main class="conv" id="conv"></main>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<!-- Data until S1-5: transcripts.js (window.TRANSCRIPTS) and menu.js (window.MENU). See dev/README.md. -->
+<script src="transcripts.js"></script>
+<script src="menu.js"></script>
+<!-- Classic scripts sharing one global scope, in this order: later files use earlier ones at load time. -->
+<script src="js/marks.js"></script>
+<script src="js/md.js"></script>
+<script src="js/store.js"></script>
+<script src="js/sidebar.js"></script>
+<script src="js/dnd.js"></script>
+<script src="js/transcript.js"></script>
+<script src="js/rail.js"></script>
+<script src="js/card.js"></script>
+<script src="js/composer.js"></script>
+<script src="js/keys.js"></script>
+<script src="js/bridge.js"></script>
+</body>
+</html>
