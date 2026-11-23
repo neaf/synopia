@@ -20,6 +20,7 @@ function stopRow(x) {
 }
 function railHTML(s, A) {
   if (!hasBackground(s)) return "";
+  graceScan();
   const kindOf = x => x.kind ? x.kind : agentType(x);
   const all = [
     ...agentsOf(s).map(a => ({ key: a.id, agent: a, name: a.description, kind: a.fork ? "fork" : (a.type || "subagent"), start: a.start, end: a.finished ? a.end : null, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done", ms: agentMs(a) })),
@@ -27,9 +28,10 @@ function railHTML(s, A) {
       end: st === "running" ? null : (b.end || new Date(new Date(b.start).getTime() + (b.timeout || 0)).toISOString()), running: st === "running", failed: st === "failed", st, ms: bgMs(b) }; })
   ];
   for (const x of all) if (!x.running && stopping.has(taskOf(x))) stopping.delete(taskOf(x));
-  const past = all.filter(x => !x.running).sort((p, q) => new Date(q.end) - new Date(p.end));
+  for (const x of all) x.shown = x.running || inGrace(s.id, x.key); // one that just finished stays in the tree for its grace
+  const past = all.filter(x => !x.shown).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
-  const running = all.filter(x => x.running).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
+  const running = all.filter(x => x.shown).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
   /* a subagent's own shells and monitors hang under its card; the main thread's (or an orphan's) under Main conversation */
   const parentOf = x => x.bg && x.bg.agentId && running.some(y => y.agent && y.agent.id === x.bg.agentId) ? x.bg.agentId : null;
   const now = running.filter(x => !parentOf(x)), kidsOf = x => x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
@@ -41,10 +43,10 @@ function railHTML(s, A) {
     return `<div class="bw-detail">${x.bg.summary ? esc(x.bg.summary) : x.running ? "No report yet." : esc(x.st)}<code>${esc(x.bg.command)}</code>${x.running ? stopRow(x) : ""}</div>`;
   };
   const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
-  return `<aside class="rail panel" aria-label="Background work">
+  return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
-      <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${now.length ? `${now.length} running in the background` : "Nothing running in the background"}</span><span class="w">${esc(wordOf(s))}</span></button>
-      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}"><i class="tg"></i><button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
+      <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running).length)}</span><span class="w">${esc(wordOf(s))}</span></button>
+      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}" ${attrs(x)}>${x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${detail(x)}${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
@@ -55,3 +57,17 @@ function railHTML(s, A) {
     </div>
   </aside>`;
 }
+/* running items coming into and leaving the tree tween like the sidebar's sub-lines (tween.js); each child holds
+   its own guide, so the guides follow its height on every frame */
+const railTw = lineTweens({
+  sel: ".kid", groups: el => new Map([[el.dataset.sid, el]]), id: "rail-line", cls: { tw: "tw", gone: "gone" },
+  box: (n, h) => ({ open: { height: h, paddingTop: "5.5px" }, shut: { height: "0px", paddingTop: "0px" } }),
+  fade: n => [...n.children].filter(c => !c.classList.contains("tg")),
+  place: (g, n, after, parent, find) => {
+    if (after) { after.after(n); return; }
+    const host = parent ? find(parent) : g.querySelector(".now"); if (!host) return;
+    let ks = host.querySelector(":scope > .kids");
+    if (!ks) { ks = document.createElement("div"); ks.className = "kids"; host.append(ks); }
+    ks.prepend(n);
+  },
+});

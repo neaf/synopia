@@ -121,4 +121,61 @@ for (const [ch, key, coming] of [['bgOn', 'bg', true], ['bgOff', 'bg', false]]) 
   check('reduced motion ' + (coming ? 'coming' : 'going') + ': instant (first frame final, nothing animates)', fr.every((f) => eq(f.h, end.h, 0.05) && (coming ? f.op === 1 : !f.line)) && !eq(end.h, res.before.h, 4) && res.anims === 0, JSON.stringify(fr[0]) + ' ' + res.anims);
 }
 await reduce(false);
+
+// ---------- the background panel: children tween in and out like the sub-lines, guides following (R7.1) ----------
+await ev(`(() => { current = TWID; view = null; openBg = null; const s0 = store.sessions.get(TWID); s0.background = [...(s0.background || []), { toolUseId: 'tw-past', kind: 'shell', status: 'completed', start: new Date(Date.now() - 60000).toISOString(), end: new Date().toISOString(), description: 'the panel is up', command: 'true' }]; renderAll();
+  const S = () => store.sessions.get(TWID), iso = () => new Date().toISOString();
+  window.RW = { kid: k => document.querySelector('.rail .kid[data-line="' + k + '"]'),
+    shellOn: () => { const s = S(); s.background = [...(s.background || []), { toolUseId: 'tw-rb', kind: 'shell', status: 'running', start: iso(), description: 'rail tween check', command: 'sleep 9' }]; },
+    shellOff: () => { const s = S(); s.background = s.background.filter(b => b.toolUseId !== 'tw-rb'); },
+    shellDone: () => { const b = S().background.find(b => b.toolUseId === 'tw-rb'); b.status = 'completed'; b.end = iso(); },
+    agentOn: () => { const s = S(); s.agents = [...(s.agents || []), { id: 'tw-ag', toolUseId: 'tw-ag-t', description: 'grace check', type: 'general-purpose', finished: false, start: iso() }]; },
+    agentDone: () => { const a = S().agents.find(a => a.id === 'tw-ag'); a.finished = true; a.end = iso(); } };
+  window.RW_SAMPLE = (change, key, ms) => new Promise(done => {
+    const out = [], t0 = performance.now(); RW[change](); renderRail();
+    const iv = setInterval(() => renderRail(), 40);
+    const f = () => { const k = RW.kid(key);
+      if (k) { const b = k.getBoundingClientRect(), tg = k.querySelector(':scope > .tg').getBoundingClientRect(), card = k.querySelector(':scope > .card');
+        out.push({ t: performance.now() - t0, h: b.height, op: +getComputedStyle(card).opacity, tgTop: tg.top - b.top, tgBot: tg.bottom - b.bottom, tgOp: +getComputedStyle(k.querySelector(':scope > .tg')).opacity }); }
+      else out.push({ t: performance.now() - t0, gone: true });
+      if (performance.now() - t0 < ms) requestAnimationFrame(f); else { clearInterval(iv); done({ frames: out, anims: document.getAnimations().filter(a => a.id === 'rail-line').length }); } };
+    requestAnimationFrame(f); });
+  return 'ok'; })()`);
+await c.cdp('Page.bringToFront');
+let rf = (await ev(`RW_SAMPLE('shellOn', 'tw-rb', 480)`)).frames.filter((f) => !f.gone);
+const full = rf.length ? Math.max(...rf.map((f) => f.h)) : 0;
+check('rail child coming: the height opens over several frames', rf.filter((f) => f.h > 0.5 && f.h < full - 0.5).length >= 3, JSON.stringify(rf.map((f) => +f.h.toFixed(1))));
+check('rail child coming: the card stays transparent until full height, then fades in', rf.every((f) => f.h >= full - 0.5 || f.op <= 0.01) && rf.filter((f) => f.op > 0.01 && f.op < 0.99).length >= 3 && rf.at(-1).op === 1, JSON.stringify(rf.map((f) => [+f.h.toFixed(1), +f.op.toFixed(2)])));
+check('rail child coming: its guide spans it on every frame and never fades', rf.every((f) => eq(f.tgTop, 0, 0.05) && eq(f.tgBot, 0, 0.05) && f.tgOp === 1), JSON.stringify(rf.find((f) => !eq(f.tgTop, 0, 0.05) || !eq(f.tgBot, 0, 0.05) || f.tgOp !== 1)));
+rf = (await ev(`RW_SAMPLE('shellOff', 'tw-rb', 480)`)).frames;
+const lit = rf.filter((f) => !f.gone);
+check('rail child going: fades at full height first, then the height closes, then it is gone', lit.length >= 6 && lit.every((f) => f.h >= full - 0.5 || f.op <= 0.01) && lit.some((f) => f.op > 0.01 && f.op < 0.99) && lit.some((f) => f.h > 0.5 && f.h < full - 0.5) && rf.at(-1).gone, JSON.stringify(rf.map((f) => f.gone ? 'x' : [+f.h.toFixed(1), +f.op.toFixed(2)])));
+check('rail child going: its guide spans it on every frame', lit.every((f) => eq(f.tgTop, 0, 0.05) && eq(f.tgBot, 0, 0.05)), '');
+
+// ---------- the 5 s grace on finishing, in the panel and the sidebar ----------
+const graceState = (key, line) => ev(`(() => { const k = RW.kid('${key}'), r = [...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID), ln = r && r.querySelector('.r-main > [data-line="${line}"]');
+  return { kid: !!k, ended: !!k && k.querySelector('.card').classList.contains('ended'), marks: k ? k.querySelectorAll('.card > .pm > .ind').length : 0, kidLive: !!k && !!k.querySelector('[data-live]'),
+    past: [...document.querySelectorAll('.rail .pr .n')].some(n => n.textContent.includes(${JSON.stringify('check')})),
+    side: !!ln && !ln.classList.contains('r-gone'), sideMarks: ln ? ln.querySelectorAll('.ind').length : 0, sideLive: !!ln && !!ln.querySelector('[data-live]'), sideText: ln ? ln.textContent.trim() : '',
+    order: [...document.querySelectorAll('.rail .now > .kids > .kid')].map(k => k.dataset.line), before: !!document.querySelector('.rail .now') && [...document.querySelector('.rail').children].indexOf(document.querySelector('.rail .now')) === 0 }; })()`);
+for (const [name, rm] of [['', false], ['reduced motion: ', true]]) {
+  await reduce(rm);
+  await ev(`RW.shellOn(); RW.agentOn(); renderAll()`); await sleep(500);
+  const t0 = Date.now();
+  await ev(`RW.shellDone(); RW.agentDone(); renderAll()`);
+  await sleep(1500);
+  // a session switch and back mid-grace: neither restarts nor cuts it
+  await ev(`current = KEYS.find(k => k !== TWID); renderAll()`); await sleep(500);
+  await ev(`current = TWID; renderAll()`);
+  await sleep(4000 - (Date.now() - t0));
+  const g = await graceState('tw-ag', 'a:tw-ag'), gs = await graceState('tw-rb', 'bg');
+  check(name + 'grace at 4 s: the panel keeps the subagent and the shell where they were, with their final status', g.kid && g.ended && g.marks === 2 && !g.kidLive && gs.kid && gs.ended && gs.marks === 2 && !gs.kidLive && !g.past, JSON.stringify([g, gs]));
+  check(name + 'grace at 4 s: the panel keeps the running order (subagent before shell), the tree first', g.order.indexOf('tw-ag') >= 0 && g.order.indexOf('tw-ag') < g.order.indexOf('tw-rb') && g.before, JSON.stringify(g.order));
+  check(name + 'grace at 4 s: the sidebar keeps the sub-lines, still marks and a frozen duration', g.side && g.sideMarks === 2 && !g.sideLive && gs.side && gs.sideMarks === 2 && /finished/.test(gs.sideText), JSON.stringify([g.sideText, gs.sideText]));
+  await sleep(5600 - (Date.now() - t0));
+  const e = await graceState('tw-ag', 'a:tw-ag'), es = await graceState('tw-rb', 'bg');
+  check(name + 'after about 5.3 s: gone from the tree and the sidebar, the shell in Past', !e.kid && !es.kid && !e.side && !es.side && es.past, JSON.stringify([e, es]));
+  await ev(`(() => { const s = store.sessions.get(TWID); s.background = s.background.filter(b => b.toolUseId !== 'tw-rb'); s.agents = s.agents.filter(a => a.id !== 'tw-ag'); renderAll(); })()`); await sleep(400);
+}
+await reduce(false);
 c.print(); c.close();

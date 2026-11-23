@@ -303,6 +303,13 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 /* a parent's Stop row moves in beside its children's guide, which runs past it */
 .kid.parent > .bw-detail { position: relative; margin-left: 64.5px; }
 .kid.parent > .bw-detail::before { content: ""; position: absolute; left: -16.5px; top: -5.5px; bottom: -1.5px; border-left: 1px solid var(--guide); }
+/* a child coming or going (rail.js railTw) clips to its tweened height; its guide is inside, so it follows */
+.kid.tw { box-sizing: border-box; overflow: hidden; }
+.kid.gone { pointer-events: none; }
+/* just finished, for its grace: the status mark with the still kind mark, as in Past, and the final duration */
+.card.ended { grid-template-columns: auto minmax(0, 1fr) auto; }
+.card.ended > .pm { grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+.card.ended .d { color: var(--ink-3); }
 .kid:not(:last-child) > .tg::after { content: ""; position: absolute; left: 0; top: 28px; width: 11px; border-top: 1px solid var(--guide); }
 
 /* motion only on things that are running: one spinner everywhere; still with reduced motion */

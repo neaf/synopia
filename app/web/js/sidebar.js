@@ -7,14 +7,27 @@ function rowHTML(s) {
       <span class="r-title">${esc(s.title)}</span>
       <span class="r-state">${rowWord(s)}</span>
       ${s.now ? `<span class="r-now" data-line="now">${esc(s.now)}</span>` : ""}
-      ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}" data-line="a:${esc(a.id)}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
-      ${(n => n ? `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => !b.agentId && bgState(b) === "running").length)}
+      ${agentsOf(s).filter(a => !a.finished || inGrace(s.id, a.id)).slice(0, 3).map(a => { const k = a.fork ? "fork" : "sub", x = { agent: a, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done" };
+        return `<span class="r-agent kc-${k}" data-line="a:${esc(a.id)}"><i class="el"></i>${a.finished ? `${ind(bgMarkKey(x))}${ind("s_" + k)}` : ind("k_" + k)} <b class="kw">${esc(a.description)}</b> ${a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))}</span>`; }).join("")}
+      ${bgLine(s)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(toReview(s).length)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
     <span class="merge-hint">+ New group</span>
     <span class="r-side" title="${esc(wordOf(s))}">${sessionMark(s)}</span>
   </button>`;
+}
+/* the main thread's shells and monitors as one line: a count while any runs; once the last finishes, its final
+   status for the grace (tween.js), then the line leaves. A subagent's own stay in the panel. */
+function bgLine(s) {
+  const own = bgOf(s).filter(b => !b.agentId), n = own.filter(b => bgState(b) === "running").length;
+  const many = c => `${c} shell${c > 1 ? "s" : ""} or monitor${c > 1 ? "s" : ""}`;
+  if (n) return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${many(n)} running</span>`;
+  const gr = own.filter(b => inGrace(s.id, b.toolUseId)).sort((p, q) => new Date(p.end || 0) - new Date(q.end || 0)), b = gr.at(-1);
+  if (!b) return "";
+  const st = bgState(b), x = { bg: b, running: false, failed: st === "failed", st };
+  const word = st === "failed" ? "failed" : st === "timed out" ? "timed out" : st === "stopped" || st === "killed" ? "stopped" : "finished";
+  return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))} ${many(gr.length)} ${word}</span>`;
 }
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
 function rowWord(s) {
@@ -51,6 +64,7 @@ let renaming = null;
 function renderSide() {
   if (!layout) loadLayout();
   reconcile();
+  graceScan();
   const c = st => data.filter(s => stateOf(s) === st).length;
   const byId = id => data.find(s => s.id === id);
   const groups = layout.groups.map(g => ({ ...g, ids: shown(g.ids) })).filter(g => g.ids.length), others = shown(layout.others);
@@ -79,56 +93,14 @@ function renderSide() {
     inp.onblur = () => done(true);
   }
 }
-/* ---------- sub-line tweens (R8.1): a line that comes opens its height, then fades in; one that goes fades
-   out, then closes; TW ms a step, instant with reduced motion. renderSide rebuilds the rows, so each tween is
-   keyed by session id and line (data-line) and re-applied at its elapsed time after every render. A line
-   whose text changes keeps its key and doesn't move. ---------- */
-const TW = 150, tweens = new Map(); // "sid|line" -> { dir: 1 comes, -1 goes, t0, node: a going line's last element, after: the line before it }
-const lineSel = ".r-main > [data-line]";
-function lineSnap(el) {
-  const m = new Map();
-  el.querySelectorAll(".row").forEach(r => {
-    const ls = [...r.querySelectorAll(lineSel)].filter(n => !n.classList.contains("r-gone"));
-    m.set(r.dataset.id, ls.map((n, i) => ({ k: n.dataset.line, node: n, after: i ? ls[i - 1].dataset.line : null })));
-  });
-  return m;
-}
-function startTween(key, dir, now, node, after) {
-  const t = tweens.get(key), e = t ? Math.min(now - t.t0, 2 * TW) : 2 * TW; // turning round mid-way goes back from where it was
-  tweens.set(key, { dir, t0: now - (2 * TW - e), node: node || t?.node, after: after !== undefined ? after : t?.after });
-}
-function tweenLines(el, before) {
-  const now = document.timeline.currentTime ?? performance.now(); // the animations' clock, so a re-render in the same frame lands on the same point
-  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { tweens.clear(); return; }
-  const rows = new Map([...el.querySelectorAll(".row")].map(r => [r.dataset.id, r]));
-  rows.forEach((r, sid) => {
-    const old = before.get(sid); if (!old) return; // a row that appears whole doesn't tween its lines
-    const ks = new Set([...r.querySelectorAll(lineSel)].map(n => n.dataset.line));
-    for (const k of ks) if (!old.some(o => o.k === k)) startTween(sid + "|" + k, 1, now);
-    for (const o of old) if (!ks.has(o.k)) startTween(sid + "|" + o.k, -1, now, o.node, o.after);
-  });
-  for (const [key, t] of tweens) {
-    const i = key.indexOf("|"), r = rows.get(key.slice(0, i)), k = key.slice(i + 1), at = now - t.t0;
-    if (!r || at >= 2 * TW) { tweens.delete(key); continue; }
-    const find = x => [...r.querySelectorAll(lineSel)].find(n => n.dataset.line === x);
-    let n = find(k);
-    if (t.dir < 0) {
-      if (n || !t.node) { tweens.delete(key); continue; }
-      n = t.node; n.classList.add("r-gone"); n.setAttribute("aria-hidden", "true");
-      (find(t.after) || r.querySelector(".r-state")).after(n);
-      n.getAnimations().forEach(a => { if (a.id === "side-line") a.cancel(); }); // in the page again, so its last tween is listed
-    }
-    if (!n) { tweens.delete(key); continue; }
-    n.classList.add("tw");
-    const h = n.getBoundingClientRect().height + "px", shut = { height: "0px", marginTop: "-1px", opacity: 0 }; // -1px takes back the grid gap
-    const kf = t.dir > 0
-      ? [{ ...shut, easing: "ease-in-out" }, { height: h, marginTop: "0px", opacity: 0, offset: .5, easing: "linear" }, { height: h, marginTop: "0px", opacity: 1 }]
-      : [{ height: h, marginTop: "0px", opacity: 1, easing: "linear" }, { height: h, marginTop: "0px", opacity: 0, offset: .5, easing: "ease-in-out" }, shut];
-    const a = n.animate(kf, { duration: 2 * TW, fill: "both", id: "side-line" });
-    if (document.timeline.currentTime != null) a.startTime = t.t0; else a.currentTime = at; // on the timeline from its start: no pending frame
-    a.onfinish = () => { if (tweens.get(key) === t) tweens.delete(key); if (t.dir < 0) n.remove(); else { n.classList.remove("tw"); a.cancel(); } };
-  }
-}
+/* sub-line tweens (R8.1, tween.js): keyed by session id and line (data-line), re-applied after every render */
+const sideTw = lineTweens({
+  sel: ".r-main > [data-line]", id: "side-line", cls: { tw: "tw", gone: "r-gone" },
+  groups: el => new Map([...el.querySelectorAll(".row")].map(r => [r.dataset.id, r])),
+  box: (n, h) => ({ open: { height: h, marginTop: "0px" }, shut: { height: "0px", marginTop: "-1px" } }), // -1px takes back the grid gap
+  place: (r, n, after) => (after || r.querySelector(".r-state")).after(n),
+});
+const tweens = sideTw.tweens, lineSnap = sideTw.snap, tweenLines = sideTw.run;
 /* "Close session": hides it and ends its process. When a turn or background work runs, ask first. */
 function closeSession(s) {
   if (!s) return;
