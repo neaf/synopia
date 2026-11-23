@@ -2,6 +2,7 @@
 import { WebSocket } from '../../../backend/node_modules/ws/wrapper.mjs';
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export async function connect(port = +(process.env.SYNOPIA_CHROME_PORT || 9334)) { // another Chrome when other checks share 9334
+export async function connect(port = Number(process.env.SYNOPIA_CHROME_PORT || 9334)) {
   const targets = await (await fetch('http://127.0.0.1:' + port + '/json')).json();
   const page = targets.find((t) => t.type === 'page');
   const ws = new WebSocket(page.webSocketDebuggerUrl);
