@@ -30,6 +30,7 @@ export type Background = {
   toolUseId: string; taskId: string | null; kind: 'shell' | 'monitor'; description: string; command: string;
   timeout: unknown; persistent: boolean; start: string | null;
   status: string; summary: string; end: string | null;
+  agentId?: string; // started by this subagent (from its own transcript); absent for the main thread's
 };
 export type Agent = {
   id: string; type: string; fork: boolean; description: string; toolUseId: string | null;
@@ -302,8 +303,15 @@ export class Transcript {
   }
 
   takeChanges(): Changes {
+    // Subagents' shells and monitors: their own changes, and all of a changed subagent's (they end with it).
+    const bg = new Set(this.changedBg);
+    for (const [aid, a] of this.agentMeta) {
+      if (!a.sub) continue;
+      for (const id of a.sub.takeBackgroundChanges()) bg.add(id);
+      if (this.changedAgents.has(aid)) for (const b of a.sub.background()) bg.add(b.toolUseId);
+    }
     const out = {
-      items: [...this.changed], background: [...this.changedBg], agents: [...this.changedAgents], meta: this.metaChanged,
+      items: [...this.changed], background: [...bg], agents: [...this.changedAgents], meta: this.metaChanged,
     };
     this.changed.clear();
     this.changedBg.clear();
@@ -655,7 +663,10 @@ export class Transcript {
       Object.assign(b, note);
       this.changedBg.add(tid);
     }
-    for (const [aid, a] of this.agentMeta) if (a.meta && a.meta.toolUseId === tid) this.changedAgents.add(aid);
+    for (const [aid, a] of this.agentMeta) {
+      if (a.meta && a.meta.toolUseId === tid) this.changedAgents.add(aid);
+      if (!b && a.sub?.getBackground(tid)) this.changedBg.add(tid); // a subagent's, notified in this file
+    }
   }
 
   // The Agent tool_use id of one of this conversation's subagents (from its launch result or its meta).
@@ -680,12 +691,43 @@ export class Transcript {
     }
   }
 
+  // The main thread's shells and monitors, then each subagent's, tagged with its id.
   background(): Background[] {
-    return [...this.bg.values()];
+    const out = [...this.bg.values()];
+    for (const aid of [...this.agentMeta.keys()].sort()) {
+      const sub = this.agentMeta.get(aid)?.sub;
+      if (sub) for (const b of sub.background()) out.push(this.subBackground(aid, sub, b));
+    }
+    return out;
   }
 
   getBackground(id: string): Background | undefined {
-    return this.bg.get(id);
+    const own = this.bg.get(id);
+    if (own) return own;
+    for (const [aid, a] of this.agentMeta) {
+      const b = a.sub?.getBackground(id);
+      if (b && a.sub) return this.subBackground(aid, a.sub, b);
+    }
+    return undefined;
+  }
+
+  // A shell or monitor a subagent started lives in that subagent's file. Its notification can
+  // land there (already in `b`) or in this file. With none, it runs while its subagent runs; once
+  // the subagent is over it reads as stopped, ended with its subagent.
+  private subBackground(aid: string, sub: Transcript, b0: Background): Background {
+    const b: Background = { ...b0, taskId: b0.taskId ?? this.taskIds.get(b0.toolUseId) ?? null, agentId: aid };
+    if (b.status !== 'running') return b;
+    const note = this.notes.get(b.toolUseId);
+    if (note) return Object.assign(b, note);
+    if (!this.agentRunning(aid)) Object.assign(b, { status: 'stopped', summary: 'Ended with its subagent', end: sub.lastTs ?? this.ended });
+    return b;
+  }
+
+  // This (subagent's) conversation's background ids that changed since last asked.
+  takeBackgroundChanges(): string[] {
+    const out = [...this.changedBg];
+    this.changedBg.clear();
+    return out;
   }
 
   // Links a subagent to this (main) conversation. `meta` is its .meta.json (null until it

@@ -618,3 +618,50 @@ test('turn: "for tool use" is a tool you turned down, and Claude carrying on kee
   assert.equal(t.turnRunning(NOW, QUIET), false);
   assert.equal(t.items.at(-1)?.text, '[Request interrupted by user]', 'the page reads this last item as stopped by you');
 });
+
+// Shells and monitors a subagent started live in its own file (claude-rail fixture).
+function loadRail(): Transcript {
+  const claude = path.join(import.meta.dirname, 'fixtures', 'claude-rail');
+  const file = findTranscript(claude, '66666666-0000-4000-8000-000000000006') as string;
+  const main = new Transcript({ home: HOME });
+  main.pushAll(records(file));
+  const w = new SubagentWatcher(sessionDirOf(file), {
+    onAgent: (aid, f) => {
+      const sub = new Transcript({ sidechain: true, home: HOME });
+      sub.pushAll(records(f));
+      main.setAgent(aid, undefined, sub);
+    },
+    onMeta: (aid, meta) => main.setAgent(aid, meta),
+  }, { pollMs: 0, watch: false });
+  w.scan();
+  return main;
+}
+
+test("subagents' shells and monitors: tagged, notified in either file, stopped with their subagent", () => {
+  const t = loadRail();
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.agentId ?? null, b.kind, b.status, b.taskId]), [
+    ['toolu_rsh', null, 'shell', 'running', 'bmain1'], // the main thread's own
+    ['toolu_bsh1', 'bbbb0001', 'shell', 'running', 'bsub1'], // no notification, its subagent runs
+    ['toolu_bmon1', 'bbbb0001', 'monitor', 'running', 'bsubm1'],
+    ['toolu_bsh2', 'bbbb0001', 'shell', 'failed', 'bsub2'], // notified in the subagent's file
+    ['toolu_bsh3', 'bbbb0001', 'shell', 'completed', 'bsub3'], // notified in the main file
+    ['toolu_bsh4', 'bbbb0002', 'shell', 'stopped', 'bsub4'], // its subagent finished, no notification
+  ]);
+  const b4 = t.getBackground('toolu_bsh4');
+  assert.deepEqual([b4?.summary, b4?.end], ['Ended with its subagent', '2026-11-20T13:03:50.000Z']);
+  assert.equal(t.getBackground('toolu_bsh3')?.summary, 'Copied the icons');
+  assert.ok(!t.items.some((i) => i.id.startsWith('toolu_bsh') || i.id.startsWith('toolu_bmon')), 'not in the main transcript');
+});
+
+test("subagents' shells and monitors: changes reported, and they end when their subagent does", () => {
+  const t = loadRail();
+  const first = t.takeChanges().background;
+  for (const id of ['toolu_rsh', 'toolu_bsh1', 'toolu_bmon1', 'toolu_bsh4']) assert.ok(first.includes(id), id);
+  assert.deepEqual(t.takeChanges().background, []);
+  t.taskEnded('toolu_bmon1', 'stopped', '', '2026-11-20T13:07:00.000Z'); // the SDK's, by its tool use id
+  assert.deepEqual(t.takeChanges().background, ['toolu_bmon1']);
+  assert.equal(t.getBackground('toolu_bmon1')?.status, 'stopped');
+  t.setAgent('bbbb0001', { agentType: 'general-purpose', description: 'Build image thumbnails', toolUseId: 'toolu_r1', finished: true });
+  assert.ok(t.takeChanges().background.includes('toolu_bsh1'));
+  assert.deepEqual([t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], ['stopped', 'Ended with its subagent']);
+});

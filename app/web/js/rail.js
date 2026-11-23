@@ -29,7 +29,11 @@ function railHTML(s, A) {
   for (const x of all) if (!x.running && stopping.has(taskOf(x))) stopping.delete(taskOf(x));
   const past = all.filter(x => !x.running).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
-  const now = all.filter(x => x.running).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
+  const running = all.filter(x => x.running).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
+  /* a subagent's own shells and monitors hang under its card; the main thread's (or an orphan's) under Main conversation */
+  const parentOf = x => x.bg && x.bg.agentId && running.some(y => y.agent && y.agent.id === x.bg.agentId) ? x.bg.agentId : null;
+  const now = running.filter(x => !parentOf(x)), kidsOf = x => x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
+  const nameOfAgent = id => agentsOf(s).find(a => a.id === id)?.description || "a subagent";
   const attrs = x => x.agent ? `data-agent="${esc(x.agent.id)}" aria-current="${!!(A && A.id === x.agent.id)}"${x.running ? ` aria-expanded="${openBg === x.key}"` : ""}` : `data-bg="${esc(x.key)}" aria-expanded="${openBg === x.key}"`;
   const detail = x => {
     if (openBg !== x.key) return "";
@@ -40,14 +44,14 @@ function railHTML(s, A) {
   return `<aside class="rail panel" aria-label="Background work">
     <div class="now">
       <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${now.length ? `${now.length} running in the background` : "Nothing running in the background"}</span><span class="w">${esc(wordOf(s))}</span></button>
-      ${now.length ? `<div class="kids">${now.map(x => `<div class="kid"><i class="tg"></i><button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}</div>`).join("")}</div>` : ""}
+      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}"><i class="tg"></i><button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
         <button class="btn quiet rv-done" data-reviewed="${esc(x.agent.id)}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
     <div class="past" id="past">
       ${past.length ? `<h3>Past <span class="cnt">${past.length}</span></h3>` : ""}
-      ${past.filter(x => bgMarkKey(x) !== "review").map(x => `<button class="pr ${x.failed ? "failed" : ""}" ${attrs(x)}><span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span><span class="n">${esc(x.name)}${x.st === "timed out" ? ` <span class="k">timed out</span>` : x.failed ? ` <span class="k">failed</span>` : ""}</span><span class="d">${took(x.ms)}</span></button>${detail(x)}`).join("")}
+      ${past.filter(x => bgMarkKey(x) !== "review").map(x => `<button class="pr ${x.failed ? "failed" : ""}" ${attrs(x)}><span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span><span class="n">${esc(x.name)}${x.st === "timed out" ? ` <span class="k">timed out</span>` : x.failed ? ` <span class="k">failed</span>` : ""}${x.bg && x.bg.agentId ? ` <span class="in">in ${esc(nameOfAgent(x.bg.agentId))}</span>` : ""}</span><span class="d">${took(x.ms)}</span></button>${detail(x)}`).join("")}
     </div>
   </aside>`;
 }

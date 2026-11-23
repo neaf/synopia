@@ -1,0 +1,7 @@
+{
+  "agentType": "Explore",
+  "description": "Check the old images",
+  "toolUseId": "toolu_r2",
+  "spawnDepth": 1,
+  "finished": true
+}

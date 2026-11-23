@@ -8,7 +8,7 @@ function rowHTML(s) {
       <span class="r-state">${rowWord(s)}</span>
       ${s.now ? `<span class="r-now" data-line="now">${esc(s.now)}</span>` : ""}
       ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}" data-line="a:${esc(a.id)}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
-      ${(n => n ? `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
+      ${(n => n ? `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => !b.agentId && bgState(b) === "running").length)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(toReview(s).length)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
@@ -132,7 +132,7 @@ function tweenLines(el, before) {
 /* "Close session": hides it and ends its process. When a turn or background work runs, ask first. */
 function closeSession(s) {
   if (!s) return;
-  const n = k => bgOf(s).filter(b => bgState(b) === "running" && b.kind === k).length;
+  const n = k => bgOf(s).filter(b => !b.agentId && bgState(b) === "running" && b.kind === k).length; // a subagent's own stop with it
   const plural = (c, one, many) => c ? [`${c} ${c === 1 ? one : many}`] : [];
   const work = [...plural(agentsOf(s).filter(a => !a.finished).length, "subagent", "subagents"),
     ...plural(n("shell"), "background shell", "background shells"), ...plural(n("monitor"), "monitor", "monitors")];

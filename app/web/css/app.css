@@ -256,6 +256,7 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .pr { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; width: 100%; padding: 2.5px 12.5px; cursor: pointer; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
 .pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
 .pr .k { color: var(--faint); }
+.pr .in { color: var(--faint); } /* the subagent a shell or monitor ran in */
 .pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
 .pr.failed .d, .pr.failed .k { color: var(--red); }
 .pr:hover { background: var(--sub); }
@@ -295,6 +296,13 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .kid > .tg { display: block; position: absolute; left: 22px; top: 0; bottom: 0; width: 11px; pointer-events: none; }
 .kid > .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
 .kid:last-child > .tg::before { bottom: auto; height: 29px; border-bottom: 1px solid var(--guide); width: 11px; }
+/* a subagent's own shells and monitors, one level deeper: the guide drops from the subagent card's mark (33 + 1 + 9 + 5.5 px in) */
+.kid .kid > .tg { left: 48px; }
+.kid .kid > .card { margin-left: 59px; width: calc(100% - 66px); }
+.kid .kid > .bw-detail { margin-left: 64.5px; }
+/* a parent's Stop row moves in beside its children's guide, which runs past it */
+.kid.parent > .bw-detail { position: relative; margin-left: 64.5px; }
+.kid.parent > .bw-detail::before { content: ""; position: absolute; left: -16.5px; top: -5.5px; bottom: -1.5px; border-left: 1px solid var(--guide); }
 .kid:not(:last-child) > .tg::after { content: ""; position: absolute; left: 0; top: 28px; width: 11px; border-top: 1px solid var(--guide); }
 
 /* motion only on things that are running: one spinner everywhere; still with reduced motion */
