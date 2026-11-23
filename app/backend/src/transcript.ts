@@ -147,6 +147,7 @@ export class Transcript {
   private ended: string | null = null;
   private endedFailed = false; // that end was a process failure (else close, idle end or quit)
   private interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
+  private lastErrors: string[] = []; // the error results of the record just read, if it held results
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
   // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
@@ -280,16 +281,19 @@ export class Transcript {
         this.refreshTool(tid);
       }
     }
-    if (Array.isArray(content)) {
+    if (Array.isArray(content) && content.some((b) => isBlock(b, 'tool_result'))) {
+      const errors: string[] = [];
       for (const b of content) {
         if (!isBlock(b, 'tool_result')) continue;
         const r = obj(b);
         const tid = str(r.tool_use_id);
         this.results.set(tid, Boolean(r.is_error));
+        if (r.is_error) errors.push(tid);
         if (r.is_error && /^\[(Request interrupted by user|Tool call interrupted)/.test(textOf(r.content).trim())) this.interrupted.add(tid);
         if (this.asks.has(tid)) this.answers.set(tid, clip(textOf(r.content), 2000));
         this.refreshTool(tid);
       }
+      this.lastErrors = errors;
       if (content.every((b) => isBlock(b, 'tool_result'))) return;
     }
     const txt = textOf(content);
@@ -337,11 +341,20 @@ export class Transcript {
     }
     if (txt.startsWith('<') && !images) return; // system reminders, local command output, hooks
     const item: Item = { id: uuid, k: 'you', ts, text: clip(txt), images };
-    if (txt.startsWith('[Request interrupted by user')) item.interrupted = true;
+    if (txt.startsWith('[Request interrupted by user')) {
+      item.interrupted = true;
+      // The CLI writes the tools the interrupt cut short as error results just before this marker.
+      for (const tid of this.lastErrors) {
+        this.interrupted.add(tid);
+        this.refreshTool(tid);
+      }
+    }
+    this.lastErrors = [];
     this.lastYou = this.put(item);
   }
 
   private assistant(d: JsonRecord, uuid: string, ts: string | null, content: unknown): void {
+    this.lastErrors = [];
     if (d.requestedModel !== undefined) this.requestedModel = d.requestedModel;
     if (d.effort !== undefined) this.effort = d.effort;
     if (!Array.isArray(content)) return;

@@ -449,6 +449,19 @@ test('process ended: a foreground tool left without a result reads as stopped, o
   assert.equal(byId(failed, 'toolu_int').state, 'stopped');
 });
 
+test('interrupt: the tool an interrupt cut short reads as stopped, an earlier failure stays failed', () => {
+  const t = new Transcript({ home: HOME });
+  const err = (id: string) => ({ type: 'tool_result', tool_use_id: id, is_error: true, content: 'no' });
+  t.pushAll([
+    { type: 'assistant', uuid: 'i-a1', timestamp: at(1), message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_f', name: 'Bash', input: { command: 'false' } }] } },
+    { type: 'user', uuid: 'i-u1', timestamp: at(2), message: { role: 'user', content: [err('toolu_f')] } },
+    { type: 'assistant', uuid: 'i-a2', timestamp: at(3), message: { id: 'm2', content: [{ type: 'tool_use', id: 'toolu_p', name: 'Bash', input: { command: 'ping -c 45 127.0.0.1' } }] } },
+    { type: 'user', uuid: 'i-u2', timestamp: at(4), message: { role: 'user', content: [err('toolu_p')] } },
+    { type: 'user', uuid: 'i-u3', timestamp: at(4), message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ]);
+  assert.deepEqual([byId(t, 'toolu_f').state, byId(t, 'toolu_p').state], ['failed', 'stopped']);
+});
+
 test('a tool you denied, or a plan you sent back, reads as denied, not failed', () => {
   const answers: Record<string, string> = { toolu_p: 'Changes: use "final"', toolu_d: 'Denied', toolu_ok: 'Approved' };
   const t = new Transcript({ home: HOME, answerOf: (id) => answers[id] });
