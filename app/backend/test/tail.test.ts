@@ -107,8 +107,11 @@ test('fs.watch triggers a read without the poll', async (t) => {
   const got: JsonRecord[] = [];
   const tail = new Tailer(file, { onRecords: (r) => got.push(...r), pollMs: 0 }).start();
   t.after(() => tail.stop());
+  // macOS arms fs.watch asynchronously: an append right after start can land before the watcher
+  // does (the poll covers that in real use). Let it settle so this test checks the watch path only.
+  await new Promise((r) => setTimeout(r, 200));
   fs.appendFileSync(file, '{"n":1}\n');
-  await until(() => got.length === 1);
+  await until(() => got.length === 1, 5000);
 });
 
 test('the poll triggers a read without fs.watch, and picks up a file created later', async (t) => {
