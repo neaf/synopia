@@ -156,3 +156,28 @@ Times run from `openSession` (from the ready line for *) to the view's first `it
 - `permission-mode` record: the name of the mode field (code reads `permissionMode`).
 - States (status.ts): on Bedrock with an expired SSO login, which `error` the `assistant` message or `api_retry` carries (code reads `authentication_failed` or `cloud_credential_error`); whether throttling arrives as `api_retry` with `error: 'rate_limit'` or `error_status: 429`; that compaction sends `system/status` `compacting` then another `system/status`; that `stream_event`/`assistant` carry `user_message_uuids` for a message folded mid-turn.
 - Turn by the transcript (status.ts, `Transcript.turnRunning`): whether the CLI writes `system/turn_duration` or `stop_hook_summary` after every turn, interrupted and failed ones included (else such a turn reads working until 30 min of quiet); the fields of `queue-operation` records (not read: only `queued_command` attachments open a turn).
+
+## Facts settled: shell edits
+
+Scripted run on 2026-11-23: SDK 0.3.330 (bundled CLI 2.1.330, entrypoint `sdk-cli`) and, once, the installed CLI 2.1.325 via `pathToClaudeCodeExecutable`; haiku, `bypassPermissions`, scratch folders with git, without git, and with git after Claude had Read a.txt, b.txt, c.py and sub/d.txt. `git status` afterwards confirmed that every command changed the disk as intended (the late background append included).
+
+| Command | `bashEditDiff` (git / no git / git after Read) | Other trace |
+| --- | --- | --- |
+| `sed -i '' 's/x/y/' a.txt` | missed / missed / missed | after Read only: `toolUseResult.staleReadFileStateHint` = "[This command modified 1 file you've previously read: a.txt. Call Read before editing.]" |
+| `python3 -c "open('b.txt','a')…"` | missed / missed / missed | none, although b.txt had been Read |
+| `echo hi > new1.txt` | missed / missed / missed | none |
+| `printf 'z\n' >> sub/d.txt` | missed / missed / missed | none, although sub/d.txt had been Read |
+| `cp a.txt copy.txt` | missed / missed / missed | none |
+| `mv b.txt moved.txt` | missed / missed / missed | none |
+| `rm c.py` | missed / missed / missed | none |
+| `perl -pi -e 's/y/w/' a.txt` | missed / missed / missed | none (a.txt had been Read; sed had already flagged it stale) |
+| `python3 writer.py` (writes two files) | missed / missed / missed | none |
+| `echo out >> /tmp/…/outside.txt` | missed / missed / missed | none |
+| `touch a.txt` | missed / missed / missed | none |
+| `(sleep 2; echo late >> a.txt) &` | missed / missed / missed | none |
+
+- No record in any of the four sessions contains `bashEditDiff` or an `edited_text_file` attachment, so `files`, `changedFiles` and `moreFiles` could not be observed. Git versus no git made no difference.
+- So in SDK sessions on 2.1.325–2.1.330, `bashEditDiff` does not appear for any kind of shell edit. Synopia cannot count on it there and has to fall back (for example to git status in the folder) or show shell edits as unknown. Whether interactive (`cli` entrypoint) sessions write it, and under what condition, is still open: a real interactive session would show it.
+- `staleReadFileStateHint` is a new `toolUseResult` field (a string). Inference: it comes from parsing the command (only `sed -i` was recognised, while appends to files that had been Read went unflagged), not from watching the file system.
+
+Cause (from the typings, `sdk.d.ts:8078`): `Settings.bashEditDiffEnabled` is off by default except in some auto/bypassPermissions cases, and the user's interactive CLI has it on. Synopia's driver passes `settings: {bashEditDiffEnabled: true}`; the bash-edits task verifies which edits are then recorded.
