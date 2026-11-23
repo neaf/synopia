@@ -49,6 +49,8 @@ export type ViewsOptions = {
   answerOf?: (toolUseId: string) => string | undefined;
   // Slice 5: the model and effort you chose for a session (state.json `models`), shown over the transcript's.
   choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
+  // settings.model: what a session with no choice and no model in its transcript starts with.
+  defaultModel?: () => string | undefined;
 };
 
 // The transcript's effort: a level, or {level} on some records.
@@ -245,7 +247,7 @@ export class Views {
       // From the transcript until a driver sets it: your turn. "Stopped" is read from the items by the page.
       status: s.status ?? 'idle',
       statusAt,
-      model: ch ? ch.model : t.requestedModel ?? null,
+      model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
     };
   }

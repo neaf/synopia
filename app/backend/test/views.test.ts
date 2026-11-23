@@ -170,3 +170,10 @@ test('status, pending, stream and close are broadcast', async () => {
   assert.deepEqual(c.take('removed'), [{ t: 'removed', id: AGENTS }]);
   assert.equal(views.sessions().length, 0);
 });
+
+test('model: a new session with no choice shows settings.model, not the CLI default', () => {
+  const clients = new Set<Client>();
+  const views = new Views({ claudeDir: CLAUDE, clients: () => clients, home: HOME, pollMs: 0, watch: false, defaultModel: () => 'haiku' });
+  views.open('new-1', { cwd: '/tmp/x' });
+  assert.equal((views.sessions() as { id: string; model: unknown }[]).find((s) => s.id === 'new-1')!.model, 'haiku');
+});
