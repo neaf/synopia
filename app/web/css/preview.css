@@ -17,10 +17,10 @@
 .pl .no { position: sticky; left: 0; color: var(--faint); text-align: right; padding: 0 1ch 0 1.5ch; margin-right: 1ch; user-select: none; background: var(--sub); border-right: 1px solid var(--line-2); }
 .pl .tx { padding-right: 2ch; }
 /* the diff's first changed line, marked softly; the line of the current match */
-/* the lines this turn changed, tinted like the diff: added lines green, a deletion as a red rule above the line after it */
-.pl.chg { background: #DAFBE1; }
-.pl.chg .no { background: #ACEEBB; color: var(--ink-2); }
-.pl.cut { box-shadow: inset 0 1px 0 #CF222E; }
 .pl.found .no { color: var(--ink); }
 ::highlight(pv-find) { background-color: #FFF1B3; }
 ::highlight(pv-cur) { background-color: #F2CC60; color: var(--ink); }
+
+/* change marks, gutter only (an editor's change bars): green bar beside added lines, a red notch where lines were removed */
+.pl.chg .no { box-shadow: inset 2px 0 0 #2DA44E; }
+.pl.cut .no { background-image: linear-gradient(#CF222E, #CF222E); background-size: 6px 2px; background-position: 0 0; background-repeat: no-repeat; }

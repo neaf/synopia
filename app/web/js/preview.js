@@ -3,7 +3,8 @@
    escaped spans, one line per '\n'), anything else is opened by the backend as `open` would. HTML opens in
    the browser; Alt-click shows its source here. Keys while it is shown: Esc closes, j/k scroll a line, g/G
    top and bottom, / or Cmd+F find, Enter or n the next match (Shift or N the previous). A click outside
-   closes it. Opened from Files changed, it starts at the diff's first changed line, softly marked. */
+   closes it. It always opens at the top. Lines the turn changed get quiet gutter marks (a green bar for added, a red
+   mark where lines were removed); the diff is where the change itself shows. */
 const pv = { el: null, want: null, path: null, line: 0, back: null, hits: [], at: -1 };
 const PV_HTML = /\.html?$/i;
 
@@ -16,7 +17,7 @@ function previewClick(a, e) {
   return true;
 }
 /* the lines the row's diff changed, in the new file: added lines, and for a deletion the line after it.
-   The preview tints them like the diff and starts at the first. */
+   The preview marks them quietly in the gutter, like an editor's change bars; it doesn't scroll to them. */
 function pvChanges(a) {
   const d = a.closest(".frow")?.nextElementSibling, added = new Set(), cut = new Set();
   if (d && d.matches(".diff")) d.querySelectorAll(".dl.a, .dl.d").forEach(r => {
@@ -55,7 +56,7 @@ function showPreview(m) {
   if (!pv.want || m.path !== pv.want.path) return;
   if (!pv.el) pvBuild();
   const want = pv.want; pv.want = null;
-  pv.path = m.path; pv.line = want.first && want.first <= m.lines ? want.first : 0; pv.back = want.back;
+  pv.path = m.path; pv.line = 0; pv.back = want.back;
   document.getElementById("pv-path").innerHTML = `<bdi>${esc(m.display || m.path)}</bdi>`; // rtl: a long path loses its start, not its name
   document.getElementById("pv-path").title = m.path;
   const n = Number(m.lines) || 0, count = `${n.toLocaleString()} line${n === 1 ? "" : "s"}`;
@@ -70,8 +71,7 @@ function showPreview(m) {
   setMode("normal");
   const code = document.getElementById("pv-code");
   code.scrollLeft = 0;
-  const hit = pv.line ? box.children[pv.line - 1] : null; // the first changed line
-  code.scrollTop = hit ? Math.max(0, hit.offsetTop - code.clientHeight / 3) : 0;
+  code.scrollTop = 0; // just the file, from the top: the diff is where changes show
   pv.el.querySelector(".pv-panel").focus({ preventScroll: true });
 }
 const pvSize = b => b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;

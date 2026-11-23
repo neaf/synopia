@@ -82,8 +82,7 @@ check('highlighted with several GitHub colours', Array.isArray(colours) && colou
 check('mono 12px, no wrap', await ev(`(() => { const s = getComputedStyle(document.querySelector('#pv-lines .tx')); return s.fontSize === '12px' && /JetBrains/.test(s.fontFamily) && getComputedStyle(document.querySelector('#pv-lines .pl')).whiteSpace === 'pre'; })()`));
 check('line numbers aligned: one gutter width, right-aligned', await ev(`(() => { const n = [...document.querySelectorAll('#pv-lines .no')]; const w = new Set(n.map(x => Math.round(x.getBoundingClientRect().right))); return w.size === 1 && getComputedStyle(n[0]).textAlign === 'right'; })()`));
 check('a long line scrolls sideways', await ev(`(() => { const c = document.getElementById('pv-code'); return c.scrollWidth > c.clientWidth; })()`));
-check('the changed lines are tinted, starting at the first', (await ev(`document.querySelector('#pv-lines .pl.chg .no, #pv-lines .pl.cut .no')?.textContent`)) === '25');
-check('the marked line is on screen', await ev(`(() => { const c = document.getElementById('pv-code').getBoundingClientRect(), h = document.querySelector('.pl.chg, .pl.cut').getBoundingClientRect(); return h.top >= c.top && h.bottom <= c.bottom; })()`));
+check('opens at the top, changes marked in the gutter only', await ev(`document.getElementById('pv-code').scrollTop === 0 && !!document.querySelector('#pv-lines .pl.chg, #pv-lines .pl.cut') && getComputedStyle(document.querySelector('#pv-lines .pl.chg, #pv-lines .pl.cut')).backgroundColor === 'rgba(0, 0, 0, 0)'`));
 check('escaped: no element but spans in the code', await ev(`document.querySelectorAll('#pv-lines .tx *:not(span)').length === 0`));
 await c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, 'preview-open.png'), Buffer.from(r.result.data, 'base64')));
 
