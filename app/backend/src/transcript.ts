@@ -16,10 +16,15 @@ export type Patch = {
 // A tool result's preview: its first PREVIEW_LINES lines, PREVIEW_BYTES at most; `lines` counts all
 // of them, `cut` says the preview isn't all (the page asks for the rest with `toolOutput`).
 export type Output = { text: string; lines: number; cut: boolean; interrupted?: boolean };
+// An image block in a record (a pasted image in your prompt, or one in a tool's result): only where it
+// is, never its bytes. `ref` is `<record id>:<block path>` (`3`, or `1.0` for a block in a tool_result's
+// content); the page loads it from `GET /api/image`. `w` and `h` come from the image's header when cheap.
+export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
 export type Question = { q: string; header: unknown; multi: boolean; opts: [string, string][] };
 export type Item = {
   id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask'; ts: string | null;
   text?: string; images?: number; interrupted?: boolean; workedMs?: number; // you
+  imgs?: ImageRef[]; // you, tool: the images the prompt sent or the result holds (R5.13)
   agent?: string | null; // report
   name?: string; verb?: string; obj?: string; state?: string; toolUseId?: string; patch?: Patch; // tool
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
@@ -208,6 +213,96 @@ export function readResult(file: string, span: Span, toolUseId: string): string 
   }
 }
 
+// The image types the page is served (GET /api/image); any other gets a 415.
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const JPEG_SCAN = 64 * 1024; // how far into a JPEG to look for its size (EXIF can come first)
+const sized = (w: number, h: number) => (w > 0 && h > 0 ? { w, h } : null);
+
+// Width and height from the first bytes of a PNG, GIF, WebP or JPEG, given as base64; null when the
+// header doesn't say within the first bytes. Decodes a prefix only, never the whole image.
+export function imageSize(mediaType: string, b64: string): { w: number; h: number } | null {
+  const head = (n: number) => Buffer.from(b64.slice(0, Math.ceil(n / 3) * 4), 'base64');
+  try {
+    if (mediaType === 'image/png') {
+      const b = head(24);
+      if (b.length >= 24 && b.readUInt32BE(0) === 0x89504e47 && b.toString('latin1', 12, 16) === 'IHDR') return sized(b.readUInt32BE(16), b.readUInt32BE(20));
+    } else if (mediaType === 'image/gif') {
+      const b = head(10);
+      if (b.length >= 10 && b.toString('latin1', 0, 4) === 'GIF8') return sized(b.readUInt16LE(6), b.readUInt16LE(8));
+    } else if (mediaType === 'image/webp') {
+      const b = head(30);
+      if (b.length < 30 || b.toString('latin1', 0, 4) !== 'RIFF' || b.toString('latin1', 8, 12) !== 'WEBP') return null;
+      const chunk = b.toString('latin1', 12, 16);
+      if (chunk === 'VP8 ') return sized(b.readUInt16LE(26) & 0x3fff, b.readUInt16LE(28) & 0x3fff);
+      if (chunk === 'VP8L') return sized(1 + (((b[22] & 0x3f) << 8) | b[21]), 1 + (((b[24] & 0x0f) << 10) | (b[23] << 2) | ((b[22] & 0xc0) >> 6)));
+      if (chunk === 'VP8X') return sized(1 + b.readUIntLE(24, 3), 1 + b.readUIntLE(27, 3));
+    } else if (mediaType === 'image/jpeg') {
+      const b = head(JPEG_SCAN);
+      if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
+      for (let i = 2; i + 9 <= b.length;) {
+        if (b[i] !== 0xff) return null;
+        const m = b[i + 1];
+        if (m === 0xff) { i++; continue; } // fill byte
+        if (m === 0x01 || (m >= 0xd0 && m <= 0xd8)) { i += 2; continue; } // markers with no length
+        if (m >= 0xc0 && m <= 0xcf && m !== 0xc4 && m !== 0xc8 && m !== 0xcc) return sized(b.readUInt16BE(i + 7), b.readUInt16BE(i + 5));
+        if (m === 0xd9 || m === 0xda) return null; // the end, or a scan with no frame header before it
+        i += 2 + b.readUInt16BE(i + 2);
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+// The image blocks of a content array (a user record's, or a tool_result's under `at`), as refs.
+export function imageRefs(recordId: string, content: unknown, at = ''): ImageRef[] {
+  if (!Array.isArray(content)) return [];
+  const out: ImageRef[] = [];
+  content.forEach((raw, i) => {
+    const b = obj(raw);
+    if (b.type !== 'image') return;
+    const src = obj(b.source);
+    const ref: ImageRef = { ref: `${recordId}:${at}${i}`, mediaType: str(src.media_type) };
+    const size = src.type === 'base64' && typeof src.data === 'string' ? imageSize(ref.mediaType, src.data) : null;
+    if (size) Object.assign(ref, size);
+    out.push(ref);
+  });
+  return out;
+}
+
+// A ref's record id and block path (`[3]`, or `[1, 0]` inside a tool_result); null when it isn't one.
+export function parseRef(ref: string): { recordId: string; path: number[] } | null {
+  const m = /^(.+):(\d{1,4}(?:\.\d{1,4})?)$/.exec(ref);
+  return m ? { recordId: m[1], path: m[2].split('.').map(Number) } : null;
+}
+
+// Reads one record line again (`span`) and decodes the image block at `path` in it. null when the file
+// is gone, the line no longer holds that record (rewritten), or there is no base64 image there.
+export function readImage(file: string, span: Span, recordId: string, at: number[]): { mediaType: string; data: Buffer } | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const buf = Buffer.alloc(span.length);
+    if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return null;
+    const d = obj(JSON.parse(buf.toString('utf8')));
+    if (d.uuid ? d.uuid !== recordId : !recordId.includes('@')) return null; // `user@<n>`: a record with no uuid
+    let b: unknown = obj(d.message).content;
+    at.forEach((i, k) => { b = k === 0 ? (Array.isArray(b) ? b[i] : undefined) : (Array.isArray(obj(b).content) ? (obj(b).content as unknown[])[i] : undefined); });
+    const src = obj(obj(b).source);
+    if (obj(b).type !== 'image' || src.type !== 'base64' || typeof src.data !== 'string') return null;
+    return { mediaType: str(src.media_type), data: Buffer.from(src.data, 'base64') };
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export class Transcript {
   readonly sidechain: boolean;
   readonly home: string;
@@ -240,6 +335,9 @@ export class Transcript {
   private outs = new Map<string, Output>();
   private outSpans = new Map<string, Span>();
   private span: Span | undefined; // of the record being pushed
+  // Images: the line of each record that holds one (by record id), and the images of each tool's result.
+  private imageSpans = new Map<string, Span>();
+  private outImgs = new Map<string, ImageRef[]>();
   private bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
   private notes = new Map<string, { status: string; summary: string; end: string | null }>();
   private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
@@ -315,6 +413,13 @@ export class Transcript {
   // spans: where each record's line sits in the file (Tailer), so a tool's full result can be read again.
   pushAll(records: JsonRecord[], spans?: Span[]): void {
     records.forEach((r, i) => this.push(r, spans?.[i]));
+  }
+
+  // Where an image block sits: its record's line in this conversation's file and the path inside it.
+  imageAt(ref: string): { span: Span; recordId: string; path: number[] } | null {
+    const r = parseRef(ref);
+    const span = r && this.imageSpans.get(r.recordId);
+    return r && span ? { span, ...r } : null;
   }
 
   // Where the record holding a tool's result sits in this conversation's file.
@@ -426,6 +531,11 @@ export class Transcript {
           const interrupted = this.interrupted.has(tid) || (r === obj(content.find((x) => isBlock(x, 'tool_result'))) && obj(tur).interrupted === true);
           this.outs.set(tid, { ...previewOf(resultText(r)), ...(interrupted ? { interrupted } : {}) });
           if (this.span) this.outSpans.set(tid, this.span);
+          const imgs = imageRefs(uuid, r.content, `${content.indexOf(b)}.`);
+          if (imgs.length) {
+            this.outImgs.set(tid, imgs);
+            if (this.span) this.imageSpans.set(uuid, this.span);
+          }
         }
         this.refreshTool(tid);
       }
@@ -479,6 +589,10 @@ export class Transcript {
     }
     if (txt.startsWith('<') && !images) return; // system reminders, local command output, hooks
     const item: Item = { id: uuid, k: 'you', ts, text: clip(txt), images };
+    if (images) {
+      item.imgs = imageRefs(uuid, content);
+      if (this.span) this.imageSpans.set(uuid, this.span);
+    }
     if (txt.startsWith('[Request interrupted by user')) {
       item.interrupted = true;
       // The CLI writes the tools the interrupt cut short as error results just before this marker.
@@ -632,15 +746,17 @@ export class Transcript {
       const patch = this.patches.get(tid);
       const bash = this.bashPatches.get(tid);
       const out = this.outs.get(tid);
+      const imgs = this.outImgs.get(tid);
       const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
       const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
       if (plan && planItem && planItem.text !== clip(plan)) {
         planItem.text = clip(plan);
         this.changed.add(planItem.id);
       }
-      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (answer && it.answer !== answer)) {
+      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (imgs && it.imgs !== imgs) || (answer && it.answer !== answer)) {
         it.state = state;
         if (out) it.out = out;
+        if (imgs) it.imgs = imgs;
         if (patch) it.patch = patch;
         if (bash) {
           it.patches = bash.patches;

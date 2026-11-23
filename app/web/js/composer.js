@@ -1,6 +1,6 @@
 /* Composer: the message box, pasted images, the slash menu and the model picker (split from prototype/app.html).
    mountComposer runs once per session view (renderConv), so data never resets what you type. */
-const attachments = [];
+const attachments = []; // pasted images: { url (an object URL, for the thumbnail), data (its data: URL, for sending) }
 const newUuid = () => crypto.randomUUID ? crypto.randomUUID() : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
 
 /* ---------- slash commands and /model, from the menu of the session's folder ---------- */
@@ -81,9 +81,14 @@ function attachSlash(ta, onModel) {
   ta.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== ta) close(); }, 120)); // the model button refocuses it
 }
 
+/* the pasted images as thumbnails (images.js), each with a ✕ on hover; a removed one's object URL is freed */
+let attachedUrls = [];
 function renderAttachments() {
+  for (const u of attachedUrls) if (!attachments.some(a => a.url === u)) URL.revokeObjectURL(u);
+  attachedUrls = attachments.map(a => a.url);
   const box = conv.querySelector(".composer .attach"); if (!box) return;
-  box.innerHTML = attachments.map((src, i) => `<figure><img src="${esc(src)}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("");
+  box.classList.add("thumbs");
+  box.innerHTML = attachments.map((a, i) => `<figure class="thumb-wrap">${thumbHTML(a.url, 0, 0, `Pasted image ${i + 1}`)}<button class="unattach" data-unattach="${i}" aria-label="Remove pasted image ${i + 1}" title="Remove">✕</button></figure>`).join("");
 }
 /* the header's model button and /model open the same picker */
 function openModelPicker() {
@@ -145,8 +150,9 @@ function mountComposer(s) {
     if (!ta.value.trim() && !attachments.length) return;
     if (ta.value.trim() === "/model" && !attachments.length) { openModelPicker(); return; } // typed in full: the picker, not a message
     const images = [];
-    for (const url of attachments) {
-      const m = /^data:(image\/(?:png|jpeg));base64,(.*)$/.exec(url);
+    for (const a of attachments) {
+      if (!a.data) { toast("An image is still being read. Press Enter again in a moment."); return; }
+      const m = /^data:(image\/(?:png|jpeg));base64,(.*)$/.exec(a.data);
       if (!m) { toast("Only PNG and JPEG images can be sent. Remove the others first."); return; }
       if (m[2].length * 3 / 4 > 5 * 1024 * 1024) { toast("An image is over 5 MB. Remove it, or paste a smaller one."); return; }
       images.push({ mediaType: m[1], data: m[2] });
@@ -160,9 +166,9 @@ function mountComposer(s) {
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; });
   ta.addEventListener("paste", e => {
     for (const item of e.clipboardData?.items || []) if (item.type.startsWith("image/")) {
-      e.preventDefault(); const r = new FileReader();
-      r.onload = () => { attachments.push(r.result); renderAttachments(); };
-      r.readAsDataURL(item.getAsFile());
+      e.preventDefault(); const file = item.getAsFile(), a = { url: URL.createObjectURL(file), data: null };
+      attachments.push(a); renderAttachments();
+      const r = new FileReader(); r.onload = () => { a.data = r.result; }; r.readAsDataURL(file);
     }
   });
   takeRestored(s.id);

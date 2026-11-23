@@ -7,6 +7,8 @@
   --add-bg: #DAFBE1; --del-bg: #FFEBE9;
   --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
   --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --log-font: 12px; --log-lh: 1.45; /* the transcript's text; thumbnails are 3 of its lines high */
+  --thumb-h: calc(3 * var(--log-font) * var(--log-lh));
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; }
@@ -87,7 +89,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .earlier button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 
 /* transcript: mono, gutter glyphs like the CLI */
-.log, .composer textarea, .status { font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+.log, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
 .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
 .ln > .g { user-select: none; }
 .ln.claude > .g { color: var(--ink); }
@@ -193,10 +195,31 @@ details.step > summary::-webkit-details-marker { display: none; }
 .composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
 .composer .attach, .composer .c-row { grid-column: 2; }
 .composer textarea { width: 100%; background: none; border: 0; resize: none; outline: none; min-height: 36px; max-height: 198px; padding: 0; }
-.attach { display: flex; gap: 7px; flex-wrap: wrap; }
-.attach figure { margin: 0 0 5.5px; position: relative; }
-.attach img { height: 52px; border-radius: 3.5px; display: block; border: 1px solid var(--line); }
-.attach button { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%; border: 0; background: var(--ink); color: #fff; font-size: 11px; line-height: 16px; padding: 0; }
+.composer .attach { grid-row: 2; } /* the pasted images sit below the text */
+.composer .attach:not(:empty) { margin: 5.5px 0 2px; }
+
+/* images (R5.13): a wrapping row of thumbnails under a prompt, a tool step or the message box, the same
+   size everywhere: at most 3 transcript lines high, never scaled up, 320px wide at most, cropped to the
+   centre. --iw/--ih: the image's size (from the backend, else once it loads); a square until then. */
+.thumbs { display: flex; flex-wrap: wrap; gap: 5.5px; margin: 3.5px 0 2px; }
+.ln > .thumbs { grid-column: 2; }
+.thumb { --th: min(calc(var(--ih, 100000) * 1px), var(--thumb-h)); --tw: min(320px, calc(var(--th) * var(--iw, 1) / var(--ih, 1))); }
+button.thumb { all: unset; display: block; cursor: zoom-in; border-radius: 5.5px; }
+.thumb img, .thumb.gone { display: block; box-sizing: content-box; width: var(--tw); height: var(--th); border: 1px solid var(--line); border-radius: 5.5px; background: var(--sub); }
+.thumb img { object-fit: cover; object-position: center; }
+button.thumb:hover img { border-color: var(--faint); }
+button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.thumb.gone { border-color: var(--line-2); color: var(--faint); font: 400 10.5px/1.2 var(--sans); display: grid; place-items: center; text-align: center; overflow: hidden; min-width: 7ch; }
+.thumb-wrap { margin: 0; position: relative; }
+.thumb-wrap .unattach { position: absolute; top: -5.5px; right: -5.5px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--panel); background: var(--ink-2); color: #fff; font-size: 9px; line-height: 14px; padding: 0; text-align: center; opacity: 0; cursor: pointer; }
+.thumb-wrap:hover .unattach, .thumb-wrap .unattach:focus-visible { opacity: 1; }
+.thumb-wrap .unattach:hover { background: var(--ink); }
+
+/* the viewer: one image at full size, fit to the window, on the canvas colour; clear of the title bar */
+.viewer { position: fixed; inset: var(--titlebar, 0px) 0 0 0; z-index: 30; display: grid; place-items: center; padding: 25px; background: rgba(237, 239, 242, .94); cursor: zoom-out; outline: none; }
+.viewer figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 9px; min-width: 0; }
+.viewer img { display: block; max-width: calc(100vw - 52px); max-height: calc(100vh - var(--titlebar, 0px) - 84px); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 7px 21.5px rgba(140, 149, 159, .25); cursor: default; }
+.viewer figcaption { font-size: 11.5px; color: var(--ink-3); }
 .c-row { display: flex; align-items: center; gap: 11px; font-size: 11px; color: var(--ink-3); }
 .c-row .btn { margin-left: auto; }
 .model { color: var(--ink-2); }
