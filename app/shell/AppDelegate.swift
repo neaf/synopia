@@ -1,8 +1,9 @@
 // The window, the backend's lifetime and Quit.
 import Cocoa
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var window: NSWindow!
+  private let frame = WindowFrame()
   private let page = PageView()
   private let backend = Backend()
   private var quitting = false
@@ -28,9 +29,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     Menus.install()
 
     window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
-                      styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+                      styleMask: [.titled, .closable, .resizable, .miniaturizable, .fullSizeContentView],
+                      backing: .buffered, defer: false)
+    // The integrated title bar (TitleBar.swift): the page runs under a
+    // transparent title bar, the traffic lights sit over the dark sidebar, and
+    // the title stays for Mission Control and the Window menu.
     window.title = "Synopia"
-    window.contentView = page.web
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    window.delegate = self
+    frame.show(page.web)
+    window.contentView = frame
+    let titlebar = window.frame.height - window.contentLayoutRect.height
+    if titlebar > 0 {
+      frame.stripHeight = titlebar
+      page.titlebar = titlebar
+    }
     let frameName = "Synopia main window"
     if !window.setFrameUsingName(frameName) { window.center() }
     window.setFrameAutosaveName(frameName)
@@ -38,17 +52,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     backend.onReady = { [weak self] r in
       guard let self else { return }
-      self.window.contentView = self.page.web
+      self.frame.show(self.page.web)
       self.page.load(port: r.port, token: r.token)
     }
     backend.onExit = { [weak self] line in
       guard let self, !self.quitting else { return }
-      self.window.contentView = BackendDownView(message: line) { [weak self] in self?.restartBackend() }
+      self.frame.show(BackendDownView(message: line) { [weak self] in self?.restartBackend() })
     }
     // The Dock badge: sessions that need you plus deliverables to review (R2.6), none at 0.
     backend.onBadge = { n in NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil }
     backend.start()
     NSApp.activate(ignoringOtherApps: true)
+  }
+
+  // MARK: NSWindowDelegate: fullscreen has no traffic lights, so no strip and no inset.
+
+  func windowWillEnterFullScreen(_ n: Notification) { setFullscreen(true) }
+  func windowDidFailToEnterFullScreen(_ w: NSWindow) { setFullscreen(false) }
+  func windowWillExitFullScreen(_ n: Notification) { setFullscreen(false) }
+  func windowDidFailToExitFullScreen(_ w: NSWindow) { setFullscreen(true) }
+
+  private func setFullscreen(_ on: Bool) {
+    frame.stripHidden = on
+    page.fullscreen = on
   }
 
   func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
