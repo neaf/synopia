@@ -2,6 +2,33 @@
 
 Written 2026-11-23 at the end of the prototyping session.
 
+**Status (2026-11-23): milestone 1 built.** All six slices are merged, with the final pass (branch `final`) on top: one end-to-end live run on haiku through the real backend and the page, the app built and launched on the same state. What is left is the author's check in the real window (below).
+
+## How to run
+
+- `(cd app/backend && npm ci)` once, then `app/build.sh` builds `build/Synopia.app`; `open build/Synopia.app` runs it on `~/Library/Application Support/Synopia`.
+- `app/dev.sh` runs the backend alone for Chrome (state in `app/.dev-state/`); `app/dev.sh --fake` plays the fake driver over the fixture tree, with no model calls.
+- `app/check.sh` runs every check (backend tests, shell type check, page script syntax), one pass or fail line per part. Page checks over headless Chrome: `app/web/dev/cdp/run.sh <dnd|keys|menu>`.
+- A test app on its own state: `open --env SYNOPIA_STATE_DIR=/tmp/s --env SYNOPIA_SNAPSHOT=/tmp/s.png build/Synopia.app`; quit it with `pkill -TERM -x Synopia`. `app/README.md` has the same commands.
+
+## Left for the author, in the real window
+
+- ⌘V of a real image from the clipboard (the live run pasted a PNG through a synthetic paste event).
+- ⌘⇧[ and ⌘⇧] through the shell's menus, and every key with WKWebView focus (the run used headless Chrome).
+- The ⌘Q NSAlert ("Quit Synopia? 1 session is working …") and the "Close session" confirm sheet while a turn runs.
+- Drag and drop with a real trackpad, and the look against `prototype/app.html` at your window size.
+- A link or file click opening in the browser or Finder (`open` was checked in S4, not in the window).
+- Sessions in `~/dev/…` folders (the run used `/tmp`, see the known limits).
+
+## Known limits
+
+- Folders under `/tmp` show as `/private/tmp/…` in files changed and after a reopen from the Open list: the CLI and `listSessions()` give the real path. Not seen in `~/dev`.
+- The Now line is rewritten 20 s after a turn ends, from the turns' text only: it doesn't see background work ending between turns (a stopped shell can still read "running" there) and lags a card that is waiting.
+- A message draft survives a backend restart while the page stays open (it reconnects), not a page reload: drafts aren't stored.
+- Right after launch the header can show the raw model id (`eu.anthropic.claude-haiku-5-5`) until the folder's menu arrives, about 1 to 5 s.
+- Markdown joins single line breaks into one paragraph, as the prototype does: a poem written one line per line reads as a paragraph.
+- A task ended by the SDK's `task_notification` between turns is kept in memory only; the JSONL's own notification (written at the next turn) or the process-end mark covers a restart.
+
 ## Where things are
 
 - `docs/requirements.md`: what to build. Every decision from the prototyping session, plus what was rejected.
@@ -65,7 +92,9 @@ The user's global rules (from `~/dev/agent-harness`) apply:
 - S5-3 (branch `s5`): `src/menu.ts` (`Menus`: per folder as the page shows it; on `view` the running process's `supportedCommands()`/`supportedModels()` refresh the folder, else one idle `query()` per folder with a prompt that never yields, 30 s timeout, closed once read; each page gets `menu` for a folder once per connection, and a change goes to pages that had it; `commands_changed` replaces the commands; `hello.menu` is the cache). Commands: one row per name (the `builtin` row wins), `__` rows dropped, descriptions and hints HTML-unescaped. Models carry `resolved` (`resolvedModel`) so the page matches a transcript's full model id to an alias row. Page: `/model` typed in full (Enter, even with no `/model` row) opens the picker instead of sending. Live (`/tmp/synopia-scratch/s5/work`): the idle query took 5.6 s and gave 57 commands and 11 models, none left escaped, `/model` among them, no model call.
 - S5-4 (branch `s5`): `Sessions.setModel` stores `{model, effort}` in `state.json` `models` (a placeholder keeps it in memory until init), `default` means no `model` option at the next start (not the transcript's last `requestedModel`); a running process gets `setModel` when the model changed (`default` → `setModel(undefined)`) and `applyFlagSettings({effortLevel})` (null: the model's default). The views' meta shows the choice over the transcript's. Page: per-session model (no global `modelValue`), the header button reads "Name, low effort"; the picker's effort row (new element, `.slash .eff`) sits under the selected model's description, ← → move along the levels, hover moves the selection, a click on a level picks both; the old local "Model set to" item is gone (the CLI itself writes a `/model <id>` prompt record when a running process switches). Live on haiku: haiku-5-5 (effort medium) → sonnet-5-5 low → haiku-5-5 with the default effort; each next assistant record's `requestedModel` and `effort` showed it (records also carry `perTurnEffort`). **Mode after a model switch: no `system/status` with `permissionMode` came, and every user record stayed `permissionMode: auto`, so these switches kept `auto`.**
 - S5-5 (branch `s5`): when a session's process ends (close, idle end, quit, failure) `Sessions` stores `state.json` `ended[sid]` (ms; a new field, moved on an id swap) and calls `views.processEnded`; `Transcript.processEnded(iso)` makes shells and monitors still running and started before then `stopped` (end = that time), subagents not finished `stopped` (finished, `stopped: true`), and a background Agent's tool line done. The mark is kept across a rewrite (`reset`), applied to records read later (so it holds after a restart or a reopen, from `add()`), work started after it runs, and a real notification still wins. Unit tests in `transcript.test.ts` and `sessions.test.ts` (failure, quit, restart).
-- Open for later tasks: a foreground tool with no result when its process failed still reads as running. `app/web/dev/cdp/run.sh <dnd|keys|menu>` runs the page checks; headless Chrome drops the first key after a load, so the checks press Shift first.
+- `app/web/dev/cdp/run.sh <dnd|keys|menu>` runs the page checks; headless Chrome drops the first key after a load, so the checks press Shift first.
+- M1-final (branch `final`): a foreground tool left without a result reads as stopped when its process ends by close, idle end or quit, and as failed when it fails (`state.json` `endedFailed`); an unanswered plan keeps "Not answered". Defects found in the end-to-end run, each fixed with a unit test: a new session's header said "Default (…)" while it ran on `settings.model`; a note on an answered question vanished from the transcript (now "Pear, note: …"); a plan sent back and a denied permission read "Failed" in red (now `denied`, a grey dot); the transcript kept an older plan revision after approval (the card's plan is stored in `state.json` `plans`); a shell stopped between turns stayed "Stopping" (the driver reads the SDK's `system/task_notification`); the tool an Esc Esc cut short read "Failed" (now stopped); a closed session came back in the Open list under the CLI's old summary (now the written title); the writer read an interrupted turn as still waiting on its tool. End-to-end on haiku in `/tmp/synopia-scratch/final` with a temp state, headless Chrome over CDP, keys wherever the requirements define them: every step passed after the fixes (see "Facts settled"). `build/Synopia.app` on the same state showed both sessions in their group; SIGTERM left no node or claude process.
+- S1-2 (branch `s1-2`): `app/shell` (main, AppDelegate, Backend, WebView, Menus, Info.plist) and `app/build.sh` into `build/Synopia.app`. Checked: node runs as the shell's child, the port answers 200, the page authenticates (`ws.authed`), SIGTERM (handled like ⌘Q) and `kill -9` of the shell both end the backend (`backend.stop reason=stdin`), a killed backend leaves the shell up. `NSWindow.allowsAutomaticWindowTabbing = false` keeps ⌘⇧[ off the Window menu. `confirmQuitIfWorking` in AppDelegate.swift is the S2-3 stub. Agents must not use `screencapture` or `osascript`/System Events (they need permissions the author may not grant). For a screenshot use `open --env SYNOPIA_SNAPSHOT=/tmp/x.png build/Synopia.app`: the shell writes a `WKWebView.takeSnapshot` PNG 1.5 s after the first page load. Quit with `pkill -TERM -x Synopia`.
 
 ## Facts settled
 
@@ -78,6 +107,12 @@ The user's global rules (from `~/dev/agent-harness`) apply:
   - Plan approval with `updatedPermissions: [{type: 'setMode', mode: 'auto', destination: 'session'}]`: a `system/status` message with `permissionMode: 'auto'` follows at once, with no `conversation_reset`, and Claude then edited without asking. A new session started with `permissionMode: 'plan'` reports `permissionMode: 'plan'` in `system/init`.
 
   - Settled by the S3 live check: typed messages sent during a turn land only as `attachment` `queued_command` records (no user record), now shown. After a plan approval the session's JSONL is rewritten (the tailer resets and re-reads). The plan text in the JSONL's ExitPlanMode `tool_use` input can be older than `input.plan` at canUseTool (the CLI reads the plan file, which a revision changed); the page shows the request's while pending. On resume the CLI answers a question left open by a quit with a "[Tool call interrupted: …]" tool result. The mode before plan mode falls back to `auto` when the transcript has no non-plan `permission-mode` record, even in a folder whose settings say `default`.
+- Settled by the M1-final run (CLI 2.1.330, SDK 0.3.330, haiku; shapes only):
+  - An Esc Esc interrupt during a foreground Bash writes an error `tool_result` for it, then a user record `[Request interrupted by user for tool use]`. A standalone `sleep 45` in the foreground is blocked by the Bash tool itself (an error result, Claude explains), so long foreground checks need another command (`ping -c 45 127.0.0.1` worked).
+  - `stopTask` emits `system/task_notification` with `status: 'stopped'` and the task's `tool_use_id` at once, also between turns; the JSONL gets its `<status>killed</status>` notification only at the next turn. A resumed process emits `stopped` notifications for the shells the previous process left behind.
+  - Plan mode from a new session: Claude calls `EnterPlanMode` when asked (no permission card under `auto`), then `ExitPlanMode` reaches canUseTool. The transcript's `requestedModel` during plan mode can differ from the session's model (a sonnet id showed while the session ran haiku); the header follows it.
+  - A folder's `permissions.defaultMode` is read when the CLI process starts: changing `.claude/settings.json` under a running process changed nothing until the next start.
+  - The answered-question tool result reads `The user answered: "<q>"="<pick>" notes: <note>. Read the answers carefully …`.
 
 ## Facts to check
 
@@ -85,4 +120,3 @@ The user's global rules (from `~/dev/agent-harness`) apply:
 
 - `system` record with `subtype: "turn_duration"`: the name of the duration field (code reads `durationMs`, a number).
 - `permission-mode` record: the name of the mode field (code reads `permissionMode`).
-- S1-2 (branch `s1-2`): `app/shell` (main, AppDelegate, Backend, WebView, Menus, Info.plist) and `app/build.sh` into `build/Synopia.app`. Checked: node runs as the shell's child, the port answers 200, the page authenticates (`ws.authed`), SIGTERM (handled like ⌘Q) and `kill -9` of the shell both end the backend (`backend.stop reason=stdin`), a killed backend leaves the shell up. `NSWindow.allowsAutomaticWindowTabbing = false` keeps ⌘⇧[ off the Window menu. `confirmQuitIfWorking` in AppDelegate.swift is the S2-3 stub. Agents must not use `screencapture` or `osascript`/System Events (they need permissions the author may not grant). For a screenshot use `open --env SYNOPIA_SNAPSHOT=/tmp/x.png build/Synopia.app`: the shell writes a `WKWebView.takeSnapshot` PNG 1.5 s after the first page load. Quit with `pkill -TERM -x Synopia`.
