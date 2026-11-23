@@ -13,3 +13,6 @@ node_modules/
 # Synopia app: dev state and local-only fixtures
 app/.dev-state/
 app/backend/test/fixtures/local/
+# The port reads fixture data only through dev/compare.sh temp copies
+app/web/transcripts.js
+app/web/menu.js
