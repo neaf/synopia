@@ -158,7 +158,8 @@ function itemsHTML(items, sessionBusy, s) {
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`]);
       if (it.state === "pending") { out.push([`na:${it.id}`, notAnswered()]); continue; }
       if (it.state === "answered") {
-        const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}</p>`).join("") : md(it.answer);
+        const notes = it.kind ? [] : parseNotes(it.answer); // your note on an answer stays visible (R6.4)
+        const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}${notes[i] ? `<span class="dim">, note: ${esc(notes[i])}</span>` : ""}</p>`).join("") : md(it.answer);
         lastTs = it.ts; prompt(txt, it.ts, `ans:${it.id}`); continue;
       }
     }

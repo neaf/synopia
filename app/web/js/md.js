@@ -54,3 +54,13 @@ function parseAnswers(a) {
   while ((m = re.exec(a || ""))) res.push(m[2]);
   return res;
 }
+/* The note you added to each answer: `"question"="answer" notes: <note>.`, up to the next answer or the CLI's closing sentence. */
+function parseNotes(a) {
+  const res = []; const re = /"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"/g; const ms = [...(a || "").matchAll(re)];
+  ms.forEach((m, i) => {
+    const rest = a.slice(m.index + m[0].length, i + 1 < ms.length ? ms[i + 1].index : a.length).replace(/\s*Read the answers carefully[\s\S]*$/, "");
+    const n = /^\s*notes:\s*([\s\S]*?)[.,]?\s*$/.exec(rest);
+    res.push(n ? n[1] : "");
+  });
+  return res;
+}
