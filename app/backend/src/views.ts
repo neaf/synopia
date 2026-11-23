@@ -308,6 +308,9 @@ export class Views {
       status,
       statusAt,
       statusDetail: s.statusDetail,
+      // whether this status comes from Synopia's own process (the driver) rather than the transcript:
+      // only then can the page offer Esc, Esc to interrupt
+      driven: s.status !== null,
       // R6.8: the question or plan another process asks, which the page shows read-only. Only while
       // it is what makes the session need you: not with a request of ours, nor for an ask our own
       // process left behind (status.ts gives that no waiting, and the page reads "Not answered").
