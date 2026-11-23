@@ -36,6 +36,10 @@ export type Agent = {
   model: unknown; depth: unknown; finished: boolean; running: boolean; review: boolean; stopped: boolean;
   start: string | null; end: string | null; total: number;
 };
+// A question or plan card waiting in the transcript: an AskUserQuestion or ExitPlanMode tool_use of
+// the latest assistant record with no tool_result yet (Transcript.pendingAsk). `agentId`: the
+// subagent that asked (null: the main conversation). `since`: the tool_use's time (ms, 0 unknown).
+export type PendingAsk = { kind: 'question' | 'plan'; toolUseId: string; agentId: string | null; since: number; qs?: Question[]; plan?: string };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
 
 const MAX_TEXT = 6000;
@@ -226,7 +230,7 @@ export class Transcript {
   // after a marker opens it again: Claude carried on.
   private turnOpen = false;
   private afterMarker = false;
-  private lastToolUses: { id: string; ts: string | null }[] = []; // of the latest main assistant record
+  private lastToolUses: { id: string; ts: string | null; name: string }[] = []; // of the latest main assistant record
   private allPrs: unknown[] = [];
   private byId = new Map<string, Item>();
   private seq = 0;
@@ -504,7 +508,7 @@ export class Transcript {
     if (Array.isArray(content)) {
       this.lastToolUses = content.map((b, i) => ({ b: obj(b), i }))
         .filter(({ b }) => b.type === 'tool_use')
-        .map(({ b, i }) => ({ id: str(b.id) || `${uuid}:${i}`, ts }));
+        .map(({ b, i }) => ({ id: str(b.id) || `${uuid}:${i}`, ts, name: str(b.name) }));
     }
     if (!Array.isArray(content)) return;
     content.forEach((raw, i) => {
@@ -706,6 +710,24 @@ export class Transcript {
     if (!this.turnOpen || this.endedBefore(this.lastTs)) return false;
     const last = this.lastTs ? Date.parse(this.lastTs) : NaN;
     return Number.isFinite(last) && now - last < quietMs;
+  }
+
+  // A question or plan waiting for its answer (R6.8): the latest assistant record of this thread
+  // has an AskUserQuestion or ExitPlanMode with no result (and the process didn't end after it);
+  // else the first running subagent's own. Null when none waits.
+  pendingAsk(): PendingAsk | null {
+    const u = this.lastToolUses.find((x) => (x.name === 'AskUserQuestion' || x.name === 'ExitPlanMode') && !this.results.has(x.id) && !this.endedBefore(x.ts));
+    if (u) {
+      const since = (u.ts && Date.parse(u.ts)) || 0;
+      if (u.name === 'AskUserQuestion') return { kind: 'question', toolUseId: u.id, agentId: null, since, qs: this.byId.get(u.id)?.qs ?? [] };
+      return { kind: 'plan', toolUseId: u.id, agentId: null, since, plan: this.byId.get(`plan:${u.id}`)?.text ?? '' };
+    }
+    for (const [aid, a] of [...this.agentMeta].sort(([x], [y]) => (x < y ? -1 : 1))) {
+      if (!a.sub || !this.agentRunning(aid)) continue;
+      const sub = a.sub.pendingAsk();
+      if (sub && !sub.agentId) return { ...sub, agentId: aid };
+    }
+    return null;
   }
 
   // Running when `finished` isn't true, its Agent tool has no (final) result and no task

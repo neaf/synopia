@@ -24,7 +24,7 @@ const want = [
   ['f6f6', 'green', /^Working$/, 'class="rot"', 'Working'],
   // the author's mix: a turned-down tool earlier, a subagent, a shell and a monitor running, and
   // its main turn open in another process (a foreground tool waiting): working, not stopped
-  ['f7f7', 'green', /^Working$/, 'class="rot"', 'Working Ran(Run the tests)'],
+  ['f7f7', 'green', /^Working$/, 'class="rot"', 'Working Bash(Run the tests)'],
 ];
 let n = 0;
 for (const [p, state, word, mark, line] of want) {

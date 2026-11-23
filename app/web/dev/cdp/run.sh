@@ -11,6 +11,8 @@
 #   app/web/dev/cdp/run.sh preview the file preview (R5.9) on a generated session pointing at a repo file, a binary and HTML, with --dry-open
 #   app/web/dev/cdp/run.sh tween   sidebar sub-lines: height then fade, fade then height, no jump, guides aligned, instant with reduced motion (R8.1, R4.3)
 #   app/web/dev/cdp/run.sh motion  running marks always move (R8.1), the sub-line tween, reduced motion (R8.5), square marks, marks on the box and gutter (R8.6)
+#   app/web/dev/cdp/run.sh extcard a question and a plan asked in another process: needs you, the read-only card, then answered (R6.8), with shots
+#   app/web/dev/cdp/run.sh motion motion rules and reduced motion (R8.1, R8.5), square marks, marks on the box and gutter (R8.6)
 # Starts headless Chrome on $SYNOPIA_CHROME_PORT (9334) if it isn't up, the backend on $SYNOPIA_CDP_PORT (4791). Prints "N/M pass" and the failures.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -20,10 +22,12 @@ state="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-state.XXXXXX")"
 port="${SYNOPIA_CDP_PORT:-4791}"
 if [ "$1" = earlier ]; then fix="$state/claude"; node "$here/earlier.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$1" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
+if [ "$1" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 curl -s http://127.0.0.1:"${SYNOPIA_CHROME_PORT:-9334}"/json >/dev/null || { "$here/chrome.sh"; sleep 2; }
 start() { "$here/backend.sh" "$port" "$state" --fake --claude-dir "$fix" ${dry[@]+"${dry[@]}"} >/dev/null; }
 stop() { local p; p="$(cat "$state/pid")"; kill "$p" 2>/dev/null; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; }
 start
 node "$here/$1.mjs" "$(cat "$state/url")" "$state" "$fix"; [ "$1" = menu ] && echo "picker shot: $state/menu-picker.png"; [ "$1" = earlier ] && echo "link shot: $state/earlier-link.png"; [ "$1" = states ] && echo "shots: $state/states-*.png"; [ "$1" = files ] && echo "shot: $state/files-changed.png"; [ "$1" = steps ] && echo "shot: $state/steps.png"; [ "$1" = preview ] && echo "shots: $state/preview-*.png"
+node "$here/$1.mjs" "$(cat "$state/url")" "$state" "$fix"; [ "$1" = menu ] && echo "picker shot: $state/menu-picker.png"; [ "$1" = earlier ] && echo "link shot: $state/earlier-link.png"; [ "$1" = states ] && echo "shots: $state/states-*.png"; [ "$1" = files ] && echo "shot: $state/files-changed.png"; [ "$1" = steps ] && echo "shot: $state/steps.png"; [ "$1" = extcard ] && echo "shots: $state/extcard-*.png"
 if [ "$1" = dnd ]; then stop; start; node "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart; fi
 stop

@@ -1,0 +1,7 @@
+{
+  "about": "Script for --fake (src/fake-driver.ts) over the ext fixture: questions and plans asked in another Claude Code process (R6.8). Made up. e1e1… and e2e2… have no step and no pending request: their transcripts end on an AskUserQuestion (two questions, one multi-select) and an ExitPlanMode with no result, so they read needs you with a read-only card. e3e3… ends on a question too, but a driver sets its status (as when Synopia's own process left it): Not answered (Synopia quit). Run: app/web/dev/cdp/run.sh extcard, which shifts the times so the cards are 4 min old.",
+  "home": "/Users/fixture",
+  "steps": [
+    { "at": 0, "sid": "e3e3e3e3-0000-4000-8000-00000000000e", "status": "idle", "ago": 300000 }
+  ]
+}

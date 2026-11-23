@@ -28,9 +28,9 @@ function askOf(r) {
 }
 /* The items with the session's pending requests as asks: a request takes the place of its tool (or the
    transcript's ask) for the same tool use, the others go at the end, a plan after its text. */
-function withPending(items, requests) {
-  if (!requests.length) return items;
-  const asks = requests.map(askOf), byTool = new Map(asks.map(a => [a.request.toolUseId, a]));
+function withPending(items, requests, ext = null) {
+  if (!requests.length && !ext) return items;
+  const asks = ext ? [ext] : requests.map(askOf), byTool = new Map(asks.map(a => [a.request.toolUseId, a]));
   const ids = new Set(items.map(it => it.id));
   const plans = new Map(asks.filter(a => a.plan).map(a => [`plan:${a.request.toolUseId}`, a.plan]));
   /* the plan as the request has it: the CLI reads it from the plan file, which a revision may have changed */
@@ -43,6 +43,32 @@ function withPending(items, requests) {
   return out;
 }
 const pendingAsk = s => { const r = requestsOf(s)[0]; return r ? askOf(r) : null; };
+/* A question or plan another Claude Code process asks (R6.8): the server's `ask` fact, sent only while
+   it is why the session needs you and no request of ours waits. Shown read-only: no cursor, no keys. */
+function extAsk(s) {
+  const x = s.ask; if (!x || requestsOf(s).length || s.status !== "waiting") return null;
+  const r = { id: `ext:${x.toolUseId}`, kind: x.kind, toolName: x.kind === "plan" ? "ExitPlanMode" : "AskUserQuestion", toolUseId: x.toolUseId, agentId: x.agentId, since: x.since || s.statusAt, input: { plan: x.plan || "" } };
+  const a = { ...askOf(r), ext: true };
+  if (x.kind !== "plan") a.qs = (x.qs || []).map(q => ({ q: q.q, header: q.header, multi: !!q.multi, opts: q.opts || [] }));
+  return a;
+}
+/* the read-only card: the prototype's card with every question open, its rows inert, and one quiet line for the footer */
+function extHTML(s, a) {
+  const n = a.qs.length;
+  const item = (q, qi) => {
+    const rows = [...q.opts.map(([l, d]) => ({ l, d })), ...(a.kind === "plan" ? [{ l: q.otherLabel, d: "Claude replans and asks again.", other: true }] : [])];
+    return `<div class="acc open">${n > 1 ? `<div class="acc-h"><span class="am">○</span><span class="hd">${esc(q.header || `Question ${qi + 1}`)}</span></div>` : ""}<div class="acc-b">
+      ${q.q ? `<div class="qt md">${md(q.q)}</div>` : ""}<div class="opts">${rows.map(r => {
+        const rec = /\(recommended\)\s*$/i.test(r.l), label = r.l.replace(/\s*\(recommended\)\s*$/i, "");
+        return `<div class="o ${r.other ? "other" : ""}"><span class="k"></span><span class="${r.other ? "pen" : q.multi ? "box" : "radio"}"></span>
+          <span class="l">${esc(label)}${rec ? `<span class="rc-t">Recommended</span>` : ""}</span><span class="d">${esc(r.d)}</span></div>`; }).join("")}</div></div></div>`;
+  };
+  return `<div class="qa-card ro" aria-label="Claude's questions, asked in another process">
+    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${askerOf(a.request)} ${a.kind === "plan" ? "wrote a plan and waits for your approval" : `asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(a.request.since)}</span></div>
+    <div class="qbody">${a.qs.map(item).join("")}</div>
+    <div class="nd-foot"><span class="ext-note">Asked in another Claude Code process. Answer it there.</span></div>
+  </div>`;
+}
 const askKey = (s, a) => `${s.id}:${a.id}`;
 const qs = (s, a) => (qstate[askKey(s, a)] ||= { qi: 0, oi: a.startOi || 0, picks: {}, own: {}, notes: {}, target: null, noteRow: null });
 const answered = (st, qi) => (st.picks[qi] || []).length > 0 || !!(st.own[qi] || "").trim();
@@ -142,8 +168,8 @@ let lastCard = null;
 function renderCard() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
-  const pa = !A && pendingAsk(s);
-  const html = pa ? qaHTML(s, pa) : !A && (stateOf(s) === "red" || s.status === "signedout") ? statusLine(s) : "";
+  const pa = !A && pendingAsk(s), ea = !A && !pa && extAsk(s);
+  const html = pa ? qaHTML(s, pa) : ea ? extHTML(s, ea) : !A && (stateOf(s) === "red" || s.status === "signedout") ? statusLine(s) : "";
   if (still(html) === lastCard) return;
   lastCard = still(html);
   const dock = conv.querySelector(".dock-inner"), composer = dock.querySelector(".composer");

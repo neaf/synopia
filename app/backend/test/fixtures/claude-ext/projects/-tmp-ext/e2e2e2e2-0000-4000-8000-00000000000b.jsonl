@@ -1,0 +1,5 @@
+{"type":"permission-mode","permissionMode":"plan"}
+{"type":"user","uuid":"x2-u1","timestamp":"2026-11-24T09:00:00.000Z","cwd":"/Users/fixture/dev/demo","message":{"role":"user","content":"Plan moving the demo settings into one file."}}
+{"type":"assistant","uuid":"x2-a1","timestamp":"2026-11-24T09:00:20.000Z","cwd":"/Users/fixture/dev/demo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_xgrep1","name":"Grep","input":{"pattern":"loadSettings"}}]}}
+{"type":"user","uuid":"x2-u2","timestamp":"2026-11-24T09:00:21.000Z","cwd":"/Users/fixture/dev/demo","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_xgrep1","content":"src/a.ts\nsrc/b.ts"}]}}
+{"type":"assistant","uuid":"x2-a2","timestamp":"2026-11-24T09:00:40.000Z","cwd":"/Users/fixture/dev/demo","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_xplan1","name":"ExitPlanMode","input":{"plan":"## Move the settings into one file\n\n1. Add `settings.json` with the keys `a.ts` and `b.ts` read today.\n2. Replace both `loadSettings` calls with one reader.\n3. Delete the two old files and run the tests.\n\nNot in this plan: the settings screen."}}]}}

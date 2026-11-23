@@ -694,6 +694,9 @@ body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px #54AEFF; }
 .nd-foot .btn { margin-left: auto; }
 .nd-foot .hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .nd-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+/* the read-only card of another process's question (R6.8): rows that don't answer to the pointer */
+.qa-card.ro .o { cursor: default; }
+.qa-card.ro .o:hover { background: none; }
 .waitln b { color: var(--red); }
 
 /* accordion: one line per question, the current one open */
