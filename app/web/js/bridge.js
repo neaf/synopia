@@ -34,7 +34,9 @@ function onMessage(m) {
     }
     case "session": {
       const had = store.sessions.has(m.id) || store.sessions.has(m.replaces);
+      if (m.replaces) renamed(m.replaces, m.id);
       applySession(m);
+      if (!had && wantNew && m.id.startsWith("new-")) { wantNew = false; current = m.id; view = null; mode = "insert"; renderAll(); break; }
       if (!current) pickCurrent();
       if (!had || !mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
@@ -48,7 +50,7 @@ function onMessage(m) {
     case "items": {
       if (!applyItems(m)) break;
       if (!isViewed(m.sid, m.agent)) break;
-      render("log", "card", ...(m.agent ? ["header"] : []));
+      render("log", "card", "header"); // the header drops its Now line while a new session is empty
       runHooks(m);
       break;
     }
@@ -81,6 +83,15 @@ function onMessage(m) {
     case "toast": toast(m.text); break;
     default: break; // recent, restore: later tasks
   }
+}
+
+/* a session's id changed (a new session got its real id, or a reset): the view on screen, the layout and
+   the subscription follow it, so the message box keeps what you typed */
+function renamed(from, to) {
+  const swap = ids => ids.map(x => x === from ? to : x);
+  for (const l of [layout, store.layout]) if (l) { l.groups.forEach(g => g.ids = swap(g.ids)); l.others = swap(l.others); }
+  if (mounted && mounted.startsWith(from + "|")) mounted = to + mounted.slice(from.length);
+  if (viewing && viewing.sid === from) viewing.sid = to;
 }
 
 /* the ?agent= and ?open= hooks, once the view they need has its items */

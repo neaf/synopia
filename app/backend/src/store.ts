@@ -9,7 +9,8 @@ import { nullLog } from './log.ts';
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
 export type Group = { id: string; name: string; ids: string[] };
 export type Layout = { groups: Group[]; others: string[] };
-export type Settings = { newSessionCwd: string; writerModel: string };
+// `model`: the model of new sessions when set (else the CLI's default).
+export type Settings = { newSessionCwd: string; writerModel: string; model?: string };
 
 export type State = {
   version: 1;
@@ -81,6 +82,7 @@ export function normalize(raw: unknown): State {
     const st = raw.settings;
     if (typeof st.newSessionCwd === 'string') s.settings.newSessionCwd = st.newSessionCwd;
     if (typeof st.writerModel === 'string') s.settings.writerModel = st.writerModel;
+    if (typeof st.model === 'string' && st.model) s.settings.model = st.model;
   }
   return s;
 }
