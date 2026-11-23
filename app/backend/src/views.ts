@@ -53,6 +53,8 @@ export type ViewsOptions = {
   choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
   defaultModel?: () => string | undefined;
+  // After each message to the pages (the Dock badge recounts from it, debounced).
+  onChange?: () => void;
 };
 
 // The transcript's effort: a level, or {level} on some records.
@@ -444,6 +446,7 @@ export class Views {
 
   private broadcast(msg: object): void {
     for (const c of this.opts.clients()) c.send(msg);
+    this.opts.onChange?.();
   }
 }
 
