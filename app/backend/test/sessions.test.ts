@@ -529,6 +529,11 @@ test('listRecent: newest first, the open ones left out, title from customTitle, 
   assert.equal(list[2].lastModified, 2059);
   const f = await sessions.listRecent('first');
   assert.deepEqual(f.map((r) => r.id), ['cccccccc-0000-4000-8000-00000000000c']);
+  // a title Claude wrote for a session Synopia closed names it, unless you renamed it
+  store.state.written['cccccccc-0000-4000-8000-00000000000c'] = { title: 'Written title', at: 1 };
+  store.state.written[PAST] = { title: 'Not this', at: 1 };
+  const w = await sessions.listRecent();
+  assert.deepEqual([w[0].title, w[1].title], ['Custom', 'Written title']);
 });
 
 test('openSession: adds it to the open list, shows its transcript, and resumes it on the first message', async () => {

@@ -181,7 +181,10 @@ export class Sessions {
     const out: Recent[] = [];
     for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
       if (!s.cwd || this.has(s.sessionId)) continue;
-      const title = titleOf(s);
+      // A session Synopia closed keeps the title Claude wrote for it (section 10's order), so the
+      // Open list names it as the sidebar did.
+      const written = this.store.state.written[s.sessionId]?.title;
+      const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
       if (q && !title.toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
       out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
       if (out.length === RECENT) break;
