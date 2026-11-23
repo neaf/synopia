@@ -5,7 +5,7 @@
 const store = { sessions: new Map(), layout: null, reviewed: new Set(), menu: {}, settings: {}, pending: new Map(), ui: { connected: false } };
 let data = [];
 const syncData = () => { data = [...store.sessions.values()]; };
-const STATE_OF = { waiting: "red", idle: "amber", busy: "green" };
+const STATE_OF = { waiting: "red", idle: "amber", stopped: "amber", failed: "amber", busy: "green" };
 /* Needs you: a pending request (question, permission or plan) for the session, oldest first. */
 const requestsOf = s => store.pending.get(s.id) || [];
 function pending(s) {
@@ -14,6 +14,8 @@ function pending(s) {
 }
 const stateOf = s => pending(s) ? "red" : (STATE_OF[s.status] || "amber");
 const WORD = { red: "Needs you", amber: "Your turn", green: "Working" };
+/* the state word: your turn splits into stopped (you interrupted it) and failed */
+const wordOf = s => { const st = stateOf(s); return st !== "amber" ? WORD[st] : s.status === "failed" ? "Failed" : s.status === "stopped" || interrupted(s) ? "Stopped" : WORD.amber; };
 let current = null;
 /* The session to show: the one in the hash (an id prefix), else the current one, else the first that needs you or waits. */
 function pickCurrent() {

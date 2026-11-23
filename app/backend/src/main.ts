@@ -12,6 +12,8 @@ import { openStore, reconcileLayout } from './store.ts';
 import { startServer } from './server.ts';
 import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
+import { Sessions } from './sessions.ts';
+import type { Image } from './sessions.ts';
 import type { Lock } from './lock.ts';
 import type { Layout, OpenEntry } from './store.ts';
 import type { Client, Server } from './server.ts';
@@ -66,10 +68,15 @@ const token = randomBytes(32).toString('hex');
 let server: Server | undefined;
 const noClients = new Set<Client>();
 const script = flags.fake ? loadScript(claudeDir) : null;
-const views = new Views({ claudeDir, clients: () => server?.clients ?? noClients, home: script?.home, log });
+let sessions: Sessions | null = null;
+const views = new Views({
+  claudeDir, clients: () => server?.clients ?? noClients, home: script?.home, log,
+  onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+});
 const fake = script ? new FakeDriver(views, script, { log }) : null;
+if (!fake) sessions = new Sessions({ store, views, log });
 
-// The open sessions: state.json's open list (filled from S1-6 on), or every fixture session under --fake.
+// The open sessions: state.json's open list, or every fixture session under --fake.
 function openEntries(): OpenEntry[] {
   if (!fake) return store.state.open;
   return views.ids().map((id) => ({ id, cwd: views.meta(id)?.cwd ?? '', openedAt: 0, closedAt: null }));
@@ -77,7 +84,15 @@ function openEntries(): OpenEntry[] {
 
 function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   if (msg.t === 'view' && typeof msg.sid === 'string') {
-    views.view(client, msg.sid, typeof msg.agent === 'string' ? msg.agent : null);
+    views.view(client, sessions ? sessions.resolve(msg.sid) : msg.sid, typeof msg.agent === 'string' ? msg.agent : null);
+  } else if (sessions && msg.t === 'newSession') {
+    sessions.newSession();
+  } else if (sessions && msg.t === 'send' && typeof msg.sid === 'string') {
+    const images = Array.isArray(msg.images)
+      ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
+      : [];
+    const r = sessions.send(msg.sid, typeof msg.text === 'string' ? msg.text : '', images, typeof msg.uuid === 'string' ? msg.uuid : undefined);
+    if (!r.ok) client.send({ t: 'toast', text: r.error });
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
     if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);
     store.changed();
@@ -103,7 +118,7 @@ try {
       settings: store.state.settings,
       pending: views.pending(),
     }),
-    quitCheck: () => ({ running: [], background: [] }),
+    quitCheck: () => ({ running: sessions?.running() ?? [], background: [] }),
     onMessage,
   });
 } catch (e) {
@@ -119,6 +134,7 @@ async function shutdown(reason: string) {
   stopping = true;
   log('backend.stop', { reason });
   fake?.stop();
+  sessions?.stop();
   views.stop();
   store.close();
   await server?.close();
@@ -135,5 +151,5 @@ if (!flags['no-parent']) {
 }
 
 if (fake) fake.start(claudeDir);
-else for (const e of store.state.open) if (e.closedAt === null) views.open(e.id, { cwd: e.cwd });
+else sessions?.start();
 process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');

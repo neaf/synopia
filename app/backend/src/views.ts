@@ -3,6 +3,7 @@
 // meta, `agents` and `background` to every page, and `items` only to the pages viewing that
 // conversation: a reset with the last WINDOW items on `view`, then upserts of changed ids.
 // It also holds the status, the pending requests and the stream preview a driver sets.
+// A session opened before its file exists (a new one) looks for it again every second.
 import fs from 'node:fs';
 import os from 'node:os';
 import { Tailer, SubagentWatcher } from './tail.ts';
@@ -12,10 +13,11 @@ import type { Item } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import type { Status } from './status.ts';
 
+export type { Status } from './status.ts';
 export const WINDOW = 160;
 
-export type Status = 'busy' | 'idle' | 'waiting';
 export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'plan'; since: number; [k: string]: unknown };
 export type SessionMeta = {
   id: string; title: string; now: string; cwd: string; prs: unknown[];
@@ -29,6 +31,7 @@ type Live = {
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
   status: Status | null; statusAt: number; stream: string | null; pending: PendingRequest[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
+  finder: NodeJS.Timeout | null;
 };
 
 export type ViewsOptions = {
@@ -38,6 +41,8 @@ export type ViewsOptions = {
   log?: Log;
   pollMs?: number; // passed to the tailers; 0 turns polling off (tests call check())
   watch?: boolean;
+  // Each assistant record of a main conversation as it lands: its message id and block types.
+  onAssistant?: (sid: string, messageId: string, blockTypes: string[]) => void;
 };
 
 const tilde = (p: string, home: string): string => (home && p.startsWith(home) ? '~' + p.slice(home.length) : p);
@@ -67,17 +72,34 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, stream: null, pending: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false,
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
+    if (file) this.attach(s, file);
+    else if (this.opts.pollMs !== 0) s.finder = setInterval(() => this.find(s), this.opts.pollMs ?? 1000);
+  }
+
+  // A new session's file appears with its first turn.
+  private find(s: Live): void {
+    if (s.path || this.live.get(s.id) !== s) return;
+    const file = findTranscript(this.opts.claudeDir, s.id);
     if (!file) return;
+    if (s.finder) clearInterval(s.finder);
+    s.finder = null;
+    this.log('views.found', { sid: s.id });
+    this.attach(s, file);
+  }
+
+  private attach(s: Live, file: string): void {
+    s.path = file;
     const tail = { pollMs: this.opts.pollMs, watch: this.opts.watch };
     s.tailer = new Tailer(file, {
       ...tail,
       onRecords: (records) => {
         if (!s.cwd) s.cwd = cwdOf(records);
         s.t.pushAll(records);
+        if (this.opts.onAssistant) landed(records, (mid, types) => this.opts.onAssistant?.(s.id, mid, types));
         this.queue(s);
       },
       onReset: () => {
@@ -122,11 +144,52 @@ export class Views {
     this.broadcast({ t: 'removed', id });
   }
 
+  // The session's id changed (a new session's real id from system/init, or a conversation_reset):
+  // it tails the new id's file from the start, keeps its folder and status, moves the pages
+  // viewing it, and sends `session` with `replaces` once.
+  rekey(oldId: string, newId: string): void {
+    const s = this.live.get(oldId);
+    if (!s || this.live.has(newId)) return;
+    this.stopOne(s);
+    this.live.delete(oldId);
+    this.open(newId, { cwd: s.cwd });
+    const n = this.live.get(newId) as Live;
+    n.status = s.status;
+    n.statusAt = s.statusAt;
+    const meta = this.metaOf(n);
+    n.sent = JSON.stringify(meta);
+    this.broadcast({ t: 'session', replaces: oldId, ...meta });
+    for (const [client, sub] of this.liveSubs()) {
+      if (sub.sid !== oldId) continue;
+      sub.sid = newId;
+      sub.agent = null;
+      this.sendReset(client, sub);
+    }
+  }
+
+  // What a driver needs from the transcript to start a process.
+  facts(id: string): { model: string | null; effort: string | null; permissionMode: string | null; working: boolean } | undefined {
+    const s = this.live.get(id);
+    if (!s) return undefined;
+    const t = s.t;
+    const effort = typeof t.effort === 'string' ? t.effort
+      : t.effort && typeof (t.effort as { level?: unknown }).level === 'string' ? (t.effort as { level: string }).level : null;
+    return {
+      model: typeof t.requestedModel === 'string' ? t.requestedModel : null,
+      effort,
+      permissionMode: t.permissionMode,
+      // a subagent or background shell or monitor still running
+      working: t.agents().some((a) => a.running) || t.background().some((b) => b.status === 'running'),
+    };
+  }
+
   stop(): void {
     for (const s of this.live.values()) this.stopOne(s);
   }
 
   private stopOne(s: Live): void {
+    if (s.finder) clearInterval(s.finder);
+    s.finder = null;
     s.tailer?.stop();
     s.watcher?.stop();
     for (const c of s.children.values()) c.tailer.stop();
@@ -135,6 +198,7 @@ export class Views {
   // Reads what is new right now (tests and the fixture builder; live sessions rely on the timers).
   check(): void {
     for (const s of this.live.values()) {
+      if (!s.path) this.find(s);
       s.watcher?.scan();
       s.tailer?.check();
       for (const c of s.children.values()) c.tailer.check();
@@ -299,6 +363,16 @@ export class Views {
 
   private broadcast(msg: object): void {
     for (const c of this.opts.clients()) c.send(msg);
+  }
+}
+
+function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {
+  for (const r of records) {
+    if (r.type !== 'assistant' || r.isSidechain === true) continue;
+    const m = r.message as { id?: unknown; content?: unknown } | undefined;
+    if (!m || typeof m.id !== 'string') continue;
+    const types = Array.isArray(m.content) ? m.content.map((b) => String((b as { type?: unknown })?.type ?? '')) : [];
+    fn(m.id, types);
   }
 }
 

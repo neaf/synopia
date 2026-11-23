@@ -1,6 +1,7 @@
 /* Composer: the message box, pasted images, the slash menu and the model picker (split from prototype/app.html).
    mountComposer runs once per session view (renderConv), so data never resets what you type. */
 const attachments = [];
+const newUuid = () => crypto.randomUUID ? crypto.randomUUID() : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
 
 /* ---------- slash commands and /model, from the menu of the session's folder ---------- */
 const MENU = () => store.menu[cur()?.cwd ?? ""] || { models: [], commands: [] };
@@ -75,10 +76,21 @@ function mountComposer(s) {
     toast(`Model set to ${m.name} for this session. Applying it to Claude comes with a later task.`);
     renderHeader(); renderLog();
   });
-  /* S1-6 sends through the session's input; until then the message stays in the box */
+  /* Enter sends the text and the pasted images (base64 PNG or JPEG, 5 MB each) to the session's input.
+     s.id follows the session when its id changes (a new session's real id), so the message reaches it. */
   const sendMsg = () => {
     if (!ta.value.trim() && !attachments.length) return;
-    toast("Sending comes with the next task");
+    const images = [];
+    for (const url of attachments) {
+      const m = /^data:(image\/(?:png|jpeg));base64,(.*)$/.exec(url);
+      if (!m) { toast("Only PNG and JPEG images can be sent. Remove the others first."); return; }
+      if (m[2].length * 3 / 4 > 5 * 1024 * 1024) { toast("An image is over 5 MB. Remove it, or paste a smaller one."); return; }
+      images.push({ mediaType: m[1], data: m[2] });
+    }
+    if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your message is still in the box."); return; }
+    send({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() });
+    ta.value = ""; ta.style.height = "auto";
+    attachments.length = 0; renderAttachments();
   };
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; });

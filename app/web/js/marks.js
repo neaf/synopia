@@ -59,6 +59,7 @@ function sessionMarkKey(s) {
   const st = stateOf(s);
   if (st === "red") return "pause";
   if (st === "green") return "work";
+  if (s.status === "failed") return "failed";
   return "stopped"; // your turn: Claude stopped and waits for you (grey square), whether or not background work runs
 }
 const sessionMark = s => ind(sessionMarkKey(s));

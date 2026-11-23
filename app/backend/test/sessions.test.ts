@@ -1,0 +1,346 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Views } from '../src/views.ts';
+import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
+import { DENY_MESSAGE, STATE_FLAG } from '../src/driver.ts';
+import type { QueryFn } from '../src/driver.ts';
+import { openStore } from '../src/store.ts';
+import type { Client } from '../src/server.ts';
+import type { CanUseTool, Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+
+type Msg = { t: string; [k: string]: unknown };
+const tick = () => new Promise((r) => setTimeout(r, 5));
+
+// An async-iterable channel: the fake CLI's output.
+function channel<T>() {
+  const buf: T[] = [];
+  let wake: (() => void) | null = null;
+  let done = false;
+  let fail: Error | null = null;
+  return {
+    push(m: T) { buf.push(m); wake?.(); wake = null; },
+    end(err?: Error) { done = true; fail = err ?? null; wake?.(); wake = null; },
+    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
+      while (true) {
+        while (buf.length) yield buf.shift() as T;
+        if (fail) throw fail;
+        if (done) return;
+        await new Promise<void>((r) => (wake = r));
+      }
+    },
+  };
+}
+
+type Call = { options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean };
+function fakeQuery() {
+  const calls: Call[] = [];
+  const fn: QueryFn = ({ prompt, options }) => {
+    const out = channel<SDKMessage>();
+    const call: Call = { options, inputs: [], out, closed: false };
+    calls.push(call);
+    void (async () => {
+      for await (const m of prompt) call.inputs.push(m);
+      out.end(); // the input closed: the process ends after its turn
+    })();
+    return Object.assign(out, { close: () => { call.closed = true; out.end(); } });
+  };
+  return { calls, fn };
+}
+
+const emit = (c: Call, m: object) => c.out.push(m as SDKMessage);
+const init = (id: string) => ({ type: 'system', subtype: 'init', session_id: id, uuid: 'u-init' });
+const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_reason: 'completed' };
+const REAL = '11111111-2222-4333-8444-555555555555';
+const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
+
+function setup(dir?: string) {
+  const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const claudeDir = path.join(root, 'claude');
+  const stateDir = path.join(root, 'state');
+  const cwd = path.join(root, 'scratch');
+  fs.mkdirSync(path.join(claudeDir, 'projects'), { recursive: true });
+  fs.mkdirSync(cwd, { recursive: true });
+  const got: Msg[] = [];
+  const c: Client = { send: (m) => got.push(JSON.parse(JSON.stringify(m))), close: () => {} };
+  const clients = new Set<Client>([c]);
+  const store = openStore(stateDir, { minIntervalMs: 0 });
+  store.state.settings.newSessionCwd = cwd;
+  store.state.settings.model = 'haiku';
+  let sessions: Sessions | null = null;
+  const views = new Views({
+    claudeDir, clients: () => clients, home: root, pollMs: 0, watch: false,
+    onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+  });
+  const q = fakeQuery();
+  sessions = new Sessions({ store, views, queryFn: q.fn, home: root });
+  const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
+  return { root, claudeDir, cwd, c, store, views, sessions, q, take };
+}
+
+test('sessions: a placeholder takes its real id from system/init', async () => {
+  const { sessions, store, q, take, cwd, c, views } = setup();
+  const ph = sessions.newSession();
+  assert.match(ph, /^new-/);
+  const first = take('session');
+  assert.equal(first.length, 1);
+  assert.equal(first[0].id, ph);
+  assert.equal(first[0].title, 'New session');
+  assert.equal(store.state.open.length, 0, 'a placeholder is not stored');
+  views.view(c, ph, null);
+
+  assert.equal(sessions.send(ph, 'hello').ok, true);
+  await tick();
+  assert.equal(q.calls.length, 1);
+  const o = q.calls[0].options;
+  assert.equal(o.cwd, cwd);
+  assert.equal(o.resume, undefined);
+  assert.equal(o.model, 'haiku');
+  assert.equal(o.permissionMode, undefined, 'your own permission setting applies');
+  assert.equal(o.includePartialMessages, true);
+  assert.equal(o.perTaskStopAffordance, true);
+  assert.equal((o.env as Record<string, string>)[STATE_FLAG], '1');
+  assert.equal(o.settingSources, undefined);
+  assert.equal(take('session').at(-1)?.status, 'busy');
+
+  emit(q.calls[0], init(REAL));
+  await tick();
+  const swapped = take('session');
+  assert.equal(swapped[0].replaces, ph);
+  assert.equal(swapped[0].id, REAL);
+  assert.deepEqual(store.state.open.map((e) => e.id), [REAL]);
+  assert.equal(store.state.open[0].cwd, cwd);
+  assert.deepEqual(store.state.layout.others, [REAL]);
+  assert.equal(store.state.status[REAL].status, 'busy');
+  assert.equal(sessions.resolve(ph), REAL);
+  assert.deepEqual(views.ids(), [REAL]);
+});
+
+test('sessions: two sends before init go to one process, in order', async () => {
+  const { sessions, q } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'one', [], '0e9b7f1c-0000-4000-8000-000000000001');
+  sessions.send(ph, 'two', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }], '0e9b7f1c-0000-4000-8000-000000000002');
+  await tick();
+  assert.equal(q.calls.length, 1);
+  const inputs = q.calls[0].inputs;
+  assert.equal(inputs.length, 2);
+  assert.equal(inputs[0].message.content, 'one');
+  assert.equal(inputs[0].uuid, '0e9b7f1c-0000-4000-8000-000000000001');
+  const blocks = inputs[1].message.content as { type: string }[];
+  assert.deepEqual(blocks.map((b) => b.type), ['image', 'text']);
+  assert.equal(inputs[1].uuid, '0e9b7f1c-0000-4000-8000-000000000002');
+
+  emit(q.calls[0], init(REAL));
+  await tick();
+  sessions.send(ph, 'three'); // an old id still reaches the session
+  await tick();
+  assert.equal(q.calls.length, 1);
+  assert.equal(inputs.length, 3);
+});
+
+test('sessions: images over 5 MB or not PNG/JPEG are refused', () => {
+  const { sessions, q } = setup();
+  const ph = sessions.newSession();
+  const big = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
+  assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/png', data: big }]).ok, false);
+  assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/gif', data: 'R0lG' }]).ok, false);
+  assert.equal(q.calls.length, 0);
+});
+
+test('sessions: the alias map reaches the session through every id it had', async () => {
+  const { sessions, q, views, c, take } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  await tick();
+  emit(q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: REAL, trigger: 'clear' });
+  await tick();
+  assert.equal(sessions.resolve(ph), RESET);
+  assert.equal(sessions.resolve(REAL), RESET);
+  assert.equal(sessions.resolve('unknown'), 'unknown');
+  take();
+  views.view(c, sessions.resolve(ph), null);
+  const items = take('items');
+  assert.equal(items[0].sid, RESET);
+  assert.equal(items[0].reset, true);
+});
+
+test('sessions: conversation_reset moves the id in the open list, layout, models, rules and status', async () => {
+  const { sessions, store, q, take } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  await tick();
+  const st = store.state;
+  st.layout = { groups: [{ id: 'g1', name: 'Group', ids: ['x', REAL] }], others: [] };
+  st.models[REAL] = { model: 'haiku', effort: 'low' };
+  st.rules[REAL] = ['Bash(ls:*)'];
+  st.written[REAL] = { title: 'Old title', now: 'Old now', at: 1 };
+  take();
+  emit(q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: REAL });
+  await tick();
+  assert.deepEqual(st.open.map((e) => e.id), [RESET]);
+  assert.deepEqual(st.layout.groups[0].ids, ['x', RESET]);
+  assert.deepEqual(st.models[RESET], { model: 'haiku', effort: 'low' });
+  assert.equal(st.models[REAL], undefined);
+  assert.deepEqual(st.rules[RESET], ['Bash(ls:*)']);
+  assert.ok(st.status[RESET]);
+  assert.equal(st.status[REAL], undefined);
+  assert.equal(st.written[RESET], undefined, 'the written title and Now line are cleared');
+  assert.equal(st.written[REAL], undefined);
+  const s = take('session');
+  assert.equal(s[0].replaces, REAL);
+  assert.equal(s[0].id, RESET);
+});
+
+test('sessions: the open list is stored, and the session resumes on the first message after a restart', async () => {
+  const a = setup();
+  const ph = a.sessions.newSession();
+  a.sessions.newSession(); // never sent to: not stored
+  a.sessions.send(ph, 'hi');
+  emit(a.q.calls[0], init(REAL));
+  emit(a.q.calls[0], RESULT);
+  await tick();
+  a.sessions.stop();
+  await tick();
+  a.store.close();
+  const saved = JSON.parse(fs.readFileSync(path.join(a.root, 'state', 'state.json'), 'utf8'));
+  assert.deepEqual(saved.open.map((e: { id: string }) => e.id), [REAL]);
+  assert.equal(typeof saved.status[REAL].at, 'number');
+
+  const b = setup(a.root);
+  b.store.state.models[REAL] = { model: 'sonnet' };
+  b.sessions.start();
+  assert.deepEqual(b.views.ids(), [REAL]);
+  assert.equal(b.q.calls.length, 0, 'no process until a message');
+  b.sessions.send(REAL, 'four');
+  await tick();
+  assert.equal(b.q.calls.length, 1);
+  assert.equal(b.q.calls[0].options.resume, REAL);
+  assert.equal(b.q.calls[0].options.model, 'sonnet', 'the stored model wins');
+  emit(b.q.calls[0], init(REAL));
+  await tick();
+  assert.deepEqual(b.store.state.open.map((e) => e.id), [REAL], 'same id, no swap');
+});
+
+test('sessions: a session whose last permission mode is plan resumes in plan mode', async () => {
+  const a = setup();
+  const dir = path.join(a.claudeDir, 'projects', '-tmp-x');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${REAL}.jsonl`), JSON.stringify({ type: 'permission-mode', permissionMode: 'plan', sessionId: REAL }) + '\n');
+  a.store.state.open.push({ id: REAL, cwd: a.cwd, openedAt: 0, closedAt: null });
+  a.sessions.start();
+  a.views.check();
+  a.sessions.send(REAL, 'go');
+  await tick();
+  assert.equal(a.q.calls[0].options.permissionMode, 'plan');
+});
+
+test('sessions: canUseTool denies with a message, and toasts', async () => {
+  const { sessions, q, take } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  await tick();
+  take();
+  const canUseTool = q.calls[0].options.canUseTool as CanUseTool;
+  const r = await canUseTool('AskUserQuestion', { questions: [] }, { signal: new AbortController().signal, toolUseID: 't1', requestId: 'r1' } as Parameters<CanUseTool>[2]);
+  assert.deepEqual(r, { behavior: 'deny', message: DENY_MESSAGE });
+  assert.equal(DENY_MESSAGE, "Synopia can't answer this yet. Ask in plain text instead.");
+  const toasts = take('toast');
+  assert.equal(toasts.length, 1);
+  assert.match(String(toasts[0].text), /AskUserQuestion/);
+});
+
+test('sessions: statuses go working, then your turn; a failed process is failed and toasts', async () => {
+  const { sessions, q, take } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running' });
+  await tick();
+  emit(q.calls[0], RESULT);
+  await tick();
+  assert.equal(take('session').at(-1)?.status, 'busy');
+  emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
+  await tick();
+  assert.equal(take('session').at(-1)?.status, 'idle');
+
+  q.calls[0].out.end(new Error('boom'));
+  await tick();
+  const got = take();
+  assert.equal(got.filter((m) => m.t === 'session').at(-1)?.status, 'failed');
+  assert.equal(got.filter((m) => m.t === 'toast').length, 1);
+  sessions.send(REAL, 'again');
+  await tick();
+  assert.equal(q.calls.length, 2, 'the next message tries again');
+  assert.equal(q.calls[1].options.resume, REAL);
+});
+
+test('sessions: a missing folder fails without starting a process', () => {
+  const { sessions, store, q, take } = setup();
+  store.state.settings.newSessionCwd = '/tmp/synopia-no-such-folder-' + process.pid;
+  const ph = sessions.newSession();
+  const r = sessions.send(ph, 'hi');
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /no longer exists/);
+  assert.equal(q.calls.length, 0);
+  assert.equal(take('session').at(-1)?.status, 'failed');
+});
+
+test('sessions: the stream preview builds from deltas and clears when the block lands and on result', async () => {
+  const { sessions, q, take, claudeDir, views } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  const ev = (event: object, parent: string | null = null) => emit(q.calls[0], { type: 'stream_event', event, parent_tool_use_id: parent, uuid: 'u', session_id: REAL });
+  ev({ type: 'message_start', message: { id: 'msg_1' } });
+  ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hel' } });
+  ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'lo' } });
+  ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: ' sub' } }, 'toolu_sub');
+  await new Promise((r) => setTimeout(r, 80));
+  const s1 = take('stream');
+  assert.equal(s1.at(-1)?.text, 'Hello');
+  assert.equal(s1.at(-1)?.sid, REAL);
+
+  // the block's record lands in the JSONL
+  const dir = path.join(claudeDir, 'projects', '-tmp-x');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${REAL}.jsonl`), JSON.stringify({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:00.000Z', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'text', text: 'Hello' }] },
+  }) + '\n');
+  views.check();
+  await tick();
+  assert.equal(take('stream').at(-1)?.clear, true);
+
+  ev({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+  ev({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'More' } });
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(take('stream').at(-1)?.text, 'More');
+  emit(q.calls[0], RESULT);
+  await tick();
+  assert.equal(take('stream').at(-1)?.clear, true);
+});
+
+test('stream preview: thinking blocks are not shown, and land by type', () => {
+  const p = new StreamPreview();
+  const e = (event: object) => p.event({ event, parent_tool_use_id: null });
+  e({ type: 'message_start', message: { id: 'm' } });
+  e({ type: 'content_block_start', index: 0, content_block: { type: 'thinking' } });
+  e({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } });
+  assert.equal(e({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'A' } }), true);
+  assert.equal(p.text(), 'A');
+  assert.equal(p.land('m', ['thinking']), false);
+  assert.equal(p.text(), 'A');
+  assert.equal(p.land('m', ['text']), true);
+  assert.equal(p.text(), null);
+});
+
+test('renameInLayout: swaps in place, or adds to Not in a group', () => {
+  assert.deepEqual(renameInLayout({ groups: [{ id: 'g', name: 'G', ids: ['a', 'b'] }], others: [] }, 'a', 'z', true),
+    { groups: [{ id: 'g', name: 'G', ids: ['z', 'b'] }], others: [] });
+  assert.deepEqual(renameInLayout({ groups: [], others: ['q'] }, 'a', 'z', true), { groups: [], others: ['q', 'z'] });
+});

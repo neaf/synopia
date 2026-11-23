@@ -51,6 +51,11 @@ final class Backend {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: config.node)
     p.arguments = ["--disable-warning=ExperimentalWarning", "--experimental-strip-types", config.backend]
+    // SYNOPIA_STATE_DIR (for example `open --env SYNOPIA_STATE_DIR=/tmp/x build/Synopia.app`) points the
+    // backend at another state folder, so checks never touch the real one.
+    if let dir = ProcessInfo.processInfo.environment["SYNOPIA_STATE_DIR"], !dir.isEmpty {
+      p.arguments?.append(contentsOf: ["--state-dir", dir])
+    }
     let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
     p.standardInput = inPipe
     p.standardOutput = outPipe

@@ -181,7 +181,8 @@ function statusLine(s) {
     const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[pending(s)] || "Claude is waiting for a permission";
     return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.statusAt)}</span></div>`;
   }
-  return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${interrupted(s) ? "Stopped" : "Your turn"}</b><span>${interrupted(s) ? "You interrupted it" : `Claude finished ${age(s.statusAt)} ago`}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
+  const w = wordOf(s), why = w === "Failed" ? `The last turn failed ${age(s.statusAt)} ago. Send a message to try again` : w === "Stopped" ? "You interrupted it" : `Claude finished ${age(s.statusAt)} ago`;
+  return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${w}</b><span>${why}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
 }
 
 /* ---------- the session view, rendered per panel: header, log, card (in the dock), rail ---------- */
@@ -226,12 +227,14 @@ function renderHeader() {
         <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title">${esc(s.title)}</h2>
-        <p class="c-now">Now: ${esc(s.now)}</p>
+        ${isEmpty(s) ? "" : `<p class="c-now">Now: ${esc(s.now)}</p>`}
         <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${p}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button><button class="btn" data-close>Close session</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
   document.getElementById("msg").placeholder = `Message ${s.title}, / for commands`;
 }
+/* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
+const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
 function logEntries(s, A) {
   const items = A ? (A.items || []) : withPending(s.items, requestsOf(s));
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
