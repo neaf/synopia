@@ -196,6 +196,26 @@ test('a turn that ends during a call writes again afterwards', async () => {
   store.close();
 });
 
+test('stop aborts the running call, and nothing is written from it (L8)', async () => {
+  const dir = tmp('synopia-writer-');
+  const store = openStore(dir);
+  let signal: AbortSignal | undefined;
+  const fn: WriterQueryFn = ({ options }) => (async function* () {
+    signal = options.abortController?.signal;
+    await new Promise<void>((_, rej) => signal?.addEventListener('abort', () => rej(new Error('aborted')), { once: true }));
+    yield { type: 'result', subtype: 'success', result: good() } as unknown as SDKMessage;
+  })();
+  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, queryFn: fn, debounceMs: 5 });
+  w.turnEnded('s1');
+  await wait(20);
+  assert.equal(signal?.aborted, false);
+  w.stop();
+  assert.equal(signal?.aborted, true);
+  await wait(5);
+  assert.equal(store.state.written.s1, undefined);
+  store.close();
+});
+
 // Views: the written text reaches `session`, with the plan's title precedence.
 test('precedence: your rename, then Claude\'s title, then the ai-title; stored and restored', () => {
   const id = 'bbbbbbbb-0000-4000-8000-00000000000b';

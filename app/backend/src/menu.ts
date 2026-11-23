@@ -70,10 +70,17 @@ export class Menus {
   private cache = new Map<string, FolderMenu>(); // by the folder as the page shows it (`~/…`)
   private loading = new Map<string, Promise<FolderMenu | null>>();
   private sentTo = new WeakMap<Client, Set<string>>();
+  private aborts = new Set<AbortController>(); // the idle queries running, aborted at quit
 
   constructor(opts: MenusOptions) {
     this.opts = opts;
     this.log = opts.log ?? nullLog;
+  }
+
+  // Quit: the idle queries still reading end with the backend.
+  stop(): void {
+    for (const ac of this.aborts) ac.abort();
+    this.aborts.clear();
   }
 
   // For `hello`: every folder's menu so far. The page then holds them all.
@@ -141,18 +148,22 @@ export class Menus {
     const started = Date.now();
     let q: IdleQuery | null = null;
     let timer: NodeJS.Timeout | undefined;
+    const ac = new AbortController();
+    this.aborts.add(ac);
     try {
-      q = (this.opts.queryFn ?? (sdkQuery as unknown as IdleQueryFn))({ prompt: idlePrompt(stop), options: { cwd: abs } });
+      q = (this.opts.queryFn ?? (sdkQuery as unknown as IdleQueryFn))({ prompt: idlePrompt(stop), options: { cwd: abs, abortController: ac } });
       const timeout = new Promise<never>((_, rej) => {
         timer = setTimeout(() => rej(new Error('timeout')), this.opts.timeoutMs ?? IDLE_TIMEOUT_MS);
       });
-      const m = await Promise.race([readMenu(q), timeout]);
+      const aborted = new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true }));
+      const m = await Promise.race([readMenu(q), timeout, aborted]);
       this.log('menu.idle', { ms: Date.now() - started, commands: m.commands.length, models: m.models.length });
       return m;
     } catch (e) {
       this.log('menu.idleFailed', { error: (e as Error)?.message === 'timeout' ? 'timeout' : 'error' });
       return null;
     } finally {
+      this.aborts.delete(ac);
       clearTimeout(timer);
       release();
       try { q?.close(); } catch { /* already gone */ }

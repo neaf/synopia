@@ -143,6 +143,7 @@ export class Writer {
   private running: string | null = null;
   private again = new Set<string>(); // a turn ended while its call ran
   private stopped = false;
+  private abort: AbortController | null = null; // the running call's, aborted at quit
 
   constructor(opts: WriterOptions) {
     this.opts = opts;
@@ -167,6 +168,7 @@ export class Writer {
     for (const t of this.timers.values()) clearTimeout(t);
     this.timers.clear();
     this.queue = [];
+    this.abort?.abort(); // the call's CLI child ends with the backend
   }
 
   private schedule(sid: string): void {
@@ -207,6 +209,9 @@ export class Writer {
     const cwd = path.join(this.opts.stateDir, 'writer');
     fs.mkdirSync(cwd, { recursive: true });
     const options = writerOptions(this.store.state.settings.writerModel || 'haiku', cwd);
+    const ac = new AbortController();
+    options.abortController = ac;
+    this.abort = ac;
     const started = this.now();
     let reply = '';
     const hooks: string[] = []; // the events of hooks that still ran (managed ones), names only
@@ -218,7 +223,10 @@ export class Writer {
     } catch (e) {
       this.log('writer.failed', { sid, error: String((e as Error)?.name ?? 'error') });
       return;
+    } finally {
+      if (this.abort === ac) this.abort = null;
     }
+    if (ac.signal.aborted) return;
     const w = parseReply(reply);
     this.log('writer.done', { sid, ok: Boolean(w), ms: this.now() - started, hooks: hooks.join(',') || 'none' });
     if (!w) return;

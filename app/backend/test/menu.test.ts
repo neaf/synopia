@@ -112,3 +112,23 @@ test('menu: an idle query that never answers times out and is closed', async () 
   assert.equal(closed, true);
   assert.equal(a.got.length, 0);
 });
+
+test('menu: stop aborts an idle query that is still reading (L8)', async () => {
+  const dir = tmp();
+  const a = client();
+  let closed = false;
+  let signal: AbortSignal | undefined;
+  const m = new Menus({
+    clients: () => new Set([a.c]),
+    queryFn: ({ options }) => {
+      signal = options.abortController?.signal;
+      return { supportedCommands: () => new Promise(() => {}), supportedModels: async () => [], close: () => { closed = true; } };
+    },
+  });
+  const viewed = m.viewed(a.c, '~/x', dir, null);
+  await new Promise((r) => setTimeout(r, 5));
+  m.stop();
+  await viewed;
+  assert.equal(signal?.aborted, true);
+  assert.equal(closed, true);
+});

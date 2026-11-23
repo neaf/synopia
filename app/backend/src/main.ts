@@ -204,6 +204,7 @@ async function shutdown(reason: string) {
   log('backend.stop', { reason });
   fake?.stop();
   writer?.stop();
+  menus?.stop();
   sessions?.stop();
   views.stop();
   store.close();

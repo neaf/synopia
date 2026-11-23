@@ -1,7 +1,9 @@
 // An exclusive lock file in the state folder, so only one backend writes the
 // state and drives the sessions. The file holds the owner's pid; a lock whose
-// pid no longer runs is stale and taken over.
-import { openSync, writeSync, closeSync, readFileSync, unlinkSync } from 'node:fs';
+// pid no longer runs is stale and taken over. The pid is written to a file of
+// our own first and linked into place, so the lock never exists empty: a second
+// backend can't read it between the create and the write and take it as stale.
+import { writeFileSync, linkSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 
 export type Lock = { path: string; release: () => void };
@@ -26,10 +28,23 @@ function alive(pid: number): boolean {
 
 export function acquireLock(stateDir: string): Lock {
   const path = join(stateDir, 'backend.lock');
-  for (let attempt = 0; attempt < 2; attempt++) {
-    let fd: number;
+  const mine = `${path}.${process.pid}`;
+  writeFileSync(mine, String(process.pid), { mode: 0o600 });
+  try {
+    return take(path, mine);
+  } finally {
     try {
-      fd = openSync(path, 'wx', 0o600);
+      unlinkSync(mine);
+    } catch {
+      // Already gone.
+    }
+  }
+}
+
+function take(path: string, mine: string): Lock {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      linkSync(mine, path); // fails with EEXIST while another backend holds it
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
       let pid = NaN;
@@ -46,8 +61,6 @@ export function acquireLock(stateDir: string): Lock {
       }
       continue;
     }
-    writeSync(fd, String(process.pid));
-    closeSync(fd);
     let held = true;
     return {
       path,
