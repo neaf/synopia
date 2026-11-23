@@ -22,7 +22,11 @@
 // Background subagents and forks (requirements R8.2, 2026-11-23): with the main turn over, a
 // session whose subagents or forks still run (the transcript's running rule) is working, not
 // your turn; shells and monitors alone are not. When the last one finishes, the turn's outcome
-// comes back, its age counted from then. Sessions with no driver status use agentsStatus().
+// comes back, its age counted from then.
+// A turn in another process (2026-11-23): with no process of Synopia's, a main turn the transcript
+// shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
+// and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
+// QUIET_MS) is working too. Sessions with no driver status use transcriptStatus().
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.
 // Without CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS (no `session_state_changed` seen yet), a turn
@@ -41,6 +45,11 @@ export type StatusEntry = { status: Status; at: number; detail?: StatusDetail };
 // 15 min: longer than the Bash tool's longest timeout (10 min), the longest a foreground tool
 // is expected to run without a message, so a slow tool doesn't read as stale.
 export const STALE_MS = 15 * 60_000;
+// 30 min: an open turn by the transcript alone, with no tool waiting for its result, that hasn't
+// changed for this long is your turn (its process may have crashed).
+export const QUIET_MS = 30 * 60_000;
+// What runs by the transcript: subagents and forks, the main turn, and when it last changed (ms).
+export type Running = { agents: number; turn: boolean; lastAt: number };
 export const AUTH_ERRORS: readonly SDKAssistantMessageError[] = ['authentication_failed', 'cloud_credential_error'];
 export type Timer = (fn: () => void, ms: number) => () => void;
 const realTimer: Timer = (fn, ms) => {
@@ -76,6 +85,7 @@ export class SessionStatus {
   private outcome: Outcome;
   private pending = 0;
   private agents = 0; // background subagents and forks running, from the transcript
+  private external = false; // a main turn running in another process, from the transcript
   private stopping = false; // an interrupt was sent and its result hasn't come yet
   private signedOut: boolean;
   private compacting = false;
@@ -185,9 +195,16 @@ export class SessionStatus {
     this.update();
   }
 
-  // The transcript's count of running subagents and forks changed.
-  setAgents(n: number): void {
-    this.agents = n;
+  // What runs by the transcript changed. `external`: the caller has no process for the session, so
+  // a running main turn there is another process's. One starting makes the old outcome history.
+  setRunning(r: Running, external: boolean): void {
+    this.agents = r.agents;
+    const turn = external && r.turn;
+    if (turn && !this.external) {
+      this.outcome = 'idle';
+      this.signedOut = false;
+    }
+    this.external = turn;
     this.update();
   }
 
@@ -225,7 +242,7 @@ export class SessionStatus {
     const stale = this.running && this.pending === 0 && now - this.last >= silentFor;
     const next: Status = this.pending > 0 ? 'waiting'
       : this.signedOut ? 'signedout'
-        : !this.running ? (this.agents > 0 ? 'busy' : this.outcome)
+        : !this.running ? (this.agents > 0 || this.external ? 'busy' : this.outcome)
           : stale ? 'stale' : this.retry ? 'retrying' : this.compacting ? 'compacting' : 'busy';
     const detail: StatusDetail = {};
     if (next === 'busy' && this.queued.length) detail.queued = this.queued.length;
@@ -256,9 +273,9 @@ export class SessionStatus {
 }
 
 // The status of a session no driver set (the transcript alone): working while its subagents or
-// forks run, else your turn.
-export function agentsStatus(agentsRunning: number): Status {
-  return agentsRunning > 0 ? 'busy' : 'idle';
+// forks or its main turn run, else your turn.
+export function transcriptStatus(r: Running): Status {
+  return r.agents > 0 || r.turn ? 'busy' : 'idle';
 }
 
 function num(v: unknown): number {

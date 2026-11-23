@@ -14,7 +14,8 @@ import type { Item } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { agentsStatus } from './status.ts';
+import { transcriptStatus, QUIET_MS } from './status.ts';
+import type { Running } from './status.ts';
 import type { Status, StatusDetail } from './status.ts';
 import { displayPath } from './paths.ts';
 
@@ -38,6 +39,7 @@ type Live = {
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
   finder: NodeJS.Timeout | null;
   working: Set<string>; // background work and subagents seen running, to tell when one ends
+  ran: string; // the last Running sent to onRunning
 };
 
 export type ViewsOptions = {
@@ -61,8 +63,8 @@ export type ViewsOptions = {
   defaultModel?: () => string | undefined;
   // After each message to the pages (the Dock badge recounts from it, debounced).
   onChange?: () => void;
-  // The session's subagents and forks changed: how many run now (status.ts setAgents).
-  onAgents?: (sid: string, running: number) => void;
+  // What runs by the transcript changed: subagents and forks, and the main turn (status.ts setRunning).
+  onRunning?: (sid: string, r: Running) => void;
   // A background shell, monitor or subagent of the session stopped running.
   onWorkEnded?: (sid: string) => void;
 };
@@ -80,10 +82,17 @@ export class Views {
   private live = new Map<string, Live>();
   private subs = new Map<Client, Sub>();
 
+  private recheck: NodeJS.Timeout | null = null;
+
   constructor(opts: ViewsOptions) {
     this.opts = opts;
     this.home = opts.home ?? os.homedir();
     this.log = opts.log ?? nullLog;
+    // A turn running by the transcript alone ends after QUIET_MS without a change: look again each minute.
+    if (opts.watch !== false) {
+      this.recheck = setInterval(() => { for (const s of this.live.values()) this.flush(s); }, 60_000);
+      this.recheck.unref?.();
+    }
   }
 
   ids(): string[] {
@@ -98,7 +107,7 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null, working: new Set(),
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null, working: new Set(), ran: '',
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
@@ -232,6 +241,8 @@ export class Views {
   }
 
   stop(): void {
+    if (this.recheck) clearInterval(this.recheck);
+    this.recheck = null;
     for (const s of this.live.values()) this.stopOne(s);
   }
 
@@ -259,10 +270,10 @@ export class Views {
     return s && this.metaOf(s);
   }
 
-  // The session's subagents and forks running now, by the transcript (0 when it isn't open).
-  agentsRunning(id: string): number {
+  // What runs now by the transcript (nothing when it isn't open): subagents and forks, the main turn.
+  running(id: string): Running {
     const s = this.live.get(id);
-    return s ? runningAgents(s.t) : 0;
+    return s ? runningOf(s.t) : { agents: 0, turn: false, lastAt: 0 };
   }
 
   private metaOf(s: Live): SessionMeta {
@@ -288,8 +299,9 @@ export class Views {
       cwd: tilde(s.cwd, this.home),
       prs: t.prs,
       // From the transcript until a driver sets it: working while subagents or forks run, else your
-      // turn (status.ts agentsStatus). "Stopped" is read from the items by the page.
-      status: s.status ?? agentsStatus(runningAgents(t)),
+      // turn, or the main turn runs in another process (status.ts transcriptStatus). "Stopped" is read
+      // from the items by the page.
+      status: s.status ?? transcriptStatus(runningOf(t)),
       statusAt,
       statusDetail: s.statusDetail,
       model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
@@ -493,8 +505,13 @@ export class Views {
       s.sent = key;
       this.broadcast({ t: 'session', ...meta });
     }
+    const ran = runningOf(s.t);
+    const ranKey = `${ran.agents}:${ran.turn}`;
+    if (ranKey !== s.ran) {
+      s.ran = ranKey;
+      this.opts.onRunning?.(s.id, ran);
+    }
     if (ch.agents.length) {
-      this.opts.onAgents?.(s.id, runningAgents(s.t));
       this.broadcast({ t: 'agents', sid: s.id, upsert: ch.agents.map((id) => s.t.getAgent(id)).filter(Boolean) });
     }
     if (ch.background.length) {
@@ -541,9 +558,10 @@ export class Views {
   }
 }
 
-// The subagents and forks still running by the transcript's rule (shells and monitors aren't counted).
-function runningAgents(t: Transcript): number {
-  return t.agents().filter((a) => a.running).length;
+// What runs by the transcript: the subagents and forks still running by its rule (shells and
+// monitors aren't counted), and its main turn (Transcript.turnRunning, quiet after QUIET_MS).
+function runningOf(t: Transcript): Running {
+  return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(Date.now(), QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0 };
 }
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {

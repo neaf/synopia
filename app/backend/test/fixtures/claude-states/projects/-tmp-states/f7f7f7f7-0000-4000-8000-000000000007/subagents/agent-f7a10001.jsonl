@@ -1,0 +1,2 @@
+{"type":"user","uuid":"f7a1-u1","timestamp":"2026-11-23T11:00:32.000Z","isSidechain":true,"agentId":"f7a10001","sessionId":"f7f7f7f7-0000-4000-8000-000000000007","message":{"role":"user","content":"Draft the release notes."}}
+{"type":"assistant","uuid":"f7a1-a1","timestamp":"2026-11-23T11:01:00.000Z","isSidechain":true,"agentId":"f7a10001","sessionId":"f7f7f7f7-0000-4000-8000-000000000007","message":{"role":"assistant","content":[{"type":"text","text":"Reading the merged pull requests."}]}}

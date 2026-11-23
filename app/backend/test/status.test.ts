@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionStatus, agentsStatus, outcomeOf, restored } from '../src/status.ts';
+import { SessionStatus, transcriptStatus, outcomeOf, restored } from '../src/status.ts';
 import type { StatusEntry } from '../src/status.ts';
 
 function tracker(init: StatusEntry | null = null) {
@@ -272,27 +272,43 @@ test('status: running subagents or forks keep a finished turn working; your turn
   const { s, seen, clock } = clocked();
   s.stateChanged('running');
   s.result(ok);
-  s.setAgents(2);
+  s.setRunning({ agents: 2, turn: false, lastAt: 0 }, false);
   s.stateChanged('idle');
   assert.equal(s.status, 'busy', 'the main turn is over, two subagents run');
   assert.equal(s.working, false, 'no turn to interrupt');
   s.setPending(1);
   assert.equal(s.status, 'waiting', 'needs you still wins');
   s.setPending(0);
-  s.setAgents(1);
+  s.setRunning({ agents: 1, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'busy');
   clock.t += 300_000;
-  s.setAgents(0);
+  s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'idle');
   assert.equal(seen.at(-1)?.at, clock.t, 'aged from when the last one finished');
 });
 
 test('status: subagents of a session with no process make it working; a failed turn comes back as failed', () => {
   const { s } = clocked({ status: 'failed', at: 5 });
-  s.setAgents(1);
+  s.setRunning({ agents: 1, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'busy');
-  s.setAgents(0);
+  s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'failed');
-  assert.equal(agentsStatus(1), 'busy', 'a session no driver set reads its transcript');
-  assert.equal(agentsStatus(0), 'idle');
+  assert.equal(transcriptStatus({ agents: 1, turn: false, lastAt: 0 }), 'busy', 'a session no driver set reads its transcript');
+  assert.equal(transcriptStatus({ agents: 0, turn: false, lastAt: 0 }), 'idle');
+});
+
+test('status: a main turn another process runs is working; ours or none is not; needs you still wins', () => {
+  const { s } = clocked({ status: 'stopped', at: 5 });
+  const turn = { agents: 0, turn: true, lastAt: 9 };
+  s.setRunning(turn, false);
+  assert.equal(s.status, 'stopped', 'with our own process the open turn is ours, not counted');
+  s.setRunning(turn, true);
+  assert.equal(s.status, 'busy');
+  assert.equal(s.working, false, 'nothing of ours to interrupt');
+  s.setPending(1);
+  assert.equal(s.status, 'waiting');
+  s.setPending(0);
+  s.setRunning({ ...turn, turn: false }, true);
+  assert.equal(s.status, 'idle', 'the old stopped is history once another process ran a turn');
+  assert.equal(transcriptStatus(turn), 'busy');
 });

@@ -35,7 +35,9 @@ function pickCurrent() {
 const reviewed = store.reviewed;
 const isReview = a => /^for review:/i.test(a.description || "");
 const toReview = s => agentsOf(s).filter(a => isReview(a) && a.finished && !reviewed.has(a.id));
-const interrupted = s => { const l = s.items[s.items.length - 1]; return l?.k === "you" && /^\[Request interrupted by user/.test(l.text || ""); };
+/* stopped by you: the latest turn ended on "[Request interrupted by user]" with nothing after it. The
+   "… for tool use" marker is a tool call you turned down, not a stop. */
+const interrupted = s => { const l = s.items[s.items.length - 1]; return l?.k === "you" && /^\[Request interrupted by user\]/.test(l.text || ""); };
 const bgRunning = s => agentsOf(s).some(a => !a.finished) || bgOf(s).some(b => bgState(b) === "running");
 
 /* Applying server messages (bridge.js calls these). Each returns the parts to render. */

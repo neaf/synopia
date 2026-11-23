@@ -1,0 +1,6 @@
+{
+  "agentType": "general-purpose",
+  "description": "Draft the release notes",
+  "toolUseId": "toolu_mag",
+  "spawnDepth": 1
+}

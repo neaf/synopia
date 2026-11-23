@@ -5,11 +5,14 @@
 import { connect, sleep } from './cdp.mjs';
 import { writeFileSync } from 'node:fs';
 const [url, stateDir] = process.argv.slice(2);
+const want0 = 7; // sessions in the states fixture
 const c = await connect();
 const { ev, check } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 760, deviceScaleFactor: 2, mobile: false });
 await c.cdp('Page.navigate', { url });
-await sleep(4000);
+await sleep(2000);
+for (let i = 0; i < 40 && (await ev(`document.querySelectorAll('#groups .row').length`)) < want0; i++) await sleep(250); // every row in
+await sleep(500);
 const row = (p) => ev(`(() => { const r = document.querySelector('.row[data-id^="${p}"]'); return r && { state: r.dataset.state, word: r.querySelector('.r-state').textContent.trim(), mark: r.querySelector('.r-side').innerHTML }; })()`);
 const want = [
   ['a1a1', 'green', /^Working, 1 message queued$/, 'mk-0550AE', 'Your message is queued'],
@@ -19,6 +22,9 @@ const want = [
   ['e5e5', 'grey', /^No updates for 1[56] min$/, 'arc frozen', 'the session may be gone'],
   // no driver status: the main turn is over and background subagents run, so it is working (R8.2)
   ['f6f6', 'green', /^Working$/, 'class="rot"', 'Working'],
+  // the author's mix: a turned-down tool earlier, a subagent, a shell and a monitor running, and
+  // its main turn open in another process (a foreground tool waiting): working, not stopped
+  ['f7f7', 'green', /^Working$/, 'class="rot"', 'Working Ran(Run the tests)'],
 ];
 let n = 0;
 for (const [p, state, word, mark, line] of want) {

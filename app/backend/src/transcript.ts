@@ -126,6 +126,13 @@ export class Transcript {
   effort: unknown = null;
   firstTs: string | null = null;
   lastTs: string | null = null;
+  // The main thread's turn, for a session no Synopia process drives (status.ts): opened by a prompt
+  // you typed (a user record, a slash command or a queued_command attachment), closed by
+  // system/turn_duration, system/stop_hook_summary or an interrupt marker. An assistant record
+  // after a marker opens it again: Claude carried on.
+  private turnOpen = false;
+  private afterMarker = false;
+  private lastToolUses: { id: string; ts: string | null }[] = []; // of the latest main assistant record
   private allPrs: unknown[] = [];
   private byId = new Map<string, Item>();
   private seq = 0;
@@ -236,7 +243,12 @@ export class Transcript {
         if (mode !== 'plan') this.lastNonPlanMode = mode;
         this.metaChanged = true;
       }
-    } else if (t === 'system' && d.subtype === 'turn_duration') {
+    }
+    if (t === 'system' && (d.subtype === 'turn_duration' || d.subtype === 'stop_hook_summary') && !(d.isSidechain && !this.sidechain)) {
+      this.turnOpen = false;
+      this.afterMarker = false;
+    }
+    if (t === 'system' && d.subtype === 'turn_duration') {
       if (this.lastYou && typeof d.durationMs === 'number') {
         this.lastYou.workedMs = d.durationMs;
         this.changed.add(this.lastYou.id);
@@ -257,6 +269,8 @@ export class Transcript {
     const a = obj(d.attachment);
     const prompt = str(a.prompt);
     if (a.type !== 'queued_command' || !prompt) return;
+    this.turnOpen = true; // written when a turn takes it in
+    this.afterMarker = false;
     const typed = a.commandMode === 'prompt' && !prompt.startsWith('<');
     if (!typed && !prompt.startsWith('<task-notification>') && !prompt.startsWith('<agent-message')) return;
     this.user({ ...d, type: 'user' }, str(d.uuid) || `attachment@${this.seq}`, ts, prompt);
@@ -339,6 +353,8 @@ export class Transcript {
       const m = /<command-name>([^<]+)/.exec(txt);
       const args = /<command-args>([^<]*)/.exec(txt);
       this.lastYou = this.put({ id: uuid, k: 'you', ts, text: `${m ? m[1] : ''} ${args ? args[1] : ''}`.trim() });
+      this.turnOpen = true;
+      this.afterMarker = false;
       return;
     }
     if (txt.startsWith('<') && !images) return; // system reminders, local command output, hooks
@@ -351,6 +367,10 @@ export class Transcript {
         this.refreshTool(tid);
       }
     }
+    // Either marker ends the turn for now (a later assistant record means Claude carried on);
+    // any other prompt you typed opens one.
+    this.turnOpen = !item.interrupted;
+    this.afterMarker = Boolean(item.interrupted);
     this.lastErrors = [];
     this.lastYou = this.put(item);
   }
@@ -359,6 +379,13 @@ export class Transcript {
     this.lastErrors = [];
     if (d.requestedModel !== undefined) this.requestedModel = d.requestedModel;
     if (d.effort !== undefined) this.effort = d.effort;
+    if (this.afterMarker) this.turnOpen = true;
+    this.afterMarker = false;
+    if (Array.isArray(content)) {
+      this.lastToolUses = content.map((b, i) => ({ b: obj(b), i }))
+        .filter(({ b }) => b.type === 'tool_use')
+        .map(({ b, i }) => ({ id: str(b.id) || `${uuid}:${i}`, ts }));
+    }
     if (!Array.isArray(content)) return;
     content.forEach((raw, i) => {
       const b = obj(raw);
@@ -540,6 +567,16 @@ export class Transcript {
     if (sub !== undefined) a.sub = sub;
     this.agentMeta.set(id, a);
     this.changedAgents.add(id);
+  }
+
+  // The main thread's turn runs (by the transcript alone): the latest assistant record has a
+  // tool_use with no result yet (and the process didn't end after it), or a turn is open and the
+  // transcript changed within `quietMs`, so a crashed process doesn't read as working for ever.
+  turnRunning(now: number, quietMs: number): boolean {
+    if (this.lastToolUses.some((u) => !this.results.has(u.id) && !this.endedBefore(u.ts))) return true;
+    if (!this.turnOpen || this.endedBefore(this.lastTs)) return false;
+    const last = this.lastTs ? Date.parse(this.lastTs) : NaN;
+    return Number.isFinite(last) && now - last < quietMs;
   }
 
   // Running when `finished` isn't true, its Agent tool has no (final) result and no task
