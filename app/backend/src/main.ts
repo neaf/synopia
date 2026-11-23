@@ -228,6 +228,13 @@ async function shutdown(reason: string) {
 
 process.on('SIGINT', () => shutdown('sigint'));
 process.on('SIGTERM', () => shutdown('sigterm'));
+// A memory figure on demand, without --inspect (the perf measurements in .ai-notes/app read it).
+process.on('SIGUSR2', () => {
+  (globalThis as { gc?: () => void }).gc?.(); // with --expose-gc: the live heap, not garbage
+  const m = process.memoryUsage();
+  const mb = (n: number) => Math.round(n / 1048576);
+  log('memory', { rss: mb(m.rss), heapUsed: mb(m.heapUsed), heapTotal: mb(m.heapTotal), external: mb(m.external), arrayBuffers: mb(m.arrayBuffers) });
+});
 if (!flags['no-parent']) {
   process.stdin.on('end', () => shutdown('stdin'));
   process.stdin.on('close', () => shutdown('stdin'));
