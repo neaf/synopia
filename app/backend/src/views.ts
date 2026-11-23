@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord } from './tail.ts';
-import { Transcript, findTranscript, sessionDirOf, readResult } from './transcript.ts';
+import { Transcript, findTranscript, sessionDirOf, readResult, readImage, IMAGE_TYPES } from './transcript.ts';
 import type { Item, PendingAsk } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
@@ -427,6 +427,19 @@ export class Views {
     }
     client.send({ t: 'toolOutput', sid, agent: agent || null, toolUseId, text, truncated: false });
     return true;
+  }
+
+  // `GET /api/image`: one image block, read again from its record's line and decoded (items carry only
+  // its ref). 404 for an unknown ref or a file that is gone or was rewritten, 415 for a type not served.
+  image(sid: string, agent: string | null, ref: string): { status: 200; type: string; body: Buffer } | { status: 404 | 415 } {
+    const s = this.live.get(sid);
+    const t = this.transcriptOf(sid, agent);
+    const file = agent ? s?.children.get(agent)?.tailer.path : s?.path;
+    const at = t?.imageAt(ref);
+    const img = file && at ? readImage(file, at.span, at.recordId, at.path) : null;
+    if (!img) return { status: 404 };
+    if (!IMAGE_TYPES.includes(img.mediaType)) return { status: 415 };
+    return { status: 200, type: img.mediaType, body: img.data };
   }
 
   // detail: the queued count and the retry of status.ts, for the page's words.

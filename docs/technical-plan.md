@@ -212,7 +212,14 @@ Page to server:
 | `open` | `path` or `url` | opens a file or an `https?` URL |
 | `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does; a bad path gets `toast` |
 
-Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`; a tool item also has `patches[]` and `moreFiles` (a Bash command's edits), `input` (the command, or short input fields) and `out` `{text, lines, cut, interrupted?}` (its result's first 20 lines, 4 KB at most):
+HTTP, on the same origin, every request with `?token=` (403 without it):
+
+| Endpoint | Query | Reply |
+|---|---|---|
+| `GET /api/quit-check` | `token` | JSON `{running[], background[]}` for the ⌘Q alert |
+| `GET /api/image` | `token`, `sid`, `ref` (an item's `imgs[].ref`), `agent` (a subagent's transcript, else none) | the image block, decoded from the record line read again, with its `Content-Type`, `Cache-Control: private, max-age=3600` and `X-Content-Type-Options: nosniff`. Only `image/png`, `image/jpeg`, `image/gif` and `image/webp`; any other type is a 415. An unknown ref, or a file that is gone or was rewritten, is a 404 (the page shows a quiet tile). |
+
+Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`; a tool item also has `patches[]` and `moreFiles` (a Bash command's edits), `input` (the command, or short input fields) and `out` `{text, lines, cut, interrupted?}` (its result's first 20 lines, 4 KB at most). A `you` item and a tool item can have `imgs[]`, `{ref, mediaType, w?, h?}` per image block of the prompt or the result: `ref` is `<record id>:<block index>` (`<i>.<j>` for block `j` inside the record's tool_result `i`), and `w`/`h` come from the PNG, JPEG, GIF or WebP header in the base64 prefix. No image bytes are kept: the backend keeps the record's line `{offset, length}` and reads it again for `GET /api/image`. Item ids are:
 - the record `uuid`, with `:<block index>` for a block inside a record;
 - for a tool, the `tool_use` id, so its result updates the same item.
 

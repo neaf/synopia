@@ -7,13 +7,13 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 
 const JS = join(import.meta.dirname, '..', '..', 'web', 'js');
-const FILES = ['marks.js', 'md.js', 'store.js', 'sidebar.js', 'transcript.js', 'rail.js', 'card.js'];
+const FILES = ['marks.js', 'md.js', 'store.js', 'sidebar.js', 'images.js', 'transcript.js', 'rail.js', 'card.js'];
 
 function page() {
   const el = (): Record<string, unknown> => ({ addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], classList: { toggle() {}, add() {}, remove() {} }, dataset: {}, style: {} });
   const document = { getElementById: el, querySelector: el, querySelectorAll: () => [], addEventListener() {}, body: { dataset: {} } };
-  const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, console });
-  const names = ['md', 'esc', 'rowHTML', 'railHTML', 'filesHTML', 'itemsHTML', 'qaHTML', 'askOf', 'store', 'syncData', 'heldHTML'];
+  const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, console, TOKEN: 't' });
+  const names = ['md', 'esc', 'rowHTML', 'railHTML', 'filesHTML', 'itemsHTML', 'qaHTML', 'askOf', 'store', 'syncData', 'heldHTML', 'thumbsHTML'];
   vm.runInContext(FILES.map((f) => readFileSync(join(JS, f), 'utf8')).join('\n;\n') + `\n;globalThis.P = { ${names.join(', ')} };`, ctx);
   return (ctx as unknown as { P: Record<string, (...a: unknown[]) => string> & { store: { sessions: Map<string, unknown>; pending: Map<string, unknown> } } }).P;
 }
@@ -77,4 +77,14 @@ test('sidebar rows, the rail, files changed, waves and cards escape their data',
   clean(P.qaHTML(s, P.askOf(request)), 'qaHTML permission');
   const question = { ...request, id: 'q2', kind: 'question', input: { questions: [{ question: BAD, header: BAD, options: [{ label: BAD, description: BAD }] }] } };
   clean(P.qaHTML(s, P.askOf(question)), 'qaHTML question');
+});
+
+test('image thumbnails: a hostile ref, size or session stays inside its attribute', () => {
+  const P = page();
+  const html = P.thumbsHTML([{ ref: BAD, mediaType: BAD, w: `1;background:url(${BAD})`, h: 2 }, { ref: 'u1:0', w: 400, h: 100 }], BAD, BAD);
+  assert.ok(!html.includes('"/onmouseover') && !html.includes(`'`), html);
+  assert.equal((html.match(/<img /g) || []).length, 2, 'one img per thumbnail, nothing more');
+  for (const [, src] of html.matchAll(/ src="([^"]*)"/g)) assert.ok(/^\/api\/image\?token=t&amp;sid=[^"<>'&]*(&#39;)?&amp;agent=[^"<>'&]*(&#39;)?&amp;ref=[^"<>'&]*(&#39;)?$/.test(src), src);
+  assert.ok(!html.includes('background:url'), 'a size that is not a number is dropped');
+  assert.ok(html.includes('style="--iw:400;--ih:100"'));
 });

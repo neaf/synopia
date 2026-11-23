@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <!-- A fallback for the header server.ts sends (contentSecurityPolicy), which also names the port. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Synopia</title>
 <link rel="icon" type="image/svg+xml" href="icon/favicon.svg">
@@ -33,6 +33,7 @@
 <script src="js/store.js"></script>
 <script src="js/sidebar.js"></script>
 <script src="js/dnd.js"></script>
+<script src="js/images.js"></script>
 <script src="js/transcript.js"></script>
 <script src="js/rail.js"></script>
 <script src="js/card.js"></script>

@@ -213,6 +213,7 @@ try {
       pending: views.pending(),
     }),
     quitCheck: () => sessions?.quitCheck() ?? { running: [], background: [] },
+    image: (sid, agent, ref) => views.image(sessions ? sessions.resolve(sid) : sid, agent, ref),
     onMessage,
   });
 } catch (e) {

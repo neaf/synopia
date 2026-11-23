@@ -98,7 +98,7 @@ test('every response carries the strict CSP, naming its own origin', async () =>
   assert.equal(dir('script-src'), "script-src 'self'");
   assert.ok(!/unsafe-(inline|eval)/.test(dir('script-src')));
   assert.equal(dir('connect-src'), `connect-src 'self' ${server.origin} ws://127.0.0.1:${server.port}`);
-  assert.equal(dir('img-src'), "img-src 'self' data:");
+  assert.equal(dir('img-src'), "img-src 'self' data: blob:");
   assert.match(dir('style-src'), /fonts\.googleapis\.com/);
   assert.match(dir('font-src'), /fonts\.gstatic\.com/);
 });

@@ -119,9 +119,15 @@ These requirements come from a day of prototyping against the user's real sessio
 - R5.11 Claude's questions and your answers render in the transcript. Answered questions appear as your turn.
 - R5.12 Opening a subagent shows its own transcript in the same pane, with a breadcrumb back to the session. Its message box writes to the main conversation: the user asks the main session to orchestrate its subagents, and it messages them itself. Messaging a subagent directly is rejected (2026-11-23).
 - R5.12a A long transcript shows its last 160 items under a quiet link, "Show 160 earlier (N more)". Clicking it, or `g` at the top, loads the 160 before them without moving what you're reading; subagent transcripts too (2026-11-23).
+- R5.12b Images show as thumbnails, Slack-style: a row below the text that wraps when there are many (2026-11-24).
+  - Under your prompt in the `❯` band, the images it sent. Under a tool step whose result holds images (a Read of an image, a screenshot), its images, visible without expanding the step.
+  - A thumbnail is at most 3 transcript lines high (about 52 px at 12 px), and its width follows the image's aspect ratio (a 400×100 image shows 4 times as wide as high). Smaller images aren't scaled up. The width stops at 320 px, cropped to the centre, for panoramas. Rounded corners and a 1px line, the same size in the message box and the transcript.
+  - An image no longer in the transcript file (gone or rewritten) is a quiet "Image gone" tile.
+  - A click on any thumbnail opens it at full size, fit to the window (its real size if smaller). Esc or a click outside closes it, and ← → move between that message's images. While it shows, no other key acts.
 
 ### 5.3 Message box
 - R5.13 One line: `❯` and the field, centred; it grows for long messages. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
+  - Pasted images show as thumbnails below the text (R5.12b sizes), each with a small ✕ on hover that removes it. Enter sends them with the text, as base64 PNG or JPEG of at most 5 MB each. The thumbnails come from the pasted image itself, never the server (2026-11-24).
 - R5.14 `/` opens an autocomplete of the session's real commands and skills, with argument hints and descriptions aligned. ↑↓ moves, Tab or Enter fills, Esc closes.
 
 ### 5.4 Rejected
