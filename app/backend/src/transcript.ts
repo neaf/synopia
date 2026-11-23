@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { JsonRecord } from './tail.ts';
+import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
 
 export type Hunk = { o: number; n: number; lines: string[] };
@@ -13,6 +13,9 @@ export type Hunk = { o: number; n: number; lines: string[] };
 export type Patch = {
   file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean;
 };
+// A tool result's preview: its first PREVIEW_LINES lines, PREVIEW_BYTES at most; `lines` counts all
+// of them, `cut` says the preview isn't all (the page asks for the rest with `toolOutput`).
+export type Output = { text: string; lines: number; cut: boolean; interrupted?: boolean };
 export type Question = { q: string; header: unknown; multi: boolean; opts: [string, string][] };
 export type Item = {
   id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask'; ts: string | null;
@@ -20,6 +23,7 @@ export type Item = {
   agent?: string | null; // report
   name?: string; verb?: string; obj?: string; state?: string; toolUseId?: string; patch?: Patch; // tool
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
+  input?: string; out?: Output; // tool: its input as the expanded step shows it, and its result's preview (R5.6)
   qs?: Question[]; answer?: string | null; // ask
 };
 export type Background = {
@@ -139,6 +143,71 @@ function textOf(content: unknown): string {
 
 const isBlock = (b: unknown, type: string): boolean => obj(b).type === type;
 
+export const PREVIEW_LINES = 20;
+export const PREVIEW_BYTES = 4096;
+
+// A tool_result block's text, as Claude got it (for Bash: stdout, then stderr). Images aren't text.
+export function resultText(block: JsonRecord): string {
+  return textOf(block.content);
+}
+
+export function previewOf(text: string): Output {
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+  let lines = 1;
+  let end = -1;
+  for (let i = body.indexOf('\n'); i !== -1; i = body.indexOf('\n', i + 1)) {
+    if (lines === PREVIEW_LINES) end = i;
+    lines++;
+  }
+  let head = end === -1 ? body : body.slice(0, end);
+  let cut = end !== -1;
+  const buf = Buffer.from(head, 'utf8');
+  if (buf.length > PREVIEW_BYTES) {
+    head = buf.subarray(0, PREVIEW_BYTES).toString('utf8').replace(/�+$/, ''); // no half character at the end
+    cut = true;
+  } else head = buf.toString('utf8'); // a copy, so the record's whole text isn't kept alive by a slice of it
+  return { text: body ? head : '', lines: body ? lines : 0, cut };
+}
+
+// The input of a tool as an expanded step shows it: a Bash command in full (4 KB at most), else one
+// `key: value` line per short field. Edit and Write show nothing here: their diff is the way to see them.
+export function inputOf(name: string, input: unknown): string {
+  const inp = obj(input);
+  if (name === 'Bash') return clip(str(inp.command), PREVIEW_BYTES);
+  if (name === 'Edit' || name === 'Write' || name === 'NotebookEdit' || name === 'AskUserQuestion' || name === 'ExitPlanMode') return '';
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(inp)) {
+    if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') continue;
+    const s = String(v);
+    out.push(`${k}: ${s.length > 300 ? s.slice(0, 300) + '…' : s}`);
+    if (out.length === 8) break;
+  }
+  return out.join('\n');
+}
+
+// Reads one record line again (`span`, from the tailer) and gives the full text of the tool_result for
+// `toolUseId` in it; null when the file is gone or no longer has that record there (rewritten, rotated).
+export function readResult(file: string, span: Span, toolUseId: string): string | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch {
+    return null;
+  }
+  try {
+    const buf = Buffer.alloc(span.length);
+    if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return null;
+    const d = JSON.parse(buf.toString('utf8'));
+    const content = obj(obj(d).message).content;
+    const b = Array.isArray(content) ? content.find((x) => isBlock(x, 'tool_result') && obj(x).tool_use_id === toolUseId) : undefined;
+    return b ? resultText(obj(b)) : null;
+  } catch {
+    return null;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 export class Transcript {
   readonly sidechain: boolean;
   readonly home: string;
@@ -167,6 +236,10 @@ export class Transcript {
   private answers = new Map<string, string>();
   private patches = new Map<string, Patch>();
   private bashPatches = new Map<string, { patches: Patch[]; more: number }>();
+  // A tool's result: only its preview stays in memory, and where its record sits for the rest.
+  private outs = new Map<string, Output>();
+  private outSpans = new Map<string, Span>();
+  private span: Span | undefined; // of the record being pushed
   private bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
   private notes = new Map<string, { status: string; summary: string; end: string | null }>();
   private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
@@ -239,11 +312,18 @@ export class Transcript {
     return out;
   }
 
-  pushAll(records: JsonRecord[]): void {
-    for (const r of records) this.push(r);
+  // spans: where each record's line sits in the file (Tailer), so a tool's full result can be read again.
+  pushAll(records: JsonRecord[], spans?: Span[]): void {
+    records.forEach((r, i) => this.push(r, spans?.[i]));
   }
 
-  push(d: JsonRecord): void {
+  // Where the record holding a tool's result sits in this conversation's file.
+  resultSpan(toolUseId: string): Span | undefined {
+    return this.outSpans.get(toolUseId);
+  }
+
+  push(d: JsonRecord, span?: Span): void {
+    this.span = span;
     this.seq++;
     const t = d.type;
     const ts = typeof d.timestamp === 'string' ? d.timestamp : null;
@@ -342,6 +422,11 @@ export class Transcript {
         if (r.is_error) errors.push(tid);
         if (r.is_error && /^\[(Request interrupted by user|Tool call interrupted)/.test(textOf(r.content).trim())) this.interrupted.add(tid);
         if (this.asks.has(tid)) this.answers.set(tid, clip(textOf(r.content), 2000));
+        else {
+          const interrupted = this.interrupted.has(tid) || (r === obj(content.find((x) => isBlock(x, 'tool_result'))) && obj(tur).interrupted === true);
+          this.outs.set(tid, { ...previewOf(resultText(r)), ...(interrupted ? { interrupted } : {}) });
+          if (this.span) this.outSpans.set(tid, this.span);
+        }
         this.refreshTool(tid);
       }
       this.lastErrors = errors;
@@ -459,6 +544,8 @@ export class Transcript {
         const [verb, o] = toolLine(name, inp, this.home);
         const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
         if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
+        const input = inputOf(name, inp);
+        if (input) item.input = input;
         this.put(item);
       }
       this.refreshTool(tid);
@@ -544,14 +631,16 @@ export class Transcript {
       else state = 'running';
       const patch = this.patches.get(tid);
       const bash = this.bashPatches.get(tid);
+      const out = this.outs.get(tid);
       const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
       const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
       if (plan && planItem && planItem.text !== clip(plan)) {
         planItem.text = clip(plan);
         this.changed.add(planItem.id);
       }
-      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (answer && it.answer !== answer)) {
+      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (answer && it.answer !== answer)) {
         it.state = state;
+        if (out) it.out = out;
         if (patch) it.patch = patch;
         if (bash) {
           it.patches = bash.patches;

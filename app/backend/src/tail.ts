@@ -5,9 +5,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export type JsonRecord = Record<string, unknown>;
+// Where a record's line sits in the file (bytes, without its newline), so it can be read again.
+export type Span = { offset: number; length: number };
 
 export type TailOptions = {
-  onRecords: (records: JsonRecord[]) => void;
+  onRecords: (records: JsonRecord[], spans: Span[]) => void;
   onReset?: () => void;
   pollMs?: number; // default 1000; 0 turns the timer off (tests call check())
   watch?: boolean; // default true
@@ -155,8 +157,11 @@ export class Tailer {
     this.mtimeMs = -1;
   }
 
+  // `chunk` holds the n bytes read just before this.offset.
   private feed(chunk: Buffer, n: number): void {
     const out: JsonRecord[] = [];
+    const spans: Span[] = [];
+    const base = this.offset - n;
     let start = 0;
     const buf = chunk;
     const end = n;
@@ -166,28 +171,31 @@ export class Tailer {
         this.partial = Buffer.concat([this.partial, chunk.subarray(0, n)]);
         return;
       }
-      this.parse(Buffer.concat([this.partial, chunk.subarray(0, nl)]), 0, this.partial.length + nl, out);
+      this.parse(Buffer.concat([this.partial, chunk.subarray(0, nl)]), 0, this.partial.length + nl, base - this.partial.length, out, spans);
       this.partial = null;
       start = nl + 1;
     }
     for (;;) {
       const nl = buf.indexOf(NL, start);
       if (nl === -1 || nl >= end) break;
-      this.parse(buf, start, nl, out);
+      this.parse(buf, start, nl, base + start, out, spans);
       start = nl + 1;
     }
     if (start < end) this.partial = Buffer.from(buf.subarray(start, end));
-    if (out.length) this.opts.onRecords(out);
+    if (out.length) this.opts.onRecords(out, spans);
   }
 
-  private parse(buf: Buffer, start: number, end: number, out: JsonRecord[]): void {
+  // at: the file offset of buf[start].
+  private parse(buf: Buffer, start: number, end: number, at: number, out: JsonRecord[], spans: Span[]): void {
     if (end <= start) return;
     const text = buf.toString('utf8', start, end);
     if (!text.trim()) return;
     try {
       const v = JSON.parse(text);
-      if (v && typeof v === 'object' && !Array.isArray(v)) out.push(v);
-      else this.skipped++;
+      if (v && typeof v === 'object' && !Array.isArray(v)) {
+        out.push(v);
+        spans.push({ offset: at, length: end - start });
+      } else this.skipped++;
     } catch {
       this.skipped++;
     }

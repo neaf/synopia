@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Tailer, SubagentWatcher } from '../src/tail.ts';
-import type { JsonRecord } from '../src/tail.ts';
-import { Transcript, findTranscript, sessionDirOf, clip } from '../src/transcript.ts';
+import type { JsonRecord, Span } from '../src/tail.ts';
+import { Transcript, findTranscript, sessionDirOf, clip, previewOf, readResult } from '../src/transcript.ts';
 import type { Item } from '../src/transcript.ts';
 
 const CLAUDE = path.join(import.meta.dirname, 'fixtures', 'claude');
@@ -100,6 +100,38 @@ test('bashEditDiff: the 400-line cut, and the result before its tool use', () =>
   assert.equal(it.patches!.length, 1);
   assert.deepEqual([it.patches![0].file, it.patches![0].add, it.patches![0].cut, it.patches![0].hunks[0].lines.length], ['~/big.txt', 450, true, 400]);
   assert.equal(it.moreFiles, undefined);
+});
+
+test('previewOf: 20 lines, 4 KB at most, the count of all lines', () => {
+  assert.deepEqual(previewOf(''), { text: '', lines: 0, cut: false });
+  assert.deepEqual(previewOf('one\ntwo\n'), { text: 'one\ntwo', lines: 2, cut: false });
+  const lines = Array.from({ length: 25 }, (_, i) => `l${i}`);
+  assert.deepEqual(previewOf(lines.join('\n')), { text: lines.slice(0, 20).join('\n'), lines: 25, cut: true });
+  assert.deepEqual(previewOf(lines.slice(0, 20).join('\n')), { text: lines.slice(0, 20).join('\n'), lines: 20, cut: false });
+  const wide = previewOf('é'.repeat(3000)); // 6000 bytes on one line
+  assert.equal(wide.cut, true);
+  assert.equal(wide.text, 'é'.repeat(2048), 'cut at a character, not inside one');
+  assert.equal(wide.lines, 1);
+});
+
+test('tool steps: input and result preview, the span of the result record, and the full read', () => {
+  const file = findTranscript(CLAUDE, ID.tools) as string;
+  const recs: JsonRecord[] = [];
+  const spans: Span[] = [];
+  new Tailer(file, { onRecords: (r, s) => { recs.push(...r); spans.push(...s); }, pollMs: 0, watch: false, chunkBytes: 512 }).check();
+  assert.equal(recs.length, spans.length);
+  const t = new Transcript({ home: HOME });
+  t.pushAll(recs, spans);
+  const bash = byId(t, 'toolu_bash1');
+  assert.equal(bash.input, 'ls -la /Users/fixture/dev/demo');
+  assert.deepEqual(bash.out, { text: 'notes.md\nREADME.md', lines: 2, cut: false });
+  assert.equal(byId(t, 'toolu_grep1').input, 'pattern: TODO');
+  assert.equal(byId(t, 'toolu_edit1').input, undefined, 'an edit shows its diff instead');
+  const span = t.resultSpan('toolu_read1')!;
+  assert.equal(readResult(file, span, 'toolu_read1'), 'File does not exist.', 'a record holding two results, read across 512-byte chunks');
+  assert.equal(readResult(file, span, 'toolu_bash1'), 'notes.md\nREADME.md');
+  assert.equal(readResult(file, { offset: span.offset + 1, length: span.length }, 'toolu_bash1'), null, 'not a record there');
+  assert.equal(readResult(file + '.gone', span, 'toolu_bash1'), null);
 });
 
 test('tools: title, PRs, model, effort and mode', () => {

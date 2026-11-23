@@ -12,7 +12,37 @@ function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
+  const line = `<span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
+  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}</div>`;
+}
+
+/* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
+   The page has the result's first 20 lines (4 KB at most); "Show all" asks the server for the rest
+   (`toolOutput`), which reads it again from the transcript file. Open steps are kept by item id. */
+const openSteps = new Set(), fullOut = new Map();
+let stepAsked = null; // the step whose full result was asked for, until the reply (or a toast)
+const stepKey = id => `${current}|${view || ""}|${id}`;
+const hasStep = t => !!(t.input || t.out);
+const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
+function stepHTML(t) {
+  const o = t.out, full = fullOut.get(stepKey(t.id));
+  const text = full !== undefined ? full : o ? o.text : "";
+  const cmd = t.input ? `<div class="cmd">${esc(t.input)}</div>` : "";
+  const res = !o ? "" : text ? `<div class="res"><span>⎿</span><span class="out">${esc(text)}</span></div>`
+    : `<div class="res"><span>⎿</span><span>No output</span></div>`;
+  const more = o && o.cut && full === undefined ? `<p class="earlier more"><button data-full="${esc(t.id)}">Show all ${+o.lines} lines</button></p>` : "";
+  const stop = o && o.interrupted ? `<div class="res"><span></span><span>Interrupted</span></div>` : "";
+  return `<div class="step-out">${cmd}${res}${more}${stop}</div>`;
+}
+function showAll(id) {
+  const key = stepKey(id); if (stepAsked === key) return;
+  stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
+}
+function applyToolOutput(m) {
+  const key = `${m.sid}|${m.agent || ""}|${m.toolUseId}`;
+  if (stepAsked === key) stepAsked = null;
+  fullOut.set(key, String(m.text ?? ""));
+  if (isViewed(m.sid, m.agent)) renderLog();
 }
 function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
@@ -25,7 +55,10 @@ function toolsHTML(run) {
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
-    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span></div>`).join("")}</div></details></div>`;
+    <div class="body">${run.map(t => {
+      const row = `<span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}">${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}">${row}</div>`;
+    }).join("")}</div></details></div>`;
 }
 
 /* ---------- files changed ---------- */
@@ -335,9 +368,10 @@ function patchChildren(parent, entries) {
   }
   for (const [k, el] of old) if (!seen.has(k)) el.remove();
 }
-/* open <details> (by position) and expanded diffs (by id) survive a redraw of their block */
+/* open <details> (by position) and expanded diffs (by id) survive a redraw of their block; steps
+   carry their own open state (openSteps, by item id) */
 function carryState(from, to) {
-  const was = [...from.querySelectorAll("details")], now = [...to.querySelectorAll("details")];
+  const was = [...from.querySelectorAll("details:not([data-step])")], now = [...to.querySelectorAll("details:not([data-step])")];
   was.forEach((d, i) => { if (now[i]) now[i].open = d.open; });
   from.querySelectorAll(".diff:not([hidden])").forEach(d => {
     const n = to.querySelector(`#${CSS.escape(d.id)}`); if (!n) return;
@@ -354,9 +388,10 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-earlier], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
+  else if (t.dataset.full) showAll(t.dataset.full);
   else if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
@@ -373,6 +408,11 @@ conv.addEventListener("click", e => {
   else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
   else if (t.id === "model-label") openModelPicker();
 });
+/* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */
+conv.addEventListener("toggle", e => {
+  const d = e.target; if (!d.dataset || !d.dataset.step) return;
+  if (d.open) openSteps.add(stepKey(d.dataset.step)); else openSteps.delete(stepKey(d.dataset.step));
+}, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
    (plan section 2), so the app and Chrome behave the same */
 document.addEventListener("click", e => {

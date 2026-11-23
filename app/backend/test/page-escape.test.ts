@@ -63,6 +63,11 @@ test('sidebar rows, the rail, files changed, waves and cards escape their data',
     { id: `u"1`, k: 'you', ts: '2026-11-20T10:00:00.000Z', text: BAD },
     { id: `t"1`, k: 'tool', name: 'Agent', verb: BAD, obj: BAD, state: 'running', toolUseId: `t"1`, ts: '2026-11-20T10:00:01.000Z' },
     { id: `c"1`, k: 'claude', ts: '2026-11-20T10:00:02.000Z', text: BAD },
+    // an expanded step's command, result and "Show all" (R5.6), alone and in a group
+    { id: `s"1`, k: 'tool', name: 'Bash', verb: BAD, obj: BAD, state: 'done', input: BAD, out: { text: BAD, lines: `3"<b>`, cut: true, interrupted: true }, ts: '2026-11-20T10:00:02.100Z' },
+    { id: `c"2`, k: 'claude', ts: '2026-11-20T10:00:02.200Z', text: BAD },
+    { id: `s"2`, k: 'tool', name: 'Grep', verb: BAD, obj: BAD, state: 'failed', input: BAD, out: { text: BAD, lines: 1, cut: true }, ts: '2026-11-20T10:00:02.300Z' },
+    { id: `s"3`, k: 'tool', name: 'Bash', verb: BAD, obj: BAD, state: 'done', input: BAD, ts: '2026-11-20T10:00:02.400Z' },
     { id: `r"1`, k: 'report', agent: `a"1`, ts: '2026-11-20T10:00:03.000Z', text: BAD },
   ];
   for (const [key, html] of P.itemsHTML(items, false, s) as unknown as [string, string][]) clean(html, `itemsHTML ${key}`);

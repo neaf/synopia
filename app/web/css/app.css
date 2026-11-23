@@ -104,6 +104,14 @@ details.fold > summary::-webkit-details-marker { display: none; }
 details.fold > summary .hint { color: var(--faint); }
 details.fold[open] > summary .hint { display: none; }
 details.fold .body { margin-top: 5.5px; }
+/* a step, expanded (R5.6): the command or input in ink, the result under ⎿, "Show all" as the earlier link */
+details.step > summary { cursor: pointer; list-style: none; }
+details.step > summary::-webkit-details-marker { display: none; }
+.step-out { margin: 2px 0 5.5px; }
+.body .step-out { margin-left: 3ch; }
+.step-out .cmd { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .earlier.more { margin: 0 0 0 3ch; }
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
