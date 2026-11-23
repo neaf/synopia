@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Views, Status, PendingRequest } from './views.ts';
+import type { StatusDetail } from './status.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -16,6 +17,8 @@ export type FakeStep = {
   sid: string;
   status?: Status;
   ago?: number; // the status (or the request) began this many ms before the step
+  // The queued count and the retry of status.ts; `retry.in` is ms from the step until it goes.
+  detail?: { queued?: number; retry?: { attempt: number; max: number; in: number } };
   pending?: Omit<PendingRequest, 'since'>;
   clear?: string; // a pending request id
   stream?: string | null;
@@ -98,7 +101,7 @@ export class FakeDriver {
 
   apply(step: FakeStep): void {
     const at = Date.now() - (step.ago ?? 0);
-    if (step.status) this.views.setStatus(step.sid, step.status, at);
+    if (step.status) this.views.setStatus(step.sid, step.status, at, detailOf(step));
     if (step.pending) {
       // The "Always allow" text, as pending.ts builds it for a real request.
       const sug = Array.isArray(step.pending.suggestions) ? step.pending.suggestions as PermissionUpdate[] : [];
@@ -127,4 +130,13 @@ export class FakeDriver {
     }, Math.max(0, ms));
     this.timers.add(t);
   }
+}
+
+function detailOf(step: FakeStep): StatusDetail {
+  const d = step.detail;
+  if (!d) return {};
+  const out: StatusDetail = {};
+  if (typeof d.queued === 'number') out.queued = d.queued;
+  if (d.retry) out.retry = { attempt: d.retry.attempt, max: d.retry.max, at: Date.now() + (d.retry.in ?? 0) };
+  return out;
 }

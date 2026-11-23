@@ -14,7 +14,7 @@ import type { ListSessionsOptions, SDKSessionInfo, SlashCommand } from '@anthrop
 import { SessionProcess } from './driver.ts';
 import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
-import type { StatusEntry } from './status.ts';
+import type { Running, StatusEntry } from './status.ts';
 import { NeedsYou } from './pending.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
@@ -101,6 +101,7 @@ type Active = {
   choice: ModelChoice | null; // slice 5: a placeholder's model and effort, stored once it has its id
   interrupting: boolean; // an interrupt is on its way: held messages go back to the box, not to Claude
   afterExit: { content: Content; uuid: string; text: string }[]; // sent while the process was ending (idle end)
+  ownEnd: number; // when a process of ours last ended (0: none yet), for feedRunning
 };
 
 // Slice 5: the model and effort you chose for a session (state.json `models`). `default` is the
@@ -450,6 +451,19 @@ export class Sessions {
     this.store.flush();
   }
 
+  // From the transcripts service: what runs by the transcript changed (R8.2): subagents and forks
+  // make a session working, and so does a main turn another process runs.
+  runningChanged(sid: string, r: Running): void {
+    const a = this.live.get(sid);
+    if (a) this.feedRunning(a, r);
+  }
+
+  // The transcript's main turn counts only with no process of ours, and only for records written
+  // after ours ended (an open turn our own process left behind is not someone else's).
+  private feedRunning(a: Active, r: Running = this.views.running(a.id)): void {
+    a.status.setRunning(r, !a.proc && r.lastAt > a.ownEnd);
+  }
+
   // From the transcripts service: an assistant record of a main conversation landed.
   landed(sid: string, messageId: string, types: string[]): void {
     const a = this.live.get(sid);
@@ -458,7 +472,7 @@ export class Sessions {
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Active {
     const a: Active = {
-      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [],
+      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], ownEnd: 0,
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
       needs: new NeedsYou({
         show: (r) => this.views.setPending(a.id, r),
@@ -472,7 +486,8 @@ export class Sessions {
     };
     this.live.set(id, a);
     this.views.open(id, { cwd });
-    this.views.setStatus(id, a.status.status, a.status.at);
+    this.views.setStatus(id, a.status.status, a.status.at, a.status.detail);
+    this.feedRunning(a); // working while its subagents or forks, or a turn of another process, run
     const ended = this.store.state.ended[id];
     if (ended) this.views.processEnded(id, ended, this.store.state.endedFailed[id] === true);
     if (!placeholder) this.opts.onOpened?.(id);
@@ -495,12 +510,13 @@ export class Sessions {
   }
 
   private statusChanged(a: Active, e: StatusEntry): void {
-    this.views.setStatus(a.id, e.status, e.at);
-    if (!a.placeholder) {
+    this.views.setStatus(a.id, e.status, e.at, e.detail);
+    const kept = this.store.state.status[a.id];
+    if (!a.placeholder && (kept?.status !== e.status || kept?.at !== e.at)) {
       this.store.state.status[a.id] = { status: e.status, at: e.at };
       this.store.changed();
     }
-    if (e.status === 'busy' || e.status === 'waiting') this.clearIdle(a);
+    if (a.status.working || e.status === 'waiting') this.clearIdle(a);
     else this.armIdle(a);
   }
 
@@ -527,7 +543,12 @@ export class Sessions {
     }
     const start = this.startOptions(a);
     const proc: SessionProcess = new SessionProcess(start, {
-      onMessage: (m) => { if (a.proc === proc) this.onMessage(a, m as Msg); },
+      onMessage: (m) => {
+        if (a.proc !== proc) return;
+        a.status.observe(m); // signed out, no updates, rate limited, compacting, queued (status.ts)
+        this.onMessage(a, m as Msg);
+      },
+      onPush: (uuid) => a.status.pushed(uuid),
       onExit: (error, ended) => this.onExit(a, proc, error, ended),
       canUseTool: (name, input, o) => {
         this.log('driver.ask', { sid: a.id, tool: name, agent: Boolean(o.agentID) });
@@ -535,6 +556,7 @@ export class Sessions {
       },
     }, this.opts.queryFn);
     a.proc = proc;
+    this.feedRunning(a); // our process drives it now: the transcript's open turn is ours
     this.log('driver.start', { sid: a.id, resume: Boolean(start.resume), model: start.model ?? null, plan: Boolean(start.plan) });
     return true;
   }
@@ -542,6 +564,7 @@ export class Sessions {
   private onExit(a: Active, proc: SessionProcess, error: Error | null, ended: boolean): void {
     if (a.proc !== proc) return;
     a.proc = null;
+    a.ownEnd = this.now();
     this.clearIdle(a);
     this.setStreamClear(a);
     const failed = !ended;

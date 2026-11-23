@@ -55,7 +55,7 @@ test('view: a reset with the items, then upserts for changed ids only', async ()
   const meta = c.take('session');
   assert.equal(meta.length, 1);
   assert.equal(meta[0].title, 'prompt 1');
-  assert.equal(meta[0].status, 'idle');
+  assert.equal(meta[0].status, 'busy', 'its last tool has no result yet: the turn runs (status.ts)');
 
   views.view(c, id, null);
   const [reset] = c.take('items');

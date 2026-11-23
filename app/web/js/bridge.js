@@ -130,6 +130,7 @@ setInterval(() => {
   NOWISH = liveNow();
   document.querySelectorAll("[data-live]").forEach(el => { el.textContent = tookLive(NOWISH - new Date(el.dataset.live)); });
   document.querySelectorAll("[data-age]").forEach(el => { el.textContent = dur(+el.dataset.age); });
+  document.querySelectorAll("[data-until]").forEach(el => { el.textContent = left(+el.dataset.until); });
 }, 1000);
 
 renderAll();

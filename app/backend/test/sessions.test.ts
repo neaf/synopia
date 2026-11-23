@@ -84,6 +84,7 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
   const views = new Views({
     claudeDir, clients: () => clients, home: root, pollMs: 0, watch: false,
     onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+    onRunning: (sid, r) => sessions?.runningChanged(sid, r),
     choice: (sid) => sessions?.choiceOf(sid),
   });
   const q = fakeQuery();
@@ -427,6 +428,31 @@ test('sessions: statuses go working, then your turn; a failed process is failed 
   assert.equal(q.calls.length, 2, 'the next message tries again');
   assert.equal(q.calls[1].options.resume, REAL);
 });
+
+test('sessions: the driver passes every message to the status: compacting, queued, signed out', async () => {
+  const { sessions, q, take } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running' });
+  emit(q.calls[0], { type: 'system', subtype: 'status', status: 'compacting' });
+  await tick();
+  assert.equal(take('session').at(-1)?.status, 'compacting');
+  emit(q.calls[0], { type: 'system', subtype: 'status', status: null });
+  await tick();
+  sessions.send(REAL, 'and this', [], Q_SENT);
+  await tick();
+  const s = take('session').at(-1) as { status: string; statusDetail: { queued?: number } };
+  assert.equal(s.status, 'busy');
+  assert.deepEqual(s.statusDetail, { queued: 1 });
+  emit(q.calls[0], { type: 'assistant', parent_tool_use_id: null, error: 'authentication_failed', user_message_uuids: [Q_SENT], message: { content: [] } });
+  emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
+  await tick();
+  const end = take('session').at(-1) as { status: string; statusDetail: object };
+  assert.equal(end.status, 'signedout');
+  assert.deepEqual(end.statusDetail, {});
+});
+const Q_SENT = '0e9b7f1c-0000-4000-8000-0000000000b1';
 
 test('sessions: a missing folder fails without starting a process', () => {
   const { sessions, store, q, take } = setup();
@@ -947,4 +973,22 @@ test('layout: a new session dragged into a group keeps its place through init (L
   // an id no session has is still dropped
   st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [REAL, 'new-gone'] }], others: [] }, st.layout, t.sessions.layoutEntries());
   assert.deepEqual(st.layout.groups[0].ids, [REAL]);
+});
+
+test('sessions: a session whose turn runs in another process reads working, until that turn ends', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  const file = writePast(path.join(root, 'claude'), cwd);
+  const base = { sessionId: PAST, cwd, isSidechain: false };
+  const add = (r: object) => fs.appendFileSync(file, JSON.stringify({ ...base, ...r }) + '\n');
+  add({ type: 'user', uuid: 'p-3', timestamp: '2026-11-20T10:01:00.000Z', message: { role: 'user', content: 'Now run the tests' } });
+  add({ type: 'assistant', uuid: 'p-4', timestamp: '2026-11-20T10:01:05.000Z', message: { id: 'm-2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ext', name: 'Bash', input: { command: 'npm test' } }] } });
+  const { sessions, views, take } = setup(root, [info(PAST, { cwd })]);
+  await sessions.openSession(PAST);
+  views.check();
+  assert.equal(take('session').at(-1)?.status, 'busy', 'its tool waits for a result in the other process');
+  add({ type: 'user', uuid: 'p-5', timestamp: '2026-11-20T10:02:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ext', content: 'ok' }] } });
+  add({ type: 'system', subtype: 'turn_duration', durationMs: 60000, timestamp: '2026-11-20T10:02:01.000Z' });
+  views.check();
+  assert.equal(take('session').at(-1)?.status, 'idle');
 });

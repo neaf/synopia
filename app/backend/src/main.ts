@@ -88,6 +88,7 @@ const views = new Views({
   choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
   defaultModel: () => store.state.settings.model,
   onChange: () => badge?.changed(),
+  onRunning: (sid, r) => sessions?.runningChanged(sid, r),
   onWorkEnded: (sid) => writer?.workEnded(sid),
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;

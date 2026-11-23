@@ -5,7 +5,9 @@
 const store = { sessions: new Map(), layout: null, reviewed: new Set(), menu: {}, settings: {}, pending: new Map(), ui: { connected: false } };
 let data = [];
 const syncData = () => { data = [...store.sessions.values()]; };
-const STATE_OF = { waiting: "red", idle: "amber", stopped: "amber", failed: "amber", busy: "green" };
+/* compacting, rate limited (retrying) and no updates (stale) happen inside a running turn: green, interruptible;
+   signed out comes after it (status.ts) */
+const STATE_OF = { waiting: "red", idle: "amber", stopped: "amber", failed: "amber", signedout: "amber", busy: "green", compacting: "green", retrying: "green", stale: "green" };
 /* Needs you: a pending request (question, permission or plan) for the session, oldest first. */
 const requestsOf = s => store.pending.get(s.id) || [];
 function pending(s) {
@@ -14,8 +16,12 @@ function pending(s) {
 }
 const stateOf = s => pending(s) ? "red" : (STATE_OF[s.status] || "amber");
 const WORD = { red: "Needs you", amber: "Your turn", green: "Working" };
+const PHASE_WORD = { signedout: "Signed out", stale: "No updates", retrying: "Rate limited", compacting: "Compacting" };
+/* the colour of the state word: signed out is red like needs you, rate limited amber, no updates grey */
+const toneOf = s => { const st = stateOf(s); return st === "red" ? st : { signedout: "red", retrying: "amber", stale: "grey" }[s.status] || st; };
+const turnRuns = s => stateOf(s) === "green" || s.status === "waiting";
 /* the state word: your turn splits into stopped (you interrupted it) and failed */
-const wordOf = s => { const st = stateOf(s); return st !== "amber" ? WORD[st] : s.status === "failed" ? "Failed" : s.status === "stopped" || interrupted(s) ? "Stopped" : WORD.amber; };
+const wordOf = s => { const st = stateOf(s); if (st !== "red" && PHASE_WORD[s.status]) return PHASE_WORD[s.status]; return st !== "amber" ? WORD[st] : s.status === "failed" ? "Failed" : s.status === "stopped" || interrupted(s) ? "Stopped" : WORD.amber; };
 let current = null;
 /* The session to show: the one in the hash (an id prefix), else the current one, else the first that needs you or waits. */
 function pickCurrent() {
@@ -29,7 +35,9 @@ function pickCurrent() {
 const reviewed = store.reviewed;
 const isReview = a => /^for review:/i.test(a.description || "");
 const toReview = s => agentsOf(s).filter(a => isReview(a) && a.finished && !reviewed.has(a.id));
-const interrupted = s => { const l = s.items[s.items.length - 1]; return l?.k === "you" && /^\[Request interrupted by user/.test(l.text || ""); };
+/* stopped by you: the latest turn ended on "[Request interrupted by user]" with nothing after it. The
+   "… for tool use" marker is a tool call you turned down, not a stop. */
+const interrupted = s => { const l = s.items[s.items.length - 1]; return l?.k === "you" && /^\[Request interrupted by user\]/.test(l.text || ""); };
 const bgRunning = s => agentsOf(s).some(a => !a.finished) || bgOf(s).some(b => bgState(b) === "running");
 
 /* Applying server messages (bridge.js calls these). Each returns the parts to render. */

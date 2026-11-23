@@ -172,14 +172,31 @@ function itemsHTML(items, sessionBusy, s) {
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
 const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
-/* the "working" line closes the transcript, like the CLI's spinner line */
+/* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
+   compacting, rate limited or no updates instead, and say a message you sent is queued. */
 function liveLine(s, A) {
-  const line = (mark, t) => `<div class="ln liveln"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
-  return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
+  if (stateOf(s) !== "green") return "";
+  const t = [...s.items].reverse().find(x => x.k === "tool");
+  return s.status === "busy" ? line(sessionMarkKey(s), t, "Working", phaseText(s)) : line(sessionMarkKey(s), t, wordOf(s), phaseText(s));
+}
+/* what the state means, after its word (status.ts: the source of each) */
+function phaseText(s) {
+  const d = s.statusDetail || {};
+  if (s.status === "compacting") return "Summing up the conversation to free space";
+  if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
+  if (s.status === "stale") return `Nothing for ${age(s.statusAt)}; the session may be gone`;
+  if (s.status === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
+  if (s.status === "busy" && d.queued) return queuedText(d.queued);
+  return "";
 }
 /* an age that the 1 s timer keeps current */
 const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
+/* a countdown to a time (the rate-limit retry) that the same timer keeps current: "in 38s", then "now" */
+const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
+const until = at => `<span data-until="${esc(at)}">${esc(left(at))}</span>`;
+const queuedText = n => `${n === 1 ? "Your message is" : `${esc(n)} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
 function statusLine(s) {
   const st = stateOf(s);
   const last = [...s.items].reverse();
@@ -187,6 +204,7 @@ function statusLine(s) {
     const t = last.find(x => x.k === "tool");
     return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div>`;
   }
+  if (s.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
   if (st === "red") {
     const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[pending(s)] || "Claude is waiting for a permission";
     return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.statusAt)}</span></div>`;

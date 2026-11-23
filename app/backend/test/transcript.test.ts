@@ -510,3 +510,52 @@ test('plan: the text the card showed wins over an older one in the JSONL', () =>
   again.pushAll([ask]);
   assert.equal(byId(again, 'plan:toolu_pl').text, 'Write "final".');
 });
+
+// The main turn by the transcript alone (a session another process drives). Made-up records.
+const NOW = Date.parse('2026-11-23T12:00:00.000Z');
+const QUIET = 30 * 60_000;
+const ago = (minAgo: number) => new Date(NOW - minAgo * 60_000).toISOString();
+const typed = (uuid: string, text: string, ts: string): JsonRecord => ({ type: 'user', uuid, timestamp: ts, message: { role: 'user', content: text } });
+const replied = (uuid: string, ts: string, content: unknown[]): JsonRecord => ({ type: 'assistant', uuid, timestamp: ts, message: { role: 'assistant', content } });
+const toolResult = (uuid: string, ts: string, tid: string, extra: object = {}): JsonRecord => ({ type: 'user', uuid, timestamp: ts, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tid, content: 'ok', ...extra }] } });
+const bashUse = (id: string) => ({ type: 'tool_use', id, name: 'Bash', input: { command: 'ls' } });
+
+test('turn: a prompt opens it, turn_duration or stop_hook_summary closes it', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('u1', 'Go', ago(5)), replied('a1', ago(4), [{ type: 'text', text: 'On it.' }])]);
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+  t.pushAll([{ type: 'system', subtype: 'turn_duration', durationMs: 60000, timestamp: ago(4) }]);
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  t.pushAll([typed('u2', 'Again', ago(3))]);
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+  t.pushAll([{ type: 'system', subtype: 'stop_hook_summary', timestamp: ago(2) }]);
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  t.pushAll([{ type: 'attachment', uuid: 'q1', timestamp: ago(1), attachment: { type: 'queued_command', prompt: 'and this', commandMode: 'prompt' } }]);
+  assert.equal(t.turnRunning(NOW, QUIET), true, 'a queued message is taken in by a running turn');
+});
+
+test('turn: quiet for 30 min with no tool waiting is your turn; a tool without its result runs on', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('u1', 'Go', ago(45)), replied('a1', ago(44), [{ type: 'text', text: 'On it.' }])]);
+  assert.equal(t.turnRunning(NOW, QUIET), false, 'crashed or gone: not working for ever');
+  t.pushAll([replied('a2', ago(40), [bashUse('toolu_long')])]);
+  assert.equal(t.turnRunning(NOW, QUIET), true, 'a foreground tool still waits for its result');
+  t.pushAll([toolResult('r1', ago(39), 'toolu_long')]);
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+});
+
+test('turn: "for tool use" is a tool you turned down, and Claude carrying on keeps it running; a plain interrupt ends it', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('u1', 'Go', ago(5)),
+    replied('a1', ago(5), [bashUse('toolu_rm')]),
+    toolResult('r1', ago(4), 'toolu_rm', { is_error: true, content: "The user doesn't want to proceed with this tool use." }),
+    typed('u2', '[Request interrupted by user for tool use]', ago(4)),
+  ]);
+  assert.equal(t.turnRunning(NOW, QUIET), false, 'nothing after the marker yet');
+  t.pushAll([replied('a2', ago(3), [{ type: 'text', text: "I'll leave it." }])]);
+  assert.equal(t.turnRunning(NOW, QUIET), true, 'Claude carried on');
+  t.pushAll([typed('u3', '[Request interrupted by user]', ago(2))]);
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  assert.equal(t.items.at(-1)?.text, '[Request interrupted by user]', 'the page reads this last item as stopped by you');
+});

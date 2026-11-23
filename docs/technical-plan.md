@@ -278,10 +278,15 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
 
 | Status | Source |
 |---|---|
-| working (agent mark turning) | `session_state_changed: running`, or the driver started a turn. Also while the process starts, compacts or retries the API: those states are designed but not wired in milestone 1 |
-| needs you (red seesaw) | a pending canUseTool request, which wins over running (R6.8) |
-| your turn (still grey square) | `idle` after a normal `result`, and the state of a session whose process isn't running |
-| stopped by you (grey square) | `idle` after a turn that ended by interrupt, or the last prompt is `[Request interrupted by user` |
+| working (agent mark turning) | `session_state_changed: running`, or the driver started a turn. Also, with the main turn over, while the transcript has background subagents or forks running (not shells or monitors), for every open session, driven or not (added 2026-11-23). And with no Synopia process, while the transcript's main turn runs in another process: the latest assistant record has a `tool_use` without a result, or a prompt (user record, slash command or `queued_command` attachment) opened a turn that no `system/turn_duration`, `system/stop_hook_summary` or interrupt marker closed, and the transcript changed within 30 min |
+| working, N messages queued (blue centre) | a message pushed during a turn, until a reply lists its uuid in `user_message_uuid(s)`; trimmed to a `result`'s `queued_turn_count`, emptied when the turn ends |
+| compacting (rings shrinking) | `system/status` with `status: 'compacting'`, until another `system/status`, a `compact_boundary` or the turn's end |
+| rate limited (amber dashes turning back) | `system/api_retry` with error `rate_limit` or HTTP 429, with its attempt and delay, until the next reply, `system/status`, another kind of retry or the turn's end |
+| no updates (frozen grey arc) | a running turn, no card waiting, and no SDK message for 15 min (plus an announced retry delay), until the next message |
+| signed out (lock) | `error` `authentication_failed` or `cloud_credential_error` on an `assistant` message or `api_retry`, or `auth_status` with an `error`; until the next turn starts or a main-thread reply comes without an error. Wins over everything but needs you |
+| needs you (red seesaw) | a pending canUseTool request, which wins over everything (R6.8) |
+| your turn (still grey square) | `idle` after a normal `result` with no subagent or fork running, and the state of a session whose process isn't running; its age counts from when the last subagent finished |
+| stopped by you (grey square) | `idle` after a turn that ended by interrupt, or the last item is exactly `[Request interrupted by user]` (not `… for tool use`, a tool you turned down) with no assistant record after it |
 | failed (red square) | `result` is an error that isn't an interrupt, or the process failed |
 
 - **Without the undocumented flag** (a later CLI drops it), working runs from the first `send` to `result`. A unit test covers that path.

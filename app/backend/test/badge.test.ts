@@ -77,3 +77,19 @@ test('badge: emits only when the count changes, debounced', async () => {
   badge.stop();
   views.stop();
 });
+
+test('badge: only needs you counts among the statuses; signed out and the turn states do not', () => {
+  const sessions: BadgeSession[] = ['waiting', 'signedout', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle'].map((status, i) => ({ id: `s${i}`, status }));
+  assert.equal(badgeCount({ sessions: () => sessions, pending: () => [], reviewed: () => [] }), 1);
+  assert.equal(badgeCount({ sessions: () => sessions, pending: () => [{ sid: 's1' }], reviewed: () => [] }), 2, 'a request on a signed-out session still needs you');
+});
+
+test('badge: a session whose turn runs in another process, with nothing pending, does not count', () => {
+  const dir = path.join(import.meta.dirname, 'fixtures', 'claude-states');
+  const views = new Views({ claudeDir: dir, clients: () => new Set<Client>(), home: '/Users/fixture', pollMs: 0, watch: false });
+  views.open('f7f7f7f7-0000-4000-8000-000000000007');
+  views.check();
+  assert.equal((views.sessions() as BadgeSession[])[0].status, 'busy');
+  assert.equal(badgeCount({ sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => [] }), 0);
+  views.stop();
+});

@@ -55,6 +55,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .row[data-state="red"] .r-state { color: var(--red); }
 .row[data-state="amber"] .r-state { color: var(--amber); }
 .row[data-state="green"] .r-state { color: var(--green); }
+.row[data-state="grey"] .r-state { color: var(--ink-3); }
 .r-now { font-size: 11px; color: var(--ink-3); line-height: 1.35; }
 .r-agent { font-size: 10.5px; color: var(--ink-3); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .r-agent b { color: var(--kc, var(--green)); font-weight: 500; }
@@ -511,6 +512,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 
 
 .liveln b { color: var(--green); }
+.liveln[data-state="amber"] b { color: var(--amber); }
+.liveln[data-state="grey"] b { color: var(--ink-3); }
 
 .log { overflow-x: hidden; }
 
@@ -544,6 +547,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 .side .row[data-state="red"] .r-state { color: #FF7B72; }
 .side .row[data-state="amber"] .r-state { color: #E3B341; }
 .side .row[data-state="green"] .r-state { color: #56D364; }
+.side .row[data-state="grey"] .r-state { color: #8C959F; }
 .side .row .r-agent { color: #9198A1; }
 .side .r-review { color: #58A6FF !important; }
 .side .row .r-side { border-color: var(--guide); background: #F6F8FA; }
@@ -555,6 +559,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 .side .row[aria-current="true"][data-state="red"] .r-state { color: var(--red); }
 .side .row[aria-current="true"][data-state="amber"] .r-state { color: var(--amber); }
 .side .row[aria-current="true"][data-state="green"] .r-state { color: var(--green); }
+.side .row[aria-current="true"][data-state="grey"] .r-state { color: var(--ink-3); }
 .side .row[aria-current="true"] .r-agent { color: var(--ink-3); }
 .side .row[aria-current="true"] .r-review { color: var(--link) !important; }
 .side .row[aria-current="true"] .r-side { background: var(--panel); }
@@ -577,11 +582,11 @@ body:not(.is-dragging) .g-empty { display: none; }
 .cap.cb { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 8.5px, var(--canvas) 9px); }
 
 /* marks take their colours from variables, so the dark sidebar gets a dark set and the open row keeps the light one */
-:root { --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
-.side { --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
+:root { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
+.side { --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
 .side .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
 .side .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
-.side .row[aria-current="true"] { --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
+.side .row[aria-current="true"] { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
 .side .row[aria-current="true"] .ind { --red: #CF222E; --ink-3: #6E7781; --link: #0550AE; --dot-amber: #D4A72C; --amber: #9A6700; --green: #1A7F37; --line-2: #E4E8EC; }
 .side .row[aria-current="true"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(14, 107, 168, .34) 90deg, transparent 90deg); }
 .side .row .r-side { background: #2D333B; border-color: #545D68; border-width: 1px; }

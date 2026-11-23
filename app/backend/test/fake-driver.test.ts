@@ -42,3 +42,27 @@ test('fake driver: opens every fixture session and plays the script', async () =
   fake.stop();
   views.stop();
 });
+
+test('fake driver: the states fixture plays one session per wired state, with its detail', () => {
+  const dir = path.join(import.meta.dirname, 'fixtures', 'claude-states');
+  const script = loadScript(dir);
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: script.home, pollMs: 0, watch: false });
+  const fake = new FakeDriver(views, script);
+  fake.start(dir);
+  fake.stop();
+  fake.runAll();
+  const got = views.sessions() as { id: string; status: string; statusDetail: { queued?: number; retry?: { attempt: number; at: number } } }[];
+  // the last has no scripted status: its subagents run, so its transcript alone reads working
+  // the last two have no scripted status: f6f6's background subagents run; f7f7 is the author's mix
+  assert.deepEqual(got.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy', 'busy']);
+  assert.ok(views.running(got[5].id).agents > 0);
+  const mix = views.running(got[6].id);
+  assert.equal(mix.agents, 1, 'one subagent');
+  assert.equal(mix.turn, true, 'its main turn is open in another process: a foreground tool waits for its result');
+  const bg = (views.sessions() as { id: string; background: { kind: string; status: string }[] }[])[6].background;
+  assert.deepEqual(bg.map((b) => `${b.kind}:${b.status}`).sort(), ['monitor:running', 'shell:running']);
+  assert.equal(got[0].statusDetail.queued, 1);
+  assert.equal(got[2].statusDetail.retry?.attempt, 3);
+  assert.ok((got[2].statusDetail.retry?.at ?? 0) > Date.now());
+  views.stop();
+});

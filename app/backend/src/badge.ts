@@ -1,7 +1,9 @@
 // The Dock badge: the number of things waiting on you, from the same sources the page uses.
 // Sessions that need you (a pending request, or the status `waiting`: the page's red), plus
 // finished "For review: …" subagents not marked reviewed (the sidebar's "N to review").
-// Only open sessions count: Views holds those and nothing else.
+// Only open sessions count: Views holds those and nothing else. In status.ts's precedence needs
+// you wins over every other status, so `waiting` is it; signed out, no updates, rate limited,
+// compacting and working (subagents running included) don't count.
 
 export type BadgeSession = { id: string; status?: unknown; agents?: { id: string; review?: boolean; finished?: boolean }[] };
 export type BadgeSource = {

@@ -1,0 +1,4 @@
+{"type":"permission-mode","permissionMode":"auto","sessionId":"a1a1a1a1-0000-4000-8000-00000000000a"}
+{"type":"user","uuid":"a1a1a1a1-0000-4000-8000-00000000000a-u1","timestamp":"2026-11-23T09:00:00.000Z","cwd":"/Users/fixture/dev/states","message":{"role":"user","content":"Draft the release notes from the merged work."}}
+{"type":"ai-title","aiTitle":"Release notes","sessionId":"a1a1a1a1-0000-4000-8000-00000000000a"}
+{"type":"assistant","uuid":"a1a1a1a1-0000-4000-8000-00000000000a-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I'll list the merged pull requests first."},{"type":"tool_use","id":"toolu_a1a1","name":"Bash","input":{"command":"git log --oneline main~20..main","description":"Release notes"}}]}}
