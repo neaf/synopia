@@ -283,5 +283,5 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 
 ## 14. Not decided yet
 
-- Notifications: a Dock badge with the needs-you count, and a notification when a session asks something. Deferred until after the first version.
+- A Dock badge with the needs-you count. Deferred until after the first version. Notifications when a session asks something are rejected (2026-11-23).
 - The stale or disconnected, rate-limited, compacting, credentials-expired and queued states are designed (status storyboard) but not wired to data.
