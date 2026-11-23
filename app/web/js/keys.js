@@ -38,7 +38,7 @@ document.addEventListener("keydown", e => {
 });
 
 function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 3600); }
-document.getElementById("new").onclick = () => toast("New session: same dialog as before, defaulting to a new worktree.");
+document.getElementById("new").onclick = () => toast("New sessions come with the next task.");
 /* Cmd+Shift+[ and ] move to the previous / next session, like tabs in iTerm (works once Synopia runs in its own app window) */
 document.addEventListener("keydown", e => {
   if (!(e.metaKey && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight"))) return;

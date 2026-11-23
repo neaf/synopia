@@ -44,16 +44,16 @@ function diffHTML(p) {
       else { out.push(`<div class="dl c"><span class="no">${n}</span><span class="sg"> </span><span>${txt}</span></div>`); o++; n++; }
     }
   });
-  if (p.cut) out.push(`<div class="dgap">⋯ diff cut at 400 lines in this prototype</div>`);
+  if (p.cut) out.push(`<div class="dgap">⋯ diff cut at 400 lines</div>`);
   return out.join("");
 }
-let fileSeq = 0;
 /* files a browser can show get an "open" link; the live app would open any file with its default app */
 const OPENABLE = /\.(html?|svg|png|jpe?g|gif|webp|pdf)$/i;
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
 const openable = f => absOf(f).startsWith("/");
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
-function filesHTML(patches) {
+function filesHTML(patches, key) { // key: stable diff ids, so an open diff stays open when the block is redrawn
+  let fileSeq = 0;
   if (!patches.length) return "";
   const byFile = new Map();
   for (const p of patches) {
@@ -67,7 +67,7 @@ function filesHTML(patches) {
   for (const [root, files] of roots) {
     body += `<div class="root">${esc(root)}</div><div class="flist">`;
     for (const f of files) {
-      const id = `diff-${fileSeq++}`;
+      const id = `diff-${key}-${fileSeq++}`;
       body += `<div class="frow"><span class="dim">⎿</span><a class="fp" href="${esc(fileUrl(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
         <button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
         <div class="diff" id="${id}" hidden>${f.list.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
@@ -116,56 +116,60 @@ function waveHTML(tools, s) {
     }).join("")}</div></div></div>`;
 }
 
+
+/* The log as keyed blocks: [key, html], one root element each. Keys come from item ids, so renderLog
+   can keep the blocks that didn't change and replace the ones that did. */
 function itemsHTML(items, sessionBusy, s) {
-  const out = []; let run = []; let turnStart = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
+  const out = []; let run = []; let turnStart = null; let turnKey = null; let turnMs = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
   const flush = () => {
     if (!run.length) return;
     const agents = run.filter(t => t.name === "Agent" || t.name === "Task"), other = run.filter(t => !(t.name === "Agent" || t.name === "Task"));
-    if (other.length) out.push(toolsHTML(other));
-    if (agents.length) out.push(waveHTML(agents, s));
+    if (other.length) out.push([`run:${other[0].id}`, toolsHTML(other)]);
+    if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  const flushFiles = () => { flush(); out.push(filesHTML(turnPatches)); turnPatches = []; };
-  const endTurn = () => { flushFiles(); if (turnStart && lastTs && new Date(lastTs) > new Date(turnStart)) out.push(`<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`); };
-  const prompt = (html, ts) => {
+  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.map(t => t.patch), key)]); } turnPatches = []; };
+  const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
+  const prompt = (html, ts, key) => {
     flush(); endTurn();
-    if (ts && day(ts) !== lastDay) { out.push(`<div class="done">${day(ts)}</div>`); lastDay = day(ts); }
-    out.push(`<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`); turnStart = ts;
+    if (ts && day(ts) !== lastDay) { out.push([`day:${key}`, `<div class="done">${day(ts)}</div>`]); lastDay = day(ts); }
+    out.push([`you:${key}`, `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`]); turnStart = ts; turnKey = key; turnMs = null;
   };
   for (const it of items) {
-    if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it.patch); if (it.ts) lastTs = it.ts; continue; }
-    if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts); lastTs = it.ts; continue; }
+    if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
+    if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
     flush();
-    if (it.k === "claude") out.push(`<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`);
+    if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
-      const first = (it.text.split("\n").find(l => l.trim()) || "Report").replace(/[#*`]/g, "").slice(0, 160);
       const a = s && agentById(s, it.agent);
-      out.push(`<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`);
+      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending") {
       flushFiles();
-      out.push(`<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`);
+      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
       const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
-      out.push(`<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
-        <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`);
+      out.push([it.id, `<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
+        <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`]);
       if (it.state === "answered") {
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}</p>`).join("") : md(it.answer);
-        lastTs = it.ts; prompt(txt, it.ts); continue;
+        lastTs = it.ts; prompt(txt, it.ts, `ans:${it.id}`); continue;
       }
     }
     if (it.ts) lastTs = it.ts;
   }
   flush();
   if (waiting) flushFiles(); else if (!sessionBusy) endTurn(); else flushFiles();
-  return out.join("");
+  return out;
 }
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
   const line = (mark, t) => `<div class="ln liveln"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
-  if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", A.items.filter(x => x.k === "tool").pop());
+  if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
+/* an age that the 1 s timer keeps current */
+const age = ms => `<span data-age="${ms}">${dur(ms)}</span>`;
 function statusLine(s) {
   const st = stateOf(s);
   const last = [...s.items].reverse();
@@ -175,94 +179,127 @@ function statusLine(s) {
   }
   if (st === "red") {
     const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[pending(s)] || "Claude is waiting for a permission";
-    return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${dur(s.statusAt)}</span></div>`;
+    return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.statusAt)}</span></div>`;
   }
-  return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${interrupted(s) ? "Stopped" : "Your turn"}</b><span>${interrupted(s) ? "You interrupted it" : `Claude finished ${dur(s.statusAt)} ago`}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
+  return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${interrupted(s) ? "Stopped" : "Your turn"}</b><span>${interrupted(s) ? "You interrupted it" : `Claude finished ${age(s.statusAt)} ago`}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
 }
+
+/* ---------- the session view, rendered per panel: header, log, card (in the dock), rail ---------- */
+const conv = document.getElementById("conv");
+const cur = () => store.sessions.get(current);
+let mounted = null; // "<sid>|<agent id>" of the view on screen
+/* Builds the view's frame when the session or the subagent changed (the composer is made here, once
+   per view, so data never resets typing, focus or attachments), then renders every panel. */
 function renderConv() {
-  const s = data.find(x => x.id === current); const conv = document.getElementById("conv");
-  if (!s) { conv.innerHTML = `<div class="missing"><p>No transcripts loaded. Run <code>python3 -I export_transcripts.py</code> in the synopia folder, then reload.</p></div>`; return; }
+  const s = cur();
+  if (!s) {
+    mounted = null;
+    conv.innerHTML = `<div class="missing"><p>${store.ui.connected ? "No open sessions." : "Connecting to the Synopia backend…"}</p></div>`;
+    return;
+  }
+  if (view && !agentById(s, view)) view = null;
+  const key = `${s.id}|${view || ""}`;
+  if (mounted !== key) {
+    mounted = key;
+    conv.innerHTML = `
+    <header class="c-head panel"></header>
+    <div class="log panel" id="log"><div class="log-inner"></div></div>
+    <div class="dock panel"><div class="dock-inner">
+      <div class="composer"><div class="slash" id="slash" role="listbox" hidden></div>
+        <div class="attach" style="grid-column:2"></div>
+        <span class="g">❯</span><textarea id="msg" rows="1" aria-label="Message"></textarea>
+      </div>
+    </div></div>`;
+    lastCard = null;
+    mountComposer(s);
+    requestView(s.id, view);
+  }
+  renderHeader(); renderLog(); renderCard(); renderRail();
+}
+function renderHeader() {
+  const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
-  if (view && !A) view = null;
-  const hidden = A ? A.total - A.items.length : s.total - s.items.length;
-  conv.innerHTML = `
-    <header class="c-head panel">
-      ${A ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
+  conv.querySelector(".c-head").innerHTML = A
+    ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
         <h2 class="c-title">${esc(A.description)}</h2>
         <p class="c-now">${A.finished ? "Finished" : "Running"}, ${took(agentMs(A))}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
-        <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>`
-      : `<h2 class="c-title">${esc(s.title)}</h2>
+        <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>
+      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
+    : `<h2 class="c-title">${esc(s.title)}</h2>
         <p class="c-now">Now: ${esc(s.now)}</p>
-        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${p}`).join(" ")}` : ""}. Tab “${esc(s.name)}”.</p>`}
-      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)"></button>${A ? "" : `<button class="btn" data-close>Close session</button>`}</div>
-    </header>
-    <div class="log panel" id="log"><div class="log-inner">
-      ${hidden > 0 ? `<p class="earlier">… ${hidden} earlier items not shown in this prototype</p>` : ""}
-      ${view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
-      ${liveLine(s, A)}
-    </div></div>
-    <div class="dock panel"><div class="dock-inner">
-      ${!A && stateOf(s) === "red" && !pendingAsk(s) ? statusLine(s) : ""}
-      ${!A && pendingAsk(s) ? qaHTML(s, pendingAsk(s)) : ""}
-      <div class="composer"><div class="slash" id="slash" role="listbox" hidden></div>
-        <div class="attach" style="grid-column:2">${attachments.map((src, i) => `<figure><img src="${src}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("")}</div>
-        <span class="g">❯</span><textarea id="msg" rows="1" placeholder="${A ? `Message ${esc(s.title)} about this subagent` : `Message ${esc(s.title)}`}, / for commands" aria-label="Message"></textarea>
-      </div>
-    </div></div>
-    ${railHTML(s, A)}`;
-  conv.classList.toggle("no-rail", !hasBackground(s));
-  const log = document.getElementById("log"); log.scrollTop = log.scrollHeight;
-  log.querySelectorAll(".frow .fc").forEach(b => b.onclick = () => {
-    const d = document.getElementById(b.getAttribute("aria-controls")); d.hidden = !d.hidden; b.setAttribute("aria-expanded", !d.hidden);
-  });
-
-  const proto = t => () => toast(t);
-  conv.querySelectorAll("[data-agent]").forEach(b => b.onclick = e => { e.preventDefault(); e.stopPropagation(); view = b.dataset.agent; renderConv(); });
-  conv.querySelector("[data-back]")?.addEventListener("click", () => { view = null; renderConv(); });
-  conv.querySelector("[data-back-main]")?.addEventListener("click", () => { view = null; renderConv(); });
-  conv.querySelectorAll("[data-reviewed]").forEach(b => b.onclick = e => { e.stopPropagation(); reviewed.add(b.dataset.reviewed); localStorage.setItem(REVIEWED_KEY, JSON.stringify([...reviewed])); renderAll(); });
-  conv.querySelectorAll("[data-bg]").forEach(b => b.onclick = () => { openBg = openBg === b.dataset.bg ? null : b.dataset.bg; renderConv(); });
-  conv.querySelector("[data-close]") && (conv.querySelector("[data-close]").onclick = proto("Next step: the close flow from the earlier prototype, fed by this transcript."));
-  conv.querySelectorAll("[data-unattach]").forEach(b => b.onclick = () => { attachments.splice(+b.dataset.unattach, 1); renderConv(); });
-  const ta = document.getElementById("msg");
-  const pa = !A && pendingAsk(s);
-  if (pa) {
-    const st = qs(s, pa);
-    conv.querySelectorAll(".acc[data-qi]").forEach(b => b.onclick = () => { st.qi = +b.dataset.qi; st.oi = 0; renderConv(); });
-    conv.querySelectorAll(".qa-card .o").forEach(b => b.onclick = () => { st.oi = +b.dataset.oi; qaPick(s, pa); if (mode !== "insert") renderConv(); });
-    document.getElementById("qa-send").onclick = () => answerAsk(s, pa);
-    const own = document.getElementById("qa-own");
-    if (own) { const q0 = pa.qs[st.target]; if (st.noteRow == null && q0.otherPrefix && own.value.startsWith(q0.otherPrefix + ": ")) own.value = own.value.slice(q0.otherPrefix.length + 2); else if (own.value === q0.otherPrefix) own.value = "";
-      const stop = save => {
-        const q = pa.qs[st.target];
-        if (st.noteRow != null) { if (save) { if (own.value.trim()) st.notes[st.target] = own.value.trim(); else delete st.notes[st.target]; } st.target = null; st.noteRow = null; mode = "normal"; renderConv(); paintMode(); return; }
-        if (save && own.value.trim()) { delete st.notes[st.target]; st.own[st.target] = q.otherPrefix ? `${q.otherPrefix}: ${own.value.trim()}` : own.value.trim(); delete st.picks[st.target]; }
-        else if (save && q.otherEmptyOk) { st.own[st.target] = q.otherPrefix || q.otherLabel; delete st.picks[st.target]; }
-        st.target = null; mode = "normal"; renderConv(); paintMode(); };
-      own.addEventListener("keydown", e => { e.stopPropagation(); if (e.key === "Enter") { e.preventDefault(); stop(true); } if (e.key === "Escape") { e.preventDefault(); stop(false); } });
-      own.addEventListener("blur", () => { if (st.target != null) stop(true); });
-      own.addEventListener("click", e => e.stopPropagation());
-      const end = own.value.length; own.focus(); own.setSelectionRange(end, end);
+        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${p}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
+      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button><button class="btn" data-close>Close session</button></div>`;
+  /* the subagent view's composer still sends to the main conversation, so it names the session */
+  document.getElementById("msg").placeholder = `Message ${s.title}, / for commands`;
+}
+function logEntries(s, A) {
+  const items = A ? (A.items || []) : withPending(s.items, requestsOf(s));
+  const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
+  const out = [];
+  if (hidden > 0) out.push(["earlier", `<p class="earlier">… ${hidden} earlier items not shown</p>`]);
+  out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
+  if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
+  out.push(["live", liveLine(s, A)]);
+  return out;
+}
+/* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
+function renderLog() {
+  const s = cur(); if (!s || !mounted) return;
+  const log = document.getElementById("log");
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  patchChildren(log.querySelector(".log-inner"), logEntries(s, view && agentById(s, view)));
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+/* live times tick in place, so they don't count as a change */
+const still = html => html.replace(/(<span data-(?:live|age)="[^"]*">)[^<]*/g, "$1").replace(/(class="bar st-running"><i style=")[^"]*/g, "$1");
+function patchChildren(parent, entries) {
+  const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
+  const seen = new Set(); let prev = null;
+  for (const [key, html] of entries) {
+    if (!html) continue;
+    let k = key, n = 1; while (seen.has(k)) k = `${key}#${n++}`;
+    seen.add(k);
+    let el = old.get(k); const sig = still(html);
+    if (!el || el._sig !== sig) {
+      const tpl = document.createElement("template"); tpl.innerHTML = html.trim();
+      const fresh = tpl.content.firstElementChild; fresh.dataset.key = k; fresh._sig = sig;
+      if (el) { carryState(el, fresh); el.replaceWith(fresh); }
+      el = fresh;
     }
+    const want = prev ? prev.nextElementSibling : parent.firstElementChild;
+    if (want !== el) parent.insertBefore(el, want);
+    prev = el;
   }
-  const setModelLabel = () => document.getElementById("model-label").textContent = modelName();
-  setModelLabel();
-  document.getElementById("model-label").onclick = () => { ta.value = "/model"; ta.focus(); ta.dispatchEvent(new Event("input")); const it = [...document.querySelectorAll("#slash .it")].find(x => x.textContent.startsWith("/model")); it?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })); };
-  attachSlash(ta, s, m => { setModelLabel(); s.items.push({ k: "tool", ts: new Date().toISOString(), verb: "Model", obj: `set to ${m.name}`, name: "model", state: "done" }); toast(`Model set to ${m.name} for this session. The live app calls setModel().`); renderConv(); });
-  const send = () => {
-    const t = ta.value.trim(); if (!t && !attachments.length) return;
-    s.items.push({ k: "you", ts: new Date().toISOString(), text: t, images: attachments.length });
-    attachments.length = 0; s.status = "busy"; s.statusAt = Date.now();
-    toast("Prototype: not sent to Claude. The live app sends this through the Agent SDK.");
-    renderAll();
-  };
-  ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
-  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; });
-  ta.addEventListener("paste", e => {
-    for (const item of e.clipboardData?.items || []) if (item.type.startsWith("image/")) {
-      e.preventDefault(); const r = new FileReader(); const v = ta.value;
-      r.onload = () => { attachments.push(r.result); renderConv(); document.getElementById("msg").value = v; };
-      r.readAsDataURL(item.getAsFile());
-    }
+  for (const [k, el] of old) if (!seen.has(k)) el.remove();
+}
+/* open <details> (by position) and expanded diffs (by id) survive a redraw of their block */
+function carryState(from, to) {
+  const was = [...from.querySelectorAll("details")], now = [...to.querySelectorAll("details")];
+  was.forEach((d, i) => { if (now[i]) now[i].open = d.open; });
+  from.querySelectorAll(".diff:not([hidden])").forEach(d => {
+    const n = to.querySelector(`#${CSS.escape(d.id)}`); if (!n) return;
+    n.hidden = false; to.querySelector(`[aria-controls="${CSS.escape(d.id)}"]`)?.setAttribute("aria-expanded", "true");
   });
 }
+function renderRail() {
+  const s = cur(); if (!s || !mounted) return;
+  const A = view && agentById(s, view);
+  const old = conv.querySelector(".rail"), html = railHTML(s, A);
+  if (old && html) old.outerHTML = html; else if (old) old.remove(); else if (html) conv.insertAdjacentHTML("beforeend", html);
+  conv.classList.toggle("no-rail", !hasBackground(s));
+}
+
+/* one click handler for the whole view, so redrawn panels need no rebinding */
+conv.addEventListener("click", e => {
+  const t = e.target.closest(".frow .fc, [data-agent], [data-back], [data-back-main], [data-reviewed], [data-bg], [data-close], [data-unattach], #model-label");
+  if (!t || t.closest(".qa-card")) return;
+  if (t.matches(".fc")) {
+    const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
+  } else if (t.dataset.agent) { e.preventDefault(); e.stopPropagation(); view = t.dataset.agent; renderConv(); }
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { view = null; renderConv(); }
+  else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
+  else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
+  else if (t.hasAttribute("data-close")) toast("Closing a session comes with a later task.");
+  else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
+  else if (t.id === "model-label") openModelPicker();
+});

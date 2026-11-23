@@ -56,3 +56,7 @@ Script order in `index.html`: marks, md, store, sidebar, dnd, transcript, rail, 
 | 1635-1636, 1639 | `?type=`. |
 
 Kept although the plan's list names it: the `.slash` rules (203-212, 609). The slash menu and the model picker draw with them (`<div class="slash" id="slash">` in `renderConv`), so they are not dead.
+
+## Since S1-5
+
+The data comes from the backend (`store.js`, `bridge.js`), not `transcripts.js`. `renderConv` now mounts the view once per session or subagent and calls `renderHeader`, `renderLog`, `renderCard` (in `card.js`) and `renderRail`; clicks in the view go through one delegated handler. `itemsHTML` returns keyed blocks instead of a string. Text changes: "in this prototype" dropped from the earlier-items and diff-cut lines, the "Tab" clause shows only with a tab name, the subagent placeholder is "Message <session title>, / for commands", and the New session, Close session, send and model toasts name the task that brings them.

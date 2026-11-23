@@ -1,0 +1,56 @@
+{
+  "about": "Script for --fake (src/fake-driver.ts). Made up. `at` is ms after the backend starts, `ago` how long the status or request has been going at that step.",
+  "home": "/Users/fixture",
+  "menu": {
+    "models": [
+      { "value": "default", "name": "Default", "description": "Use the default model (currently Fixture Large (Default))", "effort": ["low", "medium", "high"] },
+      { "value": "fixture-large", "name": "Fixture Large", "description": "The larger fixture model", "effort": ["low", "medium", "high"] },
+      { "value": "fixture-small", "name": "Fixture Small", "description": "The fast fixture model", "effort": [] }
+    ],
+    "commands": [
+      { "name": "clear", "description": "Clear the conversation", "hint": "" },
+      { "name": "compact", "description": "Summarise the conversation to free context", "hint": "[instructions]" },
+      { "name": "model", "description": "Choose the model for this session", "hint": "" },
+      { "name": "plan", "description": "Plan before changing files", "hint": "" },
+      { "name": "pr-review", "description": "Review a pull request", "hint": "<number>" },
+      { "name": "release-notes", "description": "Draft release notes from merged work", "hint": "" },
+      { "name": "fixture:deploy", "description": "Deploy the fixture app", "hint": "<env>" },
+      { "name": "__internal", "description": "Hidden from the menu", "hint": "" }
+    ]
+  },
+  "steps": [
+    { "at": 0, "sid": "11111111-0000-4000-8000-000000000001", "status": "idle", "ago": 720000 },
+
+    { "at": 0, "sid": "22222222-0000-4000-8000-000000000002", "status": "waiting", "ago": 240000 },
+    { "at": 0, "sid": "22222222-0000-4000-8000-000000000002", "ago": 240000, "pending": {
+      "id": "req-question-1", "kind": "question", "toolName": "AskUserQuestion", "toolUseId": "toolu_ask2", "agentId": null,
+      "input": { "questions": [
+        { "question": "Ship it today?", "header": "Ship", "multiSelect": false, "options": [
+          { "label": "Yes (recommended)", "description": "Today, after the checks pass" },
+          { "label": "No", "description": "Next week, with the docs" } ] },
+        { "question": "Which pages get the banner?", "header": "Pages", "multiSelect": true, "options": [
+          { "label": "Home", "description": "The landing page" },
+          { "label": "Docs", "description": "Every docs page" },
+          { "label": "Blog", "description": "Only new posts" } ] }
+      ] } } },
+
+    { "at": 0, "sid": "33333333-0000-4000-8000-000000000003", "status": "waiting", "ago": 120000 },
+    { "at": 0, "sid": "33333333-0000-4000-8000-000000000003", "ago": 120000, "pending": {
+      "id": "req-permission-1", "kind": "permission", "toolName": "Bash", "toolUseId": "toolu_fake_push1", "agentId": null,
+      "cwd": "~/dev/demo",
+      "input": { "command": "git push origin demo-banner", "description": "Push the banner branch so CI runs the demo build on it." },
+      "suggestions": [
+        { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "git push:*" }], "behavior": "allow", "destination": "localSettings" }
+      ] } },
+
+    { "at": 0, "sid": "44444444-0000-4000-8000-000000000004", "status": "busy", "ago": 60000 },
+    { "at": 0, "sid": "44444444-0000-4000-8000-000000000004", "stream": "Two subagents are" },
+    { "at": 300, "sid": "44444444-0000-4000-8000-000000000004", "stream": "Two subagents are still running. I'll merge" },
+    { "at": 600, "sid": "44444444-0000-4000-8000-000000000004", "stream": "Two subagents are still running. I'll merge their changes when both report back." },
+
+    { "at": 0, "sid": "55555555-0000-4000-8000-000000000005", "status": "waiting", "ago": 240000 },
+    { "at": 0, "sid": "55555555-0000-4000-8000-000000000005", "ago": 240000, "pending": {
+      "id": "req-plan-1", "kind": "plan", "toolName": "ExitPlanMode", "toolUseId": "toolu_fake_plan2", "agentId": null,
+      "input": { "plan": "## Plan: ship the demo release\n\n1. **Tag.** Tag `v0.3.0` on main after the banner change merges.\n2. **Notes.** Use the release notes from the review subagent, with the teal banner first.\n3. **Ship.** Run `make demo-release` and check the demo site.\n\nThen tell you the release link." } } }
+  ]
+}
