@@ -38,6 +38,7 @@ type Call = {
   options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean;
   interrupts: unknown[]; reply: { still_queued: string[]; cancelled?: string[] } | undefined;
   controls: [string, unknown][]; // slice 5: setModel and applyFlagSettings calls
+  exitDelay?: number; // ms between the input closing and the process ending (L1)
 };
 function fakeQuery() {
   const calls: Call[] = [];
@@ -47,6 +48,7 @@ function fakeQuery() {
     calls.push(call);
     void (async () => {
       for await (const m of prompt) call.inputs.push(m);
+      if (call.exitDelay) await new Promise((r) => setTimeout(r, call.exitDelay));
       out.end(); // the input closed: the process ends after its turn
     })();
     return Object.assign(out, {
@@ -829,4 +831,103 @@ test('model: a running process gets setModel and applyFlagSettings; an effort ch
   assert.deepEqual(t.store.state.models[REAL], { model: 'default', effort: null });
   assert.ok(t.take('session').some((m) => m.id === REAL && m.model === 'default'), 'pages get the change');
   assert.equal((await t.sessions.setModel('nope', 'sonnet', null)).ok, false);
+});
+
+test('needs you: held messages go out when the last card ends by its own signal (M1)', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1', { agentID: 'agent-7' });
+  void t.canUseTool('Bash', { command: 'ls' }, a.o);
+  await tick();
+  assert.equal(t.sessions.send(REAL, 'held one').ok, true);
+  assert.equal(t.call.inputs.length, 1, 'held while the card waits');
+  t.take();
+  a.ctl.abort(); // the subagent was stopped, or the CLI cancelled the tool
+  await tick();
+  assert.deepEqual(t.call.inputs.slice(1).map((m) => m.message.content), ['held one']);
+  assert.deepEqual(t.take('session').find((m) => 'held' in m)?.held, [], 'the Queued line goes');
+  assert.equal(t.take('restore').length, 0);
+});
+
+test('needs you: an interrupt restores the held messages even when the CLI aborts the card first (M1)', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1');
+  void t.canUseTool('Bash', { command: 'ls' }, a.o);
+  await tick();
+  t.sessions.send(REAL, 'keep me');
+  // the CLI aborts the request's signal while the interrupt is on its way
+  t.call.interrupts.push = (...x: unknown[]) => { a.ctl.abort(); return x.length; };
+  await t.sessions.interrupt(REAL);
+  assert.equal(t.call.inputs.length, 1, 'not pushed');
+  assert.deepEqual(t.take('restore').map((m) => m.texts), [['keep me']]);
+});
+
+test('open list: after a reset the earlier conversation is listed and opens as itself (M3)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  writePast(path.join(root, 'claude'), cwd);
+  const past = [info(PAST, { cwd, lastModified: 5000 })];
+  const t = setup(root, past);
+  await t.sessions.openSession(PAST);
+  t.sessions.send(PAST, 'go');
+  await tick();
+  emit(t.q.calls[0], init(PAST));
+  emit(t.q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: PAST, trigger: 'clear' });
+  await tick();
+  assert.equal(t.sessions.resolve(PAST), RESET);
+  assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), [PAST], 'the pre-clear conversation is a past session');
+  assert.deepEqual(await t.sessions.openSession(PAST), { ok: true, sid: PAST });
+  assert.deepEqual(t.views.ids().sort(), [PAST, RESET].sort());
+  assert.equal(t.sessions.resolve(PAST), PAST, 'page messages with its id reach it, not the new conversation');
+  assert.deepEqual(t.store.state.open.map((e) => e.id).sort(), [PAST, RESET].sort());
+  assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), []);
+});
+
+test('idle end: a message sent while the process is ending goes to the next process (L1)', async () => {
+  const t = setup(undefined, [], { idleMs: 30 });
+  const ph = t.sessions.newSession();
+  t.sessions.send(ph, 'hi');
+  await tick();
+  emit(t.q.calls[0], init(REAL));
+  emit(t.q.calls[0], RESULT);
+  await tick();
+  t.q.calls[0].exitDelay = 80;
+  await new Promise((r) => setTimeout(r, 50)); // the idle end closed the input; the exit comes later
+  t.take();
+  assert.equal(t.sessions.send(REAL, 'during the exit').ok, true);
+  await tick();
+  assert.equal(t.q.calls.length, 1, 'never two processes for one session');
+  assert.equal(t.take('session').at(-1)?.status, 'busy');
+  await new Promise((r) => setTimeout(r, 120));
+  assert.equal(t.q.calls.length, 2, 'a new process once the old one exited');
+  assert.equal(t.q.calls[1].options.resume, REAL);
+  assert.deepEqual(t.q.calls[1].inputs.map((m) => m.message.content), ['during the exit']);
+});
+
+test('status: an interrupt after the result, or one that failed, does not stop the next turn (L4)', async () => {
+  const t = await runningTurn(['interrupt_receipt_v1']);
+  const q = t.q.calls[0];
+  const state = (s: string, uuid: string) => emit(q, { type: 'system', subtype: 'session_state_changed', state: s, uuid, session_id: REAL });
+  emit(q, RESULT);
+  await tick();
+  await t.sessions.interrupt(REAL); // Esc Esc between result and idle
+  state('idle', 'u-i');
+  await tick();
+  t.sessions.send(REAL, 'next');
+  state('running', 'u-s2');
+  emit(q, RESULT);
+  state('idle', 'u-i2');
+  await tick();
+  assert.equal(t.take('session').at(-1)?.status, 'idle');
+
+  // an interrupt that throws
+  t.sessions.send(REAL, 'again');
+  state('running', 'u-s3');
+  await tick();
+  q.interrupts.push = () => { throw new Error('control channel closed'); };
+  await t.sessions.interrupt(REAL);
+  assert.match(String(t.take('toast').at(-1)?.text), /couldn't interrupt/);
+  emit(q, RESULT);
+  state('idle', 'u-i3');
+  await tick();
+  assert.equal(t.take('session').at(-1)?.status, 'idle');
 });
