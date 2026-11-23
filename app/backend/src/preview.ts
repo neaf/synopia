@@ -1,9 +1,8 @@
 // The read-only file preview (requirements R5.9): `preview {path}` from the page gets back
 // `preview {path, display, lang, html, lines, truncated, size}`, the file highlighted by `bat` (GitHub
-// theme) and turned from ANSI colours into escaped HTML spans. Only text and source files are shown:
-// the same checks as `open` (absolute, exists, a regular file without an execute bit, a document or
-// source extension on its own name and its real path's, or no extension), and no NUL byte in the
-// first 8 KB. Anything else gets today's `open` (the caller's fallback). bat runs through execFile,
+// theme) and turned from ANSI colours into escaped HTML spans. Any regular file that looks like text
+// (no NUL byte in the first 8 KB) is shown, whatever its extension or execute bit, except images and
+// PDFs. Anything else gets today's `open` (the caller's fallback). bat runs through execFile,
 // never a shell, on what this module read (at most 2 MB and 5,000 lines) over stdin, 5 s at most.
 // Without bat the text is shown plain.
 import fs from 'node:fs';
@@ -11,14 +10,12 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { OPEN_EXT } from './open.ts';
 
 export const MAX_LINES = 5000;
 export const MAX_BYTES = 2 * 1024 * 1024;
 export const SNIFF_BYTES = 8192;
 export const BAT_TIMEOUT_MS = 5000;
 const MEDIA = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']);
-export const TEXT_EXT = new Set([...OPEN_EXT].filter((e) => !MEDIA.has(e)));
 
 export type PreviewPlan =
   | { ok: true; how: 'preview'; real: string; size: number }
@@ -26,7 +23,6 @@ export type PreviewPlan =
   | { ok: false; error: string };
 
 const extOf = (p: string) => path.extname(p).toLowerCase();
-const textName = (p: string) => extOf(p) === '' || TEXT_EXT.has(extOf(p));
 
 // Whether the first bytes look like text: no NUL.
 export function looksText(head: Buffer): boolean {
@@ -56,7 +52,9 @@ export function planPreview(p: unknown): PreviewPlan {
   } catch {
     return { ok: false, error: `Can't open ${p}: it no longer exists.` };
   }
-  if (!st.isFile() || (st.mode & 0o111) !== 0 || !textName(p) || !textName(real)) return { ok: true, how: 'open' };
+  // Viewing runs nothing, so any regular text file previews, scripts and executables included ("Open in
+  // app" still goes through open's allow-list). Media (images, PDF) and binaries keep today's `open`.
+  if (!st.isFile() || MEDIA.has(extOf(p)) || MEDIA.has(extOf(real))) return { ok: true, how: 'open' };
   let head: Buffer;
   try {
     head = readHead(real, SNIFF_BYTES);

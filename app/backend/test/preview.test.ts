@@ -60,16 +60,19 @@ test('preview: path checks', () => {
   assert.deepEqual(planPreview(ts), { ok: true, how: 'preview', real: realpathSync(ts), size: 13 });
   assert.equal((planPreview(file('Makefile', 'all:\n')) as { how: string }).how, 'preview');
   assert.equal((planPreview(file('page.html', '<p>\n')) as { how: string }).how, 'preview'); // the page decides when
-  // like open: images, scripts, executables and folders are not previewed but opened or revealed
-  for (const p of [file('pic.png'), file('doc.pdf'), file('run.sh'), file('tool.ts', 'x', 0o755), file('x.jar')]) {
+  // images and PDFs open as before; viewing runs nothing, so scripts and executables preview
+  for (const p of [file('pic.png'), file('doc.pdf')]) {
     assert.equal((planPreview(p) as { how: string }).how, 'open', p);
+  }
+  for (const p of [file('run.sh', 'echo hi\n'), file('tool.ts', 'x', 0o755), file('build.py', 'print(1)\n')]) {
+    assert.equal((planPreview(p) as { how: string }).how, 'preview', p);
   }
   const folder = join(dir, 'folder');
   mkdirSync(folder);
   assert.equal((planPreview(folder) as { how: string }).how, 'open');
-  // a text name that links to something else is judged by both names
+  // a text name that links to an image is judged by both names
   const link = join(dir, 'notes.txt');
-  symlinkSync(file('thing.fileloc', 'x'), link);
+  symlinkSync(file('thing.png', 'x'), link);
   assert.equal((planPreview(link) as { how: string }).how, 'open');
 });
 

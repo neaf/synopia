@@ -14,7 +14,7 @@
 .pv-code { flex: 1; min-height: 0; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; color: var(--ink); }
 .pv-lines { display: grid; width: max-content; min-width: 100%; }
 .pl { display: grid; grid-template-columns: var(--nw, 6ch) max-content; white-space: pre; }
-.pl .no { position: sticky; left: 0; color: var(--faint); text-align: right; padding-right: 1ch; margin-right: 1ch; user-select: none; background: var(--sub); border-right: 1px solid var(--line-2); }
+.pl .no { position: sticky; left: 0; color: var(--faint); text-align: right; padding: 0 1ch 0 1.5ch; margin-right: 1ch; user-select: none; background: var(--sub); border-right: 1px solid var(--line-2); }
 .pl .tx { padding-right: 2ch; }
 /* the diff's first changed line, marked softly; the line of the current match */
 .pl.hit { background: #DDF4FF; }
