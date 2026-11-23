@@ -41,3 +41,8 @@ No badges or notifications yet. Inputs: `docs/requirements.md`, `spike/FINDINGS.
 The user's global rules (from `~/dev/agent-harness`) apply:
 - Delegate self-contained work to background subagents and name the fitting skill.
 - Mark deliverables for review with `For review:`.
+
+## Technical plan (2026-11-23)
+
+- Draft for review: `docs/technical-plan.md`. Decisions, digests and critic reviews: `.attack-plan/synopia-m1/` (ledger.md holds the author's answers Q1-Q11).
+- Big changes from this handover: Synopia is unaware of the terminal (no pid files, no take-over); transcripts come from JSONL tailing for every session; sessions keep the user's `auto` mode; SDK and CLI used through their documented surface only.
