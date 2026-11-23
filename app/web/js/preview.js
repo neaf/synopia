@@ -64,7 +64,7 @@ function showPreview(m) {
   /* m.html is escaped by the backend; its only markup is <span style="color:…"> */
   const rows = String(m.html ?? "").split("\n").slice(0, n || 1);
   const box = document.getElementById("pv-lines");
-  box.style.setProperty("--nw", `${String(rows.length).length + 2}ch`);
+  box.style.setProperty("--nw", `calc(${String(rows.length).length}ch + 2.5ch + 1px)`); // the digits, the padding, the rule
   const added = want.added || new Set(), cut = want.cut || new Set();
   box.innerHTML = rows.map((h, i) => `<div class="pl${added.has(i + 1) ? " chg" : ""}${cut.has(i + 1) ? " cut" : ""}"><span class="no">${i + 1}</span><span class="tx">${h || " "}</span></div>`).join("");
   pvCloseFind(); pv.el.hidden = false;

@@ -14,9 +14,9 @@
 .pv-code { flex: 1; min-height: 0; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; color: var(--ink); }
 .pv-lines { display: grid; width: max-content; min-width: 100%; }
 .pl { display: grid; grid-template-columns: var(--nw, 6ch) max-content; white-space: pre; }
-.pl .no { position: sticky; left: 0; color: var(--faint); text-align: right; padding: 0 1ch 0 1.5ch; margin-right: 1ch; user-select: none; background: var(--sub); border-right: 1px solid var(--line-2); }
-.pl .tx { padding-right: 2ch; }
-/* the diff's first changed line, marked softly; the line of the current match */
+.pl .no { position: sticky; left: 0; color: var(--faint); text-align: right; box-sizing: border-box; padding: 0 1ch 0 1.5ch; user-select: none; background: var(--sub); border-right: 1px solid var(--line-2); }
+.pl .tx { padding: 0 2ch 0 1ch; }
+/* the line of the current match */
 .pl.found .no { color: var(--ink); }
 ::highlight(pv-find) { background-color: #FFF1B3; }
 ::highlight(pv-cur) { background-color: #F2CC60; color: var(--ink); }
