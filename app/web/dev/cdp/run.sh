@@ -6,7 +6,8 @@
 #   app/web/dev/cdp/run.sh states  session states of status.ts (R8.2) on the states fixture, with shots
 #   app/web/dev/cdp/run.sh earlier loading earlier items, on a long transcript generated into the temp state
 #   app/web/dev/cdp/run.sh csp     the page under its CSP, the H1 payload, an injected handler blocked
-#   app/web/dev/cdp/run.sh motion  motion rules and reduced motion (R8.1, R8.5), square marks, marks on the box and gutter (R8.6)
+#   app/web/dev/cdp/run.sh tween   sidebar sub-lines: height then fade, fade then height, no jump, guides aligned, instant with reduced motion (R8.1, R4.3)
+#   app/web/dev/cdp/run.sh motion  running marks always move (R8.1), the sub-line tween, reduced motion (R8.5), square marks, marks on the box and gutter (R8.6)
 # Starts headless Chrome on $SYNOPIA_CHROME_PORT (9334) if it isn't up, the backend on $SYNOPIA_CDP_PORT (4791). Prints "N/M pass" and the failures.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
