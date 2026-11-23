@@ -9,9 +9,9 @@ const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 function toolLine(t) {
-  const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
-    : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
+  const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
+    : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
+    : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   const line = `<span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
   return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}</div>`;
 }
@@ -28,8 +28,8 @@ function stepHTML(t) {
   const o = t.out, full = fullOut.get(stepKey(t.id));
   const text = full !== undefined ? full : o ? o.text : "";
   const cmd = t.input ? `<div class="cmd">${esc(t.input)}</div>` : "";
-  const res = !o ? "" : text ? `<div class="res"><span>⎿</span><span class="out">${esc(text)}</span></div>`
-    : `<div class="res"><span>⎿</span><span>No output</span></div>`;
+  const res = !o ? "" : text ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span class="out">${esc(text)}</span></div>`
+    : `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>No output</span></div>`;
   const more = o && o.cut && full === undefined ? `<p class="earlier more"><button data-full="${esc(t.id)}">Show all ${+o.lines} lines</button></p>` : "";
   const stop = o && o.interrupted ? `<div class="res"><span></span><span>Interrupted</span></div>` : "";
   return `<div class="step-out">${cmd}${res}${more}${stop}</div>`;
@@ -56,7 +56,7 @@ function toolsHTML(run) {
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
-      const row = `<span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}">${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}">${row}</div>`;
     }).join("")}</div></details></div>`;
 }

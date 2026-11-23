@@ -98,6 +98,8 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .ln .name { font-weight: 700; color: var(--ink); }
 .ln .dim, .res { color: var(--ink-3); }
 .res { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
+/* the guide into a result or a run's step: the drawn corner, as in the sidebar and the files list */
+.res > .lcorner { align-self: start; margin: 2px 0 0 3px; }
 .res.failed { color: var(--red); }
 details.fold > summary { cursor: pointer; list-style: none; }
 details.fold > summary::-webkit-details-marker { display: none; }
