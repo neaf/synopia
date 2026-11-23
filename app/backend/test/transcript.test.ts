@@ -448,3 +448,18 @@ test('process ended: a foreground tool left without a result reads as stopped, o
   assert.equal(byId(failed, 'toolu_new').state, 'running');
   assert.equal(byId(failed, 'toolu_int').state, 'stopped');
 });
+
+test('a tool you denied, or a plan you sent back, reads as denied, not failed', () => {
+  const answers: Record<string, string> = { toolu_p: 'Changes: use "final"', toolu_d: 'Denied', toolu_ok: 'Approved' };
+  const t = new Transcript({ home: HOME, answerOf: (id) => answers[id] });
+  const err = (id: string) => ({ type: 'tool_result', tool_use_id: id, is_error: true, content: 'rejected' });
+  t.pushAll([
+    { type: 'assistant', uuid: 'd-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_p', name: 'ExitPlanMode', input: { plan: 'Draft.' } },
+      { type: 'tool_use', id: 'toolu_d', name: 'Bash', input: { command: 'rm x' } },
+      { type: 'tool_use', id: 'toolu_e', name: 'Bash', input: { command: 'false' } }] } },
+    { type: 'user', uuid: 'd-u1', timestamp: at(2), message: { role: 'user', content: [err('toolu_p'), err('toolu_d'), err('toolu_e')] } },
+  ]);
+  assert.deepEqual(['toolu_p', 'toolu_d', 'toolu_e'].map((id) => byId(t, id).state), ['denied', 'denied', 'failed']);
+  assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
+});

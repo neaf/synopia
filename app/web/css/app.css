@@ -88,7 +88,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .ln.claude > .g { color: var(--ink); }
 .ln.tool > .g, .ln.agent > .g { color: var(--dot-green); }
 .ln.tool.failed > .g { color: var(--red); }
-.ln.tool.stopped > .g { color: var(--ink-3); }
+.ln.tool.stopped > .g, .ln.tool.denied > .g { color: var(--ink-3); }
 .ln.ask > .g { color: var(--dot-amber); }
 .ln .name { font-weight: 700; color: var(--ink); }
 .ln .dim, .res { color: var(--ink-3); }

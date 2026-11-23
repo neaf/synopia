@@ -442,14 +442,17 @@ export class Transcript {
       }
     } else if (it && it.k === 'tool') {
       let state: string;
+      const answer = res !== undefined ? this.answerOf(tid) : undefined;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
         state = note || !this.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
-      } else if (res !== undefined) state = !res ? 'done' : this.interrupted.has(tid) ? 'stopped' : 'failed';
+      } else if (res !== undefined) {
+        // You denied it, or sent the plan back: your answer above says so, it didn't fail.
+        state = !res ? 'done' : this.interrupted.has(tid) ? 'stopped' : answer && /^(Denied|Changes)\b/.test(answer) ? 'denied' : 'failed';
+      }
       // A plan with no answer stays running: the page shows it as "Not answered".
       else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
       else state = 'running';
       const patch = this.patches.get(tid);
-      const answer = res !== undefined ? this.answerOf(tid) : undefined;
       if (it.state !== state || it.patch !== patch || (answer && it.answer !== answer)) {
         it.state = state;
         if (patch) it.patch = patch;
