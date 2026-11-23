@@ -9,6 +9,8 @@ import {
 import type { Turn, WriterQueryFn, WriterSource } from '../src/writer.ts';
 import { openStore } from '../src/store.ts';
 import { Views } from '../src/views.ts';
+import { Sessions } from '../src/sessions.ts';
+import type { QueryFn } from '../src/driver.ts';
 import type { Client } from '../src/server.ts';
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
@@ -232,4 +234,44 @@ test('precedence: your rename, then Claude\'s title, then the ai-title; stored a
   assert.equal(v2.meta(id)?.now, 'Claude is on it');
   v2.stop();
   again.close();
+});
+
+// Sessions: a turn's result calls the writer's trigger; opening a stored session does too.
+test('triggers: a result calls onTurnEnded, a start calls onOpened', async () => {
+  const stateDir = tmp('synopia-writer-state-');
+  const store = openStore(stateDir);
+  const cwd = tmp('synopia-writer-cwd-');
+  const id = 'cccccccc-0000-4000-8000-00000000000c';
+  store.state.open.push({ id, cwd, openedAt: 0, closedAt: null });
+  const views = new Views({ claudeDir: tmp('synopia-writer-claude-'), clients: () => new Set(), pollMs: 0, watch: false });
+  const ended: string[] = [];
+  const opened: string[] = [];
+  let out: ((m: object) => void) | null = null;
+  const queryFn: QueryFn = ({ prompt }) => {
+    const buf: object[] = [];
+    let wake: (() => void) | null = null;
+    out = (m) => { buf.push(m); wake?.(); };
+    void (async () => { for await (const _ of prompt) { /* drain */ } })();
+    return {
+      async *[Symbol.asyncIterator]() {
+        while (true) {
+          while (buf.length) yield buf.shift() as SDKMessage;
+          await new Promise<void>((r) => (wake = r));
+        }
+      },
+      close: () => {},
+    };
+  };
+  const sessions = new Sessions({ store, views, queryFn, onTurnEnded: (s) => ended.push(s), onOpened: (s) => opened.push(s) });
+  sessions.start();
+  assert.deepEqual(opened, [id]);
+  sessions.send(id, 'hello');
+  await wait(5);
+  (out as unknown as (m: object) => void)({ type: 'system', subtype: 'init', session_id: id, uuid: 'u' });
+  (out as unknown as (m: object) => void)({ type: 'result', subtype: 'success', is_error: false, result: 'done', uuid: 'r' });
+  await wait(5);
+  assert.deepEqual(ended, [id]);
+  sessions.stop();
+  views.stop();
+  store.close();
 });

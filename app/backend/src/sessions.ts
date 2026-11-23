@@ -105,6 +105,9 @@ export type SessionsOptions = {
   home?: string;
   now?: () => number;
   idleMs?: number;
+  // Slice 6 (the writer): a session's turn ended, and a stored session was opened.
+  onTurnEnded?: (sid: string) => void;
+  onOpened?: (sid: string) => void;
 };
 
 export class Sessions {
@@ -319,6 +322,7 @@ export class Sessions {
     this.live.set(id, a);
     this.views.open(id, { cwd });
     this.views.setStatus(id, a.status.status, a.status.at);
+    if (!placeholder) this.opts.onOpened?.(id);
     return a;
   }
 
@@ -395,6 +399,7 @@ export class Sessions {
     } else if (m.type === 'result') {
       this.setStreamClear(a);
       a.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined });
+      this.opts.onTurnEnded?.(a.id);
     }
   }
 

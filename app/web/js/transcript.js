@@ -227,7 +227,7 @@ function renderHeader() {
         <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title">${esc(s.title)}</h2>
-        ${isEmpty(s) ? "" : `<p class="c-now">Now: ${esc(s.now)}</p>`}
+        ${isEmpty(s) || !s.now ? "" : `<p class="c-now">Now: ${esc(s.now)}</p>`}
         <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${p}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button><button class="btn" data-close>Close session</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */

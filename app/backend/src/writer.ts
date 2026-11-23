@@ -209,10 +209,10 @@ export class Writer {
     const options = writerOptions(this.store.state.settings.writerModel || 'haiku', cwd);
     const started = this.now();
     let reply = '';
-    let hooks = 0;
+    const hooks: string[] = []; // the events of hooks that still ran (managed ones), names only
     try {
       for await (const m of (this.opts.queryFn ?? (sdkQuery as WriterQueryFn))({ prompt: one(buildPrompt(title, turns)), options })) {
-        if (m.type === 'system' && (m.subtype === 'hook_started' || m.subtype === 'hook_response')) hooks++;
+        if (m.type === 'system' && m.subtype === 'hook_started') hooks.push(String(m.hook_event));
         if (m.type === 'result') reply = m.subtype === 'success' ? m.result : '';
       }
     } catch (e) {
@@ -220,7 +220,7 @@ export class Writer {
       return;
     }
     const w = parseReply(reply);
-    this.log('writer.done', { sid, ok: Boolean(w), ms: this.now() - started, hooks });
+    this.log('writer.done', { sid, ok: Boolean(w), ms: this.now() - started, hooks: hooks.join(',') || 'none' });
     if (!w) return;
     const cur = this.src.resolve(sid); // the session may have moved to a new id meanwhile
     if (this.src.title(cur) === undefined) return;
