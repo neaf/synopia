@@ -405,6 +405,14 @@ export class Transcript {
     }
   }
 
+  // A task ended, as the SDK's task_notification says (`end` ISO): it reads as ended until the
+  // JSONL's own notification lands, which wins.
+  taskEnded(tid: string, status: string, summary: string, end: string): void {
+    if (this.notes.has(tid)) return;
+    this.notes.set(tid, { status, summary, end });
+    this.refreshTool(tid);
+  }
+
   private endedBefore(ts: string | null | undefined): boolean {
     return this.ended !== null && (!ts || ts <= this.ended);
   }

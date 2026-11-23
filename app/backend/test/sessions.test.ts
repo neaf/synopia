@@ -711,6 +711,29 @@ test('quitCheck: running turns and the background work of running processes', as
   assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [{ sid: BG, kind: 'monitor' }] });
 });
 
+test("stop task: the SDK's task_notification ends the task between turns", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const BG = '33333333-0000-4000-8000-000000000003';
+  const dir = path.join(root, 'claude', 'projects', '-tmp-fixture');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
+  const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
+  await t.sessions.openSession(BG);
+  t.views.check();
+  const bg = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string }[] }[]).find((s) => s.id === BG)!.background;
+  const run = bg().find((b) => b.status === 'running')!;
+  t.sessions.send(BG, 'go');
+  await tick();
+  emit(t.q.calls[0], init(BG));
+  emit(t.q.calls[0], RESULT);
+  emit(t.q.calls[0], { type: 'system', subtype: 'task_notification', task_id: 'x1', tool_use_id: run.toolUseId, status: 'stopped', output_file: '', summary: '', uuid: 'u-tn', session_id: BG });
+  await tick();
+  assert.equal(bg().find((b) => b.toolUseId === run.toolUseId)!.status, 'stopped');
+  assert.deepEqual(t.sessions.quitCheck().background, []);
+  t.sessions.stop();
+  t.views.stop();
+});
+
 test('process end: background work of a failed or quit process reads as stopped, also after a restart', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const BG = '33333333-0000-4000-8000-000000000003';

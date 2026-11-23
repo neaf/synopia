@@ -357,6 +357,14 @@ export class Views {
     this.flush(s);
   }
 
+  // The SDK's task_notification for one of the session's background tasks (its tool use id).
+  taskEnded(sid: string, toolUseId: string, status: string, summary: string): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.t.taskEnded(toolUseId, status, summary, new Date().toISOString());
+    this.flush(s);
+  }
+
   // Messages an interrupt cancelled, back to the session's message box.
   restore(sid: string, texts: string[]): void {
     if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });

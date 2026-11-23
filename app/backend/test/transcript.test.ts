@@ -464,6 +464,23 @@ test('a tool you denied, or a plan you sent back, reads as denied, not failed', 
   assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
 });
 
+test("task ended: the SDK's notification ends a background shell until the JSONL's own lands", () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    { type: 'assistant', uuid: 'k-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_sl', name: 'Bash', input: { command: 'sleep 300', description: 'Long sleep', run_in_background: true } }] } },
+    { type: 'user', uuid: 'k-u1', timestamp: at(2), toolUseResult: { backgroundTaskId: 'bsl1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sl', content: 'started' }] } },
+  ]);
+  assert.equal(t.getBackground('toolu_sl')!.status, 'running');
+  t.takeChanges();
+  t.taskEnded('toolu_sl', 'stopped', '', at(5));
+  assert.deepEqual([t.getBackground('toolu_sl')!.status, t.getBackground('toolu_sl')!.end], ['stopped', at(5)]);
+  assert.deepEqual(t.takeChanges().background, ['toolu_sl']);
+  t.pushAll([{ type: 'user', uuid: 'k-n1', timestamp: at(9), origin: { kind: 'task-notification' },
+    message: { role: 'user', content: '<task-notification>\n<task-id>bsl1</task-id>\n<tool-use-id>toolu_sl</tool-use-id>\n<status>killed</status>\n<summary>Killed</summary>\n</task-notification>' } }]);
+  assert.deepEqual([t.getBackground('toolu_sl')!.status, t.getBackground('toolu_sl')!.end], ['killed', at(9)]);
+});
+
 test('plan: the text the card showed wins over an older one in the JSONL', () => {
   const plans: Record<string, string> = {};
   const t = new Transcript({ home: HOME, planOf: (id) => plans[id] });

@@ -514,6 +514,11 @@ export class Sessions {
       a.status.stateChanged(String(m.state));
     } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {
       this.log('driver.mode', { sid: a.id, mode: m.permissionMode }); // after a plan approval (S3-1: back to auto), or a model switch
+    } else if (m.type === 'system' && m.subtype === 'task_notification' && typeof m.tool_use_id === 'string') {
+      // A task ended (stopTask emits one with status `stopped`). The CLI writes its notification to
+      // the JSONL only when a turn runs, so between turns this is the only sign that it ended.
+      this.log('driver.task', { sid: a.id, status: String(m.status) });
+      this.views.taskEnded(a.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
     } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
       this.opts.onCommands?.(a.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {
