@@ -1,0 +1,73 @@
+// The web view and its safety net: the page never navigates, so any
+// navigation away from the backend origin is cancelled, new windows are
+// refused, and only http and https URLs go to the default browser.
+import Cocoa
+import WebKit
+
+final class PageView: NSObject, WKNavigationDelegate, WKUIDelegate {
+  let web: WKWebView
+  private var origin: (host: String, port: Int)?
+
+  override init() {
+    web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+    super.init()
+    web.navigationDelegate = self
+    web.uiDelegate = self
+  }
+
+  func load(port: Int, token: String) {
+    origin = ("127.0.0.1", port)
+    var c = URLComponents()
+    c.scheme = "http"
+    c.host = "127.0.0.1"
+    c.port = port
+    c.path = "/"
+    c.queryItems = [URLQueryItem(name: "token", value: token)]
+    if let url = c.url { web.load(URLRequest(url: url)) }
+  }
+
+  private func isBackend(_ url: URL) -> Bool {
+    guard let o = origin else { return false }
+    return url.scheme == "http" && url.host == o.host && url.port == o.port
+  }
+
+  static func openOutside(_ url: URL?) {
+    guard let url, let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  // MARK: WKNavigationDelegate
+
+  func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+               decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+    guard let url = action.request.url else { return decisionHandler(.cancel) }
+    if isBackend(url) || url.absoluteString == "about:blank" { return decisionHandler(.allow) }
+    decisionHandler(.cancel)
+    if action.targetFrame?.isMainFrame ?? true { PageView.openOutside(url) }
+  }
+
+  /// Debug hook: with SYNOPIA_SNAPSHOT=/path/out.png set, the first page load
+  /// is written there as a PNG, a moment after it finishes. Needs no Screen
+  /// Recording permission. Launch with `open --env SYNOPIA_SNAPSHOT=… Synopia.app`.
+  private var snapshotPath = ProcessInfo.processInfo.environment["SYNOPIA_SNAPSHOT"]
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard let path = snapshotPath, !path.isEmpty else { return }
+    snapshotPath = nil
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+      webView.takeSnapshot(with: nil) { image, _ in
+        guard let tiff = image?.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
+      }
+    }
+  }
+
+  // MARK: WKUIDelegate
+
+  func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
+               for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+    PageView.openOutside(action.request.url)
+    return nil
+  }
+}
