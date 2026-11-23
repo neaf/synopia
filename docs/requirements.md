@@ -98,7 +98,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - No duplicate labels, tags or "running" words.
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
-  - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts.
+  - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts. Files changed by shell commands count too.
   - Clicking the path opens the file. The user often opens HTML artifacts.
   - Clicking the counts opens the diff, with line numbers from the stored patch, red and green rows.
 - R5.10 Markdown renders as the CLI does:

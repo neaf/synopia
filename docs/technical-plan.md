@@ -224,6 +224,7 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
   - `canUseTool`;
   - `includePartialMessages: true`;
   - `perTaskStopAffordance: true`, so an interrupt stops only the foreground turn, as in the CLI, and background work is stopped one at a time with the Stop row;
+  - `settings: {bashEditDiffEnabled: true}` (flag settings), so the CLI records the files a Bash command changed (`toolUseResult.bashEditDiff`) for "Files changed": it is off for SDK-driven sessions without it, and the writer's calls don't get it;
   - `env: {...process.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1'}`;
   - `settingSources` left at its default, so your skills, commands, `CLAUDE.md`, hooks and agents load as in the CLI (verified in the spike).
 - **Sending:** text and images are pushed with the page's `uuid`. A message sent during a turn is folded into it by the CLI, as in the terminal. A message sent while a card waits is queued behind the card, and the transcript shows "Queued until you answer the card above".

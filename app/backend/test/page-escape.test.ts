@@ -57,6 +57,8 @@ test('sidebar rows, the rail, files changed, waves and cards escape their data',
   clean(P.railHTML(s, null), 'railHTML');
   const patch = { file: `/tmp/"x/${BAD}`, add: 1, del: 0, created: true, abs: `/tmp/"x/${BAD}`, hunks: [{ o: 1, n: 1, lines: [`+${BAD}`] }] };
   clean(P.filesHTML([patch], `k"1`), 'filesHTML');
+  const bare = { file: `/tmp/"y/${BAD}`, add: 0, del: 0, created: false, abs: `/tmp/"y/${BAD}`, hunks: [], bare: true };
+  clean(P.filesHTML([patch, bare], `k"2`, `2"<b>` as unknown as number), 'filesHTML with a bare file and more');
   const items = [
     { id: `u"1`, k: 'you', ts: '2026-11-20T10:00:00.000Z', text: BAD },
     { id: `t"1`, k: 'tool', name: 'Agent', verb: BAD, obj: BAD, state: 'running', toolUseId: `t"1`, ts: '2026-11-20T10:00:01.000Z' },

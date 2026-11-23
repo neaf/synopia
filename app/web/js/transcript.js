@@ -53,9 +53,12 @@ const OPENABLE = /\.(html?|svg|png|jpe?g|gif|webp|pdf)$/i;
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
 const openable = f => absOf(f).startsWith("/");
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
-function filesHTML(patches, key) { // key: stable diff ids, so an open diff stays open when the block is redrawn
+/* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
+   shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
+function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
   let fileSeq = 0;
-  if (!patches.length) return "";
+  more = Math.max(0, +more || 0);
+  if (!patches.length && !more) return "";
   const byFile = new Map();
   for (const p of patches) {
     const f = byFile.get(p.file) || { file: p.file, add: 0, del: 0, created: false, list: [] };
@@ -63,18 +66,19 @@ function filesHTML(patches, key) { // key: stable diff ids, so an open diff stay
   }
   const roots = new Map();
   for (const f of byFile.values()) { const [r, rel] = splitPath(f.file); (roots.get(r) || roots.set(r, []).get(r)).push({ ...f, rel }); }
-  const total = byFile.size;
+  const total = byFile.size + more;
   let body = "";
   for (const [root, files] of roots) {
     body += `<div class="root">${esc(root)}</div><div class="flist">`;
     for (const f of files) {
-      const id = esc(`diff-${key}-${fileSeq++}`);
+      const id = esc(`diff-${key}-${fileSeq++}`), diffs = f.list.filter(p => !p.bare);
       body += `<div class="frow"><span class="dim">⎿</span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
-        <button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
-        <div class="diff" id="${id}" hidden>${f.list.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
+        ${diffs.length ? `<button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
+        <div class="diff" id="${id}" hidden>${diffs.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>` : `<span></span></div>`}`;
     }
     body += `</div>`;
   }
+  if (more) body += `<div class="root">and ${more} more file${more > 1 ? "s" : ""}</div>`;
   return `<div class="ln tool files"><span class="g">●</span><div><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}, click one to see the diff</span>${body}</div></div>`;
 }
 
@@ -129,7 +133,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.map(t => t.patch), key)]); } turnPatches = []; };
+  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   const prompt = (html, ts, key) => {
     flush(); endTurn();
@@ -141,7 +145,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "tool" && it.answer) { prompt(esc(it.answer), it.ts, `ans:${it.id}`); lastTs = it.ts; }
     /* a plan whose process ended before you answered (plan section 7) */
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
-    if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
+    if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
     flush();
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);

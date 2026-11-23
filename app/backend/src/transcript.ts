@@ -9,8 +9,9 @@ import type { JsonRecord } from './tail.ts';
 import { displayIn } from './paths.ts';
 
 export type Hunk = { o: number; n: number; lines: string[] };
+// `bare`: a file a shell command changed with no diff in the record (bashEditDiff.changedFiles).
 export type Patch = {
-  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[];
+  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean;
 };
 export type Question = { q: string; header: unknown; multi: boolean; opts: [string, string][] };
 export type Item = {
@@ -18,6 +19,7 @@ export type Item = {
   text?: string; images?: number; interrupted?: boolean; workedMs?: number; // you
   agent?: string | null; // report
   name?: string; verb?: string; obj?: string; state?: string; toolUseId?: string; patch?: Patch; // tool
+  patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
   qs?: Question[]; answer?: string | null; // ask
 };
 export type Background = {
@@ -85,6 +87,30 @@ export function patchOf(tur: JsonRecord, home: string): Patch {
     if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop(); // the final newline is not a line
     hunks = [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: lines.length, lines: lines.map((l) => '+' + l) }];
   }
+  return patchFrom(hunks, str(tur.filePath), tur.type === 'create', home);
+}
+
+// The files a Bash command edited (toolUseResult.bashEditDiff): one patch per `files` entry, built
+// as an Edit's, then each `changedFiles` path with no entry as a bare patch (no counts, no diff).
+// Relative paths resolve against the record's cwd.
+export function bashPatchesOf(diff: JsonRecord, cwd: string, home: string): { patches: Patch[]; more: number } {
+  const abs = (p: string) => (p && !path.isAbsolute(p) && cwd ? path.resolve(cwd, p) : p);
+  const patches: Patch[] = [];
+  for (const f of (Array.isArray(diff.files) ? diff.files : []).map(obj)) {
+    const file = abs(str(f.filePath));
+    if (file) patches.push(patchFrom((Array.isArray(f.hunks) ? f.hunks : []).map(obj), file, f.created === true, home));
+  }
+  for (const p of Array.isArray(diff.changedFiles) ? diff.changedFiles.map(str) : []) {
+    const file = abs(p);
+    if (file && !patches.some((x) => x.abs === file)) {
+      patches.push({ file: tilde(file, home), abs: file, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true });
+    }
+  }
+  const more = typeof diff.moreFiles === 'number' && diff.moreFiles > 0 ? diff.moreFiles : 0;
+  return { patches, more };
+}
+
+function patchFrom(hunks: JsonRecord[], abs: string, created: boolean, home: string): Patch {
   const linesOf = (h: JsonRecord): string[] => (Array.isArray(h.lines) ? h.lines.map(str) : []);
   let add = 0;
   let del = 0;
@@ -102,8 +128,7 @@ export function patchOf(tur: JsonRecord, home: string): Patch {
     out.push({ o: Number(h.oldStart ?? 0), n: Number(h.newStart ?? 0), lines });
     if (budget <= 0) break;
   }
-  const abs = str(tur.filePath);
-  return { file: tilde(abs, home), abs, add, del, created: tur.type === 'create', cut: budget <= 0, hunks: out };
+  return { file: tilde(abs, home), abs, add, del, created, cut: budget <= 0, hunks: out };
 }
 
 function textOf(content: unknown): string {
@@ -141,6 +166,7 @@ export class Transcript {
   private asks = new Set<string>();
   private answers = new Map<string, string>();
   private patches = new Map<string, Patch>();
+  private bashPatches = new Map<string, { patches: Patch[]; more: number }>();
   private bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
   private notes = new Map<string, { status: string; summary: string; end: string | null }>();
   private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
@@ -294,6 +320,15 @@ export class Transcript {
       const tid = first && str(obj(first).tool_use_id);
       if (tid) {
         this.patches.set(tid, patchOf(tur as JsonRecord, this.home));
+        this.refreshTool(tid);
+      }
+    }
+    const bashDiff = tur && typeof tur === 'object' && !Array.isArray(tur) ? (tur as JsonRecord).bashEditDiff : undefined;
+    if (bashDiff && typeof bashDiff === 'object' && !Array.isArray(bashDiff) && Array.isArray(content)) {
+      const first = content.find((b) => isBlock(b, 'tool_result'));
+      const tid = first && str(obj(first).tool_use_id);
+      if (tid) {
+        this.bashPatches.set(tid, bashPatchesOf(bashDiff as JsonRecord, str(d.cwd), this.home));
         this.refreshTool(tid);
       }
     }
@@ -508,15 +543,20 @@ export class Transcript {
       else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
       else state = 'running';
       const patch = this.patches.get(tid);
+      const bash = this.bashPatches.get(tid);
       const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
       const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
       if (plan && planItem && planItem.text !== clip(plan)) {
         planItem.text = clip(plan);
         this.changed.add(planItem.id);
       }
-      if (it.state !== state || it.patch !== patch || (answer && it.answer !== answer)) {
+      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (answer && it.answer !== answer)) {
         it.state = state;
         if (patch) it.patch = patch;
+        if (bash) {
+          it.patches = bash.patches;
+          if (bash.more) it.moreFiles = bash.more;
+        }
         if (answer) it.answer = answer;
         this.changed.add(tid);
       }

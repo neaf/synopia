@@ -37,7 +37,7 @@ test('tools: verbs, states, ids and skipped records', () => {
   const t = load(ID.tools);
   assert.deepEqual(t.items.map((i) => i.id), [
     't-u1', 't-a1:1', 'toolu_bash1', 'toolu_read1', 'toolu_edit1', 'toolu_write1', 'toolu_write2',
-    'toolu_grep1', 'toolu_mcp1', 'toolu_ts1', 'toolu_fetch1', 't-a5:1', 't-u9', 't-u10',
+    'toolu_bashedit1', 'toolu_grep1', 'toolu_mcp1', 'toolu_ts1', 'toolu_fetch1', 't-a5:1', 't-u9', 't-u10',
   ]);
   assert.deepEqual(byId(t, 't-u1'), {
     id: 't-u1', k: 'you', ts: '2026-11-20T10:00:00.000Z', text: 'Tidy the demo notes and add a changelog.', images: 0,
@@ -75,6 +75,33 @@ test('tools: diffs for update, create and the 400-line cut', () => {
   assert.equal(byId(t, 'toolu_write2').verb, 'Wrote');
 });
 
+test('tools: files a Bash command changed (bashEditDiff)', () => {
+  const t = load(ID.tools);
+  const it = byId(t, 'toolu_bashedit1');
+  assert.deepEqual([it.verb, it.obj, it.state, it.patch], ['Ran', 'Reword the second idea and add the tidy script', 'done', undefined]);
+  assert.deepEqual(it.patches, [
+    { file: '~/dev/demo/notes.md', abs: '/Users/fixture/dev/demo/notes.md', add: 1, del: 1, created: false, cut: false,
+      hunks: [{ o: 4, n: 4, lines: [' the first idea', '-a second idea', '+a second, better idea', ' end'] }] },
+    { file: '~/dev/demo/scripts/tidy.sh', abs: '/Users/fixture/dev/demo/scripts/tidy.sh', add: 2, del: 0, created: true, cut: false,
+      hunks: [{ o: 0, n: 1, lines: ['+#!/bin/sh', "+sed -i '' 's/teh/the/g' notes.md"] }] },
+    // a changed file with no diff: a path only, resolved against the record's cwd
+    { file: '~/dev/demo/.tidy-stamp', abs: '/Users/fixture/dev/demo/.tidy-stamp', add: 0, del: 0, created: false, cut: false, hunks: [], bare: true },
+  ]);
+  assert.equal(it.moreFiles, 2);
+  assert.equal(byId(t, 'toolu_bash1').patches, undefined); // a Bash result without bashEditDiff
+});
+
+test('bashEditDiff: the 400-line cut, and the result before its tool use', () => {
+  const lines = Array.from({ length: 450 }, (_, i) => `+line ${i}`);
+  const t = new Transcript({ home: HOME });
+  t.push({ type: 'user', uuid: 'r', cwd: '/tmp', toolUseResult: { stdout: '', bashEditDiff: { files: [{ filePath: '/Users/fixture/big.txt', hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 450, lines }], created: true }], moreFiles: 0, changedFiles: ['/Users/fixture/big.txt'] } }, message: { content: [{ type: 'tool_result', tool_use_id: 'tb', content: '' }] } });
+  t.push({ type: 'assistant', uuid: 'a', message: { content: [{ type: 'tool_use', id: 'tb', name: 'Bash', input: { command: 'gen > big.txt' } }] } });
+  const it = byId(t, 'tb');
+  assert.equal(it.patches!.length, 1);
+  assert.deepEqual([it.patches![0].file, it.patches![0].add, it.patches![0].cut, it.patches![0].hunks[0].lines.length], ['~/big.txt', 450, true, 400]);
+  assert.equal(it.moreFiles, undefined);
+});
+
 test('tools: title, PRs, model, effort and mode', () => {
   const t = load(ID.tools);
   assert.equal(t.title, 'Demo notes cleanup'); // custom-title beats a later ai-title
@@ -83,7 +110,7 @@ test('tools: title, PRs, model, effort and mode', () => {
   assert.equal(t.effort, 'high');
   assert.equal(t.permissionMode, 'auto');
   assert.equal(t.view(3).items.length, 3);
-  assert.equal(t.view(3).total, 14);
+  assert.equal(t.view(3).total, 15);
 });
 
 test('a tool result updates the same item, and takeChanges lists it', () => {

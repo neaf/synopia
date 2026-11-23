@@ -114,6 +114,7 @@ test('sessions: a placeholder takes its real id from system/init', async () => {
   assert.equal(o.permissionMode, undefined, 'your own permission setting applies');
   assert.equal(o.includePartialMessages, true);
   assert.equal(o.perTaskStopAffordance, true);
+  assert.deepEqual(o.settings, { bashEditDiffEnabled: true }, 'shell edits get a diff (bashEditDiff)');
   assert.equal((o.env as Record<string, string>)[STATE_FLAG], '1');
   assert.equal(o.settingSources, undefined);
   assert.equal(take('session').at(-1)?.status, 'busy');
