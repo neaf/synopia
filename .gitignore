@@ -6,3 +6,6 @@ spike/logs/
 # Dependencies and OS files
 node_modules/
 .DS_Store
+
+# Built app bundles
+*.app/
