@@ -46,6 +46,23 @@ final class PageView: NSObject, WKNavigationDelegate, WKUIDelegate {
     if action.targetFrame?.isMainFrame ?? true { PageView.openOutside(url) }
   }
 
+  /// Debug hook: with SYNOPIA_SNAPSHOT=/path/out.png set, the first page load
+  /// is written there as a PNG, a moment after it finishes. Needs no Screen
+  /// Recording permission. Launch with `open --env SYNOPIA_SNAPSHOT=… Synopia.app`.
+  private var snapshotPath = ProcessInfo.processInfo.environment["SYNOPIA_SNAPSHOT"]
+
+  func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+    guard let path = snapshotPath, !path.isEmpty else { return }
+    snapshotPath = nil
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+      webView.takeSnapshot(with: nil) { image, _ in
+        guard let tiff = image?.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+              let png = rep.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
+      }
+    }
+  }
+
   // MARK: WKUIDelegate
 
   func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,

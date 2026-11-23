@@ -6,8 +6,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private let page = PageView()
   private let backend = Backend()
   private var quitting = false
+  private var sigterm: DispatchSourceSignal?
 
   func applicationDidFinishLaunching(_ n: Notification) {
+    // SIGTERM quits like ⌘Q, so the backend's stdin is closed on the way out.
+    signal(SIGTERM, SIG_IGN)
+    let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    // Not called straight from the handler: terminate's .terminateLater loop
+    // would run inside a main-queue block, and the main-queue callbacks that
+    // end it could never run. A run-loop perform avoids that.
+    source.setEventHandler { NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0) }
+    source.resume()
+    sigterm = source
+
     // Window tabbing would add "Show Previous Tab" (⌘⇧[) to the Window menu.
     NSWindow.allowsAutomaticWindowTabbing = false
     Menus.install()
