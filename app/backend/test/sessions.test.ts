@@ -9,7 +9,7 @@ import { DENY_MESSAGE, STATE_FLAG } from '../src/driver.ts';
 import type { QueryFn } from '../src/driver.ts';
 import { openStore } from '../src/store.ts';
 import type { Client } from '../src/server.ts';
-import type { CanUseTool, Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 type Msg = { t: string; [k: string]: unknown };
 const tick = () => new Promise((r) => setTimeout(r, 5));
@@ -56,7 +56,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const REAL = '11111111-2222-4333-8444-555555555555';
 const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
-function setup(dir?: string) {
+function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number } = {}) {
   const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const claudeDir = path.join(root, 'claude');
   const stateDir = path.join(root, 'state');
@@ -75,7 +75,7 @@ function setup(dir?: string) {
     onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
   });
   const q = fakeQuery();
-  sessions = new Sessions({ store, views, queryFn: q.fn, home: root });
+  sessions = new Sessions({ store, views, queryFn: q.fn, listFn: async () => past, home: root, ...extra });
   const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
   return { root, claudeDir, cwd, c, store, views, sessions, q, take };
 }
@@ -343,4 +343,76 @@ test('renameInLayout: swaps in place, or adds to Not in a group', () => {
   assert.deepEqual(renameInLayout({ groups: [{ id: 'g', name: 'G', ids: ['a', 'b'] }], others: [] }, 'a', 'z', true),
     { groups: [{ id: 'g', name: 'G', ids: ['z', 'b'] }], others: [] });
   assert.deepEqual(renameInLayout({ groups: [], others: ['q'] }, 'a', 'z', true), { groups: [], others: ['q', 'z'] });
+});
+
+// A past session's JSONL, hand-written: one prompt and one reply.
+const PAST = 'aaaaaaaa-0000-4000-8000-00000000000a';
+function writePast(claudeDir: string, cwd: string, id = PAST): string {
+  const dir = path.join(claudeDir, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${id}.jsonl`);
+  const base = { sessionId: id, cwd, isSidechain: false };
+  fs.writeFileSync(file, [
+    { ...base, type: 'user', uuid: 'p-1', timestamp: '2026-11-20T10:00:00.000Z', message: { role: 'user', content: 'Count the fixture lines' } },
+    { ...base, type: 'assistant', uuid: 'p-2', timestamp: '2026-11-20T10:00:05.000Z', requestedModel: 'claude-haiku-test', message: { id: 'm-1', role: 'assistant', content: [{ type: 'text', text: 'There are four.' }] } },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  return file;
+}
+const info = (id: string, over: Partial<SDKSessionInfo> = {}): SDKSessionInfo => ({ sessionId: id, summary: `Summary ${id.slice(0, 4)}`, lastModified: 1000, cwd: '/tmp/x', ...over });
+
+test('listRecent: newest first, the open ones left out, title from customTitle, summary or firstPrompt, at most 50', async () => {
+  const many = Array.from({ length: 60 }, (_, i) => info(`bbbbbbbb-0000-4000-8000-${String(i).padStart(12, '0')}`, { lastModified: 2000 + i }));
+  const past = [
+    info(PAST, { lastModified: 9000, customTitle: 'Custom', summary: 'Sum' }),
+    info(REAL, { lastModified: 8000 }),
+    info('cccccccc-0000-4000-8000-00000000000c', { lastModified: 7000, summary: '', firstPrompt: 'First prompt\nsecond line' }),
+    info('dddddddd-0000-4000-8000-00000000000d', { lastModified: 9500, cwd: undefined }),
+    ...many,
+  ];
+  const { sessions, store, root } = setup(undefined, past);
+  store.state.open.push({ id: REAL, cwd: root, openedAt: 0, closedAt: null });
+  sessions.start();
+  const list = await sessions.listRecent();
+  assert.equal(list.length, 50);
+  assert.equal(list[0].id, PAST);
+  assert.equal(list[0].title, 'Custom');
+  assert.ok(!list.some((r) => r.id === REAL), 'an open session is left out');
+  assert.ok(!list.some((r) => r.id.startsWith('dddddddd')), 'a session without a folder is left out');
+  assert.equal(list[1].title, 'First prompt');
+  assert.equal(list[2].lastModified, 2059);
+  const f = await sessions.listRecent('first');
+  assert.deepEqual(f.map((r) => r.id), ['cccccccc-0000-4000-8000-00000000000c']);
+});
+
+test('openSession: adds it to the open list, shows its transcript, and resumes it on the first message', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  const file = writePast(path.join(root, 'claude'), cwd);
+  const { sessions, store, q, take, views, c } = setup(root, [info(PAST, { cwd, lastModified: Date.parse('2026-11-20T10:00:05.000Z') })]);
+  assert.equal((await sessions.listRecent()).length, 1);
+  take();
+  const r = await sessions.openSession(PAST);
+  assert.deepEqual(r, { ok: true, sid: PAST });
+  assert.deepEqual(store.state.open.map((e) => [e.id, e.cwd, e.closedAt]), [[PAST, cwd, null]]);
+  assert.deepEqual(store.state.layout.others, [PAST]);
+  const meta = take('session');
+  assert.equal(meta[0].id, PAST);
+  assert.equal(meta[0].title, 'Count the fixture lines');
+  views.view(c, PAST, null);
+  const items = take('items');
+  assert.equal(items[0].reset, true);
+  assert.ok((items[0].upsert as unknown[]).length >= 2, 'the history shows at once');
+  assert.equal((await sessions.listRecent()).length, 0, 'an open session is no longer listed');
+
+  assert.equal(sessions.send(PAST, 'And now?').ok, true);
+  await tick();
+  assert.equal(q.calls.length, 1);
+  assert.equal(q.calls[0].options.resume, PAST);
+  assert.equal(q.calls[0].options.cwd, cwd);
+  assert.equal(q.calls[0].options.model, 'claude-haiku-test', 'the resume keeps the model the session used');
+  emit(q.calls[0], init(PAST));
+  await tick();
+  assert.deepEqual(views.ids(), [PAST], 'the same id, no swap');
+  assert.ok(fs.existsSync(file));
+  assert.equal((await sessions.openSession('not-an-id')).ok, false);
 });

@@ -87,6 +87,17 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     views.view(client, sessions ? sessions.resolve(msg.sid) : msg.sid, typeof msg.agent === 'string' ? msg.agent : null);
   } else if (sessions && msg.t === 'newSession') {
     sessions.newSession();
+  } else if (sessions && msg.t === 'listRecent') {
+    const s = sessions;
+    s.listRecent(typeof msg.filter === 'string' ? msg.filter : '').then(
+      (list) => client.send({ t: 'recent', filter: msg.filter ?? '', sessions: list }),
+      (e) => { log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') }); client.send({ t: 'recent', filter: msg.filter ?? '', sessions: [], error: true }); },
+    );
+  } else if (sessions && msg.t === 'openSession' && typeof msg.id === 'string') {
+    sessions.openSession(msg.id).then(
+      (r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); },
+      () => client.send({ t: 'toast', text: "Synopia couldn't read the list of past sessions." }),
+    );
   } else if (sessions && msg.t === 'send' && typeof msg.sid === 'string') {
     const images = Array.isArray(msg.images)
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')

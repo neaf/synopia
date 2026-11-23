@@ -3,10 +3,14 @@
 // a conversation_reset moves a session to a new id. Both swaps keep an alias, so a late `send`
 // or `view` with an old id reaches the session. A session without a running process resumes
 // on its next message. Statuses come from status.ts and are stored with their age.
+// The Open list comes from the SDK's listSessions(); opening a past session adds it to the open
+// list, and it resumes on its first message.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
+import type { ListSessionsOptions, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess } from './driver.ts';
 import type { Content, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
@@ -22,6 +26,9 @@ export const IMAGE_TYPES = ['image/png', 'image/jpeg'];
 const STREAM_MS = 50; // at most one stream preview per this many ms and session
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+export const RECENT = 50;
+export type ListFn = (opts?: ListSessionsOptions) => Promise<SDKSessionInfo[]>;
+export type Recent = { id: string; title: string; cwd: string; lastModified: number };
 export type Image = { mediaType: string; data: string };
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
@@ -94,6 +101,7 @@ export type SessionsOptions = {
   views: Views;
   log?: Log;
   queryFn?: QueryFn; // tests inject a fake; the default is the SDK's query
+  listFn?: ListFn; // the same for listSessions
   home?: string;
   now?: () => number;
   idleMs?: number;
@@ -108,6 +116,7 @@ export class Sessions {
   private now: () => number;
   private live = new Map<string, Active>();
   private aliases = new Map<string, string>();
+  private recent = new Map<string, Recent>(); // the last Open list, for openSession's folder
 
   constructor(opts: SessionsOptions) {
     this.opts = opts;
@@ -148,6 +157,48 @@ export class Sessions {
     this.add(id, this.expand(this.store.state.settings.newSessionCwd), true, null);
     this.log('sessions.new', { sid: id });
     return id;
+  }
+
+  // The Open list: past sessions from listSessions(), newest first, without the open ones,
+  // matching the filter on title or folder, at most RECENT. A session without a folder can't
+  // resume, so it isn't listed.
+  async listRecent(filter = ''): Promise<Recent[]> {
+    const q = filter.trim().toLowerCase();
+    const all = await (this.opts.listFn ?? sdkListSessions)();
+    const out: Recent[] = [];
+    for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
+      if (!s.cwd || this.has(s.sessionId)) continue;
+      const title = titleOf(s);
+      if (q && !title.toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
+      out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
+      if (out.length === RECENT) break;
+    }
+    for (const r of out) this.recent.set(r.id, r);
+    return out.map((r) => ({ ...r, cwd: this.tilde(r.cwd) }));
+  }
+
+  // Adds a past session to the open list (or reopens a closed one, which keeps its place in the
+  // layout). Its transcript shows at once; it resumes on its first message.
+  async openSession(id: string): Promise<SendResult> {
+    if (this.has(id)) return { ok: true, sid: this.resolve(id) };
+    if (!UUID.test(id)) return { ok: false, error: "That isn't a session id." };
+    if (!this.recent.has(id)) await this.listRecent();
+    const r = this.recent.get(id);
+    if (!r) return { ok: false, error: 'That session is no longer in the Open list.' };
+    if (this.has(id)) return { ok: true, sid: this.resolve(id) };
+    const st = this.store.state;
+    const e = st.open.find((x) => x.id === id);
+    if (e) {
+      e.closedAt = null;
+      e.cwd = r.cwd;
+    } else {
+      st.open.push({ id, cwd: r.cwd, openedAt: this.now(), closedAt: null });
+    }
+    st.layout = renameInLayout(st.layout, id, id, true);
+    this.store.changed();
+    this.add(id, r.cwd, false, restored(st.status[id]) ?? { status: 'idle', at: r.lastModified });
+    this.log('sessions.open', { sid: id, reopened: Boolean(e) });
+    return { ok: true, sid: id };
   }
 
   send(sid: string, text: string, images: Image[] = [], uuid?: string): SendResult {
@@ -354,6 +405,12 @@ export class Sessions {
 }
 
 type Msg = { type: string; subtype?: string; [k: string]: unknown };
+
+// The Open list's title (plan section 6): the custom title, else the summary, else the first prompt.
+export function titleOf(s: SDKSessionInfo): string {
+  const t = [s.customTitle, s.summary, s.firstPrompt].find((x) => typeof x === 'string' && x.trim()) ?? '';
+  return t.trim().split('\n')[0].slice(0, 120) || 'Untitled session';
+}
 
 // Replaces an id in the layout; `add` puts a new id under "Not in a group" when it wasn't there.
 export function renameInLayout(layout: Layout, old: string, id: string, add: boolean): Layout {

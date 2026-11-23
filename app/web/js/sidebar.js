@@ -67,3 +67,5 @@ function renderSide() {
     inp.onblur = () => done(true);
   }
 }
+/* the footer's Open line: the list of past sessions (open-list.js) */
+document.getElementById("open").onclick = () => showOpenList();
