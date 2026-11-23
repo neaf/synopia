@@ -6,7 +6,7 @@ function rowHTML(s) {
   return `<button class="row" data-id="${s.id}" data-state="${st}" aria-current="${s.id === current}">
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
-      <span class="r-state">${st === "green" ? WORD.green : `${WORD[st]}, ${dur(s.statusAt)}`}</span>
+      <span class="r-state">${st === "green" ? WORD.green : `${WORD[st]}, ${age(s.statusAt)}`}</span>
       <span class="r-now">${esc(s.now)}</span>
       ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
       ${(n => n ? `<span class="r-agent"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
@@ -17,17 +17,16 @@ function rowHTML(s) {
     <span class="r-side" title="${esc(WORD[st])}">${sessionMark(s)}</span>
   </button>`;
 }
-/* ---------- layout: groups and order are yours; Claude only suggests the first version ---------- */
-const LAYOUT_KEY = "synopia.layout.v1";
-let layout = null;
+/* ---------- layout: groups and order are yours; the backend stores it (state.json), nothing is in localStorage ---------- */
+let layout = null; // null until hello; renderSide copies it from the store
 function loadLayout() {
-  try { layout = JSON.parse(localStorage.getItem(LAYOUT_KEY)); } catch (e) { layout = null; }
+  layout = store.layout ? JSON.parse(JSON.stringify(store.layout)) : null;
   if (!layout) layout = {
     groups: [],
     others: data.map(s => s.id)
   };
 }
-const saveLayout = () => localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+const saveLayout = () => { store.layout = JSON.parse(JSON.stringify(layout)); send({ t: "layout", layout }); };
 function reconcile() {
   const live = new Set(data.map(s => s.id));
   layout.groups.forEach(g => g.ids = g.ids.filter(id => live.has(id)));

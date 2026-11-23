@@ -23,10 +23,8 @@
 </div>
 <div class="toast" id="toast" role="status"></div>
 
-<!-- Data until S1-5: transcripts.js (window.TRANSCRIPTS) and menu.js (window.MENU). See dev/README.md. -->
-<script src="transcripts.js"></script>
-<script src="menu.js"></script>
-<!-- Classic scripts sharing one global scope, in this order: later files use earlier ones at load time. -->
+<!-- Classic scripts sharing one global scope, in this order: later files use earlier ones at load time.
+     The data comes from the backend over /ws (bridge.js), authenticated with ?token=. -->
 <script src="js/marks.js"></script>
 <script src="js/md.js"></script>
 <script src="js/store.js"></script>
