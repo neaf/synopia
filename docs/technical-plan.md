@@ -182,6 +182,7 @@ Server to page:
 | `recent` | `sessions[]` (`id`, `title`, `cwd`, `lastModified`) | reply to `listRecent` |
 | `menu` | `cwd`, `commands[]`, `models[]` | first view of a folder |
 | `restore` | `sid`, `texts[]` | messages cancelled by an interrupt, back to the message box |
+| `toolOutput` | `sid`, `agent`, `toolUseId`, `text` (the tool's full result), `truncated: false` | reply to `toolOutput`; a `toast` instead when the file is gone or was rewritten |
 | `toast` | `text` | failures you must see |
 
 Page to server:
@@ -190,6 +191,7 @@ Page to server:
 |---|---|---|
 | `view` | `sid`, `agent` | subscribes to items for that session or subagent and gets `items` with `reset` |
 | `earlier` | `sid`, `agent`, `before` (the oldest item id shown) | gets the 160 items before it as `items` with `prepend`; nothing when it isn't the viewed conversation or `before` is gone |
+| `toolOutput` | `sid`, `agent`, `toolUseId` | gets the tool's full result, read again from its record's line in the JSONL (items carry only a preview) |
 | `send` | `sid`, `text`, `images[]` (base64 PNG or JPEG, at most 5 MB each), `uuid` | pushes to the session's input, starting `query()` when none runs |
 | `answer` | `sid`, `requestId`, `answer` | settles the pending canUseTool |
 | `interrupt` | `sid` | interrupts the turn |
@@ -203,7 +205,7 @@ Page to server:
 | `reviewed` | `agentId` | adds a reviewed mark |
 | `open` | `path` or `url` | opens a file or an `https?` URL |
 
-Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`:
+Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`; a tool item also has `patches[]` and `moreFiles` (a Bash command's edits), `input` (the command, or short input fields) and `out` `{text, lines, cut, interrupted?}` (its result's first 20 lines, 4 KB at most):
 - the record `uuid`, with `:<block index>` for a block inside a record;
 - for a tool, the `tool_use` id, so its result updates the same item.
 
@@ -224,6 +226,7 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
   - `canUseTool`;
   - `includePartialMessages: true`;
   - `perTaskStopAffordance: true`, so an interrupt stops only the foreground turn, as in the CLI, and background work is stopped one at a time with the Stop row;
+  - `settings: {bashEditDiffEnabled: true}` (flag settings), so the CLI records the files a Bash command changed (`toolUseResult.bashEditDiff`) for "Files changed": it is off for SDK-driven sessions without it, and the writer's calls don't get it;
   - `env: {...process.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1'}`;
   - `settingSources` left at its default, so your skills, commands, `CLAUDE.md`, hooks and agents load as in the CLI (verified in the spike).
 - **Sending:** text and images are pushed with the page's `uuid`. A message sent during a turn is folded into it by the CLI, as in the terminal. A message sent while a card waits is queued behind the card, and the transcript shows "Queued until you answer the card above".

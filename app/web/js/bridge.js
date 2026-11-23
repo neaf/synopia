@@ -83,7 +83,8 @@ function onMessage(m) {
       if (isCurrent(current)) render("header");
       break;
     }
-    case "toast": toast(m.text); break;
+    case "toast": stepAsked = null; toast(m.text); break; // a failed toolOutput replies with a toast
+    case "toolOutput": applyToolOutput(m); break;
     case "recent": applyRecent(m); break;
     case "restore": restoreTexts(m.sid, m.texts); break;
     default: break;

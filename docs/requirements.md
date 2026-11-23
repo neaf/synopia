@@ -91,14 +91,14 @@ These requirements come from a day of prototyping against the user's real sessio
   - `⎿` results
 - R5.4 Your prompts sit on a full-width band starting with `❯`, which is the clear break between turns.
 - R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Ran(…)". There's no status line in the message panel for working.
-- R5.6 Tool runs collapse to one line ("Ran 3 commands, read 2 files"); click to expand. A single step shows inline (`Ran(Merge master into the M1 backend stack)`).
+- R5.6 Tool runs collapse to one line ("Ran 3 commands, read 2 files"); click to expand. A single step shows inline (`Ran(Merge master into the M1 backend stack)`). A click on a step, inline or inside an expanded run, expands it to its command (or its input) and its result under `⎿`, truncated to the first 20 lines with "Show all N lines" for the full result; a second click closes it. For an edit, the diff in Files changed stays the way to see the change.
 - R5.7 Subagents:
   - A single launch is one line: kind mark, name (click opens its transcript) and live time.
   - Several launched together get one heading, "3 subagents in parallel", with a row each: mark, name, duration bar on a shared timeline, and time.
   - No duplicate labels, tags or "running" words.
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
-  - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts.
+  - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts. Files changed by shell commands count too.
   - Clicking the path opens the file. The user often opens HTML artifacts.
   - Clicking the counts opens the diff, with line numbers from the stored patch, red and green rows.
 - R5.10 Markdown renders as the CLI does:

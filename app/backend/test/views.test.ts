@@ -376,3 +376,38 @@ test('work: a background shell ending between turns tells the writer, and its li
   views.taskEnded(id, 'toolu_bg', 'killed', '');
   assert.deepEqual(ended, [id], 'once');
 });
+
+test('toolOutput: the full result read again from its line, also after the file grew; a toast when it is gone', () => {
+  const id = 'abababab-0000-4000-8000-00000000000b';
+  const out = Array.from({ length: 30 }, (_, i) => `out ${i}`).join('\n');
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_o', name: 'Bash', input: { command: 'seq 30', description: 'Count' } }] },
+  }) + line({
+    type: 'user', uuid: 'r1', timestamp: '2026-11-20T10:00:03.000Z', toolUseResult: { stdout: out, stderr: '', interrupted: false },
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_o', content: out }] },
+  }));
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  const { views } = setup(dir);
+  const c = client();
+  views.open(id);
+  views.view(c, id, null);
+  const item = (c.take('items')[0].upsert as Msg[]).find((i) => i.id === 'toolu_o') as Msg;
+  assert.equal(item.input, 'seq 30');
+  assert.deepEqual(item.out, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true });
+  assert.equal(views.toolOutput(c, id, null, 'toolu_o'), true);
+  assert.deepEqual(c.take(), [{ t: 'toolOutput', sid: id, agent: null, toolUseId: 'toolu_o', text: out, truncated: false }]);
+  fs.appendFileSync(file, you(4) + you(5));
+  views.check();
+  c.take();
+  assert.equal(views.toolOutput(c, id, null, 'toolu_o'), true, 'the offset holds after the file grew');
+  assert.equal(c.take('toolOutput')[0].text, out);
+  assert.equal(views.toolOutput(c, id, null, 'toolu_none'), false);
+  assert.equal(c.take('toast').length, 1, 'an unknown tool gets a toast');
+  fs.writeFileSync(file, you(9) + you(9) + you(9) + you(9)); // rewritten, not yet re-read
+  assert.equal(views.toolOutput(c, id, null, 'toolu_o'), false);
+  assert.equal(c.take('toast').length, 1, 'a rewritten file gets a toast');
+  fs.rmSync(file);
+  assert.equal(views.toolOutput(c, id, null, 'toolu_o'), false);
+  assert.match(String(c.take('toast')[0].text), /gone or was rewritten/);
+});

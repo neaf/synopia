@@ -81,12 +81,15 @@ export function userMessage(content: Content, uuid: string): SDKUserMessage {
 
 // The options of section 6: permissionMode unset (your own setting applies) except plan,
 // settingSources at its default, the state flag added to the inherited environment.
+// bashEditDiffEnabled: without it an SDK-driven CLI writes no `bashEditDiff` (files a shell command
+// changed, for "Files changed"); it is off by default and only a flag setting turns it on everywhere.
 export function buildOptions(o: StartOptions, canUseTool: CanUseTool, stderr: (data: string) => void): Options {
   const opts: Options = {
     cwd: o.cwd,
     canUseTool,
     includePartialMessages: true,
     perTaskStopAffordance: true,
+    settings: { bashEditDiffEnabled: true },
     env: { ...process.env, [STATE_FLAG]: '1' },
     stderr,
   };
