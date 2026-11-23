@@ -17,7 +17,7 @@ final class PageView: NSObject, WKNavigationDelegate, WKUIDelegate {
   }
 
   /// The page's root for the integrated title bar: the classes `in-app` (the
-  /// page keeps the drag strip's height free) and `fullscreen` (no strip), and
+  /// sidebar keeps the drag strip's height free) and `fullscreen` (no strip), and
   /// `--titlebar`, the strip's measured height. Set before the first paint of
   /// every load, and live on a change.
   var fullscreen = false {

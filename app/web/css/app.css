@@ -725,16 +725,16 @@ button.acc:hover { background: var(--sub); }
 
 /* ---------- the integrated title bar (Synopia.app only) ----------
    The shell sets html.in-app on every load and html.fullscreen in fullscreen.
-   Its native drag strip covers the top --titlebar of the window, so the whole
-   layout starts below it. The strip shows the sidebar colour over the sidebar
-   and the canvas over the main area: one surface, with the traffic lights on
-   the dark side. The shell also sets --titlebar inline to the title bar's
-   measured height (32px on macOS 26). In a browser and in fullscreen it is 0. */
+   The traffic lights sit in the sidebar's top --titlebar, and the shell's
+   native drag strip covers just that: the sidebar column's top (270px, kept in
+   sync with sidebarWidth in TitleBar.swift). So only the sidebar starts below
+   it; the main area keeps its 9px canvas gap from the window top, as in Slack
+   and Linear, and every click there goes to the page. The shell also sets
+   --titlebar inline to the title bar's measured height (32px on macOS 26). In
+   a browser and in fullscreen it is 0. */
 :root { --titlebar: 0px; }
 html.in-app:not(.fullscreen) { --titlebar: 28px; }
-.app { padding-top: var(--titlebar); }
-/* a copy of the sidebar's box lifted into the strip, so it follows the sidebar's width */
-.app > .side { box-shadow: 0 calc(-1 * var(--titlebar)) 0 #22272E; }
+.app > .side { padding-top: var(--titlebar); }
 /* right under the traffic lights the heading needs less air above it */
 html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
 
