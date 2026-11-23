@@ -11,13 +11,12 @@ These requirements come from a day of prototyping against the user's real sessio
   - Switching between iTerm tabs named by hyphenated slugs.
   - Asking every session "how are we doing" and "so what, what's next".
   - Missing the one session that is blocked on the user.
-  - Sessions drifting into another job.
   - Sessions being abandoned instead of closed.
 - Design stance: cockpit. Everything important must be readable at a glance, without reading. The user's daily reference is iTerm with the Claude Code CLI.
 
 ## 2. Platform
 
-- R2.1 Synopia runs in its own app window, not a browser tab, so keyboard shortcuts such as ⌘⇧[ and ⌘⇧] reach the app. The user does not want it in Brave.
+- R2.1 Synopia runs in its own app window, not a browser tab, so keyboard shortcuts such as ⌘⇧[ and ⌘⇧] reach the app. The user does not want it in Brave. The app is a native Swift shell with a WKWebView, and a Node backend that runs the sessions. It is built locally, with nothing downloaded that Jamf could block. No Electron.
 - R2.2 It drives sessions through the Claude Agent SDK. No Claude Desktop, no terminal UI: the terminal was rejected because its layout options are too limited.
 - R2.3 Auth is whatever the user's Claude Code settings use. Today that's Amazon Bedrock through `~/.claude/settings.json` `env`, with an AWS SSO refresh. Synopia never prints or stores credentials.
 - R2.4 The user's skills, slash commands, `CLAUDE.md`, hooks and subagent definitions load as they do in the CLI.
@@ -25,13 +24,17 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 3. Sessions
 
-- R3.1 Synopia shows the sessions that are open, not the whole history. A session that isn't open doesn't appear.
-- R3.2 It can adopt a session the user has open in the CLI, resuming it by id. One writer per session at a time: Synopia must not resume a session that a live CLI process still has open. The prompt "close it in the terminal, open it here" is the expected flow.
-- R3.3 New session: the user says what it's for (paste a Linear, Notion or PR link, or describe the job) and picks a folder, defaulting to a new worktree of the repository. Claude names it.
-- R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. The CLI slug (tab name) is still shown, small, so the user can recognise it.
-- R3.5 Drift: when a session's recent work belongs to a different job than its title, show "Topic changed: …" with "Split into a new session" (Claude summarises the drifted part into a new session).
-- R3.6 Close, don't abandon: "Close session" shows Claude's closing note. It lists what was done and the loose ends. For each loose end the user chooses: move it to another session, keep it as a to-do, or drop it. Then the session closes, and it can be reopened later.
+- R3.1 Synopia shows only the sessions it holds open, not the whole history. Those are the new sessions started in it and the past sessions opened from its "Open session" list. A session that isn't open in Synopia doesn't appear.
+- R3.2 Synopia is unaware of the terminal. It doesn't read `~/.claude/sessions`, doesn't show terminal sessions and doesn't take them over. "Open session" lists past sessions from the SDK's `listSessions()`, newest first; opening one resumes it by id on the first message. To move a session out of the terminal, the user closes it there and opens it here. Running one session in both places at once is the user's responsibility.
+- R3.3 New session: "New session" opens an empty session in `~/dev/demo-project` (a config value). There's no dialog and no new worktree yet. The first prompt sets the tone, and Claude names the session from there.
+- R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it.
+- R3.5 No drift detection. The user keeps one session per topic (see Rejected).
+- R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. "Close session" marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
 - R3.7 Model per session: the header shows the model; clicking it, or typing `/model`, opens the model picker (list from the SDK). Effort levels come from the same list.
+- R3.8 Rejected:
+  - Taking over terminal sessions.
+  - Showing terminal sessions read-only.
+  - Drift detection ("Topic changed: …") and "Split into a new session": the user keeps one session per topic.
 
 ## 4. Sidebar
 
@@ -41,7 +44,6 @@ These requirements come from a day of prototyping against the user's real sessio
   - the title
   - the state word with its age ("Your turn, 12 min")
   - the "Now" line
-  - the drift warning, if any
   - sub-lines for running background work and "N to review"
 - R4.3 Groups render as a tree: a bold heading (just the name, no count, no state mark), sessions indented under it with 1px guides (a vertical line, a tick into each session's mark box, a corner on the last). "Not in a group" is a heading at the same level, with the same indent and no guides.
 - R4.4 Sub-lines under a session use a drawn 1px L corner with equal 7px legs.
@@ -74,7 +76,6 @@ These requirements come from a day of prototyping against the user's real sessio
   - the title
   - "Now: …"
   - the folder, the PRs and the tab name
-  - the drift warning (yellow), with "Split into a new session"
   - a model button and "Close session"
 - R5.2 No "Change group" button: dragging in the sidebar does that.
 
@@ -145,10 +146,10 @@ These requirements come from a day of prototyping against the user's real sessio
   - Enter sends once every question is answered; otherwise it jumps to the first unanswered question.
   - No number keys, no h/l, no Tab.
   - J/K still switch sessions.
-- R6.5 Permission prompt: the exact command in a code block, the folder, and Claude's reason. Rows: "Allow once", "Always allow" (says exactly what is remembered and for how long) and "Deny" (type a reason in place, optional).
+- R6.5 Permission prompt: sessions keep the user's permission mode (`auto`), so a permission card appears only when `auto` would ask. A session in plan mode stays in plan mode. The card shows the exact command in a code block, the folder, and Claude's reason. Rows: "Allow once", "Always allow" (says exactly what is remembered and for how long) and "Deny" (type a reason in place, optional).
 - R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place).
 - R6.7 Answers appear in the transcript as your turn ("Allow once", "Denied: …", "Changes: …").
-- R6.8 Detection: a session needs you when its last step is a pending question, permission or plan, even if the session's status says busy.
+- R6.8 Detection: a session needs you while it has a pending `canUseTool` request: a question, a permission or a plan.
 - R6.9 Rejected:
   - showing all questions at once
   - horizontal tabs
@@ -165,7 +166,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - "To review": items waiting for review (section 10).
   - "Running": a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer.
   - "Past": one dim line per finished item, newest first, fading out at the bottom edge. Each line shows the status mark, the still kind mark, the name and the duration; failed and timed out are named.
-- R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary.
+- R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. Each running card has a Stop row that stops only that item.
 - R7.3 Covers forks, subagents (including the `Explore` and `general-purpose` types), background shells (`Bash` with `run_in_background`) and monitors (`Monitor`).
 - R7.4 Rejected:
   - reversed order (running at the bottom)
@@ -224,6 +225,9 @@ These requirements come from a day of prototyping against the user's real sessio
   - Clicking the message box enters insert mode.
 - R9.2 The only mode indicator is the message box: grey in normal mode, blue ring in insert mode.
 - R9.3 ⌘⇧[ and ⌘⇧] also switch sessions, as in iTerm.
+- R9.4 Interrupt: Esc in normal mode while a turn runs turns the message box into "Interrupt?". A second Esc interrupts. Any other key or click dismisses it. An open in-place field on a card takes Esc first (R6.4).
+  - The interrupt stops only the foreground turn. Background subagents, shells and monitors keep running, as in the CLI; each is stopped with its own Stop row (R7.2).
+  - Messages still queued at the interrupt go back to the message box.
 
 ## 10. Deliverables for review
 
@@ -250,7 +254,7 @@ These requirements come from a day of prototyping against the user's real sessio
 ## 12. Data the app relies on
 
 Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_transcripts.py`):
-- Open sessions: `~/.claude/sessions/<pid>.json` has `sessionId`, `cwd`, `name`, `status` (busy, idle or waiting) and `statusUpdatedAt`. Never read the `.key` files.
+- Open sessions: Synopia's own list of the sessions it holds open, kept across restarts. Past sessions for the "Open session" list come from the SDK's `listSessions()`. Synopia doesn't read `~/.claude/sessions`.
 - Transcripts: `~/.claude/projects/<encoded-cwd>/<id>.jsonl`.
   - Subagents: `<id>/subagents/agent-<aid>.jsonl` plus `.meta.json` (agentType, isFork, description, toolUseId, spawnDepth, finished).
   - Edits: `toolUseResult.structuredPatch` holds the diff hunks with line numbers.
@@ -258,15 +262,16 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
   - Background work: task notifications in user messages carry the tool-use id, status and summary.
   - Reports: subagent reports arrive as `isMeta` user messages from `agent-message from="<aid>"`.
 - SDK:
-  - It resumes and forks sessions.
-  - It takes images, `canUseTool` (permissions, AskUserQuestion with `updatedInput.answers`), `supportedCommands()`, `supportedModels()`, `setModel()`, `interrupt()` and streaming input.
+  - It lists, resumes and forks sessions.
+  - It takes images, `canUseTool` (permissions, AskUserQuestion with `updatedInput.answers`), `supportedCommands()`, `supportedModels()`, `setModel()`, `interrupt()`, `stopTask()` and streaming input.
+  - The transcript is read from the JSONL; the SDK stream carries control and live state.
   - Subagent task events are available.
   - Session state events need `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`, which is undocumented.
 - Gotchas:
-  - The user's settings use `defaultMode: auto`, so pass `permissionMode: 'default'` or `canUseTool` barely fires.
+  - The user's settings use `defaultMode: auto`, so `canUseTool` fires only when `auto` would ask. Synopia keeps it that way (R6.5).
   - `interrupt()` doesn't drop queued messages.
   - Resuming or forking re-sends the whole history, which costs real money on big sessions.
-  - Nothing stops two writers on one transcript.
+  - Nothing stops two writers on one transcript. Synopia doesn't guard against it (R3.2).
   - Read-only Bash and `Agent` don't reach `canUseTool`.
 
 ## 13. Icon and favicon
@@ -274,12 +279,10 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 - Option B, "Paper": a light paper tile with the agent mark (pale green orbit, dark green arc on top, solid core).
   - Files: `prototype/icon/icon.svg`, `icon-small.svg` (16 to 64px, with more contrast) and `favicon.svg`.
   - Icons are still, since motion means running.
-- An `.icns` file for the Electron build is still to be made.
+- The `.icns` file is built locally from the icon, with the tools that ship with macOS.
 
 ## 14. Not decided yet
 
 - Messaging a running subagent directly from its view: the CLI can, and the SDK path is unverified.
 - Notifications: a Dock badge with the needs-you count, and a notification when a session asks something. Deferred until after the first version.
 - The stale or disconnected, rate-limited, compacting, credentials-expired and queued states are designed (status storyboard) but not wired to data.
-- Closed sessions: where they live and how to reopen them.
-- What "Split into a new session" carries over.
