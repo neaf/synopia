@@ -279,7 +279,7 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 ## 14. Not decided yet
 
 - Messaging a running subagent directly from its view: the CLI can, and the SDK path is unverified.
-- Notifications: a Dock badge with the needs-you count, and a notification when a session asks something.
+- Notifications: a Dock badge with the needs-you count, and a notification when a session asks something. Deferred until after the first version.
 - The stale or disconnected, rate-limited, compacting, credentials-expired and queued states are designed (status storyboard) but not wired to data.
 - Closed sessions: where they live and how to reopen them.
 - What "Split into a new session" carries over.

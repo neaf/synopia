@@ -11,9 +11,21 @@ Written 2026-11-23 at the end of the prototyping session.
 
 ## The next step
 
-Write the technical plan in a fresh session. Inputs: `docs/requirements.md`, `spike/FINDINGS.md`, and `prototype/app.html` for the look. Open points it needs to settle:
+Write the technical plan in a fresh session. **Milestone 1 = what the prototype already does, running for real in the native app**:
+- Live open sessions, without the export loop.
+- Transcripts, subagents and background work.
+- Files and diffs.
+- The needs-you cards, answering for real through the SDK.
+- Keys and modes.
+- Drag-and-drop groups.
 
-1. **Shell.** Electron was the working assumption: the Agent SDK is Node and spawns its own Claude Code process. Tauri would need a Node sidecar. The app must run in its own window (R2.1).
+No badges or notifications yet. Inputs: `docs/requirements.md`, `spike/FINDINGS.md`, and `prototype/app.html` for the look. Open points it needs to settle:
+
+1. **Shell. Decided starting point (2026-11-23):** a small native Swift shell (AppKit window, menus, shortcuts) hosting the prototype's web UI in WKWebView, plus a Node backend that runs the Agent SDK.
+   - A locally built Swift app launched fine on this machine under Jamf Protect (experiment A, `swiftc`, nothing downloaded). Chrome's `--app` window works too, as a fallback.
+   - Electron is out for now: it needs a ~150 MB downloaded runtime that Jamf may block, and adds a second browser engine.
+   - Fully native SwiftUI is out: there's no Swift Agent SDK, and the custom UI would be a rewrite.
+   - The shell talks to the page through WKScriptMessageHandler / evaluateJavaScript. Native extras (Dock badge, notifications) come later; when they do, the shell should read state from the backend, not the page.
 2. **Session ownership.**
    - Adopting a live CLI session needs that process closed first, since there's one writer per session.
    - How Synopia finds open sessions: `~/.claude/sessions` and its own SDK sessions.
