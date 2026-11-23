@@ -151,6 +151,7 @@ details.fold .body { margin-top: 5.5px; }
 .files .root { color: var(--ink-3); margin-top: 2px; }
 .flist { display: grid; grid-template-columns: 3ch minmax(0, max-content) max-content minmax(0, 1fr); column-gap: 2ch; } /* the last track takes an open diff's width, so the path and counts columns never move */
 .frow { display: contents; }
+.frow > :first-child { grid-column: 1; } /* each file row starts a grid row: the 4th track is only for an open diff */
 .frow .fp { color: var(--link); overflow-wrap: anywhere; }
 .frow .fp { text-decoration: none; }
 .frow .fp:hover { text-decoration: underline; text-underline-offset: 2.5px; }
