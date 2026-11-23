@@ -145,14 +145,21 @@ export class Transcript {
   private answerOf: (toolUseId: string) => string | undefined;
   // Slice 5: the session's process ended then (ISO): work started before it can't still run.
   private ended: string | null = null;
+  private endedFailed = false; // that end was a process failure (else close, idle end or quit)
+  private interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
+  private lastErrors: string[] = []; // the error results of the record just read, if it held results
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
   // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
-  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined } = {}) {
+  // `planOf`: the plan text an answered plan card showed; the JSONL's ExitPlanMode input can be an
+  // older revision (the CLI reads the plan file when it asks).
+  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined; planOf?: (toolUseId: string) => string | undefined } = {}) {
     this.sidechain = opts.sidechain ?? false;
     this.home = opts.home ?? os.homedir();
     this.answerOf = opts.answerOf ?? (() => undefined);
+    this.planOf = opts.planOf ?? (() => undefined);
   }
+  private planOf: (toolUseId: string) => string | undefined;
 
   get title(): string | null {
     return this.customTitle || this.aiTitle;
@@ -177,11 +184,12 @@ export class Transcript {
 
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
-    const keep = this.agentMeta, ended = this.ended;
-    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf });
+    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed;
+    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
     this.ended = ended;
+    this.endedFailed = endedFailed;
     this.metaChanged = true;
   }
 
@@ -273,15 +281,19 @@ export class Transcript {
         this.refreshTool(tid);
       }
     }
-    if (Array.isArray(content)) {
+    if (Array.isArray(content) && content.some((b) => isBlock(b, 'tool_result'))) {
+      const errors: string[] = [];
       for (const b of content) {
         if (!isBlock(b, 'tool_result')) continue;
         const r = obj(b);
         const tid = str(r.tool_use_id);
         this.results.set(tid, Boolean(r.is_error));
+        if (r.is_error) errors.push(tid);
+        if (r.is_error && /^\[(Request interrupted by user|Tool call interrupted)/.test(textOf(r.content).trim())) this.interrupted.add(tid);
         if (this.asks.has(tid)) this.answers.set(tid, clip(textOf(r.content), 2000));
         this.refreshTool(tid);
       }
+      this.lastErrors = errors;
       if (content.every((b) => isBlock(b, 'tool_result'))) return;
     }
     const txt = textOf(content);
@@ -329,11 +341,20 @@ export class Transcript {
     }
     if (txt.startsWith('<') && !images) return; // system reminders, local command output, hooks
     const item: Item = { id: uuid, k: 'you', ts, text: clip(txt), images };
-    if (txt.startsWith('[Request interrupted by user')) item.interrupted = true;
+    if (txt.startsWith('[Request interrupted by user')) {
+      item.interrupted = true;
+      // The CLI writes the tools the interrupt cut short as error results just before this marker.
+      for (const tid of this.lastErrors) {
+        this.interrupted.add(tid);
+        this.refreshTool(tid);
+      }
+    }
+    this.lastErrors = [];
     this.lastYou = this.put(item);
   }
 
   private assistant(d: JsonRecord, uuid: string, ts: string | null, content: unknown): void {
+    this.lastErrors = [];
     if (d.requestedModel !== undefined) this.requestedModel = d.requestedModel;
     if (d.effort !== undefined) this.effort = d.effort;
     if (!Array.isArray(content)) return;
@@ -369,7 +390,8 @@ export class Transcript {
         this.put({ id: tid, k: 'ask', ts, qs, answer: null, state: 'pending' });
       } else {
         // The plan sits in the transcript as Claude's reply (R6.6); the card holds only the decision.
-        if (name === 'ExitPlanMode' && str(inp.plan).trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(str(inp.plan)) });
+        const plan = name === 'ExitPlanMode' ? this.planOf(tid) ?? str(inp.plan) : '';
+        if (plan.trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(plan) });
         const [verb, o] = toolLine(name, inp, this.home);
         const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
         if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
@@ -381,16 +403,27 @@ export class Transcript {
 
   // Slice 5: the session's process ended at `at` (close, idle end, quit, failure). Background shells,
   // monitors and subagents live inside it, so those started before then and still running read as
-  // stopped. A notification that arrives later still wins.
-  processEnded(at: string): void {
+  // stopped. A notification that arrives later still wins. A foreground tool started before then
+  // with no result reads as failed when the process failed (`failed`), else as stopped.
+  processEnded(at: string, failed = false): void {
     if (this.ended && this.ended >= at) return;
     this.ended = at;
+    this.endedFailed = failed;
     for (const tid of this.bg.keys()) this.stopIfEnded(tid);
+    for (const it of this.items) if (it.k === 'tool' && it.state === 'running') this.refreshTool(it.id);
     for (const [aid, a] of this.agentMeta) {
       const tid = str(a.meta?.toolUseId);
       if (tid) this.refreshTool(tid);
       this.changedAgents.add(aid);
     }
+  }
+
+  // A task ended, as the SDK's task_notification says (`end` ISO): it reads as ended until the
+  // JSONL's own notification lands, which wins.
+  taskEnded(tid: string, status: string, summary: string, end: string): void {
+    if (this.notes.has(tid)) return;
+    this.notes.set(tid, { status, summary, end });
+    this.refreshTool(tid);
   }
 
   private endedBefore(ts: string | null | undefined): boolean {
@@ -435,12 +468,23 @@ export class Transcript {
       }
     } else if (it && it.k === 'tool') {
       let state: string;
+      const answer = res !== undefined ? this.answerOf(tid) : undefined;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
         state = note || !this.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
-      } else if (res !== undefined) state = res ? 'failed' : 'done';
+      } else if (res !== undefined) {
+        // You denied it, or sent the plan back: your answer above says so, it didn't fail.
+        state = !res ? 'done' : this.interrupted.has(tid) ? 'stopped' : answer && /^(Denied|Changes)\b/.test(answer) ? 'denied' : 'failed';
+      }
+      // A plan with no answer stays running: the page shows it as "Not answered".
+      else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
       else state = 'running';
       const patch = this.patches.get(tid);
-      const answer = res !== undefined ? this.answerOf(tid) : undefined;
+      const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
+      const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
+      if (plan && planItem && planItem.text !== clip(plan)) {
+        planItem.text = clip(plan);
+        this.changed.add(planItem.id);
+      }
       if (it.state !== state || it.patch !== patch || (answer && it.answer !== answer)) {
         it.state = state;
         if (patch) it.patch = patch;

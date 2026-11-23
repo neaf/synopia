@@ -20,9 +20,13 @@ export type State = {
   models: Record<string, { model: string; effort?: string }>;
   rules: Record<string, string[]>;
   answers: Record<string, string>;
+  // Final: the plan text each answered plan card showed, per ExitPlanMode tool use.
+  plans: Record<string, string>;
   status: Record<string, { status: string; at: number }>;
   // Slice 5: when each session's last process ended (ms), so its background work then reads as stopped.
   ended: Record<string, number>;
+  // Final: that end was a process failure, so a tool left without a result reads as failed.
+  endedFailed: Record<string, boolean>;
   written: Record<string, { title?: string; now?: string; at: number }>;
   settings: Settings;
 };
@@ -36,9 +40,11 @@ export function defaultState(): State {
     models: {},
     rules: {},
     answers: {},
+    plans: {},
     status: {},
     written: {},
     ended: {},
+    endedFailed: {},
     settings: { newSessionCwd: '~/dev/demo-project', writerModel: 'haiku' },
   };
 }
@@ -78,7 +84,7 @@ export function normalize(raw: unknown): State {
   }
   s.layout = cleanLayout(raw.layout);
   if (isStrArr(raw.reviewed)) s.reviewed = [...raw.reviewed];
-  for (const k of ['models', 'rules', 'answers', 'status', 'written', 'ended'] as const) {
+  for (const k of ['models', 'rules', 'answers', 'plans', 'status', 'written', 'ended', 'endedFailed'] as const) {
     if (isObj(raw[k])) (s as Record<string, unknown>)[k] = raw[k];
   }
   if (isObj(raw.settings)) {

@@ -80,7 +80,9 @@ const views = new Views({
   onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
   written: (sid) => store.state.written[sid],
   answerOf: (toolUseId) => store.state.answers[toolUseId],
+  planOf: (toolUseId) => store.state.plans[toolUseId],
   choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
+  defaultModel: () => store.state.settings.model,
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 // Slice 5: the slash menu and the model list per folder (the fake driver has its own).

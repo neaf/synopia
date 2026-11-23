@@ -80,13 +80,15 @@ export class NeedsYou {
   }
 
   // The card's answer: settles the request, or says why it can't.
-  answer(id: string, answer: CardAnswer): (Settled & { toolUseId: string }) | { error: string } {
+  // `plan`: the plan text a plan card asked about (the JSONL's ExitPlanMode input can be older).
+  answer(id: string, answer: CardAnswer): (Settled & { toolUseId: string; plan?: string }) | { error: string } {
     const p = this.list.find((x) => x.request.id === id);
     if (!p) return { error: 'That request is no longer waiting.' };
     const s = settle(p.asked, answer && typeof answer === 'object' ? answer : {});
     if ('error' in s) return s;
     this.drop(p, s.result);
-    return { ...s, toolUseId: p.toolUseId };
+    const plan = p.asked.toolName === 'ExitPlanMode' && typeof p.asked.input.plan === 'string' ? p.asked.input.plan : undefined;
+    return { ...s, toolUseId: p.toolUseId, plan };
   }
 
   // Every request ends (an interrupt the CLI didn't signal, the process ending).

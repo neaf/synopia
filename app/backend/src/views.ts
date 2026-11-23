@@ -47,8 +47,12 @@ export type ViewsOptions = {
   written?: (sid: string) => { title?: string; now?: string } | undefined;
   // Slice 3: the card answer stored for a tool use, shown as your turn in the transcript.
   answerOf?: (toolUseId: string) => string | undefined;
+  // The plan text an answered plan card showed (state.json `plans`).
+  planOf?: (toolUseId: string) => string | undefined;
   // Slice 5: the model and effort you chose for a session (state.json `models`), shown over the transcript's.
   choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
+  // settings.model: what a session with no choice and no model in its transcript starts with.
+  defaultModel?: () => string | undefined;
 };
 
 // The transcript's effort: a level, or {level} on some records.
@@ -79,7 +83,7 @@ export class Views {
     if (this.live.has(id)) return;
     const file = init.path ?? findTranscript(this.opts.claudeDir, id);
     const s: Live = {
-      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf }),
+      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, stream: null, pending: [], held: [],
       sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
@@ -120,7 +124,7 @@ export class Views {
     }).start();
     s.watcher = new SubagentWatcher(sessionDirOf(file), {
       onAgent: (aid, afile) => {
-        const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf });
+        const t = new Transcript({ sidechain: true, home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf });
         s.t.setAgent(aid, undefined, t);
         const tailer = new Tailer(afile, {
           ...tail,
@@ -245,7 +249,7 @@ export class Views {
       // From the transcript until a driver sets it: your turn. "Stopped" is read from the items by the page.
       status: s.status ?? 'idle',
       statusAt,
-      model: ch ? ch.model : t.requestedModel ?? null,
+      model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
     };
   }
@@ -258,7 +262,11 @@ export class Views {
     const out: { you: string; claude: string }[] = [];
     for (const i of s.t.items) {
       if (i.k === 'you' && !i.interrupted) out.push({ you: i.text ?? '', claude: '' });
-      else if (i.k === 'claude' && out.length) {
+      else if (i.k === 'you' && out.length) {
+        // An Esc Esc interrupt: say so, or the writer reads the turn as still waiting on its tool.
+        const cur = out[out.length - 1];
+        cur.claude = cur.claude ? `${cur.claude}\n\n(You interrupted this turn.)` : '(You interrupted this turn.)';
+      } else if (i.k === 'claude' && out.length) {
         const cur = out[out.length - 1];
         cur.claude = cur.claude ? `${cur.claude}\n\n${i.text ?? ''}` : i.text ?? '';
       }
@@ -344,11 +352,20 @@ export class Views {
   }
 
   // Slice 5: the session's process ended at `at` (ms): its background work and subagents that
-  // were still running read as stopped, and pages get the changed ones.
-  processEnded(sid: string, at: number): void {
+  // were still running read as stopped (a foreground tool as failed when `failed`), and pages get
+  // the changed ones.
+  processEnded(sid: string, at: number, failed = false): void {
     const s = this.live.get(sid);
     if (!s) return;
-    s.t.processEnded(new Date(at).toISOString());
+    s.t.processEnded(new Date(at).toISOString(), failed);
+    this.flush(s);
+  }
+
+  // The SDK's task_notification for one of the session's background tasks (its tool use id).
+  taskEnded(sid: string, toolUseId: string, status: string, summary: string): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.t.taskEnded(toolUseId, status, summary, new Date().toISOString());
     this.flush(s);
   }
 

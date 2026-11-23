@@ -361,6 +361,16 @@ test('needs you: a message sent while a card waits is held, and pushed once the 
   assert.equal(t.store.state.answers['tu-1'], 'Denied: not now');
 });
 
+test('needs you: a plan answer stores the plan text the card showed', async () => {
+  const t = await waitingSession();
+  const a = askOpts('1');
+  void t.canUseTool('ExitPlanMode', { plan: '1. Write "final"', planFilePath: '/tmp/p.md' }, a.o);
+  await tick();
+  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'changes', text: 'shorter' }).ok, true);
+  assert.equal(t.store.state.plans['tu-1'], '1. Write "final"');
+  assert.equal(t.store.state.answers['tu-1'], 'Changes: shorter');
+});
+
 test('needs you: Always allow stores session rules, passed back as allowedTools on the next start', async () => {
   const t = await waitingSession();
   const a = askOpts('1', { suggestions: [READ_SUGGESTION, { type: 'addDirectories', directories: ['/tmp/x'], destination: 'session' }] as Opts['suggestions'] });
@@ -519,6 +529,11 @@ test('listRecent: newest first, the open ones left out, title from customTitle, 
   assert.equal(list[2].lastModified, 2059);
   const f = await sessions.listRecent('first');
   assert.deepEqual(f.map((r) => r.id), ['cccccccc-0000-4000-8000-00000000000c']);
+  // a title Claude wrote for a session Synopia closed names it, unless you renamed it
+  store.state.written['cccccccc-0000-4000-8000-00000000000c'] = { title: 'Written title', at: 1 };
+  store.state.written[PAST] = { title: 'Not this', at: 1 };
+  const w = await sessions.listRecent();
+  assert.deepEqual([w[0].title, w[1].title], ['Custom', 'Written title']);
 });
 
 test('openSession: adds it to the open list, shows its transcript, and resumes it on the first message', async () => {
@@ -701,6 +716,29 @@ test('quitCheck: running turns and the background work of running processes', as
   assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [{ sid: BG, kind: 'monitor' }] });
 });
 
+test("stop task: the SDK's task_notification ends the task between turns", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const BG = '33333333-0000-4000-8000-000000000003';
+  const dir = path.join(root, 'claude', 'projects', '-tmp-fixture');
+  fs.mkdirSync(dir, { recursive: true });
+  fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
+  const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
+  await t.sessions.openSession(BG);
+  t.views.check();
+  const bg = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string }[] }[]).find((s) => s.id === BG)!.background;
+  const run = bg().find((b) => b.status === 'running')!;
+  t.sessions.send(BG, 'go');
+  await tick();
+  emit(t.q.calls[0], init(BG));
+  emit(t.q.calls[0], RESULT);
+  emit(t.q.calls[0], { type: 'system', subtype: 'task_notification', task_id: 'x1', tool_use_id: run.toolUseId, status: 'stopped', output_file: '', summary: '', uuid: 'u-tn', session_id: BG });
+  await tick();
+  assert.equal(bg().find((b) => b.toolUseId === run.toolUseId)!.status, 'stopped');
+  assert.deepEqual(t.sessions.quitCheck().background, []);
+  t.sessions.stop();
+  t.views.stop();
+});
+
 test('process end: background work of a failed or quit process reads as stopped, also after a restart', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const BG = '33333333-0000-4000-8000-000000000003';
@@ -723,6 +761,7 @@ test('process end: background work of a failed or quit process reads as stopped,
   assert.ok(t.take('background').some((m) => (m.upsert as { status: string }[]).some((b) => b.status === 'stopped')), 'pages get it');
   assert.deepEqual(t.sessions.quitCheck().background, []);
   assert.equal(typeof t.store.state.ended[BG], 'number', 'stored');
+  assert.equal(t.store.state.endedFailed[BG], true, 'stored as a failure');
   t.sessions.stop();
   t.views.stop();
   // a restart: the transcript still says running, the stored end says stopped
@@ -744,6 +783,7 @@ test('process end: quit marks the work of every running process', async () => {
   await tick();
   t.sessions.stop();
   assert.equal(typeof t.store.state.ended[REAL], 'number');
+  assert.equal(t.store.state.endedFailed[REAL], undefined, 'a quit is no failure');
 });
 
 test('model: a choice without a process is stored and passed at the next start; default passes no model', async () => {

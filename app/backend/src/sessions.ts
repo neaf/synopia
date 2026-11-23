@@ -181,7 +181,10 @@ export class Sessions {
     const out: Recent[] = [];
     for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
       if (!s.cwd || this.has(s.sessionId)) continue;
-      const title = titleOf(s);
+      // A session Synopia closed keeps the title Claude wrote for it (section 10's order), so the
+      // Open list names it as the sidebar did.
+      const written = this.store.state.written[s.sessionId]?.title;
+      const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
       if (q && !title.toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
       out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
       if (out.length === RECENT) break;
@@ -373,7 +376,8 @@ export class Sessions {
     const st = this.store.state;
     if (r.rules.length) st.rules[a.id] = [...new Set([...(st.rules[a.id] ?? []), ...r.rules])];
     if (r.label) st.answers[r.toolUseId] = r.label;
-    if (r.rules.length || r.label) this.store.changed();
+    if (r.plan) st.plans[r.toolUseId] = r.plan; // the plan you answered, as the card showed it
+    if (r.rules.length || r.label || r.plan) this.store.changed();
     this.log('sessions.answer', { sid: a.id, behavior: r.result.behavior, rules: r.rules.length });
     if (!a.needs.size && a.proc) for (const h of a.needs.takeHeld()) a.proc.push(h.content as Content, h.uuid);
     return { ok: true, sid: a.id };
@@ -423,20 +427,24 @@ export class Sessions {
     this.views.open(id, { cwd });
     this.views.setStatus(id, a.status.status, a.status.at);
     const ended = this.store.state.ended[id];
-    if (ended) this.views.processEnded(id, ended);
+    if (ended) this.views.processEnded(id, ended, this.store.state.endedFailed[id] === true);
     if (!placeholder) this.opts.onOpened?.(id);
     return a;
   }
 
   // Slice 5: the process ended (close, idle end, quit, failure): what ran inside it stopped. Stored,
-  // so the transcript reads the same after a restart or a reopen.
-  private ended(a: Active): void {
+  // so the transcript reads the same after a restart or a reopen. `failed`: the process failed, so
+  // a tool it left without a result reads as failed, not stopped.
+  private ended(a: Active, failed = false): void {
     const at = this.now();
     if (!a.placeholder) {
-      this.store.state.ended[a.id] = at;
+      const st = this.store.state;
+      st.ended[a.id] = at;
+      if (failed) st.endedFailed[a.id] = true;
+      else delete st.endedFailed[a.id];
       this.store.changed();
     }
-    this.views.processEnded(a.id, at);
+    this.views.processEnded(a.id, at, failed);
   }
 
   private statusChanged(a: Active, e: StatusEntry): void {
@@ -491,7 +499,7 @@ export class Sessions {
     this.setStreamClear(a);
     const failed = !ended;
     this.log('driver.exit', { sid: a.id, ended, error: Boolean(error) });
-    this.ended(a);
+    this.ended(a, failed);
     this.endNeeds(a);
     a.status.processEnded(failed);
     if (failed) {
@@ -509,6 +517,11 @@ export class Sessions {
       a.status.stateChanged(String(m.state));
     } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {
       this.log('driver.mode', { sid: a.id, mode: m.permissionMode }); // after a plan approval (S3-1: back to auto), or a model switch
+    } else if (m.type === 'system' && m.subtype === 'task_notification' && typeof m.tool_use_id === 'string') {
+      // A task ended (stopTask emits one with status `stopped`). The CLI writes its notification to
+      // the JSONL only when a turn runs, so between turns this is the only sign that it ended.
+      this.log('driver.task', { sid: a.id, status: String(m.status) });
+      this.views.taskEnded(a.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
     } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
       this.opts.onCommands?.(a.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {
@@ -542,7 +555,7 @@ export class Sessions {
     } else {
       for (const e of st.open) if (e.id === old) e.id = newId;
       st.layout = renameInLayout(st.layout, old, newId, false);
-      for (const k of ['models', 'rules', 'status', 'ended'] as const) {
+      for (const k of ['models', 'rules', 'status', 'ended', 'endedFailed'] as const) {
         const rec = st[k] as Record<string, unknown>;
         if (old in rec) { rec[newId] = rec[old]; delete rec[old]; }
       }

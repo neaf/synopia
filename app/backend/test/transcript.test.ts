@@ -414,3 +414,99 @@ test('process ended: kept across a rewrite, and applied to records read after it
   assert.equal(t.getBackground('toolu_lsh')!.status, 'stopped');
   assert.equal(fresh.getBackground('toolu_lsh')!.status, 'running', 'without an end it still runs');
 });
+
+test('process ended: a foreground tool left without a result reads as stopped, or failed when the process failed', () => {
+  const recs: JsonRecord[] = [
+    { type: 'assistant', uuid: 'f-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_fg', name: 'Bash', input: { command: 'sleep 60', description: 'Wait' } },
+      { type: 'tool_use', id: 'toolu_ok', name: 'Read', input: { file_path: '/tmp/a.txt' } },
+      { type: 'tool_use', id: 'toolu_plan', name: 'ExitPlanMode', input: { plan: 'Do it.' } }] } },
+    { type: 'user', uuid: 'f-u1', timestamp: at(2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ok', content: 'a' }] } },
+  ];
+  const closed = new Transcript({ home: HOME });
+  closed.pushAll(recs);
+  assert.equal(byId(closed, 'toolu_fg').state, 'running');
+  closed.takeChanges();
+  closed.processEnded(at(10));
+  assert.equal(byId(closed, 'toolu_fg').state, 'stopped');
+  assert.ok(closed.takeChanges().items.includes('toolu_fg'), 'pages get it');
+  assert.equal(byId(closed, 'toolu_ok').state, 'done');
+  assert.equal(byId(closed, 'toolu_plan').state, 'running', 'an unanswered plan stays "Not answered"');
+  const failed = new Transcript({ home: HOME });
+  failed.processEnded(at(10), true); // as after a restart: the mark comes first, then the records
+  failed.reset();
+  failed.pushAll(recs);
+  assert.equal(byId(failed, 'toolu_fg').state, 'failed');
+  // a tool started after the end runs; a result the CLI wrote for an interrupt reads as stopped
+  failed.pushAll([
+    { type: 'assistant', uuid: 'f-a2', timestamp: at(20), message: { id: 'm2', content: [
+      { type: 'tool_use', id: 'toolu_new', name: 'Bash', input: { command: 'ls' } },
+      { type: 'tool_use', id: 'toolu_int', name: 'Bash', input: { command: 'sleep 9' } }] } },
+    { type: 'user', uuid: 'f-u2', timestamp: at(21), message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'toolu_int', is_error: true, content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] }] } },
+  ]);
+  assert.equal(byId(failed, 'toolu_new').state, 'running');
+  assert.equal(byId(failed, 'toolu_int').state, 'stopped');
+});
+
+test('interrupt: the tool an interrupt cut short reads as stopped, an earlier failure stays failed', () => {
+  const t = new Transcript({ home: HOME });
+  const err = (id: string) => ({ type: 'tool_result', tool_use_id: id, is_error: true, content: 'no' });
+  t.pushAll([
+    { type: 'assistant', uuid: 'i-a1', timestamp: at(1), message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_f', name: 'Bash', input: { command: 'false' } }] } },
+    { type: 'user', uuid: 'i-u1', timestamp: at(2), message: { role: 'user', content: [err('toolu_f')] } },
+    { type: 'assistant', uuid: 'i-a2', timestamp: at(3), message: { id: 'm2', content: [{ type: 'tool_use', id: 'toolu_p', name: 'Bash', input: { command: 'ping -c 45 127.0.0.1' } }] } },
+    { type: 'user', uuid: 'i-u2', timestamp: at(4), message: { role: 'user', content: [err('toolu_p')] } },
+    { type: 'user', uuid: 'i-u3', timestamp: at(4), message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ]);
+  assert.deepEqual([byId(t, 'toolu_f').state, byId(t, 'toolu_p').state], ['failed', 'stopped']);
+});
+
+test('a tool you denied, or a plan you sent back, reads as denied, not failed', () => {
+  const answers: Record<string, string> = { toolu_p: 'Changes: use "final"', toolu_d: 'Denied', toolu_ok: 'Approved' };
+  const t = new Transcript({ home: HOME, answerOf: (id) => answers[id] });
+  const err = (id: string) => ({ type: 'tool_result', tool_use_id: id, is_error: true, content: 'rejected' });
+  t.pushAll([
+    { type: 'assistant', uuid: 'd-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_p', name: 'ExitPlanMode', input: { plan: 'Draft.' } },
+      { type: 'tool_use', id: 'toolu_d', name: 'Bash', input: { command: 'rm x' } },
+      { type: 'tool_use', id: 'toolu_e', name: 'Bash', input: { command: 'false' } }] } },
+    { type: 'user', uuid: 'd-u1', timestamp: at(2), message: { role: 'user', content: [err('toolu_p'), err('toolu_d'), err('toolu_e')] } },
+  ]);
+  assert.deepEqual(['toolu_p', 'toolu_d', 'toolu_e'].map((id) => byId(t, id).state), ['denied', 'denied', 'failed']);
+  assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
+});
+
+test("task ended: the SDK's notification ends a background shell until the JSONL's own lands", () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    { type: 'assistant', uuid: 'k-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_sl', name: 'Bash', input: { command: 'sleep 300', description: 'Long sleep', run_in_background: true } }] } },
+    { type: 'user', uuid: 'k-u1', timestamp: at(2), toolUseResult: { backgroundTaskId: 'bsl1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sl', content: 'started' }] } },
+  ]);
+  assert.equal(t.getBackground('toolu_sl')!.status, 'running');
+  t.takeChanges();
+  t.taskEnded('toolu_sl', 'stopped', '', at(5));
+  assert.deepEqual([t.getBackground('toolu_sl')!.status, t.getBackground('toolu_sl')!.end], ['stopped', at(5)]);
+  assert.deepEqual(t.takeChanges().background, ['toolu_sl']);
+  t.pushAll([{ type: 'user', uuid: 'k-n1', timestamp: at(9), origin: { kind: 'task-notification' },
+    message: { role: 'user', content: '<task-notification>\n<task-id>bsl1</task-id>\n<tool-use-id>toolu_sl</tool-use-id>\n<status>killed</status>\n<summary>Killed</summary>\n</task-notification>' } }]);
+  assert.deepEqual([t.getBackground('toolu_sl')!.status, t.getBackground('toolu_sl')!.end], ['killed', at(9)]);
+});
+
+test('plan: the text the card showed wins over an older one in the JSONL', () => {
+  const plans: Record<string, string> = {};
+  const t = new Transcript({ home: HOME, planOf: (id) => plans[id] });
+  const ask = { type: 'assistant', uuid: 'p-a1', timestamp: at(1), message: { id: 'm1', content: [
+    { type: 'tool_use', id: 'toolu_pl', name: 'ExitPlanMode', input: { plan: 'Write "draft".' } }] } };
+  t.pushAll([ask]);
+  assert.equal(byId(t, 'plan:toolu_pl').text, 'Write "draft".');
+  plans.toolu_pl = 'Write "final".'; // stored when you answered the card
+  t.takeChanges();
+  t.pushAll([{ type: 'user', uuid: 'p-u1', timestamp: at(2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_pl', content: 'ok' }] } }]);
+  assert.equal(byId(t, 'plan:toolu_pl').text, 'Write "final".');
+  assert.ok(t.takeChanges().items.includes('plan:toolu_pl'), 'pages get it');
+  const again = new Transcript({ home: HOME, planOf: (id) => plans[id] }); // after a restart
+  again.pushAll([ask]);
+  assert.equal(byId(again, 'plan:toolu_pl').text, 'Write "final".');
+});
