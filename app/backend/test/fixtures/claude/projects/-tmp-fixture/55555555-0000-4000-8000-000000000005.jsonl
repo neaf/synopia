@@ -1,0 +1,8 @@
+{"type":"permission-mode","permissionMode":"acceptEdits"}
+{"type":"user","uuid":"i-u1","timestamp":"2026-11-20T14:00:00.000Z","message":{"role":"user","content":"Plan the demo release."}}
+{"type":"assistant","uuid":"i-a1","timestamp":"2026-11-20T14:00:30.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Here is a first idea for the release."}]}}
+{"type":"system","subtype":"turn_duration","durationMs":31000,"uuid":"i-s1","timestamp":"2026-11-20T14:00:31.000Z"}
+{"type":"permission-mode","permissionMode":"plan"}
+{"type":"user","uuid":"i-u2","timestamp":"2026-11-20T14:01:00.000Z","message":{"role":"user","content":"Now write the plan."}}
+{"type":"assistant","uuid":"i-a2","timestamp":"2026-11-20T14:01:05.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_plan1","name":"ExitPlanMode","input":{"plan":"1. Tag 2. Ship"}}]}}
+{"type":"user","uuid":"i-u3","timestamp":"2026-11-20T14:01:20.000Z","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}

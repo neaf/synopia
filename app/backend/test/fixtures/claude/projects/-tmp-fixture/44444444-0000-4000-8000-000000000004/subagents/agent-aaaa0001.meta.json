@@ -1,0 +1,8 @@
+{
+  "agentType": "Explore",
+  "description": "Find the demo config",
+  "toolUseId": "toolu_ag1",
+  "spawnDepth": 1,
+  "finished": true,
+  "model": "haiku"
+}
