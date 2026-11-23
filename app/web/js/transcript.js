@@ -17,8 +17,8 @@ function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
   const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `ran ${n} commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
-    Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills` };
-  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "ran 1 command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill" };
+    Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills`, Watched: n => `started ${n} monitors` };
+  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "ran 1 command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor" };
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
@@ -68,7 +68,7 @@ function filesHTML(patches, key) { // key: stable diff ids, so an open diff stay
     body += `<div class="root">${esc(root)}</div><div class="flist">`;
     for (const f of files) {
       const id = `diff-${key}-${fileSeq++}`;
-      body += `<div class="frow"><span class="dim">⎿</span><a class="fp" href="${esc(fileUrl(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
+      body += `<div class="frow"><span class="dim">⎿</span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
         <button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
         <div class="diff" id="${id}" hidden>${f.list.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
     }
@@ -223,7 +223,7 @@ function renderHeader() {
   conv.querySelector(".c-head").innerHTML = A
     ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
         <h2 class="c-title">${esc(A.description)}</h2>
-        <p class="c-now">${A.finished ? "Finished" : "Running"}, ${took(agentMs(A))}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
+        <p class="c-now">${A.finished ? `${A.stopped ? "Stopped" : "Finished"}, ${took(agentMs(A))}` : `Running, ${live(A.start, agentMs(A))}`}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
         <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title">${esc(s.title)}</h2>
@@ -294,11 +294,17 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-agent], [data-back], [data-back-main], [data-reviewed], [data-bg], [data-close], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-agent], [data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
-  } else if (t.dataset.agent) { e.preventDefault(); e.stopPropagation(); view = t.dataset.agent; renderConv(); }
+  } else if (t.dataset.agent) {
+    e.preventDefault(); e.stopPropagation();
+    /* a running subagent's card opens its transcript and expands, like a shell's, to show its Stop row */
+    if (t.matches(".rail .card")) openBg = view === t.dataset.agent && openBg === t.dataset.agent ? null : t.dataset.agent;
+    view = t.dataset.agent; renderConv();
+  }
+  else if (t.dataset.stop) { stopping.add(t.dataset.stop); send({ t: "stopTask", sid: current, taskId: t.dataset.stop }); renderRail(); }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { view = null; renderConv(); }
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
@@ -306,3 +312,11 @@ conv.addEventListener("click", e => {
   else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
   else if (t.id === "model-label") openModelPicker();
 });
+/* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
+   (plan section 2), so the app and Chrome behave the same */
+document.addEventListener("click", e => {
+  const a = e.target.closest && e.target.closest("a[href]"); if (!a) return;
+  e.preventDefault();
+  if (a.dataset.path) send({ t: "open", path: a.dataset.path });
+  else if (/^https?:/i.test(a.getAttribute("href"))) send({ t: "open", url: a.href });
+}, true);

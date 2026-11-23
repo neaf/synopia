@@ -180,4 +180,12 @@ export class SessionProcess {
     this.input.end();
     this.events.onExit(error, this.ended);
   }
+
+  // Slice 4: stops one background subagent, shell or monitor (the typed Query.stopTask). A
+  // task_notification with status stopped follows, and lands in the transcript.
+  async stopTask(taskId: string): Promise<void> {
+    const q = this.q as QueryLike & { stopTask?: (id: string) => Promise<void> };
+    if (this.done || !q.stopTask) throw new Error('no running process');
+    await q.stopTask(taskId);
+  }
 }

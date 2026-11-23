@@ -280,6 +280,21 @@ export class Sessions {
     }
   }
 
+  // Slice 4: the Stop row. Background work lives inside the session's process, so with no
+  // process there is nothing left to stop.
+  async stopTask(sid: string, taskId: string): Promise<SendResult> {
+    const a = this.live.get(this.resolve(sid));
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    if (!a.proc) return { ok: false, error: 'Nothing to stop: it ended with its session’s process.' };
+    try {
+      await a.proc.stopTask(taskId);
+    } catch {
+      return { ok: false, error: 'Synopia could not stop it. It may have finished already.' };
+    }
+    this.log('sessions.stopTask', { sid: a.id, taskId });
+    return { ok: true, sid: a.id };
+  }
+
   // Quit: every process ends now.
   stop(): void {
     for (const a of this.live.values()) {

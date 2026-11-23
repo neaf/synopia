@@ -13,6 +13,7 @@ import { startServer } from './server.ts';
 import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
+import { openTarget } from './open.ts';
 import type { Image } from './sessions.ts';
 import type { Lock } from './lock.ts';
 import type { Layout, OpenEntry } from './store.ts';
@@ -28,6 +29,7 @@ const { values: flags } = parseArgs({
     'no-parent': { type: 'boolean', default: false },
     fake: { type: 'boolean', default: false },
     'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
+    'dry-open': { type: 'boolean', default: false }, // `open` logs its branch and runs nothing (checks)
   },
   strict: true,
 });
@@ -114,6 +116,10 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
     if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);
     store.changed();
+  } else if (sessions && msg.t === 'stopTask' && typeof msg.sid === 'string' && typeof msg.taskId === 'string') {
+    void sessions.stopTask(msg.sid, msg.taskId).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
+  } else if (msg.t === 'open') {
+    openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-open'], log, onError: (text) => client.send({ t: 'toast', text }) });
   } else if (msg.t === 'layout' && msg.layout && typeof msg.layout === 'object') {
     store.state.layout = reconcileLayout(msg.layout as Layout, store.state.layout, openEntries());
     store.changed();
