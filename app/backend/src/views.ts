@@ -349,6 +349,7 @@ export class Views {
     const recent = (end: string | null) => !lastYou || (end !== null && end >= lastYou);
     const out: string[] = [];
     for (const b of s.t.background()) {
+      if (b.agentId) continue; // a subagent's own: its subagent's line covers it
       if (b.status !== 'running' && !recent(b.end)) continue;
       out.push(`${b.kind} “${(b.description || b.command).slice(0, 80)}”: ${b.status === 'completed' ? 'finished' : b.status}`);
     }

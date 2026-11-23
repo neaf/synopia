@@ -1,0 +1,6 @@
+{
+  "agentType": "general-purpose",
+  "description": "Build image thumbnails",
+  "toolUseId": "toolu_r1",
+  "spawnDepth": 1
+}

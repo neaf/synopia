@@ -384,9 +384,10 @@ function carryState(from, to) {
 function renderRail() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
-  const old = conv.querySelector(".rail"), html = railHTML(s, A);
+  const old = conv.querySelector(".rail"), html = railHTML(s, A), before = old ? railTw.snap(old) : new Map();
   if (old && html) old.outerHTML = html; else if (old) old.remove(); else if (html) conv.insertAdjacentHTML("beforeend", html);
   conv.classList.toggle("no-rail", !hasBackground(s));
+  const rail = conv.querySelector(".rail"); if (rail) railTw.run(rail, before); // its children tween in and out (rail.js)
 }
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */

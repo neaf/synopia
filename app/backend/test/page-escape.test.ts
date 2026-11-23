@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 
 const JS = join(import.meta.dirname, '..', '..', 'web', 'js');
-const FILES = ['marks.js', 'md.js', 'store.js', 'sidebar.js', 'images.js', 'transcript.js', 'rail.js', 'card.js'];
+const FILES = ['marks.js', 'md.js', 'store.js', 'tween.js', 'sidebar.js', 'images.js', 'transcript.js', 'rail.js', 'card.js'];
 
 function page() {
   const el = (): Record<string, unknown> => ({ addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], classList: { toggle() {}, add() {}, remove() {} }, dataset: {}, style: {} });

@@ -55,6 +55,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - the state word with its age ("Your turn, 12 min")
   - the "Now" line
   - sub-lines for running background work and "N to review"
+  - a sub-line whose work finishes (done, failed, stopped, timed out) stays where it was for 5 s, with the status mark beside the still kind mark and the final duration, then leaves with the tween (R8.1). A session switch or a redraw doesn't restart or cut the 5 s; with reduced motion the 5 s stay and only the tween is instant.
 - R4.3 Groups render as a tree: a bold heading (just the name, no count, no state mark), sessions indented under it with 1px guides (a vertical line, a tick into each session's mark box, a corner on the last). "Not in a group" is a heading at the same level, with the same indent and no guides.
 - R4.4 Sub-lines under a session use a drawn 1px L corner with equal 7px legs.
 - R4.5 The user arranges groups by drag and drop. There is one way to do each thing:
@@ -183,10 +184,12 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 7. Background work panel
 
-- R7.1 A panel to the right of the transcript. From the top:
-  - "Main conversation", tinted by the session's state (green while working, red when it needs you, grey otherwise). A coloured left edge marks that you're viewing it.
+- R7.1 A panel to the right of the transcript (under it below 990 px). From the top:
+  - "Main conversation", a card like the running ones, tinted by the session's state (green while working, red when it needs you, grey otherwise). A coloured left edge marks that you're viewing it. Its mark on the left, its state word on the right, and under its name a quiet count: "2 running in the background", or "Nothing running in the background". No separate "Running" heading.
+  - Under it, inset as its children: a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer. The sidebar's 1px tree guides join them (R4.3): a vertical line down from the main card's mark, a tick into each card at its mark's height, a corner on the last. The line runs past an expanded card's Stop row to the last child.
+  - A card that comes or goes tweens like a sidebar sub-line (R8.1): coming, the height opens, then the card fades in; going, the card fades out, then the height closes. The guides follow the height on every frame. A card whose item finishes stays in its place for 5 s, as in R4.2 (the status and still kind marks, the final duration), then leaves and its line appears in "Past".
+  - A subagent's own shells and monitors (in its own transcript) hang under its card, one level deeper, with the same guides. They show only here: not under Main conversation, not in the sidebar's count, not in the main transcript. With no notification they run while their subagent runs; after it, they read as stopped, ended with their subagent. In "Past" they name it: "Resize the images in Build image thumbnails".
   - "To review": items waiting for review (section 10).
-  - "Running": a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer.
   - "Past": one dim line per finished item, newest first, fading out at the bottom edge. Each line shows the status mark, the still kind mark, the name and the duration; failed and timed out are named.
 - R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. Each running card has a Stop row that stops only that item.
 - R7.3 Covers forks, subagents (including the `Explore` and `general-purpose` types), background shells (`Bash` with `run_in_background`) and monitors (`Monitor`).
@@ -199,7 +202,7 @@ These requirements come from a day of prototyping against the user's real sessio
 ## 8. Status and kind vocabulary
 
 - R8.1 Running things always move: their motion is linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes, on a running mark.
-  - Layout transitions are other motion and allowed: a sidebar sub-line that appears tweens the row's height open, then fades in; one that leaves fades out, then the height closes. About 150 ms a step, instant with reduced motion. A line whose text alone changes (a timer, a count) doesn't animate.
+  - Layout transitions are other motion and allowed: a sidebar sub-line or a background panel card that appears tweens the row's height open, then fades in; one that leaves fades out, then the height closes. About 150 ms a step, instant with reduced motion. A line whose text alone changes (a timer, a count) doesn't animate.
 - R8.2 Session status marks:
   - working: agent mark turning. Also while the main turn is over but background subagents or forks still run, in every open session. Also while another process (a terminal) runs the session's main turn, read from its transcript: a tool waiting for its result, or a turn opened by a prompt and not yet ended. A turn that changed nothing for 30 minutes, with no tool waiting, is your turn.
   - working with a message queued: the same mark with a blue centre, "Working, 1 message queued". The message was sent during the turn and Claude hasn't read it yet.
