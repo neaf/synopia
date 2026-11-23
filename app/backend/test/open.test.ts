@@ -1,6 +1,6 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, chmodSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { planOpen, openTarget, OPEN } from '../src/open.ts';
@@ -33,10 +33,32 @@ test('open: scripts, executables and app bundles are revealed, not opened', () =
     const p = file('x' + ext);
     assert.equal((planOpen({ path: p }) as { how: string }).how, 'reveal', ext);
   }
-  // a plain folder (execute bit set, as every folder) opens
+  // a folder is revealed too: bundles are folders
   const folder = join(dir, 'folder');
   mkdirSync(folder);
-  assert.equal((planOpen({ path: folder }) as { how: string }).how, 'open');
+  assert.equal((planOpen({ path: folder }) as { how: string }).how, 'reveal');
+});
+
+test('open: an allow-list, so whatever is not a document or media is revealed (M2)', () => {
+  for (const ext of ['.fileloc', '.jar', '.webloc', '.inetloc', '.mobileconfig', '.scpt', '.py', '.plist', '']) {
+    const p = file('thing' + ext);
+    assert.equal((planOpen({ path: p }) as { how: string }).how, 'reveal', ext || 'no extension');
+  }
+  for (const name of ['x.prefPane', 'x.saver', 'x.bundle']) {
+    const p = join(dir, name);
+    mkdirSync(p);
+    assert.equal((planOpen({ path: p }) as { how: string }).how, 'reveal', name);
+  }
+  for (const ext of ['.md', '.PDF', '.png', '.jpeg', '.svg', '.webp', '.csv', '.json', '.log', '.htm', '.ts', '.swift']) {
+    const p = file('doc' + ext);
+    assert.equal((planOpen({ path: p }) as { how: string }).how, 'open', ext);
+  }
+  // a document name with an execute bit, or a document name linking to something else, is revealed
+  assert.equal((planOpen({ path: file('run.txt', 0o755) }) as { how: string }).how, 'reveal');
+  const loc = file('target.fileloc');
+  const link = join(dir, 'innocent.txt');
+  symlinkSync(loc, link);
+  assert.equal((planOpen({ path: link }) as { how: string }).how, 'reveal');
 });
 
 test('open: relative or missing paths and non-http URLs are refused', () => {
