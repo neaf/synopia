@@ -38,14 +38,13 @@ function railHTML(s, A) {
   };
   const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
   return `<aside class="rail panel" aria-label="Background work">
-    <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${esc(wordOf(s))}</span></button>
+    <div class="now">
+      <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${now.length ? `${now.length} running in the background` : "Nothing running in the background"}</span><span class="w">${esc(wordOf(s))}</span></button>
+      ${now.length ? `<div class="kids">${now.map(x => `<div class="kid"><i class="tg"></i><button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}</div>`).join("")}</div>` : ""}
+    </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
         <button class="btn quiet rv-done" data-reviewed="${esc(x.agent.id)}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
-    <div class="now">
-      <h3>Running <span class="cnt">${now.length ? `${now.length} in the background` : ""}</span></h3>
-      ${now.length ? now.map(x => `<button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}`).join("") : `<p class="none">Nothing running in the background.</p>`}
-    </div>
     <div class="past" id="past">
       ${past.length ? `<h3>Past <span class="cnt">${past.length}</span></h3>` : ""}
       ${past.filter(x => bgMarkKey(x) !== "review").map(x => `<button class="pr ${x.failed ? "failed" : ""}" ${attrs(x)}><span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span><span class="n">${esc(x.name)}${x.st === "timed out" ? ` <span class="k">timed out</span>` : x.failed ? ` <span class="k">failed</span>` : ""}</span><span class="d">${took(x.ms)}</span></button>${detail(x)}`).join("")}

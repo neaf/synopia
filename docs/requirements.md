@@ -173,10 +173,10 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 7. Background work panel
 
-- R7.1 A panel to the right of the transcript. From the top:
-  - "Main conversation", tinted by the session's state (green while working, red when it needs you, grey otherwise). A coloured left edge marks that you're viewing it.
+- R7.1 A panel to the right of the transcript (under it below 990 px). From the top:
+  - "Main conversation", a card like the running ones, tinted by the session's state (green while working, red when it needs you, grey otherwise). A coloured left edge marks that you're viewing it. Its mark on the left, its state word on the right, and under its name a quiet count: "2 running in the background", or "Nothing running in the background". No separate "Running" heading.
+  - Under it, inset as its children: a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer. The sidebar's 1px tree guides join them (R4.3): a vertical line down from the main card's mark, a tick into each card at its mark's height, a corner on the last. The line runs past an expanded card's Stop row to the last child.
   - "To review": items waiting for review (section 10).
-  - "Running": a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer.
   - "Past": one dim line per finished item, newest first, fading out at the bottom edge. Each line shows the status mark, the still kind mark, the name and the duration; failed and timed out are named.
 - R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. Each running card has a Stop row that stops only that item.
 - R7.3 Covers forks, subagents (including the `Explore` and `general-purpose` types), background shells (`Bash` with `run_in_background`) and monitors (`Monitor`).
