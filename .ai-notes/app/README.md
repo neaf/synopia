@@ -98,6 +98,35 @@ The user's global rules (from `~/dev/agent-harness`) apply:
 - S1-2 (branch `s1-2`): `app/shell` (main, AppDelegate, Backend, WebView, Menus, Info.plist) and `app/build.sh` into `build/Synopia.app`. Checked: node runs as the shell's child, the port answers 200, the page authenticates (`ws.authed`), SIGTERM (handled like ⌘Q) and `kill -9` of the shell both end the backend (`backend.stop reason=stdin`), a killed backend leaves the shell up. `NSWindow.allowsAutomaticWindowTabbing = false` keeps ⌘⇧[ off the Window menu. `confirmQuitIfWorking` in AppDelegate.swift is the S2-3 stub. Agents must not use `screencapture` or `osascript`/System Events (they need permissions the author may not grant). For a screenshot use `open --env SYNOPIA_SNAPSHOT=/tmp/x.png build/Synopia.app`: the shell writes a `WKWebView.takeSnapshot` PNG 1.5 s after the first page load. Quit with `pkill -TERM -x Synopia`.
 - Dock badge (branch `badge`, R2.6): `src/badge.ts` counts open sessions that need you (a pending request or status `waiting`) plus finished `For review: ` subagents not in `reviewed`, recounted 300 ms after any page message (`Views` `onChange`) or a `reviewed` mark, and `main.ts` prints `{"badge":N}` on stdout only when the count changes (always, `--no-parent` too). `Backend.swift` reads every later stdout line, sets `NSApp.dockTile.badgeLabel` (nil at 0, reset at each backend start), logs `Synopia shell: badge N` to stderr and ignores other lines. `SYNOPIA_FAKE=<fixture claude dir>` passes `--fake --claude-dir`. Checked: the fixtures give `{"badge":4}` (3 needs you, 1 to review) from the backend and the shell. Whether the Dock shows the number has to be checked by eye.
 - Earlier items (branch `earlier`, R5.12a): `Views.earlier(client, sid, agent, before)` slices the 160 items before `before` from memory and sends `items` with `prepend: true`, widening that page's `from` so upserts of those items reach it; no reply when the page views another conversation or `before` is gone (a reset is on its way). Page: "Show 160 earlier (N more)" (`.earlier button`, the line's grey, underlined), `g` at the top sends the same; `renderLogKeepingPlace` anchors on the first visible item block (not `day:` separators, whose keys move) so the place on screen stays. `app/web/dev/cdp/run.sh earlier` generates a 600-item session with a 250-item subagent into the temp state and checks order, no duplicates, the place kept, a live append and a reset (21 of 21); set `SYNOPIA_CDP_PORT` when other checks run at the same time.
+- Perf (branch `perf`): risks 1 and 2 of plan section 16 measured (see "Measured"); both within target, no fix needed. `main.ts` logs a `memory` line on SIGUSR2. Found: the Open list can't reach a session older than the 50 newest for any filter (2 of the 15 largest).
+
+## Measured
+
+2026-11-23, this machine (16 GB RAM, `sysctl hw.memsize`), CLI 2.1.330, SDK 0.3.330. Scripts: `app/backend/perf/transcripts.mjs` and `processes.mjs` (temp state dir, numbers only). `kill -USR2 <backend pid>` logs a `memory` line (rss, heap, external in MB; with `--expose-gc` after a GC).
+
+**Transcripts (risk 2).** The 15 largest sessions by `listSessions()` `fileSize` (309 MB of main files; the largest is now 96.9 MB), opened one after another in one backend, each viewed (main conversation, then its biggest subagent):
+
+| Rank | File MB | Subagents | Items | First `items` ms | Settled ms | Biggest subagent: items, first ms | Backend RSS MB | Heap used MB |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 96.9 | 0 | 702 | 196 * | 233 * | - | 140 | 21 |
+| 2 | 52.3 | 7 | 763 | 105 | 350 | 52, 2 | 91 | 27 |
+| 3 | 25.3 | 0 | 132 | 26 | 64 | - | 93 | 27 |
+| 4 | 19.9 | 31 | 1482 | 515 | 654 | 177, 4 | 85 | 32 |
+| 5 | 18.2 | 0 | 376 | 17 | 32 | - | 177 | 32 |
+| 6 | 13.1 | 0 | 61 | 21 | 37 | - | 184 | 32 |
+| 7 | 12.6 | 0 | 120 | 17 | 24 | - | 186 | 33 |
+| 8 | 11.8 | 47 | 760 | 211 | 232 | 161, 1 | 174 | 37 |
+| 9 | 11.7 | 0 | 186 | 15 | 24 | - | 188 | 37 |
+| 10 | 10.1 | 12 | 734 | 80 | 85 | 171, 1 | 174 | 39 |
+| 11 | 9.5 | 0 | 945 | 29 | 33 | - | 195 | 40 |
+| 12 | 8.2 | 3 | 216 | 48 | 51 | 30, 0 | 185 | 41 |
+| 13 | 7.0 | 0 | 510 | 146 * | 146 * | - | 121 | 20 |
+| 14 | 6.4 | 0 | 204 | 15 | 15 | - | 155 | 42 |
+| 15 | 6.3 | 5 | 307 | 34 | 34 | 99, 1 | 162 | 42 |
+
+Times run from `openSession` (from the ready line for *) to the view's first `items` and to the last `items` before 1.5 s of quiet (the whole file parsed). * Ranks 1 and 13 aren't in the Open list (it lists the 50 newest per filter, and their folder has more), so they were measured from `state.json`'s open list at start, each in its own backend. With 13 open: RSS 51 to 195 MB (77 MB after a GC), heap 42 MB used, external 14 to 22 MB; idle tail 0.42 s CPU in 60 s (0.7 %). Verdict: first view is under 0.7 s against the 2 s target, and the parsed items are a small fraction of the files (images and long tool results aren't kept whole). Reasonable here means the backend under 500 MB (3 % of 16 GB); it uses under 200 MB. The fallback (items only for viewed sessions) isn't needed.
+
+**Processes (risk 1).** Five new sessions on haiku in `/tmp/synopia-scratch/perf`, one short message each (`--idle-ms 120000`). Each `claude` child, idle between turns: 256 MB just after its turn, 220 MB at 15 s, 140 to 175 MB from 25 s to 80 s, 100 to 155 MB at 90 to 115 s (macOS compresses idle pages). Total for five: 1.29 GB at once, 0.6 to 0.95 GB after a minute. No grandchildren (no MCP servers in that folder). Each writer call adds one more `claude` (245 to 290 MB) for a few seconds. The backend itself: 50 to 116 MB. The idle end freed all five at 120 s (5 `driver.idleEnd`, 0 children after). So ten active sessions cost about 1.5 to 2.6 GB, as the plan guessed; the 30 min idle end stays.
 
 ## Facts settled
 

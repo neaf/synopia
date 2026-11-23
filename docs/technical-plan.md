@@ -470,8 +470,8 @@ Order: slice 1 first, because it proves the whole chain. Slice 2 next, because i
 
 ## 16. Risks
 
-1. **Memory per SDK process.** Each active session is a CLI process, and a parked spare is documented at 230 to 260 MB. Ten active sessions could use 2 to 3 GB. The 30 min idle end limits it. Slice 2 measures real memory with five sessions and adjusts the timeout.
-2. **Large transcripts in memory.** Parsed items for many big sessions are unmeasured. Slice 1 measures the largest. If memory is too high, items are kept only for viewed sessions, and others keep their status and last items.
+1. **Memory per SDK process.** Each active session is a CLI process. Measured with five haiku sessions (2026-11-23, `.ai-notes/app/README.md` "Measured"): 256 MB each just after a turn, falling to 100 to 175 MB within two minutes idle, so ten active sessions use about 1.5 to 2.6 GB of this machine's 16 GB. The idle end frees them (checked with `--idle-ms`), so the 30 min stays. What remains: sessions in folders whose settings start MCP servers (their children weren't in the measurement), and growth over a long session.
+2. **Large transcripts in memory.** Measured with the 15 largest sessions on this machine (309 MB of files, the largest 96.9 MB) open at once: first view in 15 to 515 ms, fully parsed within 654 ms; the backend stays under 200 MB RSS with 42 MB of heap, and idles at 0.7 % CPU. The fallback (items only for viewed sessions) isn't needed. What remains: a transcript several times larger than today's, and many more open sessions than 15. The Open list reaches only the 50 newest sessions per filter, so an old one can't be opened through it.
 3. **Undocumented dependencies change.** The three in section 13 can change in any CLI update. Each fails visibly in one module, with a fallback.
 4. **The same session open in the terminal and in Synopia.** Two writers on one transcript can interleave records. This is your call by design, and Synopia doesn't guard against it.
 
