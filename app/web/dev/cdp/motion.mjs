@@ -1,7 +1,7 @@
 // Motion and mark geometry (R8.1, R8.2, R8.5, R8.6), on the fake driver.
 // Draws every mark in marks.js's table in the three colour sets (light panel, dark sidebar, open row), then:
-// every running animation is linear, infinite, never alternates and never animates opacity; it moves only
-// marks, the running duration bar or the spinner; with prefers-reduced-motion: reduce (CDP emulation) nothing
+// every running mark (CSS animations, anything in a mark, the running bar, the spinner) is linear, infinite, never alternates and never animates opacity; it moves only
+// shapes; the sidebar sub-line tween (R8.1) is one run, height then a linear fade, and none with reduced motion; with prefers-reduced-motion: reduce (CDP emulation) nothing
 // plays and every mark keeps its painted size; squares stay square at 9 to 64 px; marks centre in the sidebar
 // box and on the transcript's ● gutter. Also reads app.css for words the rules forbid.
 // usage: run.sh motion (or node motion.mjs <url> <state-dir>); writes motion-reduced.png in the state folder
@@ -13,18 +13,28 @@ const c = await connect();
 const { ev, check } = c;
 const reduce = (on) => c.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: on ? 'reduce' : 'no-preference' }] });
 
-// the stylesheet itself: no easing, no alternate, no pulse or blink, no opacity in a keyframe
+// the stylesheet's animations (all of them are running marks; layout tweens are sidebar.js's, checked below):
+// no easing, no alternate, no pulse or blink, no opacity in a keyframe
 const css = readFileSync(fileURLToPath(new URL('../../css/app.css', import.meta.url)), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-check('app.css has no ease, alternate, pulse or blink', !/\bease(-in|-out|-in-out)?\b|\balternate\b|\bpulse\b|\bblink\b/i.test(css), String(css.match(/\bease(-in|-out|-in-out)?\b|\balternate\b|\bpulse\b|\bblink\b/i)));
+const decls = (css.match(/\banimation(-timing-function|-direction)?\s*:[^;}]*/g) || []).join('\n');
+const badWord = /\bease(-in|-out|-in-out)?\b|\balternate\b|\bpulse\b|\bblink\b/i;
+check('app.css animations have no ease, alternate, pulse or blink', !badWord.test(decls) && !/@keyframes\s+[\w-]*(pulse|blink)/i.test(css), String(decls.match(badWord)));
 const frames = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})*)\s*\}/g)];
 check('app.css keyframes found', frames.length > 5, String(frames.length));
 check('no keyframe animates opacity, visibility or a colour', frames.every((f) => !/opacity|visibility|color|background-color|fill:|stroke:/.test(f[2])), frames.filter((f) => /opacity|visibility|color|fill:|stroke:/.test(f[2])).map((f) => f[1]).join(' '));
+const tweenOf = (kind) => `(async () => { const s = data.find(s => KEYS.includes(s.id) && !bgOf(s).some(b => bgState(b) === 'running')); s.background = [...(s.background || []), { toolUseId: 'mt-bg', kind: 'shell', status: 'running', start: new Date().toISOString() }]; renderSide();
+  const a = document.getAnimations().find(a => a.id === 'side-line'); const r = a && { duration: a.effect.getComputedTiming().duration, iterations: a.effect.getComputedTiming().iterations, kf: a.effect.getKeyframes().map(k => ({ o: k.computedOffset, e: k.easing, op: +k.opacity, h: k.height })) };
+  s.background = s.background.filter(b => b.toolUseId !== 'mt-bg'); renderSide(); await new Promise(r => setTimeout(r, 400)); return r || null; })()`;
 
 await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
 await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200);
 await c.cdp('Page.navigate', { url: url + '#44444444' });
 await sleep(2500);
+// the one layout tween, a sidebar sub-line (R8.1): finite, height (eased) then opacity (linear), 150 ms each; tween.mjs checks it frame by frame
+const tw = await ev(tweenOf());
+check('sub-line tween: one run of 300 ms, height first (eased), then opacity (linear)', !!tw && tw.duration === 300 && tw.iterations === 1 && tw.kf.length === 3
+  && tw.kf[0].op === 0 && tw.kf[1].op === 0 && tw.kf[2].op === 1 && tw.kf[0].h === '0px' && tw.kf[1].h === tw.kf[2].h && tw.kf[1].o === 0.5 && tw.kf[1].e === 'linear', JSON.stringify(tw));
 const SIZES = [9, 10, 11, 12, 16, 32, 64];
 await ev(`(() => {
   const keys = Object.keys(P), sizes = ${JSON.stringify(SIZES)};
@@ -36,7 +46,8 @@ await ev(`(() => {
 await sleep(400);
 
 // what moves, and how
-const anims = await ev(`document.getAnimations().filter(a => a.playState === 'running').map(a => {
+// running things: every CSS animation, and anything moving in a mark, the running bar or the spinner
+const anims = await ev(`document.getAnimations().filter(a => a.playState === 'running' && (a.animationName || a.effect.target.closest('.ind, .bar.st-running, .spinner'))).map(a => {
   const t = a.effect.getComputedTiming(), el = a.effect.target, kf = a.effect.getKeyframes();
   return { name: a.animationName, el: el.tagName.toLowerCase() + '.' + (el.getAttribute('class') || ''), inMark: !!el.closest('.ind'), bar: !!el.closest('.bar.st-running'), spinner: el.classList.contains('spinner'),
     easing: [...new Set([t.easing, ...kf.map(k => k.easing)])], iterations: t.iterations, direction: t.direction, props: [...new Set(kf.flatMap(k => Object.keys(k)))].filter(p => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)) };
@@ -47,7 +58,7 @@ check('every animation is linear', anims.every((a) => a.easing.every((e) => e ==
 check('every animation is infinite', anims.every((a) => a.iterations === null || a.iterations === Infinity), bad((a) => !(a.iterations === null || a.iterations === Infinity)));
 check('no animation alternates', anims.every((a) => !/alternate/.test(a.direction)), bad((a) => /alternate/.test(a.direction)));
 check('animations move shapes only (transform, offsets, positions)', anims.every((a) => a.props.every((p) => /^(transform|strokeDashoffset|backgroundPosition|backgroundPositionX|backgroundPositionY)$/.test(p))), bad((a) => a.props.some((p) => !/^(transform|strokeDashoffset|backgroundPosition)/.test(p))));
-check('motion only on running things (marks, the running bar, the spinner)', anims.every((a) => a.inMark || a.bar || a.spinner), bad((a) => !(a.inMark || a.bar || a.spinner)));
+check('CSS animations are on running things (marks, the running bar, the spinner)', anims.every((a) => a.inMark || a.bar || a.spinner), bad((a) => !(a.inMark || a.bar || a.spinner)));
 
 // painted size of every mark at 64 px, in each set, before and after reduced motion; and the squares
 const paint = `(() => { const out = {};
@@ -61,6 +72,7 @@ await reduce(true);
 await sleep(300);
 const still = await ev(`document.getAnimations().filter(a => a.playState === 'running').map(a => a.animationName + ' on ' + a.effect.target.tagName.toLowerCase() + '.' + (a.effect.target.getAttribute('class') || ''))`);
 check('reduced motion: nothing plays', still.length === 0, [...new Set(still)].slice(0, 6).join('; '));
+check('reduced motion: a sub-line comes and goes without a tween', (await ev(tweenOf())) === null, 'a side-line animation ran');
 const after = await ev(paint);
 const changed = Object.keys(before).filter((k) => !after[k] || after[k].parts !== before[k].parts || after[k].w !== before[k].w || after[k].h !== before[k].h);
 check('reduced motion: every mark keeps its parts and its box', changed.length === 0, changed.slice(0, 6).join(', '));

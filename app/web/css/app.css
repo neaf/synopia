@@ -68,7 +68,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .row[data-state="green"] .dot, .dot.green { background: var(--dot-green); }
 
 /* ---------- main area: four panels on the canvas ---------- */
-.conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
+.conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
 .conv.no-rail { grid-template-columns: minmax(0, 1fr); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
 .c-head { grid-column: 1 / -1; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
@@ -100,6 +100,8 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .ln .name { font-weight: 700; color: var(--ink); }
 .ln .dim, .res { color: var(--ink-3); }
 .res { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
+/* the guide into a result or a run's step: the drawn corner, as in the sidebar and the files list */
+.res > .lcorner { align-self: start; margin: 2px 0 0 3px; }
 .res.failed { color: var(--red); }
 details.fold > summary { cursor: pointer; list-style: none; }
 details.fold > summary::-webkit-details-marker { display: none; }
@@ -568,8 +570,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .side-foot { border-top-color: #373E47; color: #9198A1; }
 .side-foot .btn { background: #2D333B; border-color: #444C56; color: #E6EDF3; }
 .side-foot .btn:hover { background: #373E47; }
-/* the Open line sits under "New session", quiet */
-.side-foot { flex-direction: column; align-items: flex-end; gap: 4px; }
+/* "Open session", quiet, then "New session", on one row at the right */
+.side-foot .btn + .btn { margin-left: 5.5px; }
 .side-foot .btn.quiet { background: none; border-color: transparent; color: #9198A1; }
 .side-foot .btn.quiet:hover { background: #2D333B; color: #E6EDF3; }
 .side-head h1 { color: #F0F6FC; }
@@ -637,6 +639,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 .r-agent b, .r-agent .ind { flex: none; }
 .r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
 .r-agent .ind { margin: 0; }
+/* a sub-line opening or closing (sidebar.js tweenLines) clips to its tweened height */
+.r-main > .tw { overflow: hidden; }
+.r-main > .r-gone { pointer-events: none; }
 
 .composer { padding: 9px 14px; }
 .composer { align-items: center; }
@@ -712,6 +717,9 @@ body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px #54AEFF; }
 .nd-foot .btn { margin-left: auto; }
 .nd-foot .hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .nd-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+/* the read-only card of another process's question (R6.8): rows that don't answer to the pointer */
+.qa-card.ro .o { cursor: default; }
+.qa-card.ro .o:hover { background: none; }
 .waitln b { color: var(--red); }
 
 /* accordion: one line per question, the current one open */
@@ -740,6 +748,21 @@ button.acc:hover { background: var(--sub); }
 
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6.5px 11.5px; border-radius: 5.5px; font-weight: 500; display: none; z-index: 10; }
 .toast.show { display: block; }
+
+/* ---------- the integrated title bar (Synopia.app only) ----------
+   The shell sets html.in-app on every load and html.fullscreen in fullscreen.
+   Its native drag strip covers the top --titlebar of the window, so the whole
+   layout starts below it. The strip shows the sidebar colour over the sidebar
+   and the canvas over the main area: one surface, with the traffic lights on
+   the dark side. The shell also sets --titlebar inline to the title bar's
+   measured height (32px on macOS 26). In a browser and in fullscreen it is 0. */
+:root { --titlebar: 0px; }
+html.in-app:not(.fullscreen) { --titlebar: 28px; }
+.app { padding-top: var(--titlebar); }
+/* a copy of the sidebar's box lifted into the strip, so it follows the sidebar's width */
+.app > .side { box-shadow: 0 calc(-1 * var(--titlebar)) 0 #22272E; }
+/* right under the traffic lights the heading needs less air above it */
+html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
 
 @media (max-width: 990px) {
   .conv { grid-template-columns: minmax(0, 1fr); }

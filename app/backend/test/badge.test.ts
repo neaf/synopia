@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Badge, badgeCount } from '../src/badge.ts';
 import { Views } from '../src/views.ts';
@@ -29,7 +31,10 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   views.open(ASKS);
   views.open(AGENTS);
   await Promise.resolve();
-  assert.equal(badgeCount(source), 1, 'the finished For review subagent');
+  // its transcript ends on a question with no answer and no driver set a status: another process asks (R6.8)
+  assert.equal(badgeCount(source), 2, 'the finished For review subagent and the question the transcript waits on');
+  views.setStatus(ASKS, 'busy');
+  assert.equal(badgeCount(source), 1, 'the driver says working: only the For review subagent');
 
   views.setPending(ASKS, { id: 'q1', kind: 'question', since: 1 });
   assert.equal(badgeCount(source), 2, 'a pending request');
@@ -92,4 +97,32 @@ test('badge: a session whose turn runs in another process, with nothing pending,
   assert.equal((views.sessions() as BadgeSession[])[0].status, 'busy');
   assert.equal(badgeCount({ sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => [] }), 0);
   views.stop();
+});
+
+test('badge: a question or plan another process asks counts, with its ask for the page, until its result lands (R6.8)', () => {
+  const src = path.join(import.meta.dirname, 'fixtures', 'claude-ext');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-ext-'));
+  fs.cpSync(src, dir, { recursive: true });
+  const views = new Views({ claudeDir: dir, clients: () => new Set<Client>(), home: '/Users/fixture', pollMs: 0, watch: false });
+  const Q = 'e1e1e1e1-0000-4000-8000-00000000000a', P = 'e2e2e2e2-0000-4000-8000-00000000000b';
+  views.open(Q);
+  views.open(P);
+  views.check();
+  const count = () => badgeCount({ sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => [] });
+  const q = views.meta(Q);
+  assert.equal(q?.status, 'waiting', 'needs you, though the turn runs by the transcript');
+  assert.equal(q?.statusAt, Date.parse('2026-11-24T09:00:40.000Z'), 'aged from the tool_use');
+  assert.deepEqual([q?.ask?.kind, q?.ask?.qs?.length, q?.ask?.qs?.[1].multi], ['question', 2, true]);
+  assert.deepEqual([views.meta(P)?.status, views.meta(P)?.ask?.kind, views.meta(P)?.ask?.plan?.startsWith('## Move')], ['waiting', 'plan', true]);
+  assert.equal(count(), 2);
+  views.setPending(P, { id: 'r1', kind: 'plan', since: 1 });
+  views.setStatus(P, 'waiting');
+  assert.equal(views.meta(P)?.ask, null, 'a request of ours is the card: no read-only one');
+  const file = path.join(dir, 'projects', '-tmp-ext', `${Q}.jsonl`);
+  fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid: 'x1-u3', timestamp: '2026-11-24T09:02:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_xask1', content: 'User has answered your questions: "Which release channel should the checklist target?"="Beta". You can now continue.' }] } }) + '\n');
+  views.check();
+  assert.deepEqual([views.meta(Q)?.status, views.meta(Q)?.ask], ['busy', null], 'answered there: the turn goes on');
+  assert.equal(count(), 1);
+  views.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
 });

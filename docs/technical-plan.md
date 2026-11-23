@@ -107,7 +107,12 @@ prototype/          unchanged, stays the look reference
   - The shell loads `http://127.0.0.1:<port>/?token=<token>`.
   - The backend exits when its stdin closes, so a crash of the shell never leaves an orphan.
   - If the backend exits, the shell shows its last stderr line in the window and offers "Restart backend".
-- **Window:** one NSWindow, 1280×820, with a normal title bar so a drag in the sidebar never moves the window, and its frame saved with `setFrameAutosaveName`.
+- **Window:** one NSWindow, 1280×820, its frame saved with `setFrameAutosaveName`.
+- **Integrated title bar** (R2.7, `TitleBar.swift`):
+  - The window uses `.fullSizeContentView`, `titlebarAppearsTransparent` and `titleVisibility = .hidden`, and keeps the title "Synopia". The traffic lights stay where AppKit puts them (no toolbar, no private API): on macOS 26 the title bar is 32 pt and the buttons sit 9 to 23 pt down, 9 to 69 pt across, over the sidebar.
+  - The content view is a `WindowFrame`: the web view (or the backend-down view) filling the window, and on top a transparent `DragStrip` as tall as the title bar (measured as the frame height minus `contentLayoutRect`, 28 pt before that). Its `mouseDown` calls `window.performDrag(with:)`. A double-click follows `AppleActionOnDoubleClick` from the global domain: `Minimize`, `None`, or zoom for `Maximize`, `Fill` and unset (falling back to the older `AppleMiniaturizeOnDoubleClick`). Every click below the strip goes to the web view, so a drag in the sidebar never moves the window.
+  - The page learns it through a `WKUserScript` at document start, refreshed and also evaluated on every change: the root classes `in-app` and `fullscreen`, and `--titlebar` set inline to the measured height (0 in fullscreen). `app.css` defaults `--titlebar` to 0, 28px under `html.in-app:not(.fullscreen)`. `.app` takes it as top padding, and the sidebar's box-shadow lifts its colour into the strip.
+  - In fullscreen (`windowWillEnterFullScreen`, `windowWillExitFullScreen` and the two failure callbacks) the strip is hidden and the page gets `fullscreen`.
 - **Menus:** an App menu (About, Quit ⌘Q), an Edit menu (Undo, Redo, Cut, Copy, Paste, Select All, so ⌘V and ⌘C reach the web view) and a Window menu. No menu item takes ⌘⇧[ or ⌘⇧], so they reach the page.
 - **Links and files:** the page never navigates. Every link and file click goes to the backend as `open`, the same in Chrome. As a safety net the shell's `WKNavigationDelegate` cancels any navigation away from the backend origin, and `createWebViewWith` returns nil. Both hand only `http` and `https` URLs to `NSWorkspace.open`.
 - **Quit:** on ⌘Q the shell calls `GET /api/quit-check` with the token, which returns the running turns and running background work. If anything is running, an NSAlert says "Quit Synopia? 2 sessions are working and 1 background shell will stop." Then the shell closes the backend's stdin, and the backend ends its `query()` processes.
@@ -180,6 +185,7 @@ Server to page:
 | `pending` | `sid`, `request` (`{id, kind: question\|permission\|plan, agentId, since, …}`) or `cleared: id` | canUseTool parked or settled |
 | `stream` | `sid`, `text` (the partial reply so far), or `clear` | while a reply is written |
 | `recent` | `sessions[]` (`id`, `title`, `cwd`, `lastModified`) | reply to `listRecent` |
+| `preview` | `path`, `display` (with `~`), `lang`, `html` (bat's GitHub colours as escaped `<span style>` runs, one line per `\n`), `lines`, `truncated` (past 5,000 lines or 2 MB), `size` | reply to `preview` |
 | `menu` | `cwd`, `commands[]`, `models[]` | first view of a folder |
 | `restore` | `sid`, `texts[]` | messages cancelled by an interrupt, back to the message box |
 | `toolOutput` | `sid`, `agent`, `toolUseId`, `text` (the tool's full result), `truncated: false` | reply to `toolOutput`; a `toast` instead when the file is gone or was rewritten |
@@ -204,6 +210,7 @@ Page to server:
 | `layout` | `layout` | replaces the stored layout |
 | `reviewed` | `agentId` | adds a reviewed mark |
 | `open` | `path` or `url` | opens a file or an `https?` URL |
+| `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does; a bad path gets `toast` |
 
 HTTP, on the same origin, every request with `?token=` (403 without it):
 
@@ -325,6 +332,9 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
   - a rule kept for the session: "for this session". Synopia stores session rules in `state.json` and passes them back as `allowedTools` on every resume, so "for this session" holds until you close it;
   - a mode change or an added directory, named as such: "and switch to accept edits", "and allow access to ~/dev/other".
 - **The permission card shows** the command (Bash `input.command`, or the file path for Edit and Write), the folder, and Claude's reason (`input.description`, else `options.description` or `options.title`). A request from a subagent (`options.agentID`) names the subagent on the header line.
+- **A card in another Claude Code process** (R6.8, 2026-11-24). With no Synopia process, a session whose transcript ends a thread (the main one, or a running subagent's) on an AskUserQuestion or ExitPlanMode tool_use with no tool_result (`Transcript.pendingAsk`) is needs you. This beats working by the transcript's running turn. The age counts from the tool_use's timestamp, the Dock badge counts the session, and the status clears when the result lands.
+  - The backend sends the ask in the session meta as `ask: {kind, toolUseId, agentId, since, qs | plan}`, only while it is why the session needs you: never with a request of ours, and never for an ask our own process left behind (its records predate our process's end). That last case keeps "Not answered (Synopia quit)".
+  - The page shows the card read-only (`card.js` `extHTML`): the red header with the reason and its age, every question open with its options, Recommended, descriptions and radios or checkboxes, or for a plan the "Approve the plan above?" decision with its two rows (the plan text stays in the transcript above). There is no cursor, no selection and no key handling. The footer is one quiet line: "Asked in another Claude Code process. Answer it there." The transcript line reads "Waiting for you: …, asked in another process".
 - **The answer shows as your turn** (R6.7). Questions, denials and plan changes are rendered from their tool result in the JSONL. "Allow once" and "Always allow" leave no text there, so the backend stores the label per tool-use id in `state.json` `answers` and the transcript shows it.
 - **Under `auto`,** permission cards appear only when the classifier would ask you. A slice 3 check confirms that AskUserQuestion and ExitPlanMode reach canUseTool under `auto`. If either doesn't, the driver adds a `PreToolUse` hook with a matcher for that tool name that returns `ask`, which is the typed way to route it to canUseTool. The same check confirms whether multi-select answers join with `, `.
 

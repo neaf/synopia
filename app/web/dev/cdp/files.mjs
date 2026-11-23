@@ -2,7 +2,7 @@
 // usage: node files.mjs <url> <state-dir>
 // Checks: a file edited by a tool and by the shell shows once with summed counts and both diffs, a
 // file the shell created reads "new", a changed file with no diff has no counts, "and 2 more files",
-// the total, and the Bash step stays a "Ran" line. Writes files-changed.png.
+// the total, and the Bash step stays a "Bash(…)" line. Writes files-changed.png.
 import fs from 'node:fs';
 import path from 'node:path';
 import { connect, sleep } from './cdp.mjs';
@@ -20,7 +20,7 @@ check('the created script reads new', row('scripts/tidy.sh') === 'new +2 −0', 
 check('a changed file with no diff has no counts', row('.tidy-stamp') === '', JSON.stringify(rows));
 check('and 2 more files', await ev(`[...document.querySelectorAll('.ln.files .root')].pop().textContent`) === 'and 2 more files');
 check('the total counts the more files', /^7 files,/.test(await ev(`document.querySelector('.ln.files .name + .dim').textContent`)));
-check('the Bash step is a Ran line', await ev(`[...document.querySelectorAll('.ln.tool .body .res')].some(r => r.textContent.includes('Ran(Reword the second idea and add the tidy script)'))`));
+check('the Bash step is a Bash(…) line', await ev(`[...document.querySelectorAll('.ln.tool .body .res')].some(r => r.textContent.includes('Bash(Reword the second idea and add the tidy script)'))`));
 await ev(`[...document.querySelectorAll('.ln.files .frow')].find(r => r.querySelector('.fp').textContent === 'notes.md').querySelector('.fc').click()`);
 const diff = await ev(`(() => { const b = [...document.querySelectorAll('.ln.files .frow')].find(r => r.querySelector('.fp').textContent === 'notes.md').querySelector('.fc'); const d = document.getElementById(b.getAttribute('aria-controls')); return d.hidden ? '' : d.textContent; })()`);
 check('the notes.md diff has both changes', diff.includes('the first idea') && diff.includes('a second, better idea') && diff.includes('next edit'), diff.slice(0, 200));

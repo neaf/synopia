@@ -9,13 +9,12 @@ const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 function toolLine(t) {
-  const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
-    : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  const line = `<span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
-  const body = hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`;
+  const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
+    : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
+    : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
+  const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
-  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span>${body}${thumbsHTML(t.imgs, current, view)}</div>`;
+  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view)}</div>`;
 }
 
 /* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
@@ -30,8 +29,8 @@ function stepHTML(t) {
   const o = t.out, full = fullOut.get(stepKey(t.id));
   const text = full !== undefined ? full : o ? o.text : "";
   const cmd = t.input ? `<div class="cmd">${esc(t.input)}</div>` : "";
-  const res = !o ? "" : text ? `<div class="res"><span>⎿</span><span class="out">${esc(text)}</span></div>`
-    : `<div class="res"><span>⎿</span><span>No output</span></div>`;
+  const res = !o ? "" : text ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span class="out">${esc(text)}</span></div>`
+    : `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>No output</span></div>`;
   const more = o && o.cut && full === undefined ? `<p class="earlier more"><button data-full="${esc(t.id)}">Show all ${+o.lines} lines</button></p>` : "";
   const stop = o && o.interrupted ? `<div class="res"><span></span><span>Interrupted</span></div>` : "";
   return `<div class="step-out">${cmd}${res}${more}${stop}</div>`;
@@ -49,20 +48,22 @@ function applyToolOutput(m) {
 function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
-  const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `ran ${n} commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
+  const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `${n} Bash commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
     Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills`, Watched: n => `started ${n} monitors` };
-  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "ran 1 command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor" };
+  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "1 Bash command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor" };
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
-      const row = `<span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}">${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}">${row}</div>`;
     }).join("")}</div></details>${run.map(t => thumbsHTML(t.imgs, current, view)).join("")}</div>`;
 }
 
+/* a step's display name: the tool's Claude Code CLI name, as in the terminal; MCP tools read "server tool" */
+function toolName(t) { return t.name && !t.name.startsWith("mcp__") ? (t.name === "Task" ? "Agent" : t.name) : t.verb; }
 /* ---------- files changed ---------- */
 function splitPath(f) {
   const m = f.match(/^(~\/dev\/[^/]+\/\.claude\/worktrees\/[^/]+)\/(.*)$/) || f.match(/^(~\/dev\/[^/]+)\/(.*)$/) || f.match(/^(~\/\.claude\/[^/]+(?:\/[^/]+)?)\/([^/]+)$/) || f.match(/^(.*)\/([^/]+)$/);
@@ -189,7 +190,7 @@ function itemsHTML(items, sessionBusy, s) {
       out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
-      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`]);
+      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
       const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
@@ -214,7 +215,7 @@ const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<d
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
    compacting, rate limited or no updates instead, and say a message you sent is queued. */
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   if (stateOf(s) !== "green") return "";
   const t = [...s.items].reverse().find(x => x.k === "tool");
@@ -241,7 +242,7 @@ function statusLine(s) {
   const last = [...s.items].reverse();
   if (st === "green") {
     const t = last.find(x => x.k === "tool");
-    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div>`;
+    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div>`;
   }
   if (s.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
   if (st === "red") {
@@ -303,7 +304,7 @@ function renderHeader() {
 /* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
 const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
 function logEntries(s, A) {
-  const items = A ? (A.items || []) : withPending(s.items, requestsOf(s));
+  const items = A ? (A.items || []) : withPending(s.items, requestsOf(s), extAsk(s));
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
@@ -403,7 +404,7 @@ conv.addEventListener("click", e => {
     view = t.dataset.agent; renderConv();
   }
   else if (t.dataset.stop) { stopping.add(t.dataset.stop); send({ t: "stopTask", sid: current, taskId: t.dataset.stop }); renderRail(); }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { view = null; renderConv(); }
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
   else if (t.hasAttribute("data-close")) closeSession(cur());
@@ -420,6 +421,6 @@ conv.addEventListener("toggle", e => {
 document.addEventListener("click", e => {
   const a = e.target.closest && e.target.closest("a[href]"); if (!a) return;
   e.preventDefault();
-  if (a.dataset.path) send({ t: "open", path: a.dataset.path });
+  if (a.dataset.path) { if (!previewClick(a, e)) send({ t: "open", path: a.dataset.path }); } // text: the preview (preview.js)
   else if (/^https?:/i.test(a.getAttribute("href"))) send({ t: "open", url: a.href });
 }, true);

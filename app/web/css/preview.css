@@ -1,0 +1,24 @@
+/* the file preview (preview.js): over the main area like the Open list, a white panel with the
+   diff view's gutter and the transcript's mono at 12px, no wrap, scrolling sideways */
+.preview { grid-column: 2; grid-row: 1; z-index: 6; background: var(--canvas); padding: 9px; min-height: 0; display: flex; }
+.preview[hidden] { display: none; }
+.pv-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; outline: none; }
+.pv-head { padding: 11px 14.5px; border-bottom: 1px solid var(--line-2); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14.5px; align-items: start; }
+.pv-name { min-width: 0; }
+.pv-path { margin: 0; font-size: 13px; font-weight: 700; line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+.pv-acts { display: flex; gap: 5.5px; }
+.composer.pv-find { grid-template-columns: 2ch minmax(0, 1fr) auto; column-gap: 1ch; border-bottom: 1px solid var(--line-2); }
+.pv-find[hidden] { display: none; }
+.pv-find input { font-family: var(--mono); font-size: 12px; line-height: 1.45; width: 100%; background: none; border: 0; outline: none; padding: 0; color: var(--ink); }
+.pv-count { font-family: var(--mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pv-code { flex: 1; min-height: 0; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; color: var(--ink); }
+.pv-lines { display: grid; width: max-content; min-width: 100%; }
+.pl { display: grid; grid-template-columns: var(--nw, 6ch) max-content; white-space: pre; }
+.pl .no { position: sticky; left: 0; color: var(--faint); text-align: right; padding-right: 1ch; margin-right: 1ch; user-select: none; background: var(--sub); border-right: 1px solid var(--line-2); }
+.pl .tx { padding-right: 2ch; }
+/* the diff's first changed line, marked softly; the line of the current match */
+.pl.hit { background: #DDF4FF; }
+.pl.hit .no { background: #B6E3FF; color: var(--ink-2); }
+.pl.found .no { color: var(--ink); }
+::highlight(pv-find) { background-color: #FFF1B3; }
+::highlight(pv-cur) { background-color: #F2CC60; color: var(--ink); }

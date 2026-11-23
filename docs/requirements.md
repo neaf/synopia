@@ -25,6 +25,11 @@ These requirements come from a day of prototyping against the user's real sessio
   - each open session that needs you (a pending question, permission or plan: the red "Needs you" of R6.1)
   - each deliverable waiting for review (a finished `For review: ` subagent not yet marked reviewed, R10.1; the same count as "N to review" in the sidebar)
   - Closed sessions don't count. At 0 there is no badge. No notifications: they were rejected (2026-11-23).
+- R2.7 The window has an integrated title bar, the unified look of Slack and Linear (decided 2026-11-24):
+  - no visible title bar: the traffic lights sit over the dark sidebar's top-left, and the strip they sit in shows the sidebar colour over the sidebar and the canvas over the main area. The window keeps the title "Synopia" for Mission Control and the Window menu.
+  - a drag on the top strip moves the window, and a double-click on it does what the system setting "Double-click a window's title bar to" says (zoom, minimise or nothing). Nothing interactive sits under the strip, and a drag anywhere below it (sidebar drag and drop) never moves the window.
+  - the sidebar's "Synopia" heading sits below the traffic lights.
+  - in fullscreen there is no strip and no inset. In a browser the page looks as before.
 
 ## 3. Sessions
 
@@ -90,8 +95,8 @@ These requirements come from a day of prototyping against the user's real sessio
   - kind marks for subagents
   - `⎿` results
 - R5.4 Your prompts sit on a full-width band starting with `❯`, which is the clear break between turns.
-- R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Ran(…)". There's no status line in the message panel for working.
-- R5.6 Tool runs collapse to one line ("Ran 3 commands, read 2 files"); click to expand. A single step shows inline (`Ran(Merge master into the M1 backend stack)`). A click on a step, inline or inside an expanded run, expands it to its command (or its input) and its result under `⎿`, truncated to the first 20 lines with "Show all N lines" for the full result; a second click closes it. For an edit, the diff in Files changed stays the way to see the change.
+- R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Bash(…)". There's no status line in the message panel for working.
+- R5.6 Tool runs collapse to one line ("3 Bash commands, read 2 files"); click to expand. A step reads as in the Claude Code CLI: the tool's name and its description or target, such as `Bash(Merge master into the M1 backend stack)` or `Read(~/dev/demo/notes.md)`; a single step shows inline. A click on a step, inline or inside an expanded run, expands it to its command (or its input) and its result under the drawn guide, truncated to the first 20 lines with "Show all N lines" for the full result; a second click closes it. For an edit, the diff in Files changed stays the way to see the change.
 - R5.7 Subagents:
   - A single launch is one line: kind mark, name (click opens its transcript) and live time.
   - Several launched together get one heading, "3 subagents in parallel", with a row each: mark, name, duration bar on a shared timeline, and time.
@@ -99,7 +104,9 @@ These requirements come from a day of prototyping against the user's real sessio
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
   - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts. Files changed by shell commands count too.
-  - Clicking the path opens the file. The user often opens HTML artifacts.
+  - Clicking the path of a text or source file opens a read-only, syntax-highlighted preview over the main area, not an external app. It has the path, the language and the line count, an "Open in app" button that opens the file with its default app, and Close. Opened from Files changed, it starts at the diff's first changed line, softly marked. Keys while it is shown: Esc closes it (before any other Esc), j/k scroll a line, g/G go to the top and bottom, ⌘F or `/` finds, Enter or n go to the next match. A click outside closes it.
+  - HTML files keep opening in the browser, because the user often opens HTML artifacts. Alt-click on an HTML path shows its source in the preview.
+  - Images, PDFs, binaries and other files open as before: with their default app, or revealed in Finder.
   - Clicking the counts opens the diff, with line numbers from the stored patch, red and green rows.
 - R5.10 Markdown renders as the CLI does:
   - bold
@@ -161,6 +168,9 @@ These requirements come from a day of prototyping against the user's real sessio
 - R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place).
 - R6.7 Answers appear in the transcript as your turn ("Allow once", "Denied: …", "Changes: …").
 - R6.8 Detection: a session needs you while it has a pending `canUseTool` request: a question, a permission or a plan.
+  - It also needs you, with no Synopia process, while its transcript ends a thread (the main conversation or a subagent) on a question or plan (AskUserQuestion or ExitPlanMode) that has no result yet: another Claude Code process asks it. This beats working, the Dock badge counts it, its age counts from the question, and it clears when the answer lands.
+  - The message panel then shows the card read-only: the red "Needs you" header with the reason and "for N min", every question open with its options (Recommended, descriptions, checkboxes for a multi-select), or the plan's two decisions under the plan in the transcript. It has no cursor, selection or keys, and its footer is one quiet line: "Asked in another Claude Code process. Answer it there." The transcript line says "Waiting for you: …, asked in another process". Once answered, the card goes and the answer shows as your turn.
+  - A session Synopia drives keeps the interactive card. A question its own process left without a request (after a crash) stays "Not answered (Synopia quit)".
 - R6.9 Rejected:
   - showing all questions at once
   - horizontal tabs
@@ -187,7 +197,8 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 8. Status and kind vocabulary
 
-- R8.1 Motion only on running things, and it always moves: linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes.
+- R8.1 Running things always move: their motion is linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes, on a running mark.
+  - Layout transitions are other motion and allowed: a sidebar sub-line that appears tweens the row's height open, then fades in; one that leaves fades out, then the height closes. About 150 ms a step, instant with reduced motion. A line whose text alone changes (a timer, a count) doesn't animate.
 - R8.2 Session status marks:
   - working: agent mark turning. Also while the main turn is over but background subagents or forks still run, in every open session. Also while another process (a terminal) runs the session's main turn, read from its transcript: a tool waiting for its result, or a turn opened by a prompt and not yet ended. A turn that changed nothing for 30 minutes, with no tool waiting, is your turn.
   - working with a message queued: the same mark with a blue centre, "Working, 1 message queued". The message was sent during the turn and Claude hasn't read it yet.

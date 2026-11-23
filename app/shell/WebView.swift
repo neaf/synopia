@@ -13,6 +13,28 @@ final class PageView: NSObject, WKNavigationDelegate, WKUIDelegate {
     super.init()
     web.navigationDelegate = self
     web.uiDelegate = self
+    syncChrome()
+  }
+
+  /// The page's root for the integrated title bar: the classes `in-app` (the
+  /// page keeps the drag strip's height free) and `fullscreen` (no strip), and
+  /// `--titlebar`, the strip's measured height. Set before the first paint of
+  /// every load, and live on a change.
+  var fullscreen = false {
+    didSet { if fullscreen != oldValue { syncChrome() } }
+  }
+  var titlebar: CGFloat = 28 {
+    didSet { if titlebar != oldValue { syncChrome() } }
+  }
+
+  private func syncChrome() {
+    let js = "document.documentElement.classList.add('in-app');"
+      + "document.documentElement.classList.toggle('fullscreen', \(fullscreen));"
+      + "document.documentElement.style.setProperty('--titlebar', '\(fullscreen ? 0 : Int(titlebar))px');"
+    let scripts = web.configuration.userContentController
+    scripts.removeAllUserScripts()
+    scripts.addUserScript(WKUserScript(source: js, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+    web.evaluateJavaScript(js, completionHandler: nil)
   }
 
   func load(port: Int, token: String) {
