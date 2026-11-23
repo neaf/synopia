@@ -25,6 +25,11 @@ These requirements come from a day of prototyping against the user's real sessio
   - each open session that needs you (a pending question, permission or plan: the red "Needs you" of R6.1)
   - each deliverable waiting for review (a finished `For review: ` subagent not yet marked reviewed, R10.1; the same count as "N to review" in the sidebar)
   - Closed sessions don't count. At 0 there is no badge. No notifications: they were rejected (2026-11-23).
+- R2.7 The window has an integrated title bar, the unified look of Slack and Linear (decided 2026-11-24):
+  - no visible title bar: the traffic lights sit over the dark sidebar's top-left, and the strip they sit in shows the sidebar colour over the sidebar and the canvas over the main area. The window keeps the title "Synopia" for Mission Control and the Window menu.
+  - a drag on the top strip moves the window, and a double-click on it does what the system setting "Double-click a window's title bar to" says (zoom, minimise or nothing). Nothing interactive sits under the strip, and a drag anywhere below it (sidebar drag and drop) never moves the window.
+  - the sidebar's "Synopia" heading sits below the traffic lights.
+  - in fullscreen there is no strip and no inset. In a browser the page looks as before.
 
 ## 3. Sessions
 
@@ -90,15 +95,15 @@ These requirements come from a day of prototyping against the user's real sessio
   - kind marks for subagents
   - `⎿` results
 - R5.4 Your prompts sit on a full-width band starting with `❯`, which is the clear break between turns.
-- R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Ran(…)". There's no status line in the message panel for working.
-- R5.6 Tool runs collapse to one line ("Ran 3 commands, read 2 files"); click to expand. A single step shows inline (`Ran(Merge master into the M1 backend stack)`).
+- R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Bash(…)". There's no status line in the message panel for working.
+- R5.6 Tool runs collapse to one line ("3 Bash commands, read 2 files"); click to expand. A step reads as in the Claude Code CLI: the tool's name and its description or target, such as `Bash(Merge master into the M1 backend stack)` or `Read(~/dev/demo/notes.md)`; a single step shows inline. A click on a step, inline or inside an expanded run, expands it to its command (or its input) and its result under the drawn guide, truncated to the first 20 lines with "Show all N lines" for the full result; a second click closes it. For an edit, the diff in Files changed stays the way to see the change.
 - R5.7 Subagents:
   - A single launch is one line: kind mark, name (click opens its transcript) and live time.
   - Several launched together get one heading, "3 subagents in parallel", with a row each: mark, name, duration bar on a shared timeline, and time.
   - No duplicate labels, tags or "running" words.
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
-  - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts.
+  - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts. Files changed by shell commands count too.
   - Clicking the path of a text or source file opens a read-only, syntax-highlighted preview over the main area, not an external app. It has the path, the language and the line count, an "Open in app" button that opens the file with its default app, and Close. Opened from Files changed, it starts at the diff's first changed line, softly marked. Keys while it is shown: Esc closes it (before any other Esc), j/k scroll a line, g/G go to the top and bottom, ⌘F or `/` finds, Enter or n go to the next match. A click outside closes it.
   - HTML files keep opening in the browser, because the user often opens HTML artifacts. Alt-click on an HTML path shows its source in the preview.
   - Images, PDFs, binaries and other files open as before: with their default app, or revealed in Finder.

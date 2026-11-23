@@ -6,6 +6,8 @@
 #   app/web/dev/cdp/run.sh states  session states of status.ts (R8.2) on the states fixture, with shots
 #   app/web/dev/cdp/run.sh earlier loading earlier items, on a long transcript generated into the temp state
 #   app/web/dev/cdp/run.sh csp     the page under its CSP, the H1 payload, an injected handler blocked
+#   app/web/dev/cdp/run.sh files   files changed with a Bash command's edits (R5.9), with a shot
+#   app/web/dev/cdp/run.sh steps   a tool step expanded to its command and result, show all, a live update (R5.6), with a shot
 #   app/web/dev/cdp/run.sh motion  motion rules and reduced motion (R8.1, R8.5), square marks, marks on the box and gutter (R8.6)
 #   app/web/dev/cdp/run.sh preview the file preview (R5.9) on a generated session pointing at a repo file, a binary and HTML, with --dry-open
 # Starts headless Chrome on $SYNOPIA_CHROME_PORT (9334) if it isn't up, the backend on $SYNOPIA_CDP_PORT (4791). Prints "N/M pass" and the failures.
@@ -21,6 +23,6 @@ curl -s http://127.0.0.1:"${SYNOPIA_CHROME_PORT:-9334}"/json >/dev/null || { "$h
 start() { "$here/backend.sh" "$port" "$state" --fake --claude-dir "$fix" ${dry[@]+"${dry[@]}"} >/dev/null; }
 stop() { local p; p="$(cat "$state/pid")"; kill "$p" 2>/dev/null; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; }
 start
-node "$here/$1.mjs" "$(cat "$state/url")" "$state" "$fix"; [ "$1" = menu ] && echo "picker shot: $state/menu-picker.png"; [ "$1" = earlier ] && echo "link shot: $state/earlier-link.png"; [ "$1" = states ] && echo "shots: $state/states-*.png"; [ "$1" = preview ] && echo "shots: $state/preview-*.png"
+node "$here/$1.mjs" "$(cat "$state/url")" "$state" "$fix"; [ "$1" = menu ] && echo "picker shot: $state/menu-picker.png"; [ "$1" = earlier ] && echo "link shot: $state/earlier-link.png"; [ "$1" = states ] && echo "shots: $state/states-*.png"; [ "$1" = files ] && echo "shot: $state/files-changed.png"; [ "$1" = steps ] && echo "shot: $state/steps.png"; [ "$1" = preview ] && echo "shots: $state/preview-*.png"
 if [ "$1" = dnd ]; then stop; start; node "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart; fi
 stop

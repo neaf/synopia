@@ -107,7 +107,12 @@ prototype/          unchanged, stays the look reference
   - The shell loads `http://127.0.0.1:<port>/?token=<token>`.
   - The backend exits when its stdin closes, so a crash of the shell never leaves an orphan.
   - If the backend exits, the shell shows its last stderr line in the window and offers "Restart backend".
-- **Window:** one NSWindow, 1280×820, with a normal title bar so a drag in the sidebar never moves the window, and its frame saved with `setFrameAutosaveName`.
+- **Window:** one NSWindow, 1280×820, its frame saved with `setFrameAutosaveName`.
+- **Integrated title bar** (R2.7, `TitleBar.swift`):
+  - The window uses `.fullSizeContentView`, `titlebarAppearsTransparent` and `titleVisibility = .hidden`, and keeps the title "Synopia". The traffic lights stay where AppKit puts them (no toolbar, no private API): on macOS 26 the title bar is 32 pt and the buttons sit 9 to 23 pt down, 9 to 69 pt across, over the sidebar.
+  - The content view is a `WindowFrame`: the web view (or the backend-down view) filling the window, and on top a transparent `DragStrip` as tall as the title bar (measured as the frame height minus `contentLayoutRect`, 28 pt before that). Its `mouseDown` calls `window.performDrag(with:)`. A double-click follows `AppleActionOnDoubleClick` from the global domain: `Minimize`, `None`, or zoom for `Maximize`, `Fill` and unset (falling back to the older `AppleMiniaturizeOnDoubleClick`). Every click below the strip goes to the web view, so a drag in the sidebar never moves the window.
+  - The page learns it through a `WKUserScript` at document start, refreshed and also evaluated on every change: the root classes `in-app` and `fullscreen`, and `--titlebar` set inline to the measured height (0 in fullscreen). `app.css` defaults `--titlebar` to 0, 28px under `html.in-app:not(.fullscreen)`. `.app` takes it as top padding, and the sidebar's box-shadow lifts its colour into the strip.
+  - In fullscreen (`windowWillEnterFullScreen`, `windowWillExitFullScreen` and the two failure callbacks) the strip is hidden and the page gets `fullscreen`.
 - **Menus:** an App menu (About, Quit ⌘Q), an Edit menu (Undo, Redo, Cut, Copy, Paste, Select All, so ⌘V and ⌘C reach the web view) and a Window menu. No menu item takes ⌘⇧[ or ⌘⇧], so they reach the page.
 - **Links and files:** the page never navigates. Every link and file click goes to the backend as `open`, the same in Chrome. As a safety net the shell's `WKNavigationDelegate` cancels any navigation away from the backend origin, and `createWebViewWith` returns nil. Both hand only `http` and `https` URLs to `NSWorkspace.open`.
 - **Quit:** on ⌘Q the shell calls `GET /api/quit-check` with the token, which returns the running turns and running background work. If anything is running, an NSAlert says "Quit Synopia? 2 sessions are working and 1 background shell will stop." Then the shell closes the backend's stdin, and the backend ends its `query()` processes.
@@ -183,6 +188,7 @@ Server to page:
 | `preview` | `path`, `display` (with `~`), `lang`, `html` (bat's GitHub colours as escaped `<span style>` runs, one line per `\n`), `lines`, `truncated` (past 5,000 lines or 2 MB), `size` | reply to `preview` |
 | `menu` | `cwd`, `commands[]`, `models[]` | first view of a folder |
 | `restore` | `sid`, `texts[]` | messages cancelled by an interrupt, back to the message box |
+| `toolOutput` | `sid`, `agent`, `toolUseId`, `text` (the tool's full result), `truncated: false` | reply to `toolOutput`; a `toast` instead when the file is gone or was rewritten |
 | `toast` | `text` | failures you must see |
 
 Page to server:
@@ -191,6 +197,7 @@ Page to server:
 |---|---|---|
 | `view` | `sid`, `agent` | subscribes to items for that session or subagent and gets `items` with `reset` |
 | `earlier` | `sid`, `agent`, `before` (the oldest item id shown) | gets the 160 items before it as `items` with `prepend`; nothing when it isn't the viewed conversation or `before` is gone |
+| `toolOutput` | `sid`, `agent`, `toolUseId` | gets the tool's full result, read again from its record's line in the JSONL (items carry only a preview) |
 | `send` | `sid`, `text`, `images[]` (base64 PNG or JPEG, at most 5 MB each), `uuid` | pushes to the session's input, starting `query()` when none runs |
 | `answer` | `sid`, `requestId`, `answer` | settles the pending canUseTool |
 | `interrupt` | `sid` | interrupts the turn |
@@ -205,7 +212,7 @@ Page to server:
 | `open` | `path` or `url` | opens a file or an `https?` URL |
 | `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does; a bad path gets `toast` |
 
-Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`:
+Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`; a tool item also has `patches[]` and `moreFiles` (a Bash command's edits), `input` (the command, or short input fields) and `out` `{text, lines, cut, interrupted?}` (its result's first 20 lines, 4 KB at most):
 - the record `uuid`, with `:<block index>` for a block inside a record;
 - for a tool, the `tool_use` id, so its result updates the same item.
 
@@ -226,6 +233,7 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
   - `canUseTool`;
   - `includePartialMessages: true`;
   - `perTaskStopAffordance: true`, so an interrupt stops only the foreground turn, as in the CLI, and background work is stopped one at a time with the Stop row;
+  - `settings: {bashEditDiffEnabled: true}` (flag settings), so the CLI records the files a Bash command changed (`toolUseResult.bashEditDiff`) for "Files changed": it is off for SDK-driven sessions without it, and the writer's calls don't get it;
   - `env: {...process.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1'}`;
   - `settingSources` left at its default, so your skills, commands, `CLAUDE.md`, hooks and agents load as in the CLI (verified in the spike).
 - **Sending:** text and images are pushed with the page's `uuid`. A message sent during a turn is folded into it by the CLI, as in the terminal. A message sent while a card waits is queued behind the card, and the transcript shows "Queued until you answer the card above".

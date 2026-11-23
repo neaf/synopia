@@ -9,25 +9,60 @@ const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 function toolLine(t) {
-  const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
-    : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
+  const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
+    : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
+    : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
+  const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
+  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}</div>`;
+}
+
+/* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
+   The page has the result's first 20 lines (4 KB at most); "Show all" asks the server for the rest
+   (`toolOutput`), which reads it again from the transcript file. Open steps are kept by item id. */
+const openSteps = new Set(), fullOut = new Map();
+let stepAsked = null; // the step whose full result was asked for, until the reply (or a toast)
+const stepKey = id => `${current}|${view || ""}|${id}`;
+const hasStep = t => !!(t.input || t.out);
+const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
+function stepHTML(t) {
+  const o = t.out, full = fullOut.get(stepKey(t.id));
+  const text = full !== undefined ? full : o ? o.text : "";
+  const cmd = t.input ? `<div class="cmd">${esc(t.input)}</div>` : "";
+  const res = !o ? "" : text ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span class="out">${esc(text)}</span></div>`
+    : `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>No output</span></div>`;
+  const more = o && o.cut && full === undefined ? `<p class="earlier more"><button data-full="${esc(t.id)}">Show all ${+o.lines} lines</button></p>` : "";
+  const stop = o && o.interrupted ? `<div class="res"><span></span><span>Interrupted</span></div>` : "";
+  return `<div class="step-out">${cmd}${res}${more}${stop}</div>`;
+}
+function showAll(id) {
+  const key = stepKey(id); if (stepAsked === key) return;
+  stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
+}
+function applyToolOutput(m) {
+  const key = `${m.sid}|${m.agent || ""}|${m.toolUseId}`;
+  if (stepAsked === key) stepAsked = null;
+  fullOut.set(key, String(m.text ?? ""));
+  if (isViewed(m.sid, m.agent)) renderLog();
 }
 function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
-  const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `ran ${n} commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
+  const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `${n} Bash commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
     Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills`, Watched: n => `started ${n} monitors` };
-  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "ran 1 command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor" };
+  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "1 Bash command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor" };
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
-    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span></div>`).join("")}</div></details></div>`;
+    <div class="body">${run.map(t => {
+      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}">${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}">${row}</div>`;
+    }).join("")}</div></details></div>`;
 }
 
+/* a step's display name: the tool's Claude Code CLI name, as in the terminal; MCP tools read "server tool" */
+function toolName(t) { return t.name && !t.name.startsWith("mcp__") ? (t.name === "Task" ? "Agent" : t.name) : t.verb; }
 /* ---------- files changed ---------- */
 function splitPath(f) {
   const m = f.match(/^(~\/dev\/[^/]+\/\.claude\/worktrees\/[^/]+)\/(.*)$/) || f.match(/^(~\/dev\/[^/]+)\/(.*)$/) || f.match(/^(~\/\.claude\/[^/]+(?:\/[^/]+)?)\/([^/]+)$/) || f.match(/^(.*)\/([^/]+)$/);
@@ -53,9 +88,12 @@ const OPENABLE = /\.(html?|svg|png|jpe?g|gif|webp|pdf)$/i;
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
 const openable = f => absOf(f).startsWith("/");
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
-function filesHTML(patches, key) { // key: stable diff ids, so an open diff stays open when the block is redrawn
+/* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
+   shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
+function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
   let fileSeq = 0;
-  if (!patches.length) return "";
+  more = Math.max(0, +more || 0);
+  if (!patches.length && !more) return "";
   const byFile = new Map();
   for (const p of patches) {
     const f = byFile.get(p.file) || { file: p.file, add: 0, del: 0, created: false, list: [] };
@@ -63,18 +101,19 @@ function filesHTML(patches, key) { // key: stable diff ids, so an open diff stay
   }
   const roots = new Map();
   for (const f of byFile.values()) { const [r, rel] = splitPath(f.file); (roots.get(r) || roots.set(r, []).get(r)).push({ ...f, rel }); }
-  const total = byFile.size;
+  const total = byFile.size + more;
   let body = "";
   for (const [root, files] of roots) {
     body += `<div class="root">${esc(root)}</div><div class="flist">`;
     for (const f of files) {
-      const id = esc(`diff-${key}-${fileSeq++}`);
+      const id = esc(`diff-${key}-${fileSeq++}`), diffs = f.list.filter(p => !p.bare);
       body += `<div class="frow"><span class="lcorner" aria-hidden="true"></span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
-        <button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
-        <div class="diff" id="${id}" hidden>${f.list.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
+        ${diffs.length ? `<button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
+        <div class="diff" id="${id}" hidden>${diffs.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>` : `<span></span></div>`}`;
     }
     body += `</div>`;
   }
+  if (more) body += `<div class="root">and ${more} more file${more > 1 ? "s" : ""}</div>`;
   return `<div class="ln tool files"><span class="g">●</span><div><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}, click one to see the diff</span>${body}</div></div>`;
 }
 
@@ -129,7 +168,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.map(t => t.patch), key)]); } turnPatches = []; };
+  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   const prompt = (html, ts, key) => {
     flush(); endTurn();
@@ -141,7 +180,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "tool" && it.answer) { prompt(esc(it.answer), it.ts, `ans:${it.id}`); lastTs = it.ts; }
     /* a plan whose process ended before you answered (plan section 7) */
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
-    if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
+    if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
     flush();
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
@@ -175,7 +214,7 @@ const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<d
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
    compacting, rate limited or no updates instead, and say a message you sent is queued. */
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   if (stateOf(s) !== "green") return "";
   const t = [...s.items].reverse().find(x => x.k === "tool");
@@ -202,7 +241,7 @@ function statusLine(s) {
   const last = [...s.items].reverse();
   if (st === "green") {
     const t = last.find(x => x.k === "tool");
-    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div>`;
+    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div>`;
   }
   if (s.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
   if (st === "red") {
@@ -331,9 +370,10 @@ function patchChildren(parent, entries) {
   }
   for (const [k, el] of old) if (!seen.has(k)) el.remove();
 }
-/* open <details> (by position) and expanded diffs (by id) survive a redraw of their block */
+/* open <details> (by position) and expanded diffs (by id) survive a redraw of their block; steps
+   carry their own open state (openSteps, by item id) */
 function carryState(from, to) {
-  const was = [...from.querySelectorAll("details")], now = [...to.querySelectorAll("details")];
+  const was = [...from.querySelectorAll("details:not([data-step])")], now = [...to.querySelectorAll("details:not([data-step])")];
   was.forEach((d, i) => { if (now[i]) now[i].open = d.open; });
   from.querySelectorAll(".diff:not([hidden])").forEach(d => {
     const n = to.querySelector(`#${CSS.escape(d.id)}`); if (!n) return;
@@ -350,9 +390,10 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-earlier], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
+  else if (t.dataset.full) showAll(t.dataset.full);
   else if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
@@ -369,6 +410,11 @@ conv.addEventListener("click", e => {
   else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
   else if (t.id === "model-label") openModelPicker();
 });
+/* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */
+conv.addEventListener("toggle", e => {
+  const d = e.target; if (!d.dataset || !d.dataset.step) return;
+  if (d.open) openSteps.add(stepKey(d.dataset.step)); else openSteps.delete(stepKey(d.dataset.step));
+}, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
    (plan section 2), so the app and Chrome behave the same */
 document.addEventListener("click", e => {

@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord } from './tail.ts';
-import { Transcript, findTranscript, sessionDirOf } from './transcript.ts';
+import { Transcript, findTranscript, sessionDirOf, readResult } from './transcript.ts';
 import type { Item } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
@@ -131,9 +131,9 @@ export class Views {
     const tail = { pollMs: this.opts.pollMs, watch: this.opts.watch };
     s.tailer = new Tailer(file, {
       ...tail,
-      onRecords: (records) => {
+      onRecords: (records, spans) => {
         if (!s.cwd) s.cwd = cwdOf(records);
-        s.t.pushAll(records);
+        s.t.pushAll(records, spans);
         if (this.opts.onAssistant) landed(records, (mid, types) => this.opts.onAssistant?.(s.id, mid, types));
         this.queue(s);
       },
@@ -151,8 +151,8 @@ export class Views {
         const tailer = new Tailer(afile, {
           pollMs: 0,
           watch: false,
-          onRecords: (records) => {
-            t.pushAll(records);
+          onRecords: (records, spans) => {
+            t.pushAll(records, spans);
             s.t.setAgent(aid, undefined); // its total, start and end changed
             this.queue(s);
           },
@@ -400,6 +400,22 @@ export class Views {
     const upsert = t.items.slice(start, end);
     client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert, total: t.total, reset: false, prepend: true });
     return upsert.length;
+  }
+
+  // `toolOutput` from a page: the full result of one tool, read again from its record's line in the
+  // file (only its preview is kept in memory). A toast when the file is gone or was rewritten.
+  toolOutput(client: Client, sid: string, agent: string | null, toolUseId: string): boolean {
+    const s = this.live.get(sid);
+    const t = this.transcriptOf(sid, agent);
+    const file = agent ? s?.children.get(agent)?.tailer.path : s?.path;
+    const span = t?.resultSpan(toolUseId);
+    const text = file && span ? readResult(file, span, toolUseId) : null;
+    if (text === null) {
+      client.send({ t: 'toast', text: "Synopia couldn't read that result again: the transcript file is gone or was rewritten." });
+      return false;
+    }
+    client.send({ t: 'toolOutput', sid, agent: agent || null, toolUseId, text, truncated: false });
+    return true;
   }
 
   // detail: the queued count and the retry of status.ts, for the page's words.
