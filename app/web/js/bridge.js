@@ -96,6 +96,9 @@ function renamed(from, to) {
   for (const l of [layout, store.layout]) if (l) { l.groups.forEach(g => g.ids = swap(g.ids)); l.others = swap(l.others); }
   if (mounted && mounted.startsWith(from + "|")) mounted = to + mounted.slice(from.length);
   if (viewing && viewing.sid === from) viewing.sid = to;
+  /* a card still up moves with it, with what you picked on it */
+  if (store.pending.has(from)) { store.pending.set(to, store.pending.get(from)); store.pending.delete(from); }
+  for (const k of Object.keys(qstate)) if (k.startsWith(from + ":")) { qstate[to + k.slice(from.length)] = qstate[k]; delete qstate[k]; }
 }
 
 /* the ?agent= and ?open= hooks, once the view they need has its items */

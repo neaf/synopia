@@ -185,3 +185,30 @@ test('model: a new session with no choice shows settings.model, not the CLI defa
   views.open('new-1', { cwd: '/tmp/x' });
   assert.equal((views.sessions() as { id: string; model: unknown }[]).find((s) => s.id === 'new-1')!.model, 'haiku');
 });
+
+test('rekey: a card, the held messages and the stream preview move to the new id (L5)', () => {
+  const { views } = setup(CLAUDE);
+  views.open('new-2', { cwd: '/tmp/x' });
+  views.setPending('new-2', { id: 'r1', kind: 'question', since: 1 });
+  views.setHeld('new-2', ['wait']);
+  views.setStream('new-2', 'Partly');
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000cd';
+  views.rekey('new-2', id);
+  assert.deepEqual(views.pending().map((p) => [p.sid, p.request.id]), [[id, 'r1']]);
+  views.clearPending(id, 'r1');
+  assert.deepEqual(views.pending(), []);
+  const s = (views.sessions() as { id: string; held: string[]; stream: string | null }[]).find((x) => x.id === id)!;
+  assert.deepEqual([s.held, s.stream], [['wait'], 'Partly']);
+});
+
+test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000ce';
+  const dir = tempSession(id, you(1) + line({ type: 'ai-title', aiTitle: 'Count the lines', sessionId: id }));
+  const clients = new Set<Client>();
+  let written: { title?: string } | undefined;
+  const views = new Views({ claudeDir: dir, clients: () => clients, home: HOME, pollMs: 0, watch: false, written: () => written });
+  views.open(id);
+  assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Count the lines', '']);
+  written = { title: 'Counting fixture lines' };
+  assert.deepEqual([views.meta(id)?.title, views.meta(id)?.name], ['Counting fixture lines', 'Count the lines']);
+});

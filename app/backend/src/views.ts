@@ -20,7 +20,7 @@ export const WINDOW = 160;
 
 export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'plan'; since: number; [k: string]: unknown };
 export type SessionMeta = {
-  id: string; title: string; now: string; cwd: string; prs: unknown[];
+  id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   status: Status; statusAt: number; model: unknown; effort: unknown;
 };
 
@@ -170,6 +170,10 @@ export class Views {
     const n = this.live.get(newId) as Live;
     n.status = s.status;
     n.statusAt = s.statusAt;
+    // the driver's state moves too: a card still up, the messages held behind it, the preview
+    n.pending = s.pending;
+    n.held = s.held;
+    n.stream = s.stream;
     const meta = this.metaOf(n);
     n.sent = JSON.stringify(meta);
     this.broadcast({ t: 'session', replaces: oldId, ...meta });
@@ -239,10 +243,14 @@ export class Views {
     const ch = this.opts.choice?.(s.id);
     let statusAt = s.statusAt;
     if (!s.status) statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
+    // Section 10: your rename, then Claude's title, then the CLI's ai-title.
+    const title = t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session';
     return {
       id: s.id,
-      // Section 10: your rename, then Claude's title, then the CLI's ai-title.
-      title: t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session',
+      title,
+      // R3.4: the CLI's own name for it (its ai-title), shown small in the header so you recognise
+      // it from the terminal; left out while it is the title itself.
+      name: t.aiTitle && t.aiTitle !== title ? t.aiTitle : '',
       now: w?.now ?? '',
       cwd: tilde(s.cwd, this.home),
       prs: t.prs,

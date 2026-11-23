@@ -18,7 +18,7 @@ import type { StatusEntry } from './status.ts';
 import { NeedsYou } from './pending.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
-import type { Store, Layout } from './store.ts';
+import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 
@@ -159,6 +159,14 @@ export class Sessions {
 
   has(id: string): boolean {
     return this.live.has(this.resolve(id));
+  }
+
+  // The ids a stored layout may hold: the open list and the new sessions not stored yet, so a
+  // placeholder dragged into a group keeps its place until init renames it there.
+  layoutEntries(): OpenEntry[] {
+    const placeholders = [...this.live.values()].filter((a) => a.placeholder)
+      .map((a) => ({ id: a.id, cwd: a.cwd, openedAt: 0, closedAt: null }));
+    return [...this.store.state.open, ...placeholders];
   }
 
   // The sessions with a running turn, for the quit check.

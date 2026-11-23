@@ -112,7 +112,7 @@ if (!fake) {
 
 // The open sessions: state.json's open list, or every fixture session under --fake.
 function openEntries(): OpenEntry[] {
-  if (!fake) return store.state.open;
+  if (!fake) return sessions ? sessions.layoutEntries() : store.state.open;
   return views.ids().map((id) => ({ id, cwd: views.meta(id)?.cwd ?? '', openedAt: 0, closedAt: null }));
 }
 

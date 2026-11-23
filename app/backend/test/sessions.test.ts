@@ -7,7 +7,7 @@ import { Views } from '../src/views.ts';
 import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
 import { STATE_FLAG } from '../src/driver.ts';
 import type { QueryFn } from '../src/driver.ts';
-import { openStore } from '../src/store.ts';
+import { openStore, reconcileLayout } from '../src/store.ts';
 import type { Client } from '../src/server.ts';
 import type { CanUseTool, Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
@@ -930,4 +930,21 @@ test('status: an interrupt after the result, or one that failed, does not stop t
   state('idle', 'u-i3');
   await tick();
   assert.equal(t.take('session').at(-1)?.status, 'idle');
+});
+
+test('layout: a new session dragged into a group keeps its place through init (L2)', async () => {
+  const t = setup();
+  const ph = t.sessions.newSession();
+  const st = t.store.state;
+  st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [ph] }], others: [] }, st.layout, t.sessions.layoutEntries());
+  assert.deepEqual(st.layout.groups.map((g) => g.ids), [[ph]], 'the placeholder is kept');
+  t.sessions.send(ph, 'hi');
+  await tick();
+  emit(t.q.calls[0], init(REAL));
+  await tick();
+  assert.deepEqual(st.layout.groups.map((g) => g.ids), [[REAL]]);
+  assert.deepEqual(st.layout.others, [], 'not also under Not in a group');
+  // an id no session has is still dropped
+  st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [REAL, 'new-gone'] }], others: [] }, st.layout, t.sessions.layoutEntries());
+  assert.deepEqual(st.layout.groups[0].ids, [REAL]);
 });
