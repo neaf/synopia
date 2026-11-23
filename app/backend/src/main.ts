@@ -15,6 +15,7 @@ import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
 import { Writer } from './writer.ts';
+import { Menus } from './menu.ts';
 import type { Image } from './sessions.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
@@ -79,8 +80,11 @@ const views = new Views({
   onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
   written: (sid) => store.state.written[sid],
   answerOf: (toolUseId) => store.state.answers[toolUseId],
+  choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
+// Slice 5: the slash menu and the model list per folder (the fake driver has its own).
+const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log });
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
 // Slice 6: Claude-written titles and Now lines, after each turn and on open.
 const writer = fake ? null : new Writer({
@@ -97,6 +101,10 @@ if (!fake) {
     store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined,
     onTurnEnded: (sid) => writer?.turnEnded(sid),
     onOpened: (sid) => writer?.opened(sid),
+    onCommands: (sid, commands) => {
+      const folder = views.meta(sid)?.cwd;
+      if (folder) menus?.commandsChanged(folder, commands);
+    },
   });
 }
 
@@ -108,7 +116,19 @@ function openEntries(): OpenEntry[] {
 
 function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   if (msg.t === 'view' && typeof msg.sid === 'string') {
-    views.view(client, sessions ? sessions.resolve(msg.sid) : msg.sid, typeof msg.agent === 'string' ? msg.agent : null);
+    const sid = sessions ? sessions.resolve(msg.sid) : msg.sid;
+    views.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null);
+    const folder = views.meta(sid)?.cwd, abs = sessions?.cwdOf(sid);
+    if (menus && sessions && folder && abs) void menus.viewed(client, folder, abs, sessions.menuSource(sid));
+  } else if (msg.t === 'setModel' && typeof msg.sid === 'string' && typeof msg.model === 'string') {
+    const effort = typeof msg.effort === 'string' && msg.effort ? msg.effort : null;
+    if (sessions) {
+      void sessions.setModel(msg.sid, msg.model, effort).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
+    } else { // the fake driver: stored and shown, nothing runs
+      store.state.models[msg.sid] = { model: msg.model, effort };
+      store.changed();
+      views.refresh(msg.sid);
+    }
   } else if (sessions && msg.t === 'newSession') {
     sessions.newSession();
   } else if (sessions && msg.t === 'listRecent') {
@@ -161,7 +181,7 @@ try {
       sessions: views.sessions(),
       layout: store.state.layout,
       reviewed: store.state.reviewed,
-      menu: fake ? fake.menu() : {},
+      menu: fake ? fake.menu() : menus?.all() ?? {},
       settings: store.state.settings,
       pending: views.pending(),
     }),
