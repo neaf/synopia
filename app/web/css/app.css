@@ -204,10 +204,11 @@ details.fold .body { margin-top: 5.5px; }
 .slash .eff-o[aria-checked="true"] { border-color: var(--link); color: var(--link); }
 /* "Interrupt?": the message box asks before Esc, Esc stops the turn; what you typed stays underneath */
 .int-ask { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
-.int-ask b { color: var(--red); font-weight: 700; }
+/* in ink, not red: red is kept for needs you (and the failed square), and interrupting is neither */
+.int-ask b { color: var(--ink); font-weight: 700; }
 .composer.asking .int-ask { display: block; }
 .composer.asking textarea, .composer.asking .attach { visibility: hidden; }
-body[data-mode] .composer.asking > .g { color: var(--red); }
+body[data-mode] .composer.asking > .g { color: var(--ink); }
 /* the Open list: past sessions over the main area, rows drawn like the command menu's */
 .app > .side { grid-column: 1; grid-row: 1; }
 .app > .conv { grid-column: 2; grid-row: 1; }
@@ -516,7 +517,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 
 /* marks in the transcript gutter sit where the ● glyph sits: centred on the first character cell and the first line */
 .ln > .g { position: relative; }
-.ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.5ch - 5px); top: calc(.725em - 5px); }
+/* em and ch here are the mark's own 10px: the ● centre is .5ch and .725em of the 12px line, so .6ch and .87em of 10px */
+.ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(.87em - .5em); }
 
 .doneln { color: var(--ink-3); margin-bottom: 16px; }
 .doneln > .g > .ind { opacity: .55; }
@@ -706,6 +708,8 @@ button.acc:hover { background: var(--sub); }
 @media (max-width: 684px) {
   .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
   .side { max-height: 44vh; }
+  /* the placements set for the Open list would keep two columns: stack the sidebar over the main area */
+  .app > .conv, .open-list { grid-column: 1; grid-row: 2; }
   .conv { min-height: 90vh; }
   .c-head { grid-template-columns: 1fr; }
   .c-acts { grid-row: auto; grid-column: 1; }
