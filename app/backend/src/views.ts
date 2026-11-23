@@ -344,11 +344,12 @@ export class Views {
   }
 
   // Slice 5: the session's process ended at `at` (ms): its background work and subagents that
-  // were still running read as stopped, and pages get the changed ones.
-  processEnded(sid: string, at: number): void {
+  // were still running read as stopped (a foreground tool as failed when `failed`), and pages get
+  // the changed ones.
+  processEnded(sid: string, at: number, failed = false): void {
     const s = this.live.get(sid);
     if (!s) return;
-    s.t.processEnded(new Date(at).toISOString());
+    s.t.processEnded(new Date(at).toISOString(), failed);
     this.flush(s);
   }
 

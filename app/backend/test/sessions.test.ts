@@ -723,6 +723,7 @@ test('process end: background work of a failed or quit process reads as stopped,
   assert.ok(t.take('background').some((m) => (m.upsert as { status: string }[]).some((b) => b.status === 'stopped')), 'pages get it');
   assert.deepEqual(t.sessions.quitCheck().background, []);
   assert.equal(typeof t.store.state.ended[BG], 'number', 'stored');
+  assert.equal(t.store.state.endedFailed[BG], true, 'stored as a failure');
   t.sessions.stop();
   t.views.stop();
   // a restart: the transcript still says running, the stored end says stopped
@@ -744,6 +745,7 @@ test('process end: quit marks the work of every running process', async () => {
   await tick();
   t.sessions.stop();
   assert.equal(typeof t.store.state.ended[REAL], 'number');
+  assert.equal(t.store.state.endedFailed[REAL], undefined, 'a quit is no failure');
 });
 
 test('model: a choice without a process is stored and passed at the next start; default passes no model', async () => {

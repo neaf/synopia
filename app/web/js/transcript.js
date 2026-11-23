@@ -10,6 +10,7 @@ const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "
 
 function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
+    : t.state === "stopped" ? `<div class="res"><span>⎿</span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   return `<div class="ln tool ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
 }
@@ -24,7 +25,7 @@ function toolsHTML(run) {
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
-    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}</span></div>`).join("")}</div></details></div>`;
+    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span></div>`).join("")}</div></details></div>`;
 }
 
 /* ---------- files changed ---------- */

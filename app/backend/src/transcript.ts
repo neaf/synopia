@@ -145,6 +145,8 @@ export class Transcript {
   private answerOf: (toolUseId: string) => string | undefined;
   // Slice 5: the session's process ended then (ISO): work started before it can't still run.
   private ended: string | null = null;
+  private endedFailed = false; // that end was a process failure (else close, idle end or quit)
+  private interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
   // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
@@ -177,11 +179,12 @@ export class Transcript {
 
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
-    const keep = this.agentMeta, ended = this.ended;
+    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed;
     const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
     this.ended = ended;
+    this.endedFailed = endedFailed;
     this.metaChanged = true;
   }
 
@@ -279,6 +282,7 @@ export class Transcript {
         const r = obj(b);
         const tid = str(r.tool_use_id);
         this.results.set(tid, Boolean(r.is_error));
+        if (r.is_error && /^\[(Request interrupted by user|Tool call interrupted)/.test(textOf(r.content).trim())) this.interrupted.add(tid);
         if (this.asks.has(tid)) this.answers.set(tid, clip(textOf(r.content), 2000));
         this.refreshTool(tid);
       }
@@ -381,11 +385,14 @@ export class Transcript {
 
   // Slice 5: the session's process ended at `at` (close, idle end, quit, failure). Background shells,
   // monitors and subagents live inside it, so those started before then and still running read as
-  // stopped. A notification that arrives later still wins.
-  processEnded(at: string): void {
+  // stopped. A notification that arrives later still wins. A foreground tool started before then
+  // with no result reads as failed when the process failed (`failed`), else as stopped.
+  processEnded(at: string, failed = false): void {
     if (this.ended && this.ended >= at) return;
     this.ended = at;
+    this.endedFailed = failed;
     for (const tid of this.bg.keys()) this.stopIfEnded(tid);
+    for (const it of this.items) if (it.k === 'tool' && it.state === 'running') this.refreshTool(it.id);
     for (const [aid, a] of this.agentMeta) {
       const tid = str(a.meta?.toolUseId);
       if (tid) this.refreshTool(tid);
@@ -437,7 +444,9 @@ export class Transcript {
       let state: string;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
         state = note || !this.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
-      } else if (res !== undefined) state = res ? 'failed' : 'done';
+      } else if (res !== undefined) state = !res ? 'done' : this.interrupted.has(tid) ? 'stopped' : 'failed';
+      // A plan with no answer stays running: the page shows it as "Not answered".
+      else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
       else state = 'running';
       const patch = this.patches.get(tid);
       const answer = res !== undefined ? this.answerOf(tid) : undefined;

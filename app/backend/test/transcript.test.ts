@@ -414,3 +414,37 @@ test('process ended: kept across a rewrite, and applied to records read after it
   assert.equal(t.getBackground('toolu_lsh')!.status, 'stopped');
   assert.equal(fresh.getBackground('toolu_lsh')!.status, 'running', 'without an end it still runs');
 });
+
+test('process ended: a foreground tool left without a result reads as stopped, or failed when the process failed', () => {
+  const recs: JsonRecord[] = [
+    { type: 'assistant', uuid: 'f-a1', timestamp: at(1), message: { id: 'm1', content: [
+      { type: 'tool_use', id: 'toolu_fg', name: 'Bash', input: { command: 'sleep 60', description: 'Wait' } },
+      { type: 'tool_use', id: 'toolu_ok', name: 'Read', input: { file_path: '/tmp/a.txt' } },
+      { type: 'tool_use', id: 'toolu_plan', name: 'ExitPlanMode', input: { plan: 'Do it.' } }] } },
+    { type: 'user', uuid: 'f-u1', timestamp: at(2), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ok', content: 'a' }] } },
+  ];
+  const closed = new Transcript({ home: HOME });
+  closed.pushAll(recs);
+  assert.equal(byId(closed, 'toolu_fg').state, 'running');
+  closed.takeChanges();
+  closed.processEnded(at(10));
+  assert.equal(byId(closed, 'toolu_fg').state, 'stopped');
+  assert.ok(closed.takeChanges().items.includes('toolu_fg'), 'pages get it');
+  assert.equal(byId(closed, 'toolu_ok').state, 'done');
+  assert.equal(byId(closed, 'toolu_plan').state, 'running', 'an unanswered plan stays "Not answered"');
+  const failed = new Transcript({ home: HOME });
+  failed.processEnded(at(10), true); // as after a restart: the mark comes first, then the records
+  failed.reset();
+  failed.pushAll(recs);
+  assert.equal(byId(failed, 'toolu_fg').state, 'failed');
+  // a tool started after the end runs; a result the CLI wrote for an interrupt reads as stopped
+  failed.pushAll([
+    { type: 'assistant', uuid: 'f-a2', timestamp: at(20), message: { id: 'm2', content: [
+      { type: 'tool_use', id: 'toolu_new', name: 'Bash', input: { command: 'ls' } },
+      { type: 'tool_use', id: 'toolu_int', name: 'Bash', input: { command: 'sleep 9' } }] } },
+    { type: 'user', uuid: 'f-u2', timestamp: at(21), message: { role: 'user', content: [
+      { type: 'tool_result', tool_use_id: 'toolu_int', is_error: true, content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] }] } },
+  ]);
+  assert.equal(byId(failed, 'toolu_new').state, 'running');
+  assert.equal(byId(failed, 'toolu_int').state, 'stopped');
+});

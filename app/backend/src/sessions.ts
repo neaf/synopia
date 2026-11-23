@@ -423,20 +423,24 @@ export class Sessions {
     this.views.open(id, { cwd });
     this.views.setStatus(id, a.status.status, a.status.at);
     const ended = this.store.state.ended[id];
-    if (ended) this.views.processEnded(id, ended);
+    if (ended) this.views.processEnded(id, ended, this.store.state.endedFailed[id] === true);
     if (!placeholder) this.opts.onOpened?.(id);
     return a;
   }
 
   // Slice 5: the process ended (close, idle end, quit, failure): what ran inside it stopped. Stored,
-  // so the transcript reads the same after a restart or a reopen.
-  private ended(a: Active): void {
+  // so the transcript reads the same after a restart or a reopen. `failed`: the process failed, so
+  // a tool it left without a result reads as failed, not stopped.
+  private ended(a: Active, failed = false): void {
     const at = this.now();
     if (!a.placeholder) {
-      this.store.state.ended[a.id] = at;
+      const st = this.store.state;
+      st.ended[a.id] = at;
+      if (failed) st.endedFailed[a.id] = true;
+      else delete st.endedFailed[a.id];
       this.store.changed();
     }
-    this.views.processEnded(a.id, at);
+    this.views.processEnded(a.id, at, failed);
   }
 
   private statusChanged(a: Active, e: StatusEntry): void {
@@ -491,7 +495,7 @@ export class Sessions {
     this.setStreamClear(a);
     const failed = !ended;
     this.log('driver.exit', { sid: a.id, ended, error: Boolean(error) });
-    this.ended(a);
+    this.ended(a, failed);
     this.endNeeds(a);
     a.status.processEnded(failed);
     if (failed) {
@@ -542,7 +546,7 @@ export class Sessions {
     } else {
       for (const e of st.open) if (e.id === old) e.id = newId;
       st.layout = renameInLayout(st.layout, old, newId, false);
-      for (const k of ['models', 'rules', 'status', 'ended'] as const) {
+      for (const k of ['models', 'rules', 'status', 'ended', 'endedFailed'] as const) {
         const rec = st[k] as Record<string, unknown>;
         if (old in rec) { rec[newId] = rec[old]; delete rec[old]; }
       }
