@@ -249,12 +249,39 @@ function logEntries(s, A) {
   const items = A ? (A.items || []) : withPending(s.items, requestsOf(s));
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
-  if (hidden > 0) out.push(["earlier", `<p class="earlier">… ${hidden} earlier items not shown</p>`]);
+  if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   out.push(["live", liveLine(s, A)]);
   return out;
+}
+/* Earlier items: the server sends the page's last 160; the link asks for the 160 before the oldest
+   shown (`earlier`, plan section 5), and they come back as `items` with `prepend`. */
+const EARLIER = 160;
+let earlierAsked = null; // "<sid>|<agent>|<before>" until its reply, so a second click sends nothing
+const earlierHTML = hidden => `<p class="earlier"><button data-earlier>Show ${Math.min(EARLIER, +hidden)} earlier</button>${hidden > EARLIER ? ` (${+hidden} more)` : ""}</p>`;
+function loadEarlier() {
+  const s = cur(); if (!s || !mounted) return false;
+  const A = view && agentById(s, view), t = A || s, items = t.items || [];
+  if (!items.length || (t.total || 0) <= items.length) return false;
+  const key = `${s.id}|${view || ""}|${items[0].id}`;
+  if (earlierAsked !== key) { earlierAsked = key; send({ t: "earlier", sid: s.id, agent: view || null, before: items[0].id }); }
+  return true;
+}
+/* Renders the log after a prepend so the block you were reading stays where it was on screen. */
+function renderLogKeepingPlace() {
+  earlierAsked = null;
+  const log = document.getElementById("log"); if (!log) return renderLog();
+  const inner = log.querySelector(".log-inner"), top = log.getBoundingClientRect().top;
+  // a day separator's key moves with the first item of its day, so the anchor is an item's block
+  const anchor = [...inner.children].find(el => !/^(earlier|day:)/.test(el.dataset.key) && el.getBoundingClientRect().bottom > top);
+  const key = anchor?.dataset.key, off = anchor ? anchor.getBoundingClientRect().top - top : 0;
+  const height = log.scrollHeight, was = log.scrollTop;
+  renderLog();
+  const el = key && [...inner.children].find(c => c.dataset.key === key);
+  if (el) log.scrollTop += el.getBoundingClientRect().top - top - off;
+  else log.scrollTop = was + log.scrollHeight - height; // the block was regrouped: keep the distance from the end
 }
 /* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
 function renderLog() {
@@ -305,9 +332,10 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-agent], [data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-close], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
-  if (t.matches(".fc")) {
+  if (t.hasAttribute("data-earlier")) loadEarlier();
+  else if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
     e.preventDefault(); e.stopPropagation();

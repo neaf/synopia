@@ -127,6 +127,9 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     views.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null);
     const folder = views.meta(sid)?.cwd, abs = sessions?.cwdOf(sid);
     if (menus && sessions && folder && abs) void menus.viewed(client, folder, abs, sessions.menuSource(sid));
+  } else if (msg.t === 'earlier' && typeof msg.sid === 'string' && typeof msg.before === 'string') {
+    const sid = sessions ? sessions.resolve(msg.sid) : msg.sid;
+    views.earlier(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.before);
   } else if (msg.t === 'setModel' && typeof msg.sid === 'string' && typeof msg.model === 'string') {
     const effort = typeof msg.effort === 'string' && msg.effort ? msg.effort : null;
     if (sessions) {

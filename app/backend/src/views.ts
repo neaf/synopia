@@ -1,7 +1,8 @@
 // The transcripts service: one tailer and one reducer per open session and per subagent,
 // and the protocol messages that come from them (plan sections 5 and 7). It sends `session`
 // meta, `agents` and `background` to every page, and `items` only to the pages viewing that
-// conversation: a reset with the last WINDOW items on `view`, then upserts of changed ids.
+// conversation: a reset with the last WINDOW items on `view`, then upserts of changed ids, and
+// the WINDOW items before the oldest shown on `earlier`.
 // It also holds the status, the pending requests and the stream preview a driver sets.
 // A session opened before its file exists (a new one) looks for it again every second.
 import fs from 'node:fs';
@@ -310,6 +311,24 @@ export class Views {
     const sub: Sub = { sid, agent: agent || null, from: 0 };
     this.subs.set(client, sub);
     this.sendReset(client, sub);
+  }
+
+  // `earlier` from a page: the WINDOW items before `before` (the oldest item it shows), sent with
+  // `prepend`. The page's window grows to them, so later upserts of those items reach it too.
+  // A reply only for the conversation the page views, and only while `before` is still in it
+  // (after a rewrite the page gets a reset instead). Returns how many items went out.
+  earlier(client: Client, sid: string, agent: string | null, before: string): number {
+    const sub = this.subs.get(client);
+    if (!sub || sub.sid !== sid || sub.agent !== (agent || null)) return 0;
+    const t = this.transcriptOf(sub.sid, sub.agent);
+    if (!t) return 0;
+    const end = t.items.findIndex((i) => i.id === before);
+    if (end < 0) return 0;
+    const start = Math.max(0, end - WINDOW);
+    sub.from = Math.min(sub.from, start);
+    const upsert = t.items.slice(start, end);
+    client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert, total: t.total, reset: false, prepend: true });
+    return upsert.length;
   }
 
   setStatus(sid: string, status: Status, at = Date.now()): void {
