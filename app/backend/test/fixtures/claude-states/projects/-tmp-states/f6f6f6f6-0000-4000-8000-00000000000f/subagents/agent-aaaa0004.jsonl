@@ -1,0 +1,2 @@
+{"type":"user","uuid":"aaaa0004-u1","timestamp":"2026-11-20T13:00:09.000Z","isSidechain":true,"agentId":"aaaa0004","sessionId":"f6f6f6f6-0000-4000-8000-00000000000f","message":{"role":"user","content":"Draft the demo release notes."}}
+{"type":"assistant","uuid":"aaaa0004-a1","timestamp":"2026-11-20T13:11:59.000Z","isSidechain":true,"agentId":"aaaa0004","sessionId":"f6f6f6f6-0000-4000-8000-00000000000f","message":{"role":"assistant","content":[{"type":"text","text":"Sent the notes."}]}}

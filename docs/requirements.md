@@ -182,9 +182,14 @@ These requirements come from a day of prototyping against the user's real sessio
 
 - R8.1 Motion only on running things, and it always moves: linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes.
 - R8.2 Session status marks:
-  - working: agent mark turning
-  - needs you: two red pause stripes seesawing
-  - your turn: still grey square ("stopped, waiting for you")
+  - working: agent mark turning. Also while the main turn is over but background subagents or forks still run, in every open session.
+  - working with a message queued: the same mark with a blue centre, "Working, 1 message queued". The message was sent during the turn and Claude hasn't read it yet.
+  - compacting: green rings shrinking inward, "Compacting context".
+  - rate limited: amber dashes turning backwards, "Rate limited, retrying in 38s", with the attempt in the transcript. Claude Code retries a throttled request on its own.
+  - no updates: the working arc frozen and grey, "No updates for 16 min". A turn runs but nothing came for 15 minutes; the session may be gone.
+  - signed out: red lock, "Signed out". The sign-in expired (for Bedrock, `aws sso login`); it clears when the next turn starts or a reply gets through.
+  - needs you: two red pause stripes seesawing. It wins over every other status.
+  - your turn: still grey square ("stopped, waiting for you"), only when nothing of Claude's runs except shells and monitors. Its age counts from when the last subagent finished.
   - stopped by you: grey square
   - done: grey check
   - failed: red square
@@ -287,4 +292,5 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 
 ## 14. Not decided yet
 
-- The stale or disconnected, rate-limited, compacting, credentials-expired and queued states are designed (status storyboard) but not wired to data.
+- The sidebar banner for signed out ("2 sessions are blocked. Run aws sso login") from the status storyboard: the row and the status line show it, the banner isn't built.
+- Plan rate limits (five-hour and weekly): the SDK documents them as unavailable on Bedrock, so only retries on throttling show.

@@ -426,6 +426,31 @@ test('sessions: statuses go working, then your turn; a failed process is failed 
   assert.equal(q.calls[1].options.resume, REAL);
 });
 
+test('sessions: the driver passes every message to the status: compacting, queued, signed out', async () => {
+  const { sessions, q, take } = setup();
+  const ph = sessions.newSession();
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running' });
+  emit(q.calls[0], { type: 'system', subtype: 'status', status: 'compacting' });
+  await tick();
+  assert.equal(take('session').at(-1)?.status, 'compacting');
+  emit(q.calls[0], { type: 'system', subtype: 'status', status: null });
+  await tick();
+  sessions.send(REAL, 'and this', [], Q_SENT);
+  await tick();
+  const s = take('session').at(-1) as { status: string; statusDetail: { queued?: number } };
+  assert.equal(s.status, 'busy');
+  assert.deepEqual(s.statusDetail, { queued: 1 });
+  emit(q.calls[0], { type: 'assistant', parent_tool_use_id: null, error: 'authentication_failed', user_message_uuids: [Q_SENT], message: { content: [] } });
+  emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
+  await tick();
+  const end = take('session').at(-1) as { status: string; statusDetail: object };
+  assert.equal(end.status, 'signedout');
+  assert.deepEqual(end.statusDetail, {});
+});
+const Q_SENT = '0e9b7f1c-0000-4000-8000-0000000000b1';
+
 test('sessions: a missing folder fails without starting a process', () => {
   const { sessions, store, q, take } = setup();
   store.state.settings.newSessionCwd = '/tmp/synopia-no-such-folder-' + process.pid;

@@ -143,7 +143,7 @@ function renderCard() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
   const pa = !A && pendingAsk(s);
-  const html = pa ? qaHTML(s, pa) : !A && stateOf(s) === "red" ? statusLine(s) : "";
+  const html = pa ? qaHTML(s, pa) : !A && (stateOf(s) === "red" || s.status === "signedout") ? statusLine(s) : "";
   if (still(html) === lastCard) return;
   lastCard = still(html);
   const dock = conv.querySelector(".dock-inner"), composer = dock.querySelector(".composer");

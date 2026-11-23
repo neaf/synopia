@@ -404,6 +404,12 @@ export class Sessions {
     this.store.flush();
   }
 
+  // From the transcripts service: the session's running subagents and forks changed (R8.2: a
+  // session whose subagents run is working, also with no process of Synopia's).
+  agentsChanged(sid: string, running: number): void {
+    this.live.get(sid)?.status.setAgents(running);
+  }
+
   // From the transcripts service: an assistant record of a main conversation landed.
   landed(sid: string, messageId: string, types: string[]): void {
     const a = this.live.get(sid);
@@ -425,7 +431,8 @@ export class Sessions {
     };
     this.live.set(id, a);
     this.views.open(id, { cwd });
-    this.views.setStatus(id, a.status.status, a.status.at);
+    this.views.setStatus(id, a.status.status, a.status.at, a.status.detail);
+    a.status.setAgents(this.views.agentsRunning(id)); // working while its subagents or forks run
     const ended = this.store.state.ended[id];
     if (ended) this.views.processEnded(id, ended, this.store.state.endedFailed[id] === true);
     if (!placeholder) this.opts.onOpened?.(id);
@@ -448,12 +455,13 @@ export class Sessions {
   }
 
   private statusChanged(a: Active, e: StatusEntry): void {
-    this.views.setStatus(a.id, e.status, e.at);
-    if (!a.placeholder) {
+    this.views.setStatus(a.id, e.status, e.at, e.detail);
+    const kept = this.store.state.status[a.id];
+    if (!a.placeholder && (kept?.status !== e.status || kept?.at !== e.at)) {
       this.store.state.status[a.id] = { status: e.status, at: e.at };
       this.store.changed();
     }
-    if (e.status === 'busy' || e.status === 'waiting') this.clearIdle(a);
+    if (a.status.working || e.status === 'waiting') this.clearIdle(a);
     else this.armIdle(a);
   }
 
@@ -480,7 +488,12 @@ export class Sessions {
     }
     const start = this.startOptions(a);
     const proc: SessionProcess = new SessionProcess(start, {
-      onMessage: (m) => { if (a.proc === proc) this.onMessage(a, m as Msg); },
+      onMessage: (m) => {
+        if (a.proc !== proc) return;
+        a.status.observe(m); // signed out, no updates, rate limited, compacting, queued (status.ts)
+        this.onMessage(a, m as Msg);
+      },
+      onPush: (uuid) => a.status.pushed(uuid),
       onExit: (error, ended) => this.onExit(a, proc, error, ended),
       canUseTool: (name, input, o) => {
         this.log('driver.ask', { sid: a.id, tool: name, agent: Boolean(o.agentID) });

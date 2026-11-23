@@ -42,3 +42,21 @@ test('fake driver: opens every fixture session and plays the script', async () =
   fake.stop();
   views.stop();
 });
+
+test('fake driver: the states fixture plays one session per wired state, with its detail', () => {
+  const dir = path.join(import.meta.dirname, 'fixtures', 'claude-states');
+  const script = loadScript(dir);
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: script.home, pollMs: 0, watch: false });
+  const fake = new FakeDriver(views, script);
+  fake.start(dir);
+  fake.stop();
+  fake.runAll();
+  const got = views.sessions() as { id: string; status: string; statusDetail: { queued?: number; retry?: { attempt: number; at: number } } }[];
+  // the last has no scripted status: its subagents run, so its transcript alone reads working
+  assert.deepEqual(got.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy']);
+  assert.ok(views.agentsRunning(got[5].id) > 0);
+  assert.equal(got[0].statusDetail.queued, 1);
+  assert.equal(got[2].statusDetail.retry?.attempt, 3);
+  assert.ok((got[2].statusDetail.retry?.at ?? 0) > Date.now());
+  views.stop();
+});

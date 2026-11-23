@@ -2,11 +2,10 @@
 /* ---------- sidebar ---------- */
 let KEYS = [];
 function rowHTML(s) {
-  const st = stateOf(s);
-  return `<button class="row" data-id="${s.id}" data-state="${st}" aria-current="${s.id === current}">
+  return `<button class="row" data-id="${s.id}" data-state="${toneOf(s)}" aria-current="${s.id === current}">
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
-      <span class="r-state">${st === "green" ? WORD.green : `${wordOf(s)}, ${age(s.statusAt)}`}</span>
+      <span class="r-state">${rowWord(s)}</span>
       ${s.now ? `<span class="r-now">${esc(s.now)}</span>` : ""}
       ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
       ${(n => n ? `<span class="r-agent"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
@@ -16,6 +15,16 @@ function rowHTML(s) {
     <span class="merge-hint">+ New group</span>
     <span class="r-side" title="${esc(wordOf(s))}">${sessionMark(s)}</span>
   </button>`;
+}
+/* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
+function rowWord(s) {
+  const st = stateOf(s), d = s.statusDetail || {}, n = d.queued;
+  if (st === "red") return `${wordOf(s)}, ${age(s.statusAt)}`;
+  if (s.status === "busy") return n ? `Working, ${n} message${n > 1 ? "s" : ""} queued` : WORD.green;
+  if (s.status === "compacting") return "Compacting context";
+  if (s.status === "retrying") return `Rate limited, retrying${d.retry ? ` ${until(d.retry.at)}` : ""}`;
+  if (s.status === "stale") return `No updates for ${age(s.statusAt)}`;
+  return `${wordOf(s)}, ${age(s.statusAt)}`;
 }
 /* ---------- layout: groups and order are yours; the backend stores it (state.json), nothing is in localStorage ---------- */
 let layout = null; // null until hello; renderSide copies it from the store
@@ -75,7 +84,7 @@ function closeSession(s) {
   const plural = (c, one, many) => c ? [`${c} ${c === 1 ? one : many}`] : [];
   const work = [...plural(agentsOf(s).filter(a => !a.finished).length, "subagent", "subagents"),
     ...plural(n("shell"), "background shell", "background shells"), ...plural(n("monitor"), "monitor", "monitors")];
-  const turn = s.status === "busy" || s.status === "waiting";
+  const turn = turnRuns(s);
   const list = work.length > 1 ? `${work.slice(0, -1).join(", ")} and ${work.at(-1)}` : work[0];
   if (turn || work.length) {
     const what = turn && list ? `Claude is working, and ${list} will stop.` : turn ? "Claude is working, and its turn will stop." : `${list} will stop.`;

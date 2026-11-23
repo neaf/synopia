@@ -1,0 +1,2 @@
+{"type":"user","uuid":"aaaa0006-u1","timestamp":"2026-11-20T13:00:11.000Z","isSidechain":true,"agentId":"aaaa0006","sessionId":"f6f6f6f6-0000-4000-8000-00000000000f","message":{"role":"user","content":"Count the demo files."}}
+{"type":"assistant","uuid":"aaaa0006-a1","timestamp":"2026-11-20T13:01:00.000Z","isSidechain":true,"agentId":"aaaa0006","sessionId":"f6f6f6f6-0000-4000-8000-00000000000f","message":{"role":"assistant","content":[{"type":"text","text":"12 files."}]}}

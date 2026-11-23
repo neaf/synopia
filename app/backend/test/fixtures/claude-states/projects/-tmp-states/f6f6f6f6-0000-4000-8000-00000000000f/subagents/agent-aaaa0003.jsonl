@@ -1,0 +1,2 @@
+{"type":"user","uuid":"aaaa0003-u1","timestamp":"2026-11-20T13:00:08.000Z","isSidechain":true,"agentId":"aaaa0003","sessionId":"f6f6f6f6-0000-4000-8000-00000000000f","message":{"role":"user","content":"Try the other approach."}}
+{"type":"assistant","uuid":"aaaa0003-a1","timestamp":"2026-11-20T13:09:50.000Z","isSidechain":true,"agentId":"aaaa0003","sessionId":"f6f6f6f6-0000-4000-8000-00000000000f","message":{"role":"assistant","content":[{"type":"text","text":"The other approach works."}]}}

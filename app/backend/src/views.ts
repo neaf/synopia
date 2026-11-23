@@ -13,7 +13,8 @@ import type { Item } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import type { Status } from './status.ts';
+import { agentsStatus } from './status.ts';
+import type { Status, StatusDetail } from './status.ts';
 
 export type { Status } from './status.ts';
 export const WINDOW = 160;
@@ -21,7 +22,7 @@ export const WINDOW = 160;
 export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'plan'; since: number; [k: string]: unknown };
 export type SessionMeta = {
   id: string; title: string; now: string; cwd: string; prs: unknown[];
-  status: Status; statusAt: number; model: unknown; effort: unknown;
+  status: Status; statusAt: number; statusDetail: StatusDetail; model: unknown; effort: unknown;
 };
 
 type Sub = { sid: string; agent: string | null; from: number };
@@ -29,7 +30,7 @@ type Child = { t: Transcript; tailer: Tailer };
 type Live = {
   id: string; path: string | null; cwd: string; t: Transcript;
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
-  status: Status | null; statusAt: number; stream: string | null; pending: PendingRequest[]; held: string[];
+  status: Status | null; statusAt: number; statusDetail: StatusDetail; stream: string | null; pending: PendingRequest[]; held: string[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
   finder: NodeJS.Timeout | null;
 };
@@ -55,6 +56,8 @@ export type ViewsOptions = {
   defaultModel?: () => string | undefined;
   // After each message to the pages (the Dock badge recounts from it, debounced).
   onChange?: () => void;
+  // The session's subagents and forks changed: how many run now (status.ts setAgents).
+  onAgents?: (sid: string, running: number) => void;
 };
 
 // The transcript's effort: a level, or {level} on some records.
@@ -87,7 +90,7 @@ export class Views {
     const s: Live = {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
       tailer: null, watcher: null, children: new Map(),
-      status: null, statusAt: 0, stream: null, pending: [], held: [],
+      status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
       sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null,
     };
     this.live.set(id, s);
@@ -172,6 +175,7 @@ export class Views {
     const n = this.live.get(newId) as Live;
     n.status = s.status;
     n.statusAt = s.statusAt;
+    n.statusDetail = s.statusDetail;
     const meta = this.metaOf(n);
     n.sent = JSON.stringify(meta);
     this.broadcast({ t: 'session', replaces: oldId, ...meta });
@@ -234,13 +238,23 @@ export class Views {
     return s && this.metaOf(s);
   }
 
+  // The session's subagents and forks running now, by the transcript (0 when it isn't open).
+  agentsRunning(id: string): number {
+    const s = this.live.get(id);
+    return s ? runningAgents(s.t) : 0;
+  }
+
   private metaOf(s: Live): SessionMeta {
     const t = s.t;
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
     const w = this.opts.written?.(s.id);
     const ch = this.opts.choice?.(s.id);
     let statusAt = s.statusAt;
-    if (!s.status) statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
+    if (!s.status) {
+      statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
+      // your turn after background subagents: its age counts from when the last one finished
+      for (const a of t.agents()) if (a.end && !a.running) statusAt = Math.max(statusAt, Date.parse(a.end) || 0);
+    }
     return {
       id: s.id,
       // Section 10: your rename, then Claude's title, then the CLI's ai-title.
@@ -248,9 +262,11 @@ export class Views {
       now: w?.now ?? '',
       cwd: tilde(s.cwd, this.home),
       prs: t.prs,
-      // From the transcript until a driver sets it: your turn. "Stopped" is read from the items by the page.
-      status: s.status ?? 'idle',
+      // From the transcript until a driver sets it: working while subagents or forks run, else your
+      // turn (status.ts agentsStatus). "Stopped" is read from the items by the page.
+      status: s.status ?? agentsStatus(runningAgents(t)),
       statusAt,
+      statusDetail: s.statusDetail,
       model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
     };
@@ -312,11 +328,13 @@ export class Views {
     this.sendReset(client, sub);
   }
 
-  setStatus(sid: string, status: Status, at = Date.now()): void {
+  // detail: the queued count and the retry of status.ts, for the page's words.
+  setStatus(sid: string, status: Status, at = Date.now(), detail: StatusDetail = {}): void {
     const s = this.live.get(sid);
     if (!s) return;
     s.status = status;
     s.statusAt = at;
+    s.statusDetail = detail;
     this.flush(s);
   }
 
@@ -414,6 +432,7 @@ export class Views {
       this.broadcast({ t: 'session', ...meta });
     }
     if (ch.agents.length) {
+      this.opts.onAgents?.(s.id, runningAgents(s.t));
       this.broadcast({ t: 'agents', sid: s.id, upsert: ch.agents.map((id) => s.t.getAgent(id)).filter(Boolean) });
     }
     if (ch.background.length) {
@@ -448,6 +467,11 @@ export class Views {
     for (const c of this.opts.clients()) c.send(msg);
     this.opts.onChange?.();
   }
+}
+
+// The subagents and forks still running by the transcript's rule (shells and monitors aren't counted).
+function runningAgents(t: Transcript): number {
+  return t.agents().filter((a) => a.running).length;
 }
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {

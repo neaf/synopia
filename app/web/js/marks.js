@@ -58,7 +58,10 @@
 function sessionMarkKey(s) {
   const st = stateOf(s);
   if (st === "red") return "pause";
-  if (st === "green") return "work";
+  /* the storyboard's states (status.ts says what drives each): lock, frozen grey arc, amber dashes turning back, rings shrinking */
+  const phase = { signedout: "creds", stale: "stale", retrying: "ratelimit", compacting: "compact" }[s.status];
+  if (phase) return phase;
+  if (st === "green") return s.statusDetail?.queued ? "queued" : "work";
   if (s.status === "failed") return "failed";
   return "stopped"; // your turn: Claude stopped and waits for you (grey square), whether or not background work runs
 }
@@ -80,6 +83,8 @@ function bgMarkKey(x) {
   P.k_sub = ['', '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="4.4" stroke="var(--mk-7CC48F)" stroke-width="1.6"/><g class="rot" style="--d:1.4s"><circle cx="6" cy="1.6" r="1.8" fill="var(--mk-1A7F37)"/></g></svg>'];
   P.k_fork = ['', '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="4.4" stroke="var(--mk-E2D6F8)" stroke-width="1.4"/><g class="rot" style="--d:2.4s"><circle cx="6" cy="10.4" r="1.6" fill="var(--mk-8250DF)" transform="rotate(-50 6 6)"/></g><g class="rot rev" style="--d:2.4s"><circle cx="6" cy="10.4" r="1.6" fill="var(--mk-8250DF)" transform="rotate(50 6 6)"/></g></svg>'];
   P.k_shell = ['', '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 3.2 5 6 1.8 8.8" stroke="var(--mk-0B7A82)" stroke-width="1.8"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="var(--mk-B6E0E3)" stroke-width="1.9"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="var(--mk-0B7A82)" stroke-width="1.9" class="bounce"/></svg>'];
+  /* working with your message queued: the same turning arc, its centre in your blue (status storyboard) */
+  P.queued = ['', P.work[1].replace('<circle cx="6" cy="6" r="1.8" fill="var(--mk-1A7F37)"/>', '<circle cx="6" cy="6" r="1.8" fill="var(--mk-0550AE)"/>')];
   /* squares as SVG so they stay square at every size */
   P.stopped = ['', '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.3" y="2.3" width="7.4" height="7.4" rx="1.1" fill="var(--ink-3)"/></svg>'];
   P.failed = ['', '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.3" y="2.3" width="7.4" height="7.4" rx="1.1" fill="var(--red)"/></svg>'];

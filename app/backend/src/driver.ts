@@ -40,6 +40,8 @@ export type ProcessEvents = {
   onExit: (error: Error | null, ended: boolean) => void;
   // Parks the request until its card is answered or its signal aborts (pending.ts). Never null.
   canUseTool: CanUseTool;
+  // A message went into the input queue (status.ts counts the ones sent during a turn as queued).
+  onPush?: (uuid: string) => void;
 };
 
 // What an interrupt did: the texts of the messages it cancelled (they go back to the message
@@ -120,6 +122,7 @@ export class SessionProcess {
     this.sent.set(uuid, text);
     if (this.sent.size > KEEP_SENT) this.sent.delete(this.sent.keys().next().value as string);
     this.input.push(userMessage(content, uuid));
+    this.events.onPush?.(uuid);
   }
 
   // Interrupts the foreground turn (perTaskStopAffordance spares background work). With the
