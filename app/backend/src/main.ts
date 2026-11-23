@@ -86,7 +86,7 @@ const views = new Views({
 });
 const fake = script ? new FakeDriver(views, script, { log }) : null;
 // Slice 5: the slash menu and the model list per folder (the fake driver has its own).
-const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log });
+const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log, cacheFile: join(stateDir, 'menu-cache.json') });
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
 // Slice 6: Claude-written titles and Now lines, after each turn and on open.
 const writer = fake ? null : new Writer({

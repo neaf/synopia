@@ -132,3 +132,24 @@ test('menu: stop aborts an idle query that is still reading (L8)', async () => {
   assert.equal(signal?.aborted, true);
   assert.equal(closed, true);
 });
+
+test('menu: the model lists are kept across launches, so hello names the model at once', async () => {
+  const dir = tmp();
+  const cacheFile = path.join(tmp(), 'menu-cache.json');
+  const a = client();
+  const first = new Menus({ clients: () => new Set([a.c]), queryFn: idleFake().fn, cacheFile });
+  await first.viewed(a.c, '~/x', dir, null);
+  // the next launch, before any view
+  const q = idleFake();
+  const next = new Menus({ clients: () => new Set([a.c]), queryFn: q.fn, cacheFile });
+  const hello = next.all()['~/x'];
+  assert.deepEqual(hello.models.map((m) => [m.value, m.name, m.resolved]), [['default', 'Default', null], ['haiku', 'Haiku', 'claude-haiku-9']]);
+  assert.deepEqual(hello.commands, [], 'commands come with the first view');
+  a.got.length = 0;
+  await next.viewed(a.c, '~/x', dir, null);
+  assert.equal(q.calls.length, 1, 'the folder is still read on its first view');
+  assert.equal((a.got[0].commands as unknown[]).length, 2);
+  // a broken cache file is ignored
+  fs.writeFileSync(cacheFile, '{nope');
+  assert.deepEqual(new Menus({ clients: () => new Set(), cacheFile }).all(), {});
+});
