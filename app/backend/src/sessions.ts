@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
 import type { ListSessionsOptions, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess } from './driver.ts';
-import type { Content, QueryFn, StartOptions } from './driver.ts';
+import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
 import type { StatusEntry } from './status.ts';
 import type { Views } from './views.ts';
@@ -221,6 +221,29 @@ export class Sessions {
     a.status.turnStarted();
     this.log('sessions.send', { sid: a.id, images: images.length });
     return { ok: true, sid: a.id };
+  }
+
+  // Esc, Esc: stops the foreground turn; background work keeps running (perTaskStopAffordance).
+  // Messages the interrupt cancelled go back to the message box through `restore`. A CLI
+  // without the cancel capability runs them afterwards, and the toast says so.
+  async interrupt(sid: string): Promise<void> {
+    const a = this.live.get(this.resolve(sid));
+    if (!a?.proc || !a.status.working) return;
+    a.status.interrupted();
+    let r: InterruptResult;
+    try {
+      r = await a.proc.interrupt();
+    } catch (e) {
+      this.log('driver.interruptFailed', { sid: a.id });
+      this.views.toast(`Synopia couldn't interrupt Claude: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+      return;
+    }
+    this.log('driver.interrupt', { sid: a.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
+    if (r.restored.length) this.views.restore(a.id, r.restored);
+    if (r.stillQueued) {
+      const n = r.stillQueued;
+      this.views.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`);
+    }
   }
 
   // Quit: every process ends now.

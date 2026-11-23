@@ -98,6 +98,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
       (r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); },
       () => client.send({ t: 'toast', text: "Synopia couldn't read the list of past sessions." }),
     );
+  } else if (sessions && msg.t === 'interrupt' && typeof msg.sid === 'string') {
+    void sessions.interrupt(msg.sid);
   } else if (sessions && msg.t === 'send' && typeof msg.sid === 'string') {
     const images = Array.isArray(msg.images)
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')

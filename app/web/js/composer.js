@@ -68,8 +68,49 @@ function openModelPicker() {
   const it = [...document.querySelectorAll("#slash .it")].find(x => x.textContent.startsWith("/model"));
   it?.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
 }
+/* ---------- Esc, Esc: the message box turns into "Interrupt?" while a turn runs (R9.4) ---------- */
+let interruptAsk = null; // the session id the prompt is for
+const canInterrupt = s => Boolean(s) && stateOf(s) === "green";
+function askInterrupt() {
+  const box = conv.querySelector(".dock .composer"); if (!box) return;
+  interruptAsk = current;
+  if (!box.querySelector(".int-ask")) box.insertAdjacentHTML("beforeend", `<p class="int-ask" role="alert"><b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.</p>`);
+  box.classList.add("asking");
+}
+function dismissInterrupt() {
+  interruptAsk = null;
+  conv.querySelectorAll(".composer.asking").forEach(b => b.classList.remove("asking"));
+}
+/* the second Esc: stop the turn, if it still runs */
+function confirmInterrupt() {
+  const sid = interruptAsk; dismissInterrupt();
+  if (sid && sid === current && canInterrupt(cur())) send({ t: "interrupt", sid });
+}
+/* the turn ended or the view changed under the prompt */
+function syncInterrupt() {
+  if (interruptAsk && (interruptAsk !== current || !canInterrupt(cur()) || !conv.querySelector(".composer.asking"))) dismissInterrupt();
+}
+document.addEventListener("mousedown", () => { if (interruptAsk) dismissInterrupt(); }, true);
+
+/* messages an interrupt cancelled come back to their session's box, before what you typed since */
+const restoredTexts = new Map();
+function restoreTexts(sid, texts) {
+  if (!texts?.length) return;
+  restoredTexts.set(sid, [...(restoredTexts.get(sid) || []), ...texts]);
+  if (mounted && mounted.startsWith(sid + "|")) takeRestored(sid);
+  toast(texts.length === 1 ? "Your queued message is back in the message box." : `Your ${texts.length} queued messages are back in the message box.`);
+}
+function takeRestored(sid) {
+  const texts = restoredTexts.get(sid), ta = document.getElementById("msg");
+  if (!texts || !ta) return;
+  restoredTexts.delete(sid);
+  ta.value = [...texts, ta.value].filter(t => t.trim()).join("\n\n");
+  ta.dispatchEvent(new Event("input"));
+}
+
 function mountComposer(s) {
   const ta = document.getElementById("msg");
+  interruptAsk = null;
   renderAttachments();
   attachSlash(ta, m => {
     s.items.push({ id: `local:${Date.now()}`, k: "tool", ts: new Date().toISOString(), verb: "Model", obj: `set to ${m.name}`, name: "model", state: "done" });
@@ -101,4 +142,5 @@ function mountComposer(s) {
       r.readAsDataURL(item.getAsFile());
     }
   });
+  takeRestored(s.id);
 }

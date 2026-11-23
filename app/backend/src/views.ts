@@ -293,6 +293,11 @@ export class Views {
     this.broadcast({ t: 'toast', text });
   }
 
+  // Messages an interrupt cancelled, back to the session's message box.
+  restore(sid: string, texts: string[]): void {
+    if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });
+  }
+
   private transcriptOf(sid: string, agent: string | null): Transcript | null {
     const s = this.live.get(sid);
     if (!s) return null;

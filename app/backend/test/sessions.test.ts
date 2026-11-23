@@ -34,18 +34,24 @@ function channel<T>() {
   };
 }
 
-type Call = { options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean };
+type Call = {
+  options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean;
+  interrupts: unknown[]; reply: { still_queued: string[]; cancelled?: string[] } | undefined;
+};
 function fakeQuery() {
   const calls: Call[] = [];
   const fn: QueryFn = ({ prompt, options }) => {
     const out = channel<SDKMessage>();
-    const call: Call = { options, inputs: [], out, closed: false };
+    const call: Call = { options, inputs: [], out, closed: false, interrupts: [], reply: { still_queued: [] } };
     calls.push(call);
     void (async () => {
       for await (const m of prompt) call.inputs.push(m);
       out.end(); // the input closed: the process ends after its turn
     })();
-    return Object.assign(out, { close: () => { call.closed = true; out.end(); } });
+    return Object.assign(out, {
+      close: () => { call.closed = true; out.end(); },
+      interrupt: async (req?: unknown) => { call.interrupts.push(req); return call.reply; },
+    });
   };
   return { calls, fn };
 }
@@ -415,4 +421,64 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   assert.deepEqual(views.ids(), [PAST], 'the same id, no swap');
   assert.ok(fs.existsSync(file));
   assert.equal((await sessions.openSession('not-an-id')).ok, false);
+});
+
+const Q1 = '0e9b7f1c-0000-4000-8000-0000000000a1';
+const Q2 = '0e9b7f1c-0000-4000-8000-0000000000a2';
+const Q3 = '0e9b7f1c-0000-4000-8000-0000000000a3';
+async function runningTurn(caps: string[] | undefined) {
+  const t = setup();
+  const ph = t.sessions.newSession();
+  t.sessions.send(ph, 'count slowly', [], Q1);
+  await tick();
+  emit(t.q.calls[0], { ...init(REAL), ...(caps ? { capabilities: caps } : {}) });
+  emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running', uuid: 'u-s', session_id: REAL });
+  await tick();
+  t.sessions.send(REAL, 'and then this', [], Q2);
+  t.sessions.send(REAL, '', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }], Q3);
+  t.take();
+  return t;
+}
+
+test('interrupt: with interrupt_cancel_queued_v1 it cancels the queued messages and restores their text', async () => {
+  const t = await runningTurn(['interrupt_receipt_v1', 'interrupt_cancel_queued_v1']);
+  t.q.calls[0].reply = { still_queued: [], cancelled: [Q2, Q3, 'unknown-uuid'] };
+  await t.sessions.interrupt(REAL);
+  assert.deepEqual(t.q.calls[0].interrupts, [{ cancelQueued: true }]);
+  const got = t.take();
+  assert.deepEqual(got.filter((m) => m.t === 'restore'), [{ t: 'restore', sid: REAL, texts: ['and then this'] }], 'an image-only message and unknown uuids give no text');
+  assert.equal(got.filter((m) => m.t === 'toast').length, 0);
+  emit(t.q.calls[0], { ...RESULT, subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' });
+  emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: 'u-i', session_id: REAL });
+  await tick();
+  assert.equal(t.take('session').at(-1)?.status, 'stopped');
+  assert.equal(t.q.calls[0].closed, false, 'the process (and its background work) keeps running');
+  assert.equal(t.q.calls.length, 1);
+});
+
+test('interrupt: without the capability it uses the plain interrupt and toasts what still runs', async () => {
+  const t = await runningTurn(['interrupt_receipt_v1']);
+  t.q.calls[0].reply = { still_queued: [Q2] };
+  await t.sessions.interrupt(REAL);
+  assert.deepEqual(t.q.calls[0].interrupts, [undefined]);
+  const got = t.take();
+  assert.equal(got.filter((m) => m.t === 'restore').length, 0);
+  assert.match(String(got.find((m) => m.t === 'toast')?.text), /queued message will still run/);
+  emit(t.q.calls[0], { ...RESULT, subtype: 'success' });
+  emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: 'u-i', session_id: REAL });
+  await tick();
+  assert.equal(t.take('session').at(-1)?.status, 'stopped', 'an interrupted turn is stopped by you, whatever its subtype');
+});
+
+test('interrupt: an idle session or one without a process is left alone', async () => {
+  const t = setup();
+  const ph = t.sessions.newSession();
+  await t.sessions.interrupt(ph);
+  t.sessions.send(ph, 'hi');
+  await tick();
+  emit(t.q.calls[0], init(REAL));
+  emit(t.q.calls[0], RESULT);
+  await tick();
+  await t.sessions.interrupt(REAL);
+  assert.deepEqual(t.q.calls[0].interrupts, []);
 });

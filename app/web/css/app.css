@@ -192,6 +192,12 @@ details.fold .body { margin-top: 5.5px; }
 .slash .it[aria-selected="true"] { background: #DDF4FF; }
 .slash .it[aria-selected="true"] .n { color: var(--link); }
 .slash .head { color: var(--ink-3); padding: 2px 10px 3.5px; }
+/* "Interrupt?": the message box asks before Esc, Esc stops the turn; what you typed stays underneath */
+.int-ask { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+.int-ask b { color: var(--red); font-weight: 700; }
+.composer.asking .int-ask { display: block; }
+.composer.asking textarea, .composer.asking .attach { visibility: hidden; }
+body[data-mode] .composer.asking > .g { color: var(--red); }
 /* the Open list: past sessions over the main area, rows drawn like the command menu's */
 .app > .side { grid-column: 1; grid-row: 1; }
 .app > .conv { grid-column: 2; grid-row: 1; }

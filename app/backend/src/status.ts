@@ -38,6 +38,7 @@ export class SessionStatus {
   private flag = false; // a session_state_changed event was seen
   private outcome: Outcome;
   private pending = 0;
+  private stopping = false; // an interrupt was sent and its result hasn't come yet
 
   constructor(init: StatusEntry | null, onChange: (e: StatusEntry) => void, now: () => number = Date.now) {
     this.onChange = onChange;
@@ -64,8 +65,14 @@ export class SessionStatus {
     this.update();
   }
 
+  // You interrupted the turn: the result that ends it is "stopped by you", whatever its subtype.
+  interrupted(): void {
+    this.stopping = true;
+  }
+
   result(r: ResultLike): void {
-    this.outcome = outcomeOf(r);
+    this.outcome = this.stopping ? 'stopped' : outcomeOf(r);
+    this.stopping = false;
     if (!this.flag) this.running = false;
     this.update();
   }
