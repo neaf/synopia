@@ -403,7 +403,7 @@ conv.addEventListener("click", e => {
     view = t.dataset.agent; renderConv();
   }
   else if (t.dataset.stop) { stopping.add(t.dataset.stop); send({ t: "stopTask", sid: current, taskId: t.dataset.stop }); renderRail(); }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { view = null; renderConv(); }
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
   else if (t.hasAttribute("data-close")) closeSession(cur());

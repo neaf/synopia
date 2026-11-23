@@ -66,7 +66,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .row[data-state="green"] .dot, .dot.green { background: var(--dot-green); }
 
 /* ---------- main area: four panels on the canvas ---------- */
-.conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
+.conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
 .conv.no-rail { grid-template-columns: minmax(0, 1fr); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
 .c-head { grid-column: 1 / -1; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
@@ -547,8 +547,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .side-foot { border-top-color: #373E47; color: #9198A1; }
 .side-foot .btn { background: #2D333B; border-color: #444C56; color: #E6EDF3; }
 .side-foot .btn:hover { background: #373E47; }
-/* the Open line sits under "New session", quiet */
-.side-foot { flex-direction: column; align-items: flex-end; gap: 4px; }
+/* "Open session", quiet, then "New session", on one row at the right */
+.side-foot .btn + .btn { margin-left: 5.5px; }
 .side-foot .btn.quiet { background: none; border-color: transparent; color: #9198A1; }
 .side-foot .btn.quiet:hover { background: #2D333B; color: #E6EDF3; }
 .side-head h1 { color: #F0F6FC; }
