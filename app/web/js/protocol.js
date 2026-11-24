@@ -1,7 +1,8 @@
 /* Protocol: the one schema of the WebSocket between the page and the backend, the source for every field.
    DOM-free: the page imports it (connection.js), and so does the backend (router.ts, publisher.ts and their
    tests). A frame is JSON `{t, ...}`. The backend's `hello` carries VERSION; a page whose VERSION differs
-   reloads. An action carries an `id` and gets one `ack {id, ok, error}` back, to the page that sent it.
+   waits for a daemon of its own version (connection.js). An action carries an `id` and gets one
+   `ack {id, ok, error}` back, to the page that sent it.
 
    Field types: "str", "num", "bool", "obj", "arr", "any"; a trailing "?" also takes a missing field or null. */
 export const VERSION = 2;

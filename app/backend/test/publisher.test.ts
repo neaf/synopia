@@ -190,7 +190,7 @@ test('status, pending, a stream clear and close are broadcast; the stream text g
   assert.equal(publisher.sessions().length, 0);
 });
 
-test('state: a turned-down tool reads "Your turn", an Esc Esc stop "Stopped", a retitle after it keeps it (seams#B3)', () => {
+test('state: a turned-down tool reads "Your turn", an Esc Esc stop "Stopped", a retitle after it keeps it', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000ac';
   const marker = (uuid: string, s: number, text: string) => line({ type: 'user', uuid, timestamp: `2026-11-20T10:00:0${s}.000Z`, message: { role: 'user', content: [{ type: 'text', text }] } });
   const dir = tempSession(id, you(1) + marker('x2', 2, '[Request interrupted by user for tool use]'));
@@ -502,7 +502,7 @@ test('work: a background shell ending between turns tells the writer, and its li
   assert.deepEqual(ended, [id], 'once');
 });
 
-test('rekey: the work seen running moves with the record, so its end reaches the writer (backend-core#B11)', () => {
+test('rekey: the work seen running moves with the record, so its end reaches the writer', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000d2', next = 'aaaaaaaa-0000-4000-8000-0000000000d3';
   const body = you(1) + line({
     type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
@@ -540,7 +540,7 @@ test("work: the SDK's task_started gives a shell its task id when the file has n
   transcripts.stop(); publisher.stop();
 });
 
-test("toolProgress: a running tool's start (now minus the elapsed time) goes with its item, once, and leaves with its result (backend-core#B9)", () => {
+test("toolProgress: a running tool's start (now minus the elapsed time) goes with its item, once, and leaves with its result", () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000d1';
   const dir = tempSession(id, you(1) + line({
     type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
@@ -615,7 +615,7 @@ test('toolOutput: the full result read again from its line, also after the file 
 });
 
 
-test('flush: a status set while a flush runs is in that flush, and the frames keep their order (seams#I8)', () => {
+test('flush: a status set while a flush runs is in that flush, and the frames keep their order', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000f5';
   const dir = tempSession(id, you(1));
   const clients = new Set<Client>();
@@ -640,7 +640,7 @@ test('flush: a status set while a flush runs is in that flush, and the frames ke
   transcripts.stop(); publisher.stop();
 });
 
-test('restore and toast: to the page that acted while it is connected, else to every page (backend-core#B8)', () => {
+test('restore and toast: to the page that acted while it is connected, else to every page', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000f6';
   const { clients, transcripts, publisher } = setup(tempSession(id, you(1)));
   const a = client(), b = client();
@@ -660,7 +660,7 @@ test('restore and toast: to the page that acted while it is connected, else to e
   transcripts.stop(); publisher.stop();
 });
 
-test('outbox: session.ts owns it; a queued message lands by its record once, an interrupt gives the rest back to the page that sent it (R5.5, seams#I7, backend-core#B8)', async () => {
+test('outbox: session.ts owns it; a queued message lands by its record once, an interrupt gives the rest back to the page that sent it (R5.5)', async () => {
   const REAL = '11111111-2222-4333-8444-555555555555';
   const U1 = '11111111-0000-4000-8000-000000000001', U2 = '11111111-0000-4000-8000-000000000002';
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-publisher-'));

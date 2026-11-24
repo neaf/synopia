@@ -242,7 +242,7 @@ export class Transcripts {
   }
 
   // For the writer: the background work that runs now, and what ended since your last message,
-  // one line each ("shell “npm test”: running"). Times compare as instants (formats#B6).
+  // one line each ("shell “npm test”: running"). Times compare as instants.
   work(id: string): string[] | undefined {
     const s = this.live.get(id);
     if (!s) return undefined;

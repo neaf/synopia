@@ -100,8 +100,8 @@ export const codeHash = (backendDir: string) => new CodeHasher(backendDir).read(
 // The update rule. The daemon reads the checkout's code hash every 10 s: an update is pending once
 // a hash other than the running one reads the same twice in a row (no restart halfway through a
 // save or a checkout), and the daemon restarts once one is pending and nothing runs. A handover put
-// off because work started waits for the next reading (a new hash cycle), not the next idle second
-// (backend-core#B10). A hash whose new daemon failed to start isn't tried again; a checkout back at
+// off because work started waits for the next reading (a new hash cycle), not the next idle
+// second. A hash whose new daemon failed to start isn't tried again; a checkout back at
 // the running code clears it.
 export class UpdateCheck {
   readonly running: string;
@@ -261,7 +261,7 @@ export async function startDaemon(o: DaemonOptions): Promise<Daemon> {
     if (state !== 'stopping' && !crashed) log('backend.exit', { code: exitCode });
     if (!handedOver) removeDaemonInfo(stateDir, process.pid);
   });
-  // An uncaught error: its trace to daemon.log, state.json written now (seams#B4), exit 1.
+  // An uncaught error: its trace to daemon.log, state.json written now, exit 1.
   const crash = (kind: string) => (err: unknown) => {
     if (crashed) return;
     crashed = true;

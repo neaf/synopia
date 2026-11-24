@@ -2,7 +2,7 @@
 // The upgrade checks Host and Origin; the first frame must be the token. No routing here: each
 // later frame goes to onMessage (router.ts), and the hello to onAuthed (publisher.ts).
 // A page that doesn't read its socket (asleep, hung) gets no more stream previews once SEND_SOFT bytes
-// wait for it, and is cut off at SEND_HARD; it reconnects and its hello has everything (backend-core#B6).
+// wait for it, and is cut off at SEND_HARD; it reconnects and its hello has everything.
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -139,7 +139,7 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
       else res.destroy();
     });
   });
-  // Socket errors after listen, and requests Node can't parse: logged, never thrown (backend-core#B7).
+  // Socket errors after listen, and requests Node can't parse: logged, never thrown.
   http.on('error', (e) => log('http.error', { code: (e as NodeJS.ErrnoException).code ?? 'unknown' }));
   http.on('clientError', (e, socket) => {
     log('http.clientError', { code: (e as NodeJS.ErrnoException).code ?? 'unknown' });

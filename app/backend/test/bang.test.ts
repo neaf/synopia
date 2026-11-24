@@ -89,7 +89,7 @@ test('bang: a folder that is gone fails to start', async () => {
   assert.match(r.error ?? '', /couldn't start/);
 });
 
-test('bang: a spawn that throws ends the run after the constructor, never inside it (sessions-sdk#B3)', async () => {
+test('bang: a spawn that throws ends the run after the constructor, never inside it', async () => {
   let inside = true;
   let done: BangRun | null = null;
   new Bang({ id: ID, cmd: 'echo \0x', cwd: tmp(), shell: '/bin/sh', onUpdate: () => {}, onDone: (r) => { assert.equal(inside, false, 'not from the constructor'); done = r; } });
@@ -98,7 +98,7 @@ test('bang: a spawn that throws ends the run after the constructor, never inside
   assert.match((done as BangRun | null)?.error ?? '', /couldn't start/);
 });
 
-test('bang: the SIGKILL timer goes once the group is empty (sessions-sdk#B4)', async () => {
+test('bang: the SIGKILL timer goes once the group is empty', async () => {
   let bang!: Bang;
   const done = new Promise<void>((resolve) => {
     bang = new Bang({ id: ID, cmd: 'sleep 30', cwd: tmp(), shell: '/bin/sh', killAfterMs: 60_000, onUpdate: () => {}, onDone: () => resolve() });
@@ -109,14 +109,14 @@ test('bang: the SIGKILL timer goes once the group is empty (sessions-sdk#B4)', a
   assert.equal((bang as unknown as { killTimer: unknown }).killTimer, null, 'no SIGKILL armed for a group id that may be reused');
 });
 
-test('bang: the cap counts code points, never splits a pair, and the cut line names the cap (sessions-sdk#B5)', async () => {
+test('bang: the cap counts code points, never splits a pair, and the cut line names the cap', async () => {
   const { run: r } = await run(`printf '\\360\\237\\230\\200%.0s' 1 2 3 4 5`, { cap: 3 });
   assert.equal(r.out, '😀😀😀');
   assert.equal(r.cut, true);
   assert.equal(bashOutput({ out: 'x', err: '', cut: true, exit: 0 }, 3), '<bash-stdout>x</bash-stdout><bash-stderr>[Output cut at 3 characters]</bash-stderr>');
 });
 
-test('delivery: a command that cannot spawn toasts, and the daemon goes on (sessions-sdk#B3)', async () => {
+test('delivery: a command that cannot spawn toasts, and the daemon goes on', async () => {
   const { sessions, SID, got, last } = setup();
   assert.equal(sessions.get(SID)!.runBang('echo \0x').ok, true);
   await until(() => last()?.bang?.running === false);

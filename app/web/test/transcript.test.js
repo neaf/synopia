@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { itemsHTML, filesHTML } from "../js/transcript.js";
 import { live, age, until, still } from "../js/format.js";
 
-test("web-ui#B6: the ticking spans don't change a block's signature, other text does", () => {
+test("the ticking spans don't change a block's signature, other text does", () => {
   const at = Date.now() + 38_000;
   const block = left => `<div class="ln liveln"><b>Working</b> <span class="dim">Retrying <span data-until="${at}">${left}</span>, attempt 2</span></div>`;
   assert.equal(still(block("in 38s")), still(block("in 37s")));

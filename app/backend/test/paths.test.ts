@@ -36,7 +36,7 @@ test('paths: files changed and tool lines show /tmp, not its real path', () => {
   assert.deepEqual(toolLine('Read', { file_path: abs }, '/Users/fixture'), ['Read', '/tmp/synopia-scratch/s/notes.txt']);
 });
 
-test('formats#B3: a path inside a text maps only where a path starts', () => {
+test('a path inside a text maps only where a path starts', () => {
   const home = '/Users/fixture';
   assert.equal(displayIn('see https://host/Users/fixture/a and /Users/fixture/b', home), 'see https://host/Users/fixture/a and ~/b');
   assert.equal(displayIn(`ls /mnt${realTmp}/a ${realTmp}/b`, home), `ls /mnt${realTmp}/a /tmp/b`);

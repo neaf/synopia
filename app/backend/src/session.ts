@@ -54,7 +54,7 @@ export type SendResult = { ok: true; sid: string } | { ok: false; error: string 
 
 // A message for the process: your prompt (a turn), or bash mode's context (`shouldQuery: false`, no
 // turn). `inBox`: the page still holds the prompt (a take-over), so a refusal leaves it there.
-// `by`: the page that sent it, which gets it back in its box if it can't go (backend-core#B8).
+// `by`: the page that sent it, which gets it back in its box if it can't go.
 // `images`: the pasted images the content carries, which go back with the text.
 type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By };
 type Context = { kind: 'context'; text: string; uuid: string };

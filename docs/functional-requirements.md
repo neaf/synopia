@@ -1,0 +1,286 @@
+# Functional requirements
+
+Synopia's behaviour as numbered requirements, for tracing to code. [requirements.md](requirements.md) is the author's behaviour spec (R-numbers) and wins on any conflict; each FR names the R-numbers it restates. [architecture.md](architecture.md) maps every FR to the modules that implement it. `prototype/app.html` is the look.
+
+Every FR below is implemented unless it is marked `dropped` (decided against) or `future` (decided, out of scope, not to be blocked). What is still wrong or unchecked is under [Known gaps](#known-gaps).
+
+Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in code comments refer to the [decisions](#decisions-2026-11-24) at the end of this file. Section 15 of [requirements.md](requirements.md) numbers the author's earlier design answers on its own.
+
+## Platform, shell and daemon (PLAT)
+- FR-PLAT-01: One native AppKit window (1280x820, frame saved) hosting one WKWebView; closing it quits the app; built locally with swiftc, no Electron. R2.1
+- FR-PLAT-02: Sessions run through the Claude Agent SDK; the user's skills, commands, CLAUDE.md, hooks and subagents load as in the CLI (`settingSources` default). R2.2, R2.4
+- FR-PLAT-03: Auth is the user's Claude Code settings (Bedrock via `settings.json` env, AWS SSO); credentials are never printed or stored. R2.3
+- FR-PLAT-04: The backend is a detached daemon that outlives the app. The app finds it by `daemon.json` (pid, procStart, port, token, version, code, v; 0600, atomic), checked by `ps lstart` and the `/api/ping` pid. Else it spawns one (posix_spawn, SETSID) and waits 20 s. A daemon that runs with the recorded start time but misses the ping is slow, not gone: the app waits 20 s, then shows the error view, and never spawns a second one. No launchd agent. R2.8
+- FR-PLAT-05: One daemon per state folder (a kernel file lock); a second exits 3 and the app waits for the winner. R2.8
+- FR-PLAT-06: ⌘Q quits only the app. "Stop All Work…" (⌥⌘Q) asks when anything runs, with the daemon's `summary` sentence (what runs, by kind, with counts), then stops every session and quits. A failed check asks too ("Synopia could not tell what is running."); one sheet at a time. R2.8
+- FR-PLAT-07: The daemon exits after 30 min with no page and nothing running (turn, subagent, shell, monitor, pending card). R2.8
+- FR-PLAT-08: Self-update: the daemon hashes `backend/src/**/*.ts`, `package-lock.json` and `web/js/protocol.js` every 10 s; the same new hash twice is pending; handover only when idle (a handover put off by work waits for the next reading); footer "Update ready: restarts when idle"; a failed successor leaves the old daemon with a toast. R2.8
+- FR-PLAT-09: "Restart Backend Now…" asks as Stop All Work does, then hands over at once; UI state survives. R2.8
+- FR-PLAT-10: Daemon lost: the page shows a quiet "Reconnecting…" (backoff 0.5-8 s), the app restarts it once and reloads; a second loss within 60 s shows the error view with the log line and "Restart backend". A handover is not a crash: the old daemon marks `daemon.json` with `handover`. A page that meets a daemon of another protocol version shows "Updating…" and waits, sending nothing. R2.8
+- FR-PLAT-11: Dock badge = open sessions that need you + finished unreviewed `For review: ` subagents; none at 0; closed sessions excluded; no notifications. R2.6
+- FR-PLAT-12: Integrated title bar: transparent, title hidden but "Synopia" kept; a 270 pt drag strip over the sidebar top only; double-click follows `AppleActionOnDoubleClick`; no strip over the main area; none in fullscreen; a browser looks as before. R2.7
+- FR-PLAT-13: The shell tells the page its chrome: `html.in-app`, `html.fullscreen`, `--titlebar`, `window.SYNOPIA_CLOCK24`. R2.7
+- FR-PLAT-14: The page never navigates away: file paths and URLs go to the backend `open`; other main-frame links go to NSWorkspace (http/https only); new windows refused.
+- FR-PLAT-15: Transport: backend on 127.0.0.1, random port, token, exact Host and Origin, CSP header, one WebSocket `/ws` with `auth` first within 10 s, 32 MB frame cap, per-page backpressure, HTTP `/api/ping|badge|quit-check|image|stop|restart`. Every frame is checked against `app/web/js/protocol.js`; every action is acked.
+- FR-PLAT-16: The page also runs in a browser for debugging (`app/dev.sh`, `--no-parent`: no idle exit, update or restart); it prints the port it listens on.
+- FR-PLAT-17: Login environment merged once at daemon start (allow-list in `login-env.ts`: PATH, MANPATH, ASDF_DIR, ASDF_DATA_DIR, HOMEBREW_PREFIX, HOMEBREW_CELLAR, HOMEBREW_REPOSITORY, LANG, LC_*, SSH_AUTH_SOCK and a few more), fallback PATH on failure. R2.3
+- FR-PLAT-18: Icon "Paper" and favicon, still; `.icns` built locally with sips and iconutil; the build checks the new bundle before it replaces the old one. R2.5, R13
+- FR-PLAT-19: Logs: `daemon.log` copy-truncated at 5 MB; `backend.log` event lines with quoted, 128-char-capped values; SIGUSR2 logs memory.
+
+## Sessions (SES)
+- FR-SES-01: Only sessions Synopia holds open show; the open list persists across restarts with transcripts; the SDK process starts on the first message. R3.1
+- FR-SES-02: "New session" opens an empty session in the new-session folder (a stored setting; default the most recently opened session's folder, else `~`), no dialog, no worktree; placeholder id until `system/init`, old ids keep resolving; `conversation_reset` swaps the id the same way; a swap onto an id already open is refused with a toast. R3.3
+- FR-SES-03: "Open session" lists past sessions from `listSessions()`, newest 50, open ones excluded, filtered on title and folder; a terminal-held row says "Open in a terminal" and opens read-only; opening resumes by id on the first message and makes it the most recently opened. R3.2, R3.6
+- FR-SES-04: Close (x, x) ends the process, the `!` command and the cards, clears the session's "always allow" rules, marks `closedAt`, hides the session at its layout place and drops its UI state; reopening puts it back. R3.6, R9.6
+- FR-SES-05: Claude writes the title and the Now line live (haiku, 20 s debounce, one call at a time, no tools, hooks or MCP, `persistSession:false`); the CLI slug still shows small. No drift detection, no split. R3.4, R3.5
+- FR-SES-06: Title order: custom > written > CLI ai-title > first prompt > "New session"; an empty custom title clears a rename; a shown-title change is a quiet "Retitled" line ("by you" for a rename), none for the first title or an equal one. R5.12c
+- FR-SES-07: Model per session: the header shows it; click or `/model` opens the SDK's model list with effort; a running process gets `setModel` + `applyFlagSettings`, else it applies at next start. Choice > transcript model > `settings.model`, from one resolver. R3.7
+- FR-SES-08: Terminals are seen through pid files: a file counts when its pid lives with the same UTC `procStart`, `kind: interactive`, `entrypoint: cli`, not Synopia's own child; a format break logs once; a live pid with another start time is logged once; a failed `ps` is never cached. R3.2
+- FR-SES-09: Yield: a terminal taking a held session makes Synopia interrupt, end its process and show read-only with "Open in a terminal (pid N). Type there, or send here to bring it back."; when the CLI exits the session is Synopia's again. R3.2
+- FR-SES-10: Take-over on send: when the CLI is idle, re-check, SIGTERM then SIGINT (never SIGKILL, 10 s cap, then a toast and the message stays), note to its tty after exit, transcript stable 500 ms, resume and send; busy or waiting: "Waiting for the terminal to finish…", any edit or Esc cancels. R3.2
+- FR-SES-11: One writer: no Synopia process starts on a session a live terminal holds; the start re-checks that session's pid files. R3.10
+- FR-SES-12: Process lifecycle: one SDK `query()` per active session fed by an input queue; ends on close, 30 min idle (no turn, card or work), quit or yield; an unclean end is `failed` with the last stderr line as a toast; the end time is stored so work reads stopped after restart; a process exit during shutdown runs nothing.
+- FR-SES-13: Start options: permission mode unset (the user's `auto`) unless the transcript's last mode is plan; `perTaskStopAffordance`, `includePartialMessages`, `bashEditDiffEnabled`, state-events env flag. R6.5
+- FR-SES-14: Send: text plus PNG/JPEG images up to 5 MB each and 20 MB together; empty text or image data refused; held behind a card until the last card; during a process end queued for the next process. A send the backend refuses, or one lost before its ack, comes back to the box. R5.13
+- FR-SES-15 (`future`): Closing note with what was done and loose ends to triage. R3.6 ("comes later"). Nothing in `sessions.close` blocks it.
+
+## UI state (STATE)
+- FR-STATE-01: Reopening shows exactly what was on screen: current session and subagent view, per-session scroll anchor (item + pixels, or pinned within 40 px of the end), draft (text, cursor, images as files 5 MB / 20 MB, mode), expanded steps, diffs, runs, background card, earlier range, half-answered cards, Open list, file preview, image viewer, theme. State lives in the backend; closed sessions drop it, and so do sessions no longer open at start; an id swap carries it; last writer wins; an emptied entry keeps `current` and `view`. R3.9
+- FR-STATE-02: state.json: one file, atomic tmp+rename, 0600, at most one write per second, retried after a failed write, flushed on shutdown and on a crash; every entry validated on load; an unreadable file is kept as `.bad-<ms>`. R3.9
+
+## Sidebar (SIDE)
+- FR-SIDE-01: Dark sidebar `#22272E`, the only dark area; the open row is a light cut-out tab into the canvas. R4.1
+- FR-SIDE-02: Flat rows: mark box, title, state word with age, Now line, running-work sub-lines, "N to review"; a finished sub-line stays 5 s with status and still kind marks and duration, then tweens out; switches and redraws do not cut the 5 s. R4.2
+- FR-SIDE-03: Groups as a tree: bold name heading, indented sessions with 1px guides and 7 px L corners; "Not in a group" at the same level without guides. R4.3, R4.4
+- FR-SIDE-04: Drag and drop: edge zones insert with a blue line and dot; middle of a lone session makes a new group and opens its name field; middle of a grouped session inserts; dashed placeholder only when "Not in a group" is empty; headings are not targets; the drag copy is 50% opacity, 14 px right. R4.5, R4.6
+- FR-SIDE-05: Double-click renames a group; empty groups vanish; user order kept, no sorting. The backend owns the layout: the page sends intents (move, new group, rename) and draws the layout it gets; closed ids keep their place; an intent naming an old id still moves that session. R4.7
+- FR-SIDE-06 (`future`): Claude suggests the first grouping from shared rare references (attack plan, Linear project, label, worktree). R4.8. `layout.ts` intents allow a suggested grouping later.
+
+## Session view and transcript (VIEW)
+- FR-VIEW-01: Header: title, "Now: …", folder, last 4 PRs, tab name, model button; same height and lines in a subagent view; no Close or Change group button. R5.1, R5.2
+- FR-VIEW-02: Transcript reads like the CLI: JetBrains Mono NL 12 px, no ligatures, flat; gutter `●`, green `●` tools, kind marks, `⎿` results; prompts on a full-width `❯` band. R5.3, R5.4
+- FR-VIEW-03: Each turn ends "Worked for 5s, done 02:24 PM"; while it runs the log ends with the moving agent mark and "Working Bash(…)"; no working status line. R5.5
+- FR-VIEW-04: A message sent mid-turn shows as a dimmed queued prompt below the live line, in send order, replaced in place when its record lands; an interrupt that cancels it puts its text and images back in the box of the page that sent it. R5.5, R9.4
+- FR-VIEW-05: Tool runs collapse to one line; a step reads `Tool(target)`; a click expands command or input plus the first 20 lines with "Show all N lines"; a running step shows "Running, 42s" and, when Synopia drives it, "Output shows when it finishes"; step line and live line are one step and stay open through redraws. R5.6
+- FR-VIEW-06: Subagents: one line per single launch (mark, name, live time); several together under "3 subagents in parallel"; no bars or duplicate labels; a subagent whose own shell or monitor runs counts as running. R5.7
+- FR-VIEW-07: Subagent reports fold as "Report from <name>, 8m" with "Open its transcript". R5.8
+- FR-VIEW-08: Files changed per turn, grouped by repo or worktree, aligned `+add −del`, shell edits included (`bashEditDiff`, flag plus a git repo); counts open the diff with line numbers; a text path opens the preview, HTML opens in the browser (Alt-click shows source), others open with their app or reveal. R5.9
+- FR-VIEW-09: File preview: read-only, bat-highlighted, path, language, line count, "Open in app", Close; opens at the top; gutter marks for changed lines; keys Esc first, j/k, g/G, ⌘F or `/`, Enter or n; a click outside closes; dark theme Coldark-Dark. R5.9, R11
+- FR-VIEW-10: Opening files: an allow-list of document, media and source types on a non-executable regular file opens; everything else is revealed in Finder; URLs http/https only; `/usr/bin/open` via argv, never a shell. R5.9
+- FR-VIEW-11: Markdown as the CLI renders it: bold, blue inline code, `- ` lists, tables (a table of separators only renders as its text), code blocks, clickable bare URLs and links. R5.10
+- FR-VIEW-12: Claude's questions and your answers render in the transcript; answers show as your turn ("Allow once", "Denied: …", "Changes: …"). R5.11, R6.7
+- FR-VIEW-13: A subagent opens its own transcript in the same pane with a breadcrumb; its message box writes to the main conversation. R5.12
+- FR-VIEW-14: A long transcript shows its last 160 items under "Show 160 earlier (N more)"; the link or `g` at the top loads 160 more without moving the view; subagents too. R5.12a
+- FR-VIEW-15: Image thumbnails: under prompts, steps and collapsed runs; at most 3 lines high, width by aspect ratio up to 320 px centre-cropped, never upscaled, shape known from the header bytes; "Image gone" for a lost image. R5.12b
+- FR-VIEW-16: Image viewer: opens fit, never upscaled; click, `z`, `0` toggle 100% around the pointer; pan at 100% by drag, scroll, arrows; ← → and j/k step through the row with "3 of 7" and source; Esc or click outside closes; no other key acts. R5.12b
+- FR-VIEW-17: Streaming preview of the main conversation's text, keyed by message id and block, throttled 50 ms, sent only to pages viewing it, cleared when its record lands.
+- FR-VIEW-18: One reader tails every open session's JSONL and subagent files by byte offset (4 MB slices, fs.watch plus 1 s poll, reset on shrink, inode change or rewrite, not on a bare touch); the SDK stream carries only control and live state. R12
+- FR-VIEW-19: Records become items with stable ids: sidechain drop, meta and command rules, `!` records, queued attachments, tool states (done, failed, running, stopped, denied), process-end marking, turn open/close; a response's tool uses are tracked across its records. R12
+- FR-VIEW-20: Paths display with `~` and `/tmp` in single paths and free text, only where a path starts.
+
+## Message box (BOX)
+- FR-BOX-01: At least three lines, `❯` first, grows; a click focuses; no Send button or hint row; Enter sends, Shift+Enter breaks, placeholder "/ for commands". R5.13
+- FR-BOX-02: Image paste: thumbnails from the pasted image with ✕; `[Image #N]` tag at the caret, N counting through the session, never reused; deleting a tag dims its thumbnail and skips it; sent as one text block with tags then images in tag order; PNG/JPEG up to 5 MB each, 20 MB together (refused in the page, box kept); drafts keep tags and images. R5.13
+- FR-BOX-03: Bash mode: `!` first turns the prompt into a pink `!`; Enter runs `$SHELL -c` in the session folder with the login env, output streams, cut at 30,000 code points; one command per session; Esc, Esc ends it (SIGTERM to its group, SIGKILL after 3 s); command and output go to Claude as `<bash-input>`/`<bash-stdout>`/`<bash-stderr>` without a turn; the transcript shows it on a `!` band, 20 lines, stderr apart, exit noted; refused in a terminal-held session and while another process runs the turn. R5.13, R9.4
+- FR-BOX-04: `/` opens the session's real commands and skills (from the SDK, cached per folder; internal and server-only commands left out) with hints and descriptions; ↑↓, Tab or Enter fills, Esc closes. R5.14
+
+## Needs you (NEED)
+- FR-NEED-01: A blocked session shows "Needs you" everywhere: red seesawing stripes in the sidebar, red tint on the Main conversation row, red card header. R6.1
+- FR-NEED-02: The transcript ends with Files changed then one "Waiting for you: …" line; no "Worked for" after it. R6.2
+- FR-NEED-03: Card above the box: red header (reason, "for 4 min", "k of N answered"), one accordion line per question, only the current one open with cursor, radio or checkbox, label, green "Recommended", description, last row "type your own", footer with Send. R6.3
+- FR-NEED-04: Card keys in normal mode: j/k through all options as one list, Space selects only, `i` types in place (a note as `annotations.notes`, or your own answer), Enter sends when complete else jumps to the first unanswered; no number keys, h/l or Tab; J/K still switch. Picks are kept until the answer is acked; offline the answer is refused and the picks stay. R6.4
+- FR-NEED-05: Permission card only when `auto` would ask; plan mode stays; shows the command, folder and Claude's reason; Allow once, Always allow (says what is remembered and for how long; cleared on close), Deny with an optional reason. R6.5
+- FR-NEED-06: Plan approval: the plan is Claude's reply; the card holds Approve (restores the mode before plan) or Ask for changes typed in place. R6.6
+- FR-NEED-07: Detection: a pending `canUseTool` request (question, permission, plan), several per session FIFO; an abort, interrupt or process end denies it. R6.8
+- FR-NEED-08: With no Synopia process, a thread whose transcript ends on an unanswered AskUserQuestion or ExitPlanMode needs you: read-only card with "Asked in another Claude Code process. Answer it there.", beats working, counts in the badge, ages from the question, stale after 12 h, clears when answered; a send waits. R6.8
+- FR-NEED-09: A question Synopia's own process left without a request (after a crash) reads "Not answered (Synopia quit)". R6.8
+
+## Background work panel (BG)
+- FR-BG-01: Panel right of the transcript (below it under 990 px): "Main conversation" card tinted by state with "N running in the background"; children ordered forks, subagents, shells, monitors, then oldest; 1px tree guides; cards tween in and out; a finished card stays 5 s then moves to Past. R7.1
+- FR-BG-02: A subagent's own shells and monitors hang under its card only; after it ends they read stopped, and Past names the subagent. R7.1
+- FR-BG-03: "To review" and "Past" (dim, newest first, fading at the bottom; failed and timed out named). R7.1
+- FR-BG-04: The viewed item gets an ink 1px edge, nothing moves; hover only shades; focus is the blue ring. R7.1
+- FR-BG-05: A subagent or fork click opens its transcript; a shell or monitor click expands its command and summary. R7.2
+- FR-BG-06 (`dropped`, Q4): A Stop row on each running card that stops only that item. Synopia sends no `stopTask`; R7.2 records the decision.
+- FR-BG-07: Covers forks, subagents (Explore, general-purpose and others), background shells (`run_in_background`, and foreground Bash moved by b,b or a timeout), monitors; ended by task notifications (JSONL wins over SDK events); an id swap keeps the work seen running. R7.3
+
+## Status and marks (STAT)
+- FR-STAT-01: Running marks always move: linear, infinite, one cycle per 2 s (monitor 3 s), phase kept across re-renders; layout tweens about 150 ms; a timer text change does not animate; reduced motion keeps the shape. R8.1, R8.5
+- FR-STAT-02: Session statuses: working (also background subagents, or another process's open turn), working with a queued message, compacting, rate limited with retry time, no updates (15 min), signed out, needs you (wins), your turn, stopped by you (only on `[Request interrupted by user]`, not "for tool use"), done, failed, timed out, ready for review; a quiet open turn becomes your turn after 30 min. The backend derives each session's status, word, tone, light and mark (`state` in the `session` frame); the page renders it. R8.2
+- FR-STAT-03: Kind marks, shape plus colour: agent ring+core+arc green; subagent orbiting dot green; fork two parting dots `#8250DF`; shell `>_` `#0B7A82`; monitor radar `#0E6BA8` (one SVG drawing); each with a still version. R8.3
+- FR-STAT-04: Mark colours come from variables with a light and a brighter dark set; marks align on boxes, ticks and the gutter. R8.4, R8.6
+- FR-STAT-05: Status restored after restart: busy and waiting become idle; stopped, failed, idle, signed out kept. R3.9, R8.2
+- FR-STAT-06 (`future`): Signed-out sidebar banner ("2 sessions are blocked. Run aws sso login"). R14. The row mark and status line say "Signed out"; a banner would count the sessions whose `state.status` is `signedout`. No such count exists yet.
+
+## Keyboard (KEY)
+- FR-KEY-01: Vim modes. Normal: J/K sessions, Ctrl+J/K conversations (Main then the panel's order, wrapping), j/k scroll or card cursor, g/G (g at top loads earlier), i/a insert, `/` insert with menu. Insert: typing to the box or card field, Esc back (first Esc closes the menu); a click on the box enters insert. One key dispatcher; a layer on top (preview, viewer, Open list, drag) owns every key while shown. R9.1
+- FR-KEY-02: The only mode indicator is the box: grey in normal, blue ring in insert. R9.2
+- FR-KEY-03: ⌘⇧[ and ⌘⇧] switch sessions; window tabbing is off so the system does not take them. R9.3
+- FR-KEY-04: Esc in normal during a turn asks "Interrupt?" in the box; a second Esc interrupts the foreground turn only; queued messages come back to the box (`cancelQueued` when advertised, else a toast); a running `!` command is asked first; an open card field takes Esc first. R9.4
+- FR-KEY-05: b in normal, when the driven turn runs a foreground Bash or subagent, marks those steps and asks "Send to background?"; b again sends all; nothing to send or another process: no-op, toast only when nothing could go. R9.5
+- FR-KEY-06: x in normal asks "Close this session? x again…" naming what will stop ("Remove it from Synopia?" for another process's); x again closes; one prompt at a time across Esc, b and x; in insert x types. R9.6
+
+## Review (REV)
+- FR-REV-01: A subagent whose description starts `For review: ` is a deliverable: on finish a blue badge, a "To review" group and "N to review" in the sidebar; it stays until "Mark reviewed"; opening it does not count. The backend stores a mark only for a subagent an open session has and keeps the 1000 newest; marks are not pruned on close, so a reopened session's reviewed deliverables stay reviewed. R10.1, R10.2
+
+## Visual system (LOOK)
+- FR-LOOK-01: Light theme with visible white panels on `#EDEFF2`; Atkinson Hyperlegible Next for UI, JetBrains Mono NL for the transcript, both bundled in `app/web/fonts` (OFL); sizes 81% of the first draft; GitHub-like colours with red `#CF222E` for needs you only; sentence case; 1px lines. R11
+- FR-LOOK-02: Dark mode: follows the system live until chosen; the footer moon or sun switch picks the other theme and stores it, Alt-click follows the system again; sidebar stays darkest (`#22272E`, canvas `#2A3038`, panels `#333A44`); every surface has a dark variant; AA contrast; instant switch. R11
+- FR-LOOK-03: The look matches `prototype/app.html`, except decided differences: rail 320 px, one mark period, no kind edge on cards. AGENTS.md
+
+## Tooling and checks (TOOL)
+- FR-TOOL-01: `app/check.sh` prints one line each for backend tests, shell (typecheck and `DaemonFilesTest`) and web (syntax, import rules, page unit tests); `--page` adds the 22 page suites; each line names what failed; nonzero on any failure. Every change must pass `app/check.sh --page`.
+- FR-TOOL-02: Each page-check run starts its own chrome-headless-shell and scripted-SDK backend on port 0 with temp state, and cleans both up on exit or signal. No other browser is ever started.
+- FR-TOOL-03: The scripted SDK (`app/backend/dev/scripted-sdk.ts`, `--sdk-script <file>`, `app/dev.sh --script`): per-session scripts of SDK messages and `canUseTool` calls over a fixture tree, so dev runs and every page check run the real Sessions code with no model call. It replaced the `--fake` driver (Q5).
+- FR-TOOL-04: Test hooks: `?agent=<id>`, `?open=1`; `window.__synopia` (state getters, ready signal, sent-frame spy, message injection); env `SYNOPIA_STATE_DIR`, `SYNOPIA_SDK_SCRIPT`, `SYNOPIA_EXIT_IDLE_MS`, `SYNOPIA_SNAPSHOT`, `SYNOPIA_DEBUG_DRAG` (shell), `SYNOPIA_CDP_THEME` (page checks).
+- FR-TOOL-05: `app/web/dev/compare.sh` screenshots prototype and port in 6 states for look review.
+- FR-TOOL-06: Perf scripts (`app/backend/perf`, opt-in, outside check.sh, real model calls): 5 haiku sessions' RSS; load time and memory of the N largest real sessions.
+- FR-TOOL-07 (`dropped`, Q10): `check.html` backend smoke page.
+- FR-TOOL-08: `app/backend/test/upgrade.sh`, opt-in, outside check.sh: a daemon built from tag `rearch-base` hands over to this tree's code (one daemon after, protocol v2, open list, layout, marks and models kept).
+
+## Non-functional
+- NFR-01: Each undocumented dependency sits in one module with its quirks, a pinning test and one topic doc: Claude Code transcript JSONL (`claude-jsonl.ts`, `tail.ts`), the `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` flag and the other untyped SDK extensions such as `interrupt({cancelQueued})` (`sdk.ts`), the pid files `~/.claude/sessions/<pid>.json` (`cli-terminals.ts`), and `daemon.json` (`daemon-files.ts` and `DaemonFiles.swift`, one reader per side). A handover is a field in `daemon.json`, never a log line.
+- NFR-02: SDK and CLI only through their documented surface (docs, typings, `--help`); no minified or binary reading. Behaviour the docs leave open is settled by one scripted check and kept in the adapter.
+- NFR-03: Look and motion: running things always move (linear, infinite, no pulse or fade); layout tweens allowed; one way to do each thing; light theme with dark sidebar, dark mode keeps the sidebar darkest; 1px lines; no ALL CAPS; shape carries meaning, not only colour; the rejected lists (R3.8, R4.9, 5.4, R6.9, R7.4, R8.7) stay out. `motion.mjs` reads the CSS for banned motion.
+- NFR-04: Checks never take focus: page checks use chrome-headless-shell only, never Google Chrome.app or Chrome for Testing (`chrome-bin.sh` fails with an install hint instead); no check launches `build/Synopia.app`; no macOS permissions (no osascript, UI scripting, screencapture); every browser started is killed.
+- NFR-05: The automated checks are the contract: `app/check.sh --page` prints four pass lines; no manual checklist.
+- NFR-06: One Node event loop owns the backend; nothing blocks it for long: first reads sliced at 4 MB per turn, no synchronous child process, async code hash and `ps`. The sync file work left is under [Known gaps](#known-gaps).
+- NFR-07: Running work survives the app; the app may crash or quit any time; one bad page message never ends the daemon (a guard per frame in the router, a last guard in the server); an uncaught error flushes state.json and exits 1, and the shell restarts the daemon once.
+- NFR-08: Local security: 127.0.0.1 only, per-start token, exact Host and Origin, CSP without inline script, files opened via argv never a shell, secrets never logged.
+- NFR-09: Scale: one user, one 16 GB machine, 55 MB / 4,200-line transcripts, 50 MB parsed under 2 s (`tail.test.ts`), backend under 200 MB RSS with the 15 largest sessions; an idle `claude` child costs 100-256 MB, so idle processes end after 30 min.
+- NFR-10: Platform: macOS 26+ (Info.plist; the true floor is `unverified`), Node 22.13+ with `--experimental-strip-types` and no build step, Swift from the command line tools; nothing fetched at run time that Jamf could block (fonts bundled); the node path is baked in at build.
+- NFR-11: Privacy: never read `~/.claude/sessions/*.key`; never commit `prototype/transcripts.js`, `spike/logs/` or anything from `~/.claude/sessions` or `~/.claude/projects`; never resume, fork or message a session a live CLI holds; the tree holds invented data only.
+- NFR-12: Persisted state is durable and validated: atomic writes, retry after a failed write, flush on any exit, entries validated on load, growing maps capped (reviewed 1000, answers 2000, plans 100).
+
+## Constraints from external systems
+Each fact, its source and its workaround are in the topic doc named.
+
+Claude Code files (CLI 2.1.325-2.1.330), [Claude Code transcripts](Claude%20Code%20transcripts.md) and [Claude Code terminals](Claude%20Code%20terminals.md):
+- CON-CC-01: Transcripts are `~/.claude/projects/<cwd realpath, non-alphanumerics as ->/<sid>.jsonl`; subagents `<sid>/subagents/agent-<aid>.jsonl` + `.meta.json` (agentType, isFork, description, toolUseId, spawnDepth, finished). Meta can lag, be half-written, or lack `finished`.
+- CON-CC-02: Each assistant record holds one content block; records of one response share `message.id`.
+- CON-CC-03: A mid-turn message lands as an `attachment` `queued_command` (string or block array), not a user record.
+- CON-CC-04: An SDK-driven CLI rarely writes `turn_duration` but writes `stop_hook_summary`; interrupted turns write neither.
+- CON-CC-05: `[Request interrupted by user]` is a stop; `… for tool use]` is a tool turned down; tool_result errors precede the marker.
+- CON-CC-06: Background: `toolUseResult.backgroundTaskId` for moved Bash; `status: async_launched` for async Agent; a re-woken subagent notifies by task id only; a monitor event has no tool-use id and must not end it.
+- CON-CC-07: `bashEditDiff` is written only with the flag setting `bashEditDiffEnabled: true` and a folder in a git repo.
+- CON-CC-08: In an SDK-driven CLI a subagent's records carry no `toolUseResult`; shell task ids come from `system/task_started`, about 2 s into a Bash. `unverified` live.
+- CON-CC-09: ExitPlanMode input can hold an older plan revision; plan approval rewrites the JSONL (the tailer must reset).
+- CON-CC-10: Image media types can mislabel bytes; a Read of an image repeats base64 in `toolUseResult.file`.
+- CON-CC-11: Pid files `~/.claude/sessions/<pid>.json` (undocumented): pid, sessionId, procStart (UTC text equal to `LC_ALL=C TZ=UTC ps -o lstart=`), kind, entrypoint (`cli`; SDK children write `sdk-ts`), cwd, status (busy, idle, waiting, shell), statusUpdatedAt; `*.key` beside them. Written 1-3 s after start. A CLI started with inherited `CLAUDE_CODE_*` variables writes none. Deletion on exit `unverified`.
+- CON-CC-12: Nothing in the CLI stops two writers on one transcript.
+- CON-CC-13: A folder's `permissions.defaultMode` is read at CLI start only.
+
+Agent SDK (0.3.330, bundled CLI 2.1.330), [Agent SDK](Agent%20SDK.md):
+- CON-SDK-01: `session_state_changed` needs the undocumented env flag `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`.
+- CON-SDK-02: `interrupt()` is typed without arguments; `{cancelQueued:true}` works when init lists `interrupt_cancel_queued_v1`; without it queued messages survive an interrupt.
+- CON-SDK-03: With `permissionMode` unset the user's `auto` applies; `canUseTool` fires only when auto would ask (AskUserQuestion and ExitPlanMode always; read-only Bash and Agent never); with `permissions.ask` rules requests arrive without suggestions.
+- CON-SDK-04: `options.env` replaces the environment.
+- CON-SDK-05: Control calls need streaming input; `supportedCommands/Models` need a `query()`: an idle one with a never-yielding prompt answers in about 5.6 s, makes no model call and runs SessionStart hooks.
+- CON-SDK-06: `system/init` comes at every turn start and carries capabilities and slash commands.
+- CON-SDK-07: `shouldQuery:false` user messages join the transcript without a turn and merge into the next one.
+- CON-SDK-08: `perTaskStopAffordance: true` makes an interrupt spare background tasks.
+- CON-SDK-09: ExitPlanMode approval needs an explicit `setMode` update.
+- CON-SDK-10: `supportedCommands()` descriptions are HTML-escaped; internal names start `__`; `workflow-launch-exec` is server-only.
+- CON-SDK-11: `tool_progress` carries elapsed seconds only, no output.
+- CON-SDK-12: `stopTask` emits `task_notification` at once; the JSONL gets it only when the turn ends. Synopia does not call it (FR-BG-06).
+- CON-SDK-13: Resume and fork re-send the whole history (cost). `unverified`.
+- CON-SDK-14: `listSessions()` gives the cwd realpath and honours `CLAUDE_CONFIG_DIR`.
+- CON-SDK-15: Bedrock error shapes for expired SSO, throttling and compaction are typings-based only, `unverified`; plan rate limits (5 h, weekly) are unavailable on Bedrock (R14).
+
+WKWebView and browsers, [WKWebView and AppKit](WKWebView%20and%20AppKit.md) and [Page checks](Page%20checks.md):
+- CON-WK-01: The web view's locale does not see the macOS 24-hour setting.
+- CON-WK-02: `target=_blank` and `file://` links do nothing useful; every click is intercepted.
+- CON-WK-03: `confirm()` needs a WKUIDelegate (Synopia sets none and uses none); `takeSnapshot` needs no Screen Recording permission.
+- CON-WK-04: The page uses subgrid, `CSS.highlights`, `inert`, `Array.findLast`, writable `CSSAnimation.startTime`; the minimum WebKit is `unverified`.
+- CON-WK-05: A rebuilt element restarts its CSS animation; marks need their `startTime` pinned.
+- CON-WK-06: Native drag is unreliable on `<button>` rows; DnD uses pointer events.
+- CON-WK-07: Headless Chrome drops the first key after load; a hidden or unfocused page gets no frames; Chrome.app with `--headless` still takes focus.
+
+macOS, [macOS](macOS.md) and [Daemon files](Daemon%20files.md):
+- CON-MAC-01: Finder-launched apps lack the asdf PATH and a Dock-started daemon gets launchd's short PATH.
+- CON-MAC-02: macOS 26 title bar is 32 pt with traffic lights 9-23 pt down; measured at run time, 28 pt default.
+- CON-MAC-03: Automatic window tabbing takes ⌘⇧[.
+- CON-MAC-04: The daemon survives the app via `posix_spawn` SETSID, CLOEXEC_DEFAULT, SETSIGDEF; `waitpid` gives a raw status (exit 3 is `3 << 8`).
+- CON-MAC-05: `fs.watch` merges or drops events and arms asynchronously; a poll is required.
+- CON-MAC-06: `ps -o tty=` gives `ttysNNN`, `??` for none; `ps lstart` pads single-digit days.
+- CON-MAC-07: A locally swiftc-built app runs under Jamf Protect. `unverified` (one author run).
+- CON-MAC-08: bat has no GitHub Dark theme (Coldark-Dark used).
+- CON-MAC-09: `O_EXLOCK` is not in Node's `fs.constants`; its value 0x20 gives a kernel lock that goes with the process.
+
+## Dropped
+- FR-BG-06 `stopTask` and the Stop row, 2026-11-24 (Q4).
+- The `--fake` driver, replaced by the scripted SDK (FR-TOOL-03), 2026-11-24 (Q5). A daemon still accepts `--fake` and `--dry-open` once, so a check's old daemon can hand over to new code.
+- FR-TOOL-07 `check.html`, 2026-11-24 (Q10).
+- The fixed default folder (a work repo) in FR-SES-02: a stored setting, default the most recent session's folder or `~`, 2026-11-24.
+- The kept storyboards are design history; [requirements.md](requirements.md) (R6.4, R8.3) wins where they differ.
+
+## Known gaps
+
+What the code does not do yet, or what no check covers. Each is low risk unless it says otherwise.
+
+Status rules still in the page. The backend derives each session's state, but three item-level derivations stay in the page because the backend does not send the fields:
+- A background item's display state: `completed` reads done, and a monitor whose `start + timeout` has passed reads timed out, on the page's clock (`rail.js` `bgState`). Needs a per-item display state from `transcript.ts`/`status.ts`.
+- A finished subagent whose own shell or monitor still runs reads running (`transcript.js` `waveHTML`). `Agent.running` is `!finished` today; it needs to count the subagent's own work.
+- A per-item mark key (`k_*`, `review`, `failed`, `timeout`, `stopped`, `done`), as the session's `state.mark` (`marks.js` `bgMarkKey`).
+With those three fields, `rail.js`, `transcript.js` and `marks.js` read instead of derive.
+
+Backend, low:
+- A queued message's record is matched by its text and a 5 s grace (`session.ts` `landsAs`); the `queued_command` record's link to the sent message is `unverified` ([Claude Code transcripts](Claude%20Code%20transcripts.md#messages-sent-during-a-turn)). No test covers the grace or a cut text.
+- `Session.stop()` at shutdown does not close the cards: parked `canUseTool` requests stay pending until the process close aborts them. The daemon exits anyway.
+- `login-env.ts` sets `SYNOPIA_LOGIN_ENV=1` in the daemon's environment, so every CLI and `!` shell inherits it. `captureShell` ignores the `env` option of `loadLoginEnv`.
+- `paths.ts` does not map a path after a `:` (`PATH=/a:/Users/x/bin` keeps the second path in full). Display only.
+- SIGTERM or SIGINT before the daemon is ready exits without a state flush; nothing has changed by then today.
+- `daemon.log` rotation copies then truncates, so lines written between the two are lost.
+- A page frame in the 1 s close window after the router stopped is dropped without an ack.
+- Sync file work left on the loop (NFR-06): `findTranscript` at open and rekey, the tail reads (4 MB slices), `statSync` in `open.ts`, `preview.ts` and `session.ts`, the `daemon.log` copy at rotation (up to 5 MB), the state.json write, and draft image writes in `ui-state.ts`.
+- `ui-state.ts` and other modules each keep a one-line `isObj` guard; `daemon.ts` exports a few names only its own module uses.
+
+Page, low:
+- The "For review: " prefix is stripped only in To review; the sidebar and Past show it.
+- Some light-sidebar rules in `app.css` are overridden later in the file and could be merged; left, as merging is a look risk.
+
+Shell and the one-time update:
+- Not verifiable without launching the app, so no check covers them: the confirm sheets' text and the one-sheet rule, the slow-daemon wait and its error view, SIGTERM only to the same process, the page reload after Restart Backend Now, and the bundle swap while an app instance runs. `Backend.lost` and `findOrStart` have no automated test (only the `DaemonFiles` decode is tested).
+- No UI way to end a daemon that runs but does not answer; adding one is a product decision. The shell has no Reload, ⌘W or ⌘H item and the web view is not inspectable; page edits show after "Restart Backend Now…" or a relaunch.
+- `Backend.swift` `procStart` waits on `ps` with no timeout on its one serial queue; a hung `ps` stalls later checks.
+- A new shell that sees a `rearch-base` daemon hand over counts it as a crash (that daemon writes no `handover` field), so a second loss within 60 s shows the error view. Two daemons can run only if a `rearch-base` daemon wrote an empty `procStart` (its `ps` failed) or was started by hand with `--no-parent`. Both apply to the one update from `rearch-base` only ([Daemon files](Daemon%20files.md#the-one-update-from-a-daemon-before-these-files)).
+- `build.sh` replaces the bundle with two renames; if the second fails the old bundle is gone. It does not check the Node version (22.13+).
+
+Checks and tooling:
+- `menu.mjs` reads state.json after a fixed 1.2 s sleep (the store writes on a 1 s timer); it can flake under load.
+- Page suites share fixed sandbox folders (`/tmp/synopia-bang`, `-images`, `-close`, `-steps`, `-titles`, `-background`, `-queued`, `-earlier`), and `compare.sh` a fixed port (4718) and folder, so two runs at once collide. `run.sh` leaves each run's state folder in `$TMPDIR`.
+- `preview.mjs` and `restore.mjs` preview `app/backend/src/open.ts` and assert on its text: a refactor of open.ts fails them.
+- `run.sh` and `check.sh` do not check that `app/backend/node_modules` exists (`dev.sh` does).
+- `compare.sh` "waiting" shot: the header says "Default" where the prototype says "Default (Fixture Large)", because that fixture session's folder has no menu.
+- `perf/processes.mjs` reads protocol v2 but was not run since (it makes real model calls).
+
+Known limits of the design:
+- A take-over that completes while you are on another session leaves its text in that session's draft (the page empties the box only while it is on screen).
+- The Now line follows 20 s (the writer's debounce) after a turn, background work or a waiting card changes, not at once.
+- Until a folder's menu first arrives (1 to 5 s, once per folder; `menu-cache.json` keeps it) the header names the model from its id (`format.js` `modelLabel`), which can differ from the menu's name.
+- Not restored after a reload or relaunch: the preview's change marks, the slash menu, a viewer on pasted (blob) images. A SIGKILL of the daemon loses at most the last second of UI state.
+- Backend updates: an action sent during the idle handover is refused with an ack ("Synopia is restarting…") and a send comes back to the box. A new daemon that loads but fails later is a lost daemon: the shell starts one after 20 s, and the error view shows if that fails too. Session processes end with the handover (they were idle) and resume on the next message.
+- Paths map only the real path of `/tmp` and of home back (`paths.ts`); a project folder reached through a symlink shows its real path.
+- A task ended by the SDK's `task_notification` between turns is kept in memory only; the JSONL's own notification (written at the next turn) or the process-end mark covers a restart.
+- The Open list shows the 50 newest sessions per filter, so an older one in a busy folder can't be reached from it.
+- Two writers on one transcript (a terminal and Synopia at once) can interleave records; the take-over keeps one writer only for sessions Synopia holds (CON-CC-12).
+
+Facts marked `unverified` in the topic docs (Bedrock error shapes, the macOS and WebKit floor, Jamf, resume cost, pid-file deletion) wait for a live check.
+
+Before any push: git history up to the Phase 2 commit of the rearchitecture holds real work data (Q1); scrub it first, asking the user.
+
+## Decisions (2026-11-24)
+The user's answers for the rearchitecture.
+- Q1: Real work data leaves the tree (deleted or replaced with invented data). Git history still holds it: scrub it before any push, asking the user first.
+- Q2: Keep the three storyboards as design reference, with invented data only. group_sessions.py and prototype/index.html are deleted; their facts and "why rejected" lines are in [requirements.md](requirements.md) "Design notes". R4.8 stays future.
+- Q3: `bashEditDiff` is settled (flag plus git repo); no git-status fallback.
+- Q4: Drop `stopTask` until a key is designed; R7.2 amended.
+- Q5: The scripted SDK `query()` at the adapter seam replaces `--fake`; page checks run the real Sessions code.
+- Q6: "Always allow" rules clear on close.
+- Q7: One window, one page per daemon; `restore` and toasts go to the page that acted.
+- Q8: Fonts bundled.
+- Q9: Actions taken while disconnected are refused with a toast and local state stays; UI state is sent again on reconnect; the layout is the backend's.
+- Q10: Dev leftovers deleted, facts moved into topic docs first; the perf scripts stay as an opt-in batch.
+- Q11: FR-SES-15, FR-SIDE-06, FR-STAT-06 (and the signed-out banner) stay future requirements; nothing may block them.
+- Checks never take focus: chrome-headless-shell only, no Chrome.app fallback (NFR-04).
+- No manual checklist: the automated checks are the contract (NFR-05).

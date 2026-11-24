@@ -15,9 +15,9 @@ export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: n
 // `model`: the model of new sessions when set (else the CLI's default).
 export type Settings = { newSessionCwd?: string; writerModel: string; model?: string };
 
-// The subagents marked reviewed (R10.2), newest last: the oldest go past this many (backend-core#B5).
+// The subagents marked reviewed (R10.2), newest last: the oldest go past this many.
 export const REVIEWED_MAX = 1000;
-// The answer labels and answered plans kept, newest last: the oldest go past these (final-session#B5).
+// The answer labels and answered plans kept, newest last: the oldest go past these.
 // They label tool items of open or reopened sessions; a plan can be long.
 export const ANSWERS_MAX = 2000;
 export const PLANS_MAX = 100;
@@ -113,7 +113,7 @@ export function normalize(raw: unknown): State {
   }
   s.layout = cleanLayout(raw.layout);
   if (isStrArr(raw.reviewed)) s.reviewed = raw.reviewed.slice(-REVIEWED_MAX);
-  // Each entry checked (backend-core#B4): a wrong-shaped one is dropped, not passed on.
+  // Each entry checked: a wrong-shaped one is dropped, not passed on.
   s.models = entries(raw.models, (v) => isObj(v) && typeof v.model === 'string'
     ? { model: v.model, ...(typeof v.effort === 'string' || v.effort === null ? { effort: v.effort } : {}) } : undefined);
   s.rules = entries(raw.rules, (v) => (isStrArr(v) ? [...v] : undefined));
@@ -184,7 +184,7 @@ export function openStore(stateDir: string, opts: { log?: Log; minIntervalMs?: n
     timer = setTimeout(write, wait);
   }
 
-  // A failed write keeps the state dirty and tries again after the interval (backend-core#B1).
+  // A failed write keeps the state dirty and tries again after the interval.
   function write() {
     if (timer) { clearTimeout(timer); timer = null; }
     if (!dirty) return;

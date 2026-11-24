@@ -135,7 +135,7 @@ test('ui: a new id re-keys the session data, its draft files and the current ses
   assert.deepEqual(store.state.ui.sessions[NEW].folds, ['|run:a#0']);
 });
 
-test('ui: an emptied entry of the current session keeps current and view (backend-core#B2)', () => {
+test('ui: an emptied entry of the current session keeps current and view', () => {
   const { store, drafts } = setup();
   patchUi(store, { current: SID, view: 'a1', sessions: { [SID]: { draft: { text: 't', images: [{ id: 'i', mediaType: 'image/png', data: png(10) }] } } } });
   patchUi(store, { sessions: { [SID]: { draft: null } } }); // the draft sent: the entry's last field

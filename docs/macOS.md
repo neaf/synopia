@@ -1,6 +1,6 @@
 # macOS
 
-Facts about macOS itself that Synopia's daemon, shell and tools depend on. AppKit and WKWebView are in [WKWebView and AppKit](WKWebView%20and%20AppKit.md); `ps` start strings for the daemon are in [Daemon files](Daemon%20files.md#quirk-process-start-strings). Sources: code, tests, and live runs recorded in `.ai-notes/app/README.md`.
+Facts about macOS itself that Synopia's daemon, shell and tools depend on. AppKit and WKWebView are in [WKWebView and AppKit](WKWebView%20and%20AppKit.md); `ps` start strings for the daemon are in [Daemon files](Daemon%20files.md#quirk-process-start-strings). Sources: code, tests, and live runs recorded in `.ai-notes/app/README.md` at tag `rearch-base`.
 
 ## PATH for apps and daemons
 
@@ -21,7 +21,7 @@ Facts about macOS itself that Synopia's daemon, shell and tools depend on. AppKi
 
 ## Environment for a GUI app
 
-A test can pass variables to an app it launches only through `open --env NAME=value <app>` (`SYNOPIA_STATE_DIR`, `SYNOPIA_SNAPSHOT`). Source: app/README.md 30-33. Page checks never launch the app; see [Page checks](Page%20checks.md).
+A test can pass variables to an app it launches only through `open --env NAME=value <app>` (`SYNOPIA_STATE_DIR`, `SYNOPIA_SNAPSHOT`). Source: README.md "Run". Page checks never launch the app; see [Page checks](Page%20checks.md).
 
 ## `ps`
 

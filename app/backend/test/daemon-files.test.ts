@@ -54,7 +54,7 @@ test('daemon.json is written atomically with mode 0600 and removed only by its o
   assert.equal(existsSync(join(dir, 'daemon.json')), false);
 });
 
-test('handover: the old daemon marks its own daemon.json; the successor keeps a mark that names it (shell-and-tooling#B9)', () => {
+test('handover: the old daemon marks its own daemon.json; the successor keeps a mark that names it', () => {
   const dir = tmp();
   assert.equal(markHandover(dir, 4242, { reason: 'update', successor: 4343 }), false, 'no file: nothing written');
   writeDaemonInfo(dir, info({ pid: 9 }));
@@ -135,7 +135,7 @@ test('the lock goes with the process, even on SIGKILL', async () => {
   acquireLock(dir).release();
 });
 
-test('eight starters racing for a stale lock: exactly one wins (sessions-sdk#B2)', async () => {
+test('eight starters racing for a stale lock: exactly one wins', async () => {
   for (let round = 0; round < 3; round++) {
     const dir = tmp();
     writeFileSync(join(dir, 'backend.lock'), String(deadPid())); // a crashed daemon's

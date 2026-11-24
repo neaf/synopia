@@ -272,7 +272,7 @@ export function render(
 }
 
 // The `preview` message: a preview reply; a file that isn't text is opened as `open` would, and the reply
-// says so (`opened`), so the page stops waiting for it (seams#B8); or a toast.
+// says so (`opened`), so the page stops waiting for it; or a toast.
 export async function previewFile(
   p: unknown,
   opts: { bat: Bat; theme?: Theme; display?: (p: string) => string; run?: RunBat; log?: Log; open: (p: string) => void; reply: (msg: PreviewReply | PreviewOpened) => void; toast: (text: string) => void },

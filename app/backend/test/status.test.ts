@@ -339,7 +339,7 @@ test('status: a question another process asks is needs you over working, aged fr
   assert.equal(transcriptStatus({ ...asking, ask: null }), 'busy');
 });
 
-// ---------- sessionState: what the page shows (seams#I4) ----------
+// ---------- sessionState: what the page shows ----------
 const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, review: 0, driven: true, ...f });
 const show = (status: Status, f: Partial<StateFacts> = {}, detail: StatusDetail = {}) => {
   const st = sessionState({ status, at: 7, detail }, facts(f));
@@ -371,7 +371,7 @@ test('state: needs you wins, with what it waits on (R6.1)', () => {
   assert.equal(need('busy', { ask: { kind: 'plan' } }), null, 'an ask is passed only while it is why the session waits');
 });
 
-test('state: stopped by you is the stop marker on your turn, not a turned-down tool (seams#B3)', () => {
+test('state: stopped by you is the stop marker on your turn, not a turned-down tool', () => {
   assert.deepEqual(show('idle', { interrupted: true }), ['amber', 'amber', 'Stopped', 'stopped']);
   assert.equal(sessionState({ status: 'idle', at: 0 }, facts({ interrupted: true })).stopped, true);
   assert.equal(sessionState({ status: 'stopped', at: 0 }, facts()).stopped, true);
@@ -494,13 +494,13 @@ test('badge: a question or plan another process asks counts, with its ask for th
 test('quitSummary: counts per kind and the alert sentence, a kind it has no words for too', () => {
   assert.deepEqual(quitSummary({ running: [], background: [] }), { running: [], background: [], counts: {}, summary: '' });
   const bg = (...kinds: string[]) => kinds.map((kind) => ({ sid: 's', kind }));
-  // `background` keeps the older daemons' list, so a shell of that time still asks (final-daemon#B2)
+  // `background` keeps the older daemons' list, so a shell of that time still asks
   assert.deepEqual(quitSummary({ running: ['a', 'b'], background: bg('shell') }),
     { running: ['a', 'b'], background: [{ sid: 's', kind: 'shell' }], counts: { shell: 1 }, summary: '2 sessions are working and 1 background shell will stop.' });
   assert.equal(quitSummary({ running: ['a'], background: [] }).summary, '1 session is working and will stop.');
   assert.equal(quitSummary({ running: [], background: bg('monitor', 'subagent', 'subagent', 'shell', 'shell') }).summary,
     '2 subagents, 2 background shells and 1 monitor will stop.');
-  // a new kind: counted and named, so the confirm still shows (seams#A7)
+  // a new kind: counted and named, so the confirm still shows
   const q = quitSummary({ running: [], background: bg('task') });
   assert.deepEqual(q.counts, { task: 1 });
   assert.equal(q.summary, '1 background task will stop.');

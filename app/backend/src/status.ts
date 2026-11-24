@@ -340,7 +340,7 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
   return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.external === b.external && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
 }
 
-// ---------- what the page shows: the one derivation (seams#I4) ----------
+// ---------- what the page shows: the one derivation ----------
 // The page renders `session.state` and decides nothing about status itself.
 //   light    red: needs you. green: a turn runs, interruptible (working, compacting, rate limited,
 //            no updates). amber: your turn (idle, stopped, failed, signed out).
@@ -351,7 +351,7 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //   mark     the session mark's key (marks.js).
 //   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
 //            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
-//            `Interrupt`; a turned-down tool is not one, seams#B3).
+//            `Interrupt`; a turned-down tool is not one).
 //   needsYou what the session waits on: the oldest request's kind, or the question or plan
 //            another process asks; null when it waits on nothing.
 //   review   finished "For review: …" subagents not marked reviewed (R10.1).
@@ -403,7 +403,7 @@ export function sessionState(e: { status: Status; at: number; detail?: StatusDet
 export const badgeOf = (s: SessionState): number => (s.needsYou ? 1 : 0) + s.review;
 
 // The Dock badge's count, kept as sessions change: the shell polls it every 2 s and nothing is rebuilt
-// per poll (seams#B6, backend-core#B3). `onChange` runs when the total moves (the `badge` log line).
+// per poll. `onChange` runs when the total moves (the `badge` log line).
 export class BadgeCounter {
   private per = new Map<string, number>();
   private total = 0;
@@ -437,7 +437,7 @@ export class BadgeCounter {
 // alert's sentence after its question ("2 sessions are working and 1 background shell will stop."),
 // empty when nothing runs. The shell shows `summary` as it is and knows no kind: a new kind is counted
 // and named here. `background` keeps the list shape of the daemons before `summary`: a shell of that
-// time still decodes it and asks first (final-daemon#B2, docs/Daemon files.md).
+// time still decodes it and asks first (docs/Daemon files.md).
 export type QuitCheck = { running: string[]; background: { sid: string; kind: string }[]; counts: Record<string, number>; summary: string };
 
 const KIND_WORDS: Record<string, [string, string]> = {

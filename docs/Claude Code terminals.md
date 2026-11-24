@@ -1,6 +1,6 @@
 # Claude Code terminals
 
-How Synopia sees a Claude Code CLI running in a terminal, and how it takes a session over. The pid files are undocumented; `cli-terminals.ts` is the only module that reads them, and it fails safe: a file it can't make sense of counts as no terminal (logged once as `terminals.format`). Process facts (`ps`, liveness, signals) come from `macos.ts`; see [macOS](macOS.md#ps). Facts hold for CLI 2.1.325 to 2.1.330. Sources: code, `cli-terminals.test.ts`, the take-over live run (CLI 2.1.325 in a pty under `expect`, recorded in `.ai-notes/app/README.md` "Settled by the take-over live run").
+How Synopia sees a Claude Code CLI running in a terminal, and how it takes a session over. The pid files are undocumented; `cli-terminals.ts` is the only module that reads them, and it fails safe: a file it can't make sense of counts as no terminal (logged once as `terminals.format`). Process facts (`ps`, liveness, signals) come from `macos.ts`; see [macOS](macOS.md#ps). Facts hold for CLI 2.1.325 to 2.1.330. Sources: code, `cli-terminals.test.ts`, the take-over live run (CLI 2.1.325 in a pty under `expect`, recorded in `.ai-notes/app/README.md` at tag `rearch-base` "Settled by the take-over live run").
 
 Transcript files are in [Claude Code transcripts](Claude%20Code%20transcripts.md).
 

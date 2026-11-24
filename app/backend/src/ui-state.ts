@@ -208,7 +208,7 @@ function dropImages(store: Store, sid: string, was: Draft | undefined, kept: Dra
 }
 
 // A session's ui data and its draft images go; `current` and `view` stay, so a session whose last
-// field emptied (a draft sent, the last step folded) is still the one on screen (backend-core#B2).
+// field emptied (a draft sent, the last step folded) is still the one on screen.
 function dropSession(store: Store, sid: string): boolean {
   const had = sid in store.state.ui.sessions;
   delete store.state.ui.sessions[sid];

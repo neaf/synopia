@@ -244,7 +244,7 @@ export class CliTerminals {
 
   // Alive, the same start time (the CLI writes it in UTC: docs/Claude Code terminals.md#quirk-procstart-is-utc)
   // and not one of Synopia's own. Stored per pid and start time while the pid lives, unless `fresh`.
-  // null: a probe failed, so nothing is stored and the next scan asks again (formats#B8).
+  // null: a probe failed, so nothing is stored and the next scan asks again.
   private async verify(t: Terminal, fresh: boolean): Promise<boolean | null> {
     if (!this.probe.alive(t.pid)) {
       this.verified.delete(this.key(t));

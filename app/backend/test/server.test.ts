@@ -225,7 +225,7 @@ test('a handler that throws is logged, and the socket and server go on (NFR-07)'
   ws.close();
 });
 
-test('a page that doesn\'t read: stream previews are dropped past the soft limit, other frames kept, and it is cut off past the hard one (backend-core#B6)', async () => {
+test('a page that doesn\'t read: stream previews are dropped past the soft limit, other frames kept, and it is cut off past the hard one', async () => {
   const { ws, got, client } = await page();
   (ws as unknown as { _socket: { pause(): void; resume(): void } })._socket.pause();
   const big = 'x'.repeat(16 * 1024);
@@ -251,7 +251,7 @@ test('a page that doesn\'t read: stream previews are dropped past the soft limit
   assert.ok(lines.some((l) => l.startsWith('ws.slow')), lines.join('\n'));
 });
 
-test('a request Node can\'t parse gets 400 and a log line; the server goes on (backend-core#B7)', async () => {
+test('a request Node can\'t parse gets 400 and a log line; the server goes on', async () => {
   const sock = tcp(server.port, '127.0.0.1');
   await once(sock, 'connect');
   let reply = '';
@@ -281,7 +281,7 @@ test('an oversized frame before auth closes the socket', async () => {
   assert.equal(await done, 1009);
 });
 
-test('close: a page gets what was sent to it, then a close frame; a frame after it reaches nothing (seams#B5)', async () => {
+test('close: a page gets what was sent to it, then a close frame; a frame after it reaches nothing', async () => {
   const seen: string[] = [];
   const s2 = await startServer({
     port: 0, token: TOKEN, webRoot, quitCheck: () => ({ running: [], background: [], counts: {}, summary: '' }),

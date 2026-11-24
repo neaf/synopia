@@ -112,7 +112,7 @@ export class Cards {
     if ('error' in s) return s;
     const st = this.hooks.store.state, sid = this.hooks.sid();
     if (s.rules.length) st.rules[sid] = [...new Set([...(st.rules[sid] ?? []), ...s.rules])];
-    // the newest ANSWERS_MAX labels and PLANS_MAX plans are kept (final-session#B5)
+    // the newest ANSWERS_MAX labels and PLANS_MAX plans are kept
     if (s.label) capRecord(st.answers, p.toolUseId, s.label, ANSWERS_MAX);
     // the plan you answered, as the card showed it (the JSONL's ExitPlanMode input can be older)
     if (p.asked.toolName === 'ExitPlanMode' && typeof p.asked.input.plan === 'string') capRecord(st.plans, p.toolUseId, p.asked.input.plan, PLANS_MAX);

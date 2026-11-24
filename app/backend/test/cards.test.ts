@@ -148,7 +148,7 @@ const SID = '11111111-2222-4333-8444-555555555555';
 const READ_RULE: PermissionUpdate[] = [{ type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '//tmp/**' }], behavior: 'allow', destination: 'session' }];
 const opts = (id: string, signal: AbortSignal, extra: object = {}) => ({ signal, toolUseID: `tu-${id}`, requestId: id, ...extra }) as unknown as Parameters<Cards['park']>[2];
 
-test('cards: an answered request lets go of its abort listener (sessions-sdk#B9)', async () => {
+test('cards: an answered request lets go of its abort listener', async () => {
   const t = cards();
   const ac = new AbortController();
   const p = t.c.park('Bash', { command: 'ls' }, opts('rq-1', ac.signal));
@@ -159,7 +159,7 @@ test('cards: an answered request lets go of its abort listener (sessions-sdk#B9)
   assert.equal(t.drained, 1, 'the last card went: held messages may go');
 });
 
-test('cards: Always allow stores the session rules; close ends the requests and forgets the rules (sessions-sdk#B1, Q6)', async () => {
+test('cards: Always allow stores the session rules; close ends the requests and forgets the rules (Q6)', async () => {
   const t = cards();
   void t.c.park('Read', { file_path: '/tmp/a' }, opts('rq-1', new AbortController().signal, { suggestions: READ_RULE }));
   t.c.answer('rq-1', { choice: 'always' });
@@ -172,7 +172,7 @@ test('cards: Always allow stores the session rules; close ends the requests and 
   assert.equal(t.drained, 1, 'an abort is no drain');
 });
 
-test('cards: the Always allow text shows folders with ~ (final-session#B6)', () => {
+test('cards: the Always allow text shows folders with ~', () => {
   const shown: unknown[] = [];
   const hooks: CardsHooks = {
     store: cards().store, sid: () => SID, show: (r) => shown.push(r.always), clear: () => {}, count: () => {},
@@ -185,7 +185,7 @@ test('cards: the Always allow text shows folders with ~ (final-session#B6)', () 
   assert.deepEqual(shown, ['Allow access to ~/dev/other for this session.']);
 });
 
-test('cards: answer labels and plans keep the newest ANSWERS_MAX and PLANS_MAX (final-session#B5)', async () => {
+test('cards: answer labels and plans keep the newest ANSWERS_MAX and PLANS_MAX', async () => {
   const t = cards();
   for (let i = 0; i < PLANS_MAX + 2; i++) t.store.state.plans[`old-${i}`] = 'p';
   for (let i = 0; i < ANSWERS_MAX; i++) t.store.state.answers[`old-${i}`] = 'Allow once';

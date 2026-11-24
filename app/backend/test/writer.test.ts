@@ -145,7 +145,7 @@ test('a bad reply is ignored and keeps the text written before', async () => {
   store.close();
 });
 
-test('an error result is logged as a failed call, not as a bad reply (sessions-sdk#B11)', async () => {
+test('an error result is logged as a failed call, not as a bad reply', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
   store.state.written.s1 = { title: 'Kept', now: 'Kept now', at: 1 };
@@ -162,7 +162,7 @@ test('an error result is logged as a failed call, not as a bad reply (sessions-s
   store.close();
 });
 
-test('no scratch folder: logged as a failed call with its code, no call, and the next one still runs (final-adapters#B4)', async () => {
+test('no scratch folder: logged as a failed call with its code, no call, and the next one still runs', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
   fs.writeFileSync(path.join(dir, 'writer'), 'a file where the folder goes');

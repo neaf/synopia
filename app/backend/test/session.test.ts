@@ -107,7 +107,7 @@ test('session: a close while the start check runs starts nothing', async () => {
   assert.equal(t.q.calls.length, 0);
 });
 
-test('session: after quit a process exit runs nothing: no toast, no next process (sessions-sdk#B10)', async () => {
+test('session: after quit a process exit runs nothing: no toast, no next process', async () => {
   const t = setup({ idleMs: 30 });
   t.sessions.get(SID)!.send('one');
   t.q.calls[0].exitDelay = 50; // the process takes a while to go after its input closes
@@ -123,7 +123,7 @@ test('session: after quit a process exit runs nothing: no toast, no next process
   assert.notEqual(t.last()?.state.status, 'failed');
 });
 
-test('session: an id swap onto another open session is refused, logged and toasted (sessions-sdk#B6)', async () => {
+test('session: an id swap onto another open session is refused, logged and toasted', async () => {
   const t = setup({ open: [SID, OTHER] });
   t.sessions.get(SID)!.send('hello');
   emit(t.q.calls[0], { type: 'conversation_reset', new_conversation_id: OTHER });
@@ -135,7 +135,7 @@ test('session: an id swap onto another open session is refused, logged and toast
   t.sessions.stop();
 });
 
-test('session: images over 20 MB together are refused with a reason, below the 32 MB frame (seams#B2)', () => {
+test('session: images over 20 MB together are refused with a reason, below the 32 MB frame', () => {
   const four = 'A'.repeat(Math.floor((4.5 * 1048576) / 3) * 4); // 4.5 MB of base64 data
   const five = Array.from({ length: 5 }, () => ({ mediaType: 'image/png', data: four }));
   assert.ok(MAX_TOTAL_IMAGE_BYTES * 4 / 3 < 32 * 1048576, 'the base64 frame stays under the socket cap');
@@ -155,7 +155,7 @@ test('model: one resolver for the header and the process', () => {
   assert.deepEqual(resolveModel(undefined, { model: null, effort: null }), { model: null, effort: null });
 });
 
-test('close: the session rules go, so a reopened session asks again (sessions-sdk#B1, Q6)', async () => {
+test('close: the session rules go, so a reopened session asks again (Q6)', async () => {
   const t = setup();
   t.store.state.rules[SID] = ['Read(//tmp/**)'];
   t.sessions.get(SID)!.send('hello');

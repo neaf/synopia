@@ -84,7 +84,7 @@ test('flush writes at once', () => {
   assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).settings.writerModel, 'opus');
 });
 
-test('a failed write keeps the state dirty and is tried again (backend-core#B1); the file is 0600', async () => {
+test('a failed write keeps the state dirty and is tried again; the file is 0600', async () => {
   const dir = tmp();
   const lines: string[] = [];
   const s = openStore(dir, { minIntervalMs: 30, log: (e, f) => lines.push(`${e} ${f?.code ?? ''}`.trim()) });
@@ -110,7 +110,7 @@ test('a failed write keeps the state dirty and is tried again (backend-core#B1);
   assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).settings.writerModel, 'opus');
 });
 
-test('every map entry is checked on load; a wrong one is dropped (backend-core#B4)', () => {
+test('every map entry is checked on load; a wrong one is dropped', () => {
   const dir = tmp();
   writeFileSync(join(dir, 'state.json'), JSON.stringify({
     version: 1,
@@ -139,13 +139,13 @@ test('every map entry is checked on load; a wrong one is dropped (backend-core#B
     a: { at: 9, title: 'Ship it', now: 'Waiting', history: [{ title: 'Ship', at: 1 }] },
     c: { at: 3 }, d: { at: 4, history: [] },
   });
-  // reviewed marks: the newest REVIEWED_MAX kept (backend-core#B5)
+  // reviewed marks: the newest REVIEWED_MAX kept
   assert.equal(st.reviewed.length, REVIEWED_MAX);
   assert.equal(st.reviewed[0], 'agent-5');
   assert.equal(st.reviewed.at(-1), 'agent-1004');
 });
 
-test('reviewed marks: a new mark past REVIEWED_MAX drops the oldest (backend-core#B5)', () => {
+test('reviewed marks: a new mark past REVIEWED_MAX drops the oldest', () => {
   const s = openStore(tmp(), { minIntervalMs: 0 });
   const marks = new ReviewedMarks(s);
   for (let i = 0; i < REVIEWED_MAX; i++) marks.mark(`a${i}`);

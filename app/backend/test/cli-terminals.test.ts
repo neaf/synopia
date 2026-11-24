@@ -67,7 +67,7 @@ test('terminals: a dead pid or another start time (a reused pid) holds nothing',
   assert.equal(reg.holder(SID), null, 'exited');
 });
 
-test('terminals: a live pid whose start differs is logged once (formats#A1)', async () => {
+test('terminals: a live pid whose start differs is logged once', async () => {
   const { reg, write, procs, logs } = setup();
   procs.set(4242, { start: 'Tue Nov 24 11:02:03 2026', parent: 1 });
   procs.set(4243, { start: 'Tue Nov 24 11:02:03 2026', parent: 1 });
@@ -79,7 +79,7 @@ test('terminals: a live pid whose start differs is logged once (formats#A1)', as
   assert.deepEqual(logs, ['terminals.startMismatch']);
 });
 
-test('terminals: a failed ps leaves the terminal unknown, and the next scan asks again (formats#B8)', async () => {
+test('terminals: a failed ps leaves the terminal unknown, and the next scan asks again', async () => {
   const s = setup();
   s.procs.set(4242, { start: START, parent: 1 });
   s.failing.add(4242);

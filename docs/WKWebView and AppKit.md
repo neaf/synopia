@@ -1,6 +1,6 @@
 # WKWebView and AppKit
 
-How the Swift shell hosts the page, and what WebKit and AppKit do that the page must work around. The shell is one window with one `WKWebView` loading `http://127.0.0.1:<port>/?token=…` from the daemon ([Daemon files](Daemon%20files.md)). The page also runs in Chrome for checks ([Page checks](Page%20checks.md)). Sources: code, and a probe window on macOS 26 recorded in `.ai-notes/app/README.md` (Title bar).
+How the Swift shell hosts the page, and what WebKit and AppKit do that the page must work around. The shell is one window with one `WKWebView` loading `http://127.0.0.1:<port>/?token=…` from the daemon ([Daemon files](Daemon%20files.md)). The page also runs in Chrome for checks ([Page checks](Page%20checks.md)). Sources: code, and a probe window on macOS 26 recorded in `.ai-notes/app/README.md` at tag `rearch-base` (Title bar).
 
 ## Title bar
 
@@ -15,7 +15,7 @@ How the Swift shell hosts the page, and what WebKit and AppKit do that the page 
 
 - Symptom: the drag strip and the sidebar disagree after a CSS change.
 - Cause: the strip over the sidebar is native; its width can't be read from the page.
-- Workaround: 270 px in `app.css` (`.app` first track, line 33) and `WindowFrame.sidebarWidth` (`TitleBar.swift` 18), kept equal by hand.
+- Workaround: 270 px in `app.css` (`.app` `grid-template-columns` first track) and `WindowFrame.sidebarWidth` (`TitleBar.swift`), kept equal by hand.
 
 ### Double-click on the strip
 
@@ -91,4 +91,4 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 ## WebKit features used
 
-The page uses CSS `subgrid`, the CSS Custom Highlight API (`CSS.highlights`, feature-detected: without it find marks are absent), `inert` and a writable `CSSAnimation.startTime`. The minimum WebKit (and so macOS) version that has all of them is `unverified`. Code: `app.css` 783 (subgrid), `preview.js` 97, `tween.js` `lineTweens` (inert), `marks.js` `syncMarks`.
+The page uses CSS `subgrid`, the CSS Custom Highlight API (`CSS.highlights`, feature-detected: without it find marks are absent), `inert` and a writable `CSSAnimation.startTime`. The minimum WebKit (and so macOS) version that has all of them is `unverified`. Code: `app.css` `.o` (subgrid), `preview.js` `pvHL`, `tween.js` `lineTweens` (inert), `marks.js` `syncMarks`.

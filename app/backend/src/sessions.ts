@@ -80,7 +80,7 @@ export class Sessions {
 
   // Opens every session of the open list that isn't closed. None has a process yet. The page's UI
   // state of any other session (closed while state.json was edited, a new session that never got its
-  // id) goes, with its draft images (final-daemon#L5).
+  // id) goes, with its draft images.
   start(): void {
     this.opts.terminals?.onChange(() => this.terminalsChanged());
     for (const e of this.store.state.open) {

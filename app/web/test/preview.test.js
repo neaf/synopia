@@ -1,4 +1,4 @@
-// preview.js find: matches ignore case and land on the text shown (web-ui#B5).
+// preview.js find: matches ignore case and land on the text shown.
 import "./stub-dom.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -13,7 +13,7 @@ test("every match, case ignored, not overlapping", () => {
   assert.deepEqual(findIn("abc", "x"), []);
 });
 
-test("web-ui#B5: a character whose lowercase is longer doesn't shift later matches", () => {
+test("a character whose lowercase is longer doesn't shift later matches", () => {
   // "İ" (U+0130) lowercases to two code units ("i" and a combining dot)
   assert.deepEqual(findIn("İ abc abc", "abc"), [[2, 5], [6, 9]]);
   assert.deepEqual(hits("İstanbul, then Bar", "bar"), ["Bar"]);

@@ -704,7 +704,7 @@ test("subagents' shells and monitors: changes reported, and they end when their 
   assert.deepEqual([t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], ['stopped', 'Ended with its subagent']);
 });
 
-// Facts settled 2026-11-24 (.ai-notes/app/README.md), in the shapes real files hold (made-up content).
+// Facts settled 2026-11-24 (docs/Claude Code transcripts.md), in the shapes real files hold (made-up content).
 const SID = '77777777-0000-4000-8000-000000000007';
 const stopHooks = (uuid: string, ts: string, entrypoint = 'sdk-cli'): JsonRecord => ({
   type: 'system', subtype: 'stop_hook_summary', uuid, timestamp: ts, isSidechain: false, entrypoint, sessionId: SID, session_id: SID,
@@ -829,13 +829,13 @@ test('a stale card: a question in a transcript quiet for 12 hours is your turn, 
   assert.equal(main.pendingAsk(NOW, ASK_STALE_MS)?.toolUseId, 'toolu_ysq');
 });
 
-// formats#B1-B7 and seams#B3: each fails on the reducer before the one-block-per-record rewrite
-// (B7 had no defect: its test pins the rebuild). The CLI writes one content block per assistant
+// Each of these failed on the reducer before it tracked a response across its records (the reset
+// test pins the rebuild). The CLI writes one content block per assistant
 // record; the records of one response share message.id (docs/Claude Code
 // transcripts.md#assistant-records-one-block-per-record).
 const block = (uuid: string, ts: string, mid: string, b: object): JsonRecord => ({ type: 'assistant', uuid, timestamp: ts, message: { id: mid, role: 'assistant', content: [b] } });
 
-test('formats#B1: a pending ask followed by a later block of its message still waits', () => {
+test('a pending ask followed by a later block of its message still waits', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
     typed('u1', 'Go', ago(10)),
@@ -854,7 +854,7 @@ test('formats#B1: a pending ask followed by a later block of its message still w
   assert.equal(t.pendingAsk(), null, 'a new message replaces the old one');
 });
 
-test('formats#B1: a long Bash in an earlier block, then a text block of its message, still runs after 30 min', () => {
+test('a long Bash in an earlier block, then a text block of its message, still runs after 30 min', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
     typed('u1', 'Go', ago(50)),
@@ -866,7 +866,7 @@ test('formats#B1: a long Bash in an earlier block, then a text block of its mess
   assert.equal(t.turnRunning(NOW, QUIET), false, 'its result came, then 40 min of quiet');
 });
 
-test('formats#B1: the ext fixture asks in another process, a later Read in the same message', () => {
+test('the ext fixture asks in another process, a later Read in the same message', () => {
   const claude = path.join(import.meta.dirname, 'fixtures', 'claude-ext');
   const t = new Transcript({ home: HOME });
   t.pushAll(records(findTranscript(claude, 'e1e1e1e1-0000-4000-8000-00000000000a') as string));
@@ -874,7 +874,7 @@ test('formats#B1: the ext fixture asks in another process, a later Read in the s
   assert.equal(byId(t, 'toolu_xread2').state, 'done');
 });
 
-test('formats#B2: an empty custom-title removes the rename', () => {
+test('an empty custom-title removes the rename', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
     typed('u1', 'Go', ago(9)),
@@ -887,14 +887,14 @@ test('formats#B2: an empty custom-title removes the rename', () => {
   assert.deepEqual(t.items.filter((i) => i.k === 'title').map((i) => [i.title, i.by]), [['My notes', 'you'], ['Demo notes', 'claude']]);
 });
 
-test('formats#B4: a sidechain turn_duration in the main file sets no worked time', () => {
+test('a sidechain turn_duration in the main file sets no worked time', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([typed('u1', 'Go', ago(9)), { ...turnDuration('s1', ago(8), 42_000), isSidechain: true }]);
   assert.equal(byId(t, 'u1').workedMs, undefined);
   assert.equal(t.turnRunning(NOW, QUIET), true, "a subagent's turn end doesn't close the main turn");
 });
 
-test('formats#B6: the process end and a record time compare as instants, not as text', () => {
+test('the process end and a record time compare as instants, not as text', () => {
   const t = new Transcript({ home: HOME });
   t.processEnded('2026-11-20T10:00:05.000Z');
   t.pushAll([{ type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:05Z', message: { id: 'm1', content: [
@@ -904,7 +904,7 @@ test('formats#B6: the process end and a record time compare as instants, not as 
   assert.equal(t.getBackground('toolu_bg')?.end, '2026-11-20T10:00:05.000Z', 'the same end again changes nothing');
 });
 
-test('formats#B7: a reset rebuilds the reader: the same records give what a new reader gives', () => {
+test('a reset rebuilds the reader: the same records give what a new reader gives', () => {
   const recs = records(findTranscript(CLAUDE, ID.tools) as string);
   const t = new Transcript({ home: HOME });
   t.pushAll([...recs, typed('x', 'stray', ago(1)), { type: 'custom-title', customTitle: 'Stray' }]);
@@ -917,7 +917,7 @@ test('formats#B7: a reset rebuilds the reader: the same records give what a new 
   assert.equal(t.turnRunning(NOW, QUIET), fresh.turnRunning(NOW, QUIET));
 });
 
-test("seams#B3: a turned-down tool is not a stop; the turn keeps your prompt's time", () => {
+test("a turned-down tool is not a stop; the turn keeps your prompt's time", () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
     typed('u1', 'Go', ago(10)),

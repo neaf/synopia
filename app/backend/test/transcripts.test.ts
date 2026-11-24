@@ -72,7 +72,7 @@ test('open, rekey, close: the listener hears each; a rekey reads the new id\'s f
   transcripts.stop();
 });
 
-test('turns: an interrupted turn says so to the writer; a turned-down tool does not (seams#B3)', () => {
+test('turns: an interrupted turn says so to the writer; a turned-down tool does not', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000ab';
   const marker = (uuid: string, s: number, text: string) => line({ type: 'user', uuid, timestamp: `2026-11-20T10:00:0${s}.000Z`, message: { role: 'user', content: [{ type: 'text', text }] } });
   const dir = tempSession(id, you(1) + marker('x2', 2, '[Request interrupted by user for tool use]') + you(3) + marker('x4', 4, '[Request interrupted by user]'));
@@ -116,7 +116,7 @@ test('work: a background shell running, then ended by the SDK\'s notification, i
   transcripts.stop();
 });
 
-test('work: what ended counts since your last message by instant, not by ISO text (formats#B6)', () => {
+test('work: what ended counts since your last message by instant, not by ISO text', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000f4';
   // your last message at 10:00:05.500; the shell ends at 10:00:05 written without milliseconds,
   // which sorts after ".500Z" as text ('Z' > '.') but is half a second before it

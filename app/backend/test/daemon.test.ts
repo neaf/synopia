@@ -61,7 +61,7 @@ test('code hash: every src .ts file, package-lock.json and the page\'s protocol.
   const h4 = (await codeHash(dir))!;
   assert.notEqual(h4, h3, 'the page\'s protocol.js counts');
   writeFileSync(join(dir, '..', 'web', 'js', 'protocol.js'), 'export const VERSION = 3;\n');
-  assert.notEqual(await codeHash(dir), h4, 'a protocol.js change alone is new code (final-daemon#B3)');
+  assert.notEqual(await codeHash(dir), h4, 'a protocol.js change alone is new code');
   assert.match((await codeHash(new URL('..', import.meta.url).pathname))!, /^[0-9a-f]{16}$/, 'the backend itself');
 });
 
@@ -119,7 +119,7 @@ test('update rule: pending once a new hash holds for two reads; restart only whe
   assert.equal(u.read('eeee'), true, 'the next change is');
 });
 
-test('update rule: a deferred handover waits for the next reading, not the next idle second (backend-core#B10)', () => {
+test('update rule: a deferred handover waits for the next reading, not the next idle second', () => {
   const u = new UpdateCheck('aaaa');
   u.read('bbbb'); u.read('bbbb');
   assert.equal(u.restartNow(false), true);
@@ -231,7 +231,7 @@ test('a stale daemon.json is replaced by the next daemon', async () => {
   await once(d, 'exit');
 });
 
-test('an uncaught error writes state.json first, removes daemon.json and exits 1 (seams#B4)', async () => {
+test('an uncaught error writes state.json first, removes daemon.json and exits 1', async () => {
   const { main, dir: backend } = backendCopy();
   const trigger = join(backend, 'crash-now');
   // the copy throws from a timer once the trigger file appears: an error no handler catches

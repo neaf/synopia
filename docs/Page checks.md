@@ -165,9 +165,9 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 
 ## Date-relative fixtures
 
-Status depends on age: `STALE_MS` 15 min, `QUIET_MS` 30 min, `ASK_STALE_MS` 12 h (`status.ts` 57, 60, 63). A fixture record with a fixed date flips status once it ages past a threshold.
+Status depends on age: `STALE_MS` 15 min, `QUIET_MS` 30 min, `ASK_STALE_MS` 12 h (`status.ts` constants). A fixture record with a fixed date flips status once it ages past a threshold.
 - Date such records at run time, or touch the fixture file's mtime.
-- `badge.test.ts` 18-21 sets a tracked fixture file's mtime to now; 126-127 dates an appended record now. Commit 3c6f8c2.
+- `status.test.ts` sets a tracked fixture file's mtime to now (`fs.utimesSync` in the "badge: …" case) and dates an appended answer at run time. Commit 3c6f8c2.
 
 ## Real data
 

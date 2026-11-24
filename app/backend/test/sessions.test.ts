@@ -112,7 +112,7 @@ test('sessions: images over 5 MB or not PNG/JPEG are refused', () => {
   const big = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
   assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/png', data: big }]).ok, false);
   assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/gif', data: 'R0lG' }]).ok, false);
-  assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/png', data: '' }]).ok, false, 'empty image data is refused (formats#B9)');
+  assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/png', data: '' }]).ok, false, 'empty image data is refused');
   assert.equal(q.calls.length, 0);
 });
 
@@ -628,7 +628,7 @@ test('interrupt: with interrupt_cancel_queued_v1 it cancels the queued messages 
   await t.sessions.get(REAL)!.interrupt();
   assert.deepEqual(t.q.calls[0].interrupts, [{ cancelQueued: true }]);
   const got = t.take();
-  // an image-only message comes back with its image (final-adapters#B5); an unknown uuid gives nothing
+  // an image-only message comes back with its image; an unknown uuid gives nothing
   assert.deepEqual(got.filter((m) => m.t === 'restore'), [{ t: 'restore', sid: REAL, texts: ['and then this'], images: [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }] }]);
   assert.equal(got.filter((m) => m.t === 'toast').length, 0);
   emit(t.q.calls[0], { ...RESULT, subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' });
@@ -1117,7 +1117,7 @@ test('sessions: a session whose turn runs in another process reads working, unti
   assert.equal(take('session').at(-1)?.state.status, 'idle');
 });
 
-test('bash mode: refused while another process runs the turn, as with a terminal (final-session#B3)', async () => {
+test('bash mode: refused while another process runs the turn, as with a terminal', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const cwd = path.join(root, 'scratch');
   const file = writePast(path.join(root, 'claude'), cwd);
@@ -1139,7 +1139,7 @@ test('bash mode: refused while another process runs the turn, as with a terminal
   sessions.stop();
 });
 
-test('openSession: reopening makes it the most recently opened, for the new-session folder (final-session#B1)', async () => {
+test('openSession: reopening makes it the most recently opened, for the new-session folder', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const cwd = path.join(root, 'scratch');
   writePast(path.join(root, 'claude'), cwd);
@@ -1158,7 +1158,7 @@ test('openSession: reopening makes it the most recently opened, for the new-sess
   assert.equal(t.publisher.meta(ph)?.cwd, '~/scratch', 'the reopened one\'s folder');
 });
 
-test('start: the page ui state of a session that is not open goes, with its draft images (final-daemon#L5)', () => {
+test('start: the page ui state of a session that is not open goes, with its draft images', () => {
   const t = setup();
   const OPEN = REAL, CLOSED = RESET, GONE = '77777777-0000-4000-8000-000000000007';
   t.store.state.open.push({ id: OPEN, cwd: t.cwd, openedAt: 1, closedAt: null }, { id: CLOSED, cwd: t.cwd, openedAt: 1, closedAt: 2 });

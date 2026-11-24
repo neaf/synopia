@@ -125,7 +125,7 @@ test('handover', { concurrency: true }, async (t) => {
       await waitFor(() => !alive(n.pid), 5000, 'the new daemon to stop');
     } finally {
       await d.stop();
-      killAll(d.stateDir); // each new daemon it started, waiting or running (final-tooling#B2)
+      killAll(d.stateDir); // each new daemon it started, waiting or running
     }
   }));
   await Promise.all(runs);

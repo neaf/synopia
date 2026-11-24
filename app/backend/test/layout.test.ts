@@ -1,6 +1,6 @@
 // The sidebar's layout (layout.ts): the reconcile with the open list, the page's intents, an id swap,
 // and the owner that is the only writer of state.json's `layout`. Then the router: an intent sent with an
-// old id (a new session's placeholder) still moves that session (seams#A6).
+// old id (a new session's placeholder) still moves that session.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
@@ -134,7 +134,7 @@ test('Layouts: an id swap keeps the place and is not sent alone (the session fra
   o.store.close();
 });
 
-// ---------- a late intent (seams#A6) ----------
+// ---------- a late intent ----------
 
 test('router: an intent with an old id moves the session that id became', () => {
   const o = owner(open(['real', 'b', 'c']));

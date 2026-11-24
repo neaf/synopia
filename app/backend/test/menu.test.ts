@@ -78,7 +78,7 @@ test('menu: a running process gives the menu, and pages that had the folder get 
   assert.equal((a.got.at(-1)?.models as unknown[]).length, 2, 'the models stay');
 });
 
-test('menu: a running process that never answers times out, and the idle probe fills the menu (sessions-sdk#B7)', async () => {
+test('menu: a running process that never answers times out, and the idle probe fills the menu', async () => {
   const dir = tmp();
   const a = client();
   const q = idleFake();
@@ -93,7 +93,7 @@ test('menu: a running process that never answers times out, and the idle probe f
   assert.deepEqual(a.got.map((x) => x.t), ['menu']);
 });
 
-test('menu: a failed probe waits before the next try, longer after each failure (sessions-sdk#B8)', async () => {
+test('menu: a failed probe waits before the next try, longer after each failure', async () => {
   const dir = tmp();
   const a = client();
   let now = 0;
@@ -166,7 +166,7 @@ test('menu: the model lists are kept across launches, so hello names the model a
   assert.deepEqual(new Menus({ reply: (c, m) => c.send(m), clients: () => new Set(), cacheFile }).all(), {});
 });
 
-test('menu: commands_changed before any view keeps the models, and the first view still reads them (final-adapters#B3)', async () => {
+test('menu: commands_changed before any view keeps the models, and the first view still reads them', async () => {
   const dir = tmp();
   const cacheFile = path.join(tmp(), 'menu-cache.json');
   const a = client();

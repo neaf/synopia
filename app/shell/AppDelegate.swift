@@ -1,5 +1,5 @@
 // The window, finding the backend daemon, Quit and Stop All Work. The app is only UI: ⌘Q, a
-// crash or a kill ends the app and never the daemon, so running work goes on (plan section 2).
+// crash or a kill ends the app and never the daemon, so running work goes on (docs/Daemon files.md).
 import Cocoa
 
 @MainActor

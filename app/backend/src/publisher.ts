@@ -6,7 +6,7 @@
 // acted, when it is still connected.
 // One flush per change batch, guarded: a change made while a flush runs (status.ts hears what runs
 // and sets the status) marks the session dirty and flushes again after, so the frames of one flush
-// always go in this order: `session`, `agents`, `background`, `items` (seams#I8).
+// always go in this order: `session`, `agents`, `background`, `items`.
 import os from 'node:os';
 import { transcriptStatus, sessionState, badgeOf } from './status.ts';
 import type { BadgeCounter, Running, SessionState, Needs, Status, StatusDetail } from './status.ts';
@@ -131,12 +131,12 @@ export class Publisher {
     this.broadcast({ t: 'layout', layout });
   }
 
-  // A toast to the page that acted, or to every page when none did or it is gone (backend-core#B8).
+  // A toast to the page that acted, or to every page when none did or it is gone.
   toast(text: string, to?: Client | null): void {
     this.toActing({ t: 'toast', text }, to);
   }
 
-  // Messages that didn't go, back to the message box of the page that sent them (backend-core#B8):
+  // Messages that didn't go, back to the message box of the page that sent them:
   // their texts, and `images` (each `{mediaType, data, n?}`) when they carried pasted ones.
   restore(sid: string, back: Returned[], to?: Client | null): void {
     if (!back.length) return;
@@ -410,7 +410,7 @@ export class Publisher {
     }
   }
 
-  // A tool's start goes when it stops running (backend-core#B9).
+  // A tool's start goes when it stops running.
   private trimSince(p: Pub, t: Transcript, ch: ReadChanges): void {
     if (!p.since.size) return;
     const check = (tr: Transcript | null, ids: string[]) => {

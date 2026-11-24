@@ -44,7 +44,7 @@ test('sdk: interrupt passes cancelQueued only with the capability, and maps the 
   q.calls[0].reply = { still_queued: ['u1', 'not-ours'], cancelled: ['u2', 'u3', 'unknown'] };
   r = await p.interrupt();
   assert.deepEqual(q.calls[0].interrupts[1], { cancelQueued: true });
-  // an image-only message comes back with its image (final-adapters#B5)
+  // an image-only message comes back with its image
   assert.deepEqual(r, { cancelQueued: true, restored: [{ text: 'second', images: [] }, { text: '', images: [png] }], stillQueued: 1 });
   p.close();
   await tick();
@@ -83,7 +83,7 @@ test('sdk: plan approval sets the mode before plan mode back, auto when unknown'
 const MODELS = [{ value: 'haiku', displayName: 'Haiku', description: 'Fast' }] as ModelInfo[];
 const CMDS = [{ name: 'compact', description: '&lt;x&gt;', argumentHint: '' }, { name: 'workflow-launch-exec', description: 'server only', argumentHint: '' }] as SlashCommand[];
 
-test('sdk: the idle probe reads the menu with a prompt that never yields, then closes (web-ui#B8 filter)', async () => {
+test('sdk: the idle probe reads the menu with a prompt that never yields, then closes', async () => {
   const q = fakeQuery({ commands: async () => CMDS, models: async () => MODELS });
   const m = await probeMenu(q.fn, '/w', { abortController: new AbortController() });
   assert.deepEqual(m.commands.map((c) => [c.name, c.description]), [['compact', '<x>']], 'workflow-launch-exec runs server-side only');
@@ -110,7 +110,7 @@ test('sdk: the writer call has nothing to act with and saves nothing', () => {
     [1, [], {}, true, 'dontAsk', { disableAllHooks: true }, false, 'prompt', '/state/writer']);
 });
 
-test('sdk: a one-shot call tells a reply from an error result (sessions-sdk#B11)', async () => {
+test('sdk: a one-shot call tells a reply from an error result', async () => {
   const ok = fakeQuery({ onInput: (c) => { emit(c, { type: 'system', subtype: 'hook_started', hook_event: 'SessionStart' }); emit(c, result('{"title":"t"}')); } });
   assert.deepEqual(await oneShot(ok.fn, 'hi', {}), { reply: '{"title":"t"}', failure: null, apiError: null, hooks: ['SessionStart'] });
   assert.equal(ok.calls[0].inputs[0].message.content, 'hi');
@@ -163,7 +163,7 @@ test('content: an image without a number (an older page) goes after the tagged o
   assert.deepEqual(shape(userContent('', [im(undefined, 'old')])), ['image:old:image/png'], 'images only: no empty text block');
 });
 
-test('content: empty or broken image data is refused, as are other types and images over 5 MB (formats#B9)', () => {
+test('content: empty or broken image data is refused, as are other types and images over 5 MB', () => {
   const png = Buffer.from('png').toString('base64');
   assert.equal(imageError([{ mediaType: 'image/png', data: png }, { mediaType: 'image/jpeg', data: png }]), null);
   assert.match(String(imageError([{ mediaType: 'image/png', data: '' }])), /empty or damaged/);

@@ -45,7 +45,7 @@ test('reviewed: stored once; the next hello shows the deliverable reviewed and t
   assert.equal(after.agents.find((a) => a.id === REVIEW)?.review, false);
   assert.equal(after.state.review, 0);
   assert.equal(await badge(), n - 1);
-  assert.equal(hello.reviewed, undefined, 'the page gets the marks only as the subagents\' review flag (backend-core#B5)');
+  assert.equal(hello.reviewed, undefined, 'the page gets the marks only as the subagents\' review flag');
 });
 
 test('layout: intents change the layout every page gets, and the next hello has it; a refused one is acked with why', async () => {
@@ -111,7 +111,7 @@ test('preview: a text file comes back as a preview frame; a missing one is a toa
   const at = p.frames.length;
   p.send({ t: 'preview', path: join(tmp('router'), 'gone.txt') });
   assert.match(String((await p.next('toast', () => true, 5000, at)).text), /no longer exists/);
-  // not text: opened as `open` would, and the page hears so (seams#B8)
+  // not text: opened as `open` would, and the page hears so
   const pdf = join(tmp('router'), 'report.pdf');
   writeFileSync(pdf, '%PDF-1.4\n');
   p.send({ t: 'preview', path: pdf });
@@ -137,7 +137,7 @@ test('actions: one ack each, to the page that sent it, with the error when not d
   const p = await connectPage(d.info), q = await connectPage(d.info);
   p.send({ t: 'close', id: 'c1', sid: 'not-a-session' });
   assert.deepEqual(await p.next('ack', (m) => m.id === 'c1'), { t: 'ack', id: 'c1', ok: false, error: "That session isn't open any more." });
-  p.send({ t: 'reviewed', id: 'r1', agentId: 'no-such-agent' }); // not stored (final-daemon#B7)
+  p.send({ t: 'reviewed', id: 'r1', agentId: 'no-such-agent' }); // not stored
   assert.deepEqual(await p.next('ack', (m) => m.id === 'r1'), { t: 'ack', id: 'r1', ok: false, error: "That subagent isn't in an open session any more." });
   p.send({ t: 'answer', id: 'a1', sid: S2 }); // no requestId
   assert.deepEqual(await p.next('ack', (m) => m.id === 'a1'), { t: 'ack', id: 'a1', ok: false, error: UNREADABLE });
@@ -184,7 +184,7 @@ test('router: an async action that rejects acks ok:false; one without an id is o
   assert.equal(r.lines.filter((l) => l.startsWith('router.failed')).length, 2);
 });
 
-test('router: stop acks an action still running at once, and refuses every later one (seams#B5)', async () => {
+test('router: stop acks an action still running at once, and refuses every later one', async () => {
   let finish: (v: unknown) => void = () => {};
   const r = standIn({ setModel: () => new Promise((ok) => { finish = ok; }) });
   r.router.handle(r.page, { t: 'setModel', id: 'm1', sid: 'S', model: 'x' });

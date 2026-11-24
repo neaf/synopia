@@ -1,6 +1,6 @@
 # Claude Code transcripts
 
-How Claude Code writes a session to disk, as Synopia reads it. The format is undocumented. Facts hold for CLI 2.1.325 to 2.1.330 (the SDK 0.3.330 bundles 2.1.330; the installed CLI was 2.1.325 for the terminal and shell-edit runs). Sources: code, tests, and shape-only scans (record kinds, field names, value types and counts, no values) recorded in `.ai-notes/app/README.md` "Facts settled" (2026-11-23 and 2026-11-24).
+How Claude Code writes a session to disk, as Synopia reads it. The format is undocumented. Facts hold for CLI 2.1.325 to 2.1.330 (the SDK 0.3.330 bundles 2.1.330; the installed CLI was 2.1.325 for the terminal and shell-edit runs). Sources: code, tests, and shape-only scans (record kinds, field names, value types and counts, no values) recorded in `.ai-notes/app/README.md` at tag `rearch-base` "Facts settled" (2026-11-23 and 2026-11-24).
 
 Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Code%20terminals.md). What the SDK stream says live is in [Agent SDK](Agent%20SDK.md).
 
@@ -30,7 +30,7 @@ Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Co
 - Symptom: after an ExitPlanMode approval the JSONL shrinks or changes inode; offsets past the old end read garbage.
 - Cause: the CLI rewrites the session file on plan approval.
 - Workaround: the tailer resets (reads from 0, rebuilds state) on a shrink, an inode change or a rewrite in place. A same-size file with a new mtime whose first and last 4 KB are unchanged is a bare touch: nothing is read again. A file that grew is an append while the first 4 KB and the 4 KB before the old end are unchanged, else a rewrite. A rewrite in place that changes only the middle is missed.
-- Code: `tail.ts` `step`, `sigOf`, `resetState`; `transcript.ts` `reset` (a new `ReadState`). Test: `tail.test.ts` "formats#B5", "final-adapters#B2". Source: live run S3.
+- Code: `tail.ts` `step`, `sigOf`, `resetState`; `transcript.ts` `reset` (a new `ReadState`). Test: `tail.test.ts` "a bare touch …", "a rewrite in place that grows resets …". Source: live run S3.
 
 ## Record types
 
@@ -60,9 +60,9 @@ Code: `claude-jsonl.ts` `classify`. Source: formats audit X17; shape scan 2026-1
 - A thinking block arrives as its own record before the text of the same id.
 - Live, every `stream_event` `message_start` id equals the assistant records' `message.id` (7 of 7), so the stream preview is keyed by message id and block and cleared when a record of that id and block type lands. Code: `session.ts` `StreamPreview`.
 - An API-error turn writes an assistant record with `isApiErrorMessage`, `error` (string), `failedResponseHadNoToolCall`, `streamCutCause`, `truncatedAfterOutput` and a text block.
-- Synopia keys the latest response by `message.id` (by the record when it has none) and gathers its tool uses over all its records: a question in one record followed by another tool use in the next still waits, and a running Bash followed by a text block still runs. Code: `transcript.ts` `assistant`, `waiting`. Test: `transcript.test.ts` "formats#B1".
+- Synopia keys the latest response by `message.id` (by the record when it has none) and gathers its tool uses over all its records: a question in one record followed by another tool use in the next still waits, and a running Bash followed by a text block still runs. Code: `transcript.ts` `assistant`, `waiting`. Test: `transcript.test.ts` "a pending ask followed by a later block of its message still waits".
 
-Source: `.ai-notes/app/README.md` "Facts (branch facts)" Streaming.
+Source: `.ai-notes/app/README.md` at tag `rearch-base` "Facts (branch facts)" Streaming.
 
 ## User records and text prefixes
 
@@ -141,7 +141,7 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - An Esc interrupt during tools writes an error `tool_result` for each cut-short tool, then the user record `[Request interrupted by user` (or `… for tool use]`).
 - `[Request interrupted by user for tool use]` means a tool was turned down; Claude carries on after it.
 - Synopia reads the first marker as a stop (item `interrupted`) and the second as a turned-down tool (item `turnedDown`). Either closes the turn until Claude writes again; the error results just before the marker read as stopped. A turned-down marker isn't a prompt: the turn's time still counts from yours.
-- Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "seams#B3", `transcripts.test.ts` "turns".
+- Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "a turned-down tool is not a stop …", `transcripts.test.ts` "turns".
 
 ## Background work
 
@@ -158,7 +158,7 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - A subagent woken again after its first end notifies with `<task-id>` only; the code maps the agent id back to its tool use.
 - A monitor's event notification has no `<tool-use-id>` and does not end the monitor.
 - A foreground subagent's shells are stopped by the CLI when that subagent ends.
-- The CLI writes a stop notification to the JSONL only when a turn runs; see [Agent SDK](Agent%20SDK.md#stoptask-and-task-notifications).
+- The CLI writes a stop notification to the JSONL only when a turn runs; see [Agent SDK](Agent%20SDK.md#task-notifications).
 
 Code: `claude-jsonl.ts` `userOf` (`toolUseResult`), `taskNotes`; `transcript.ts` `note`. Source: live run S4, shape scan 2026-11-24.
 
@@ -177,7 +177,7 @@ Code: `claude-jsonl.ts` `userOf` (`toolUseResult`), `taskNotes`; `transcript.ts`
 - Outside a git repo Synopia shows no shell-edit rows (decision Q3, 2026-11-24).
 - `staleReadFileStateHint` (string) flags a command that changed a file Claude had Read; only `sed -i` was recognised.
 
-Code: `sdk.ts` `buildOptions`, `claude-jsonl.ts` `bashEditOf`, `transcript.ts` `bashPatchesOf`. Source: `.ai-notes/app/README.md` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
+Code: `sdk.ts` `buildOptions`, `claude-jsonl.ts` `bashEditOf`, `transcript.ts` `bashPatchesOf`. Source: `.ai-notes/app/README.md` at tag `rearch-base` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
 
 ## Plans
 

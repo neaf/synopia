@@ -42,13 +42,13 @@ test("tables: a head, a body, the separator row dropped", () => {
     "<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td><code>x</code></td></tr></tbody></table>");
 });
 
-test("web-ui#B2: a table of separators only renders as text instead of throwing", () => {
+test("a table of separators only renders as text instead of throwing", () => {
   assert.equal(md("| --- |"), "<p>| --- |</p>");
   assert.equal(md("| --- | :-: |\n|---|---|"), "<p>| --- | :-: |<br>|---|---|</p>");
   assert.equal(md("Before\n\n| --- |\n\nAfter"), "<p>Before</p><p>| --- |</p><p>After</p>");
 });
 
-test("web-ui#B2: a data row whose first cell starts with two hyphens stays", () => {
+test("a data row whose first cell starts with two hyphens stays", () => {
   assert.equal(md("| flag | means |\n|---|---|\n| --force | no checks |\n| -n | dry run |"),
     "<table><thead><tr><th>flag</th><th>means</th></tr></thead><tbody><tr><td>--force</td><td>no checks</td></tr><tr><td>-n</td><td>dry run</td></tr></tbody></table>");
 });

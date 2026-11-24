@@ -3,8 +3,7 @@
 // An action (protocol.js ACTIONS) with an `id` gets one `ack {id, ok, error}`, to the page that sent it,
 // once it is done: the page shows `error` and keeps what it had (Q9). A handler that throws is logged
 // (`router.failed`) and acked `ok: false`; the daemon goes on serving. Once stopped (a shutdown or a
-// handover), every action is refused with an ack, and an action still running is acked at once
-// (seams#B5).
+// handover), every action is refused with an ack, and an action still running is acked at once.
 import { ACTIONS, PAGE, problem } from '../../web/js/protocol.js';
 import type { Client } from './server.ts';
 import type { Sessions } from './sessions.ts';
@@ -161,7 +160,7 @@ export class Router {
           },
         );
       },
-      // a text file's read-only preview; anything else opens as `open` does, and the page hears it did (seams#B8)
+      // a text file's read-only preview; anything else opens as `open` does, and the page hears it did
       preview: (client, m) => this.o.bat.then((bat) => previewFile(m.path, {
         bat, theme: themeOf(m.theme), log, display: (p) => displayPath(p, this.o.home), reply: (r) => publisher.reply(client, r), toast: toastTo(client),
         open: (p) => openTarget({ path: p }, { dryRun: this.o.dryRun, log, onError: toastTo(client) }),
@@ -186,15 +185,15 @@ export class Router {
       newSession: () => { sessions.newSession(); },
       openSession: (_client, m) => sessions.openSession(m.sid as string)
         .catch((): SendResult => ({ ok: false, error: "Synopia couldn't read the list of past sessions." })),
-      // a mark only for a subagent an open session has: an unknown id would be stored for nothing
-      // (final-daemon#B7); the 1000 newest marks are kept (store.ts REVIEWED_MAX)
+      // a mark only for a subagent an open session has: an unknown id would be stored for nothing;
+      // the 1000 newest marks are kept (store.ts REVIEWED_MAX)
       reviewed: (_client, m) => {
         const id = m.agentId as string;
         if (!transcripts.ids().some((sid) => transcripts.get(sid)?.getAgent(id))) return { ok: false, error: NO_AGENT };
         if (marks.mark(id)) publisher.reviewed(id);
       },
       // the sidebar's layout (layout.ts): every session id through its aliases, so an intent sent
-      // before a new session got its real id still moves that session (seams#A6)
+      // before a new session got its real id still moves that session
       moveSession: (_client, m) => {
         const to = placeOf(m, (id) => sessions.resolve(id));
         return to ? sessions.layout.move(sessions.resolve(m.sid as string), to) : { ok: false, error: UNREADABLE };

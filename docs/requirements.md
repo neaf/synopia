@@ -2,7 +2,7 @@
 
 Synopia is a desktop app for one person who runs several Claude Code sessions at the same time. It replaces "Claude in iTerm tabs" with one window that shows every open session at a glance, says which one needs the user, and lets the user chat in any of them.
 
-These requirements come from a day of prototyping against the user's real sessions (2026-11-23). The prototype in `prototype/app.html` is the UI reference: when a requirement and the prototype disagree on look, the prototype wins; when they disagree on behaviour, this document wins. Each section ends with what was tried and rejected, so it doesn't come back.
+These requirements come from a day of prototyping against the user's real sessions (2026-11-23). The prototype in `prototype/app.html` is the UI reference: when a requirement and the prototype disagree on look, the prototype wins; when they disagree on behaviour, this document wins. Each section ends with what was tried and rejected, so it doesn't come back. [functional-requirements.md](functional-requirements.md) restates this behaviour as numbered FRs (FR-PLAT-01 and so on) with what is still open; [architecture.md](architecture.md) maps each FR to its modules.
 
 ## 1. Who it's for and the job
 
@@ -385,7 +385,7 @@ Rearchitecture decisions (2026-11-24):
 - One window and one page per daemon; `restore` and toasts go to the page that acted.
 - The fonts are bundled (R11).
 - An action taken while disconnected (answer, a layout change, reviewed, close, interrupt) is refused with a toast and local state stays as it was; UI state is sent again on reconnect. The layout is the backend's: the page sends intents and draws the layout it gets.
-- Future, out of the rearchitecture's scope and not to be blocked by it: the signed-out banner (section 14), FR-SES-15, FR-SIDE-06, FR-STAT-06.
+- Future, out of the rearchitecture's scope and not to be blocked by it: the closing note (R3.6, FR-SES-15), the first-grouping suggestion (R4.8, FR-SIDE-06) and the signed-out banner (section 14, FR-STAT-06). FR ids are in [functional-requirements.md](functional-requirements.md).
 
 ## 16. Design notes
 

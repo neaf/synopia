@@ -209,7 +209,7 @@ test('the subagent watcher calls onScan after every scan, so its subagents need 
   assert.equal(scans, 2);
 });
 
-test('formats#B5: a bare touch (same bytes, new mtime) reads nothing and resets nothing', (t) => {
+test('a bare touch (same bytes, new mtime) reads nothing and resets nothing', (t) => {
   const file = path.join(tmp(t), 's.jsonl');
   fs.writeFileSync(file, '{"n":1}\n{"n":2}\n');
   fs.utimesSync(file, 1000, 1000);
@@ -230,7 +230,7 @@ test('formats#B5: a bare touch (same bytes, new mtime) reads nothing and resets 
   assert.deepEqual(got.slice(3), [{ n: 7 }, { n: 8 }, { n: 9 }]);
 });
 
-test('final-adapters#B2: a rewrite in place that grows resets; an append with the same start does not', (t) => {
+test('a rewrite in place that grows resets; an append with the same start does not', (t) => {
   const file = path.join(tmp(t), 's.jsonl');
   fs.writeFileSync(file, '{"n":1,"plan":"old"}\n{"n":2}\n');
   const ino = fs.statSync(file).ino;
