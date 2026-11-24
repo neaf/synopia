@@ -56,6 +56,8 @@ await ev(`document.getElementById('log').scrollTop = 0`);
 fs.writeFileSync(path.join(stateDir, 'earlier-link.png'), Buffer.from((await c.cdp('Page.captureScreenshot', { clip: { x: 0, y: 0, width: 1280, height: 300, scale: 1 } })).result.data, 'base64'));
 
 // Scrolled a little below the top, so the block read sits mid-screen; then a click.
+// The web fonts first (index.html, display=swap): their swap rewraps the text and moves every block.
+await ev(`document.fonts.ready.then(() => true)`);
 await ev(`document.getElementById('log').scrollTop = 0`);
 await ev(`document.getElementById('log').scrollTop = 120`);
 let before = await place();
