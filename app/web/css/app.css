@@ -282,15 +282,20 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .pr .in { color: var(--faint); } /* the subagent a shell or monitor ran in */
 .pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
 .pr.failed .d, .pr.failed .k { color: var(--red); }
-.pr:hover { background: var(--sub); }
+/* hover and the open item draw in a frame on the cards' edges (7 px in), behind the text, so a Past row lines up with the cards above */
+.pr { position: relative; isolation: isolate; }
+.pr::before { content: ""; position: absolute; inset: 0 7px; z-index: -1; border: 1px solid transparent; border-radius: 5.5px; pointer-events: none; }
+.pr:hover::before { background: var(--sub); }
 .pr:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
-.pr[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--ink-3); border-radius: 5.5px; background: var(--sub); }
+/* the item you're viewing, of any kind: its one 1px edge turns ink, nothing else around it */
+.pr[aria-current="true"]::before { border-color: var(--ink); }
+.pr[aria-current="true"] .n { color: var(--ink); }
 .now { border-bottom: 1px solid var(--line-2); padding: 7px 0 7px; flex: none; max-height: 55%; overflow-y: auto; }
 .card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
   margin: 0 7px 5.5px; width: calc(100% - 14.5px); padding: 7px 9px; border-radius: 5.5px; background: #E6F6EA; border: 1px solid #B4E2C0; cursor: pointer; }
 .card:hover { background: #DAF2E0; }
 .card:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
-.card[aria-current="true"] { box-shadow: 0 0 0 2px var(--dot-green); }
+.card[aria-current="true"] { border-color: var(--ink); }
 .card .n { font-weight: 700; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .d { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 2; }
@@ -683,10 +688,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .main-row[data-state="green"] { background: #E6F6EA; border-color: #B4E2C0; }
 .main-row[data-state="red"] { background: #FFEBE9; border-color: #FFCECB; }
 .main-row[data-state="amber"] { background: var(--sub); }
-/* selected: the same 2px ring as a selected subagent card, in the session's state colour */
-.main-row[aria-current="true"][data-state="green"] { box-shadow: 0 0 0 2px var(--dot-green); }
-.main-row[aria-current="true"][data-state="red"] { box-shadow: 0 0 0 2px var(--red); }
-.main-row[aria-current="true"][data-state="amber"] { box-shadow: 0 0 0 2px var(--ink-3); }
+/* selected: its border turns ink, as on a selected card or Past row, over any state tint */
+.main-row[aria-current="true"] { border-color: var(--ink); }
 .main-row:hover { filter: brightness(.98); }
 
 /* modes */
