@@ -13,7 +13,7 @@ Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Co
 | `~/.claude/projects/<folder>/<sid>/subagents/agent-<aid>.meta.json` | the subagent's facts: `agentType`, `isFork`, `description`, `toolUseId`, `spawnDepth`, `finished` |
 | `~/.claude/plans/<slug>.md` | the plan text the CLI writes before ExitPlanMode asks |
 
-- `<folder>` is the realpath of the session's cwd with every non-alphanumeric character replaced by `-` (`/tmp/x` gives `-private-tmp-x`). Synopia never builds it: it globs `projects/*/<sid>.jsonl` and takes the first match in name order. Code: `transcript.ts` `findTranscript` (1132-1146), `registry.ts` `transcriptOf`. Source: SDK spike row 1 (`spike/FINDINGS.md` at tag `rearch-base`).
+- `<folder>` is the realpath of the session's cwd with every non-alphanumeric character replaced by `-` (`/tmp/x` gives `-private-tmp-x`). Synopia never builds it: it globs `projects/*/<sid>.jsonl` and takes the first match in name order. Code: `transcript.ts` `findTranscript`, `registry.ts` `transcriptOf`. Source: SDK spike row 1 (`spike/FINDINGS.md` at tag `rearch-base`).
 - `CLAUDE_CONFIG_DIR` moves the whole tree; the backend's `--claude-dir` follows it.
 - Records are single lines, usually under 60 KB; one record can be many MB (images, long tool results). The largest session seen is 55 MB in 4,200 lines (96.9 MB in a later scan). Test: `tail.test.ts` 139-170 parses 50 MB in under 2 s.
 - The JSONL appears about 1 s after the SDK's `system/init` for a new session. Code: `views.ts` looks again each second for a file that doesn't exist yet. Source: live run S1-6.
@@ -23,14 +23,14 @@ Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Co
 - Symptom: `agent-<aid>.jsonl` exists with no `.meta.json`, or the meta fails to parse, or it lacks `finished` (5 of 162 seen).
 - Cause: the CLI writes the two files separately and rewrites the meta in place.
 - Workaround: the subagent watcher reports each `agent-<id>.jsonl` once and each meta whenever its size and mtime change; a meta that fails to parse is skipped and read again at the next change. A missing `finished` is not an end.
-- Code: `tail.ts` `SubagentWatcher` (230-309).
+- Code: `tail.ts` `SubagentWatcher`.
 
 ### Quirk: plan approval rewrites the file
 
 - Symptom: after an ExitPlanMode approval the JSONL shrinks or changes inode; offsets past the old end read garbage.
 - Cause: the CLI rewrites the session file on plan approval.
-- Workaround: the tailer resets (reads from 0, rebuilds state) on a shrink, an inode change or a same-size rewrite.
-- Code: `tail.ts` `resetState` (153), `transcript.ts` reset (433). Source: live run S3.
+- Workaround: the tailer resets (reads from 0, rebuilds state) on a shrink, an inode change or a same-size rewrite. A same-size file with a new mtime whose first and last 4 KB are unchanged is a bare touch: nothing is read again. A same-size rewrite that changes only the middle is missed.
+- Code: `tail.ts` `step`, `sigOf`, `resetState`; `transcript.ts` `reset` (a new `ReadState`). Test: `tail.test.ts` "formats#B5". Source: live run S3.
 
 ## Record types
 
@@ -44,14 +44,14 @@ Every record has `type`. Most carry the common fields `parentUuid`, `isSidechain
 | `system` `turn_duration` | turn end: `durationMs`, `messageCount`, `pendingBackgroundAgentCount`, `isMeta` | yes |
 | `system` `stop_hook_summary` | turn end: `hookCount`, `hookInfos[{command, durationMs}]`, `hookErrors`, `preventedContinuation`, `stopReason`, `toolUseID` | yes |
 | `permission-mode` | `{permissionMode, sessionId}` | yes |
-| `custom-title` | `customTitle`, your rename | yes |
+| `custom-title` | `customTitle`, your rename; an empty one removes it | yes |
 | `ai-title` | `aiTitle`, Claude's title | yes |
 | `pr-link` | `prNumber` | no |
 | `mode` | `{mode, sessionId}`, beside each `permission-mode` | no |
 | `queue-operation` | `{operation, content, commandUuid, deliveryId, reason}` | no |
 | `last-prompt`, `atis-latch`, `file-history-snapshot`, `api-request*`, `tools-used`, `system` `away_summary` | bookkeeping | no, skipped silently |
 
-Code: `transcript.ts` record dispatch (490-545). Source: formats audit X17; shape scan 2026-11-24.
+Code: `claude-jsonl.ts` `classify`. Source: formats audit X17; shape scan 2026-11-24.
 
 ## Assistant records: one block per record
 
@@ -60,6 +60,7 @@ Code: `transcript.ts` record dispatch (490-545). Source: formats audit X17; shap
 - A thinking block arrives as its own record before the text of the same id.
 - Live, every `stream_event` `message_start` id equals the assistant records' `message.id` (7 of 7), so the stream preview is keyed by message id and block and cleared when a record of that id and block type lands. Code: `sessions.ts` `StreamPreview` (53-102).
 - An API-error turn writes an assistant record with `isApiErrorMessage`, `error` (string), `failedResponseHadNoToolCall`, `streamCutCause`, `truncatedAfterOutput` and a text block.
+- Synopia keys the latest response by `message.id` (by the record when it has none) and gathers its tool uses over all its records: a question in one record followed by another tool use in the next still waits, and a running Bash followed by a text block still runs. Code: `transcript.ts` `assistant`, `waiting`. Test: `transcript.test.ts` "formats#B1".
 
 Source: `.ai-notes/app/README.md` "Facts (branch facts)" Streaming.
 
@@ -82,7 +83,7 @@ Source: `.ai-notes/app/README.md` "Facts (branch facts)" Streaming.
 - An AskUserQuestion result reads `The user answered: "<question>"="<pick>" notes: <note>. …`; multi-select picks join with `, `.
 - Tool results: Edit and Write carry `toolUseResult.structuredPatch` (hunks with `oldStart`, `oldLines`, `newStart`, `newLines`, `lines`); a Write that creates a file has `type: "create"` and `content` instead.
 
-Code: `transcript.ts` `user` (562-708). Source: `export_transcripts.py` (tag `rearch-base`), live runs S3 and M1-final.
+Code: `claude-jsonl.ts` `bodyOf`, `userOf`. Test: `claude-jsonl.test.ts`. Source: `export_transcripts.py` (tag `rearch-base`), live runs S3 and M1-final.
 
 ### Images and image tags
 
@@ -96,7 +97,7 @@ Code: `transcript.ts` `user` (562-708). Source: `export_transcripts.py` (tag `re
 - Symptom: a thumbnail has no size or the wrong shape.
 - Cause: a record can label JPEG bytes `image/png`; browsers go by the bytes.
 - Workaround: `imageSize` tries the declared type first, then the other served types.
-- Code: `transcript.ts` `imageSize` (235-246).
+- Code: `transcript.ts` `imageSize`.
 
 ## Messages sent during a turn
 
@@ -106,7 +107,7 @@ Code: `transcript.ts` `user` (562-708). Source: `export_transcripts.py` (tag `re
 - Other fields seen: `delivery_id`, `humanTurn`, `imagePasteIds`, `isMeta`, `origin`, `runId`, `source_uuid`, `usage`, `toolsUsedDelta`.
 - A `shouldQuery: false` message (bash mode) is written as a `queue-operation` record, then a plain `user` record with string content and `queueTranscriptOnly`, `promptId`, `promptSource`, `turnAttributionKey`, `permissionMode`.
 
-Code: `transcript.ts` `queuedCommand` (545-560), `views.ts` `settleOutbox` (642-645). Source: live runs S3 and `bang`.
+Code: `claude-jsonl.ts` `classify` (attachment), `views.ts` `settleOutbox`. Source: live runs S3 and `bang`.
 
 ## Turn ends
 
@@ -126,7 +127,7 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - Symptom: "worked for" missing on sessions Synopia drives.
 - Cause: the SDK-driven CLI rarely writes `turn_duration`.
 - Workaround: a main-thread `stop_hook_summary` sets `workedMs` from your prompt's time; a later `turn_duration` wins.
-- Code: `transcript.ts` 516-536. Test: `transcript.test.ts` 715-727.
+- Code: `transcript.ts` `turnEnd`. Test: `transcript.test.ts` "worked for: an SDK-driven turn ends with stop_hook_summary only".
 
 ### Quirk: a failed turn read from the file alone looks running
 
@@ -139,7 +140,8 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 
 - An Esc interrupt during tools writes an error `tool_result` for each cut-short tool, then the user record `[Request interrupted by user` (or `… for tool use]`).
 - `[Request interrupted by user for tool use]` means a tool was turned down; Claude carries on after it.
-- Code: `transcript.ts` 609, 693-704; the error results just before the marker are marked interrupted.
+- Synopia reads the first marker as a stop (item `interrupted`) and the second as a turned-down tool (item `turnedDown`). Either closes the turn until Claude writes again; the error results just before the marker read as stopped. A turned-down marker isn't a prompt: the turn's time still counts from yours.
+- Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "seams#B3", `views.test.ts` "turns".
 
 ## Background work
 
@@ -158,14 +160,14 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - A foreground subagent's shells are stopped by the CLI when that subagent ends.
 - The CLI writes a stop notification to the JSONL only when a turn runs; see [Agent SDK](Agent%20SDK.md#stoptask-and-task-notifications).
 
-Code: `transcript.ts` 570-575, 640-652. Source: live run S4, shape scan 2026-11-24.
+Code: `claude-jsonl.ts` `userOf` (`toolUseResult`), `taskNotes`; `transcript.ts` `note`. Source: live run S4, shape scan 2026-11-24.
 
 ### Quirk: subagent shells have no task id in SDK sessions
 
 - Symptom: a subagent's shell in a Synopia-driven session has no id to stop it by.
 - Cause: an SDK-driven CLI writes no `toolUseResult` in a subagent's records (scratch runs 1 to 3). `unverified` beyond those runs: the live check is cited in code and notes only.
 - Workaround: the id comes from the SDK's `system/task_started` (`task_id`, `tool_use_id`, `task_type: local_bash`, `owned_by_subagent`, `is_backgrounded`), kept over a rewrite. A foreground Bash gets `task_started` about 2 s after it starts; a foreground Agent at once.
-- Code: `sessions.ts` 882-884, `transcript.ts` `taskStarted` (796-800), 929-931.
+- Code: `sessions.ts` 882-884, `transcript.ts` `taskStarted`, `refreshTool` (`fg`).
 
 ## Shell edits (`bashEditDiff`)
 
@@ -175,16 +177,16 @@ Code: `transcript.ts` 570-575, 640-652. Source: live run S4, shape scan 2026-11-
 - Outside a git repo Synopia shows no shell-edit rows (decision Q3, 2026-11-24).
 - `staleReadFileStateHint` (string) flags a command that changed a file Claude had Read; only `sed -i` was recognised.
 
-Code: `driver.ts` `buildOptions` (85-93), `transcript.ts` 116, 591. Source: `.ai-notes/app/README.md` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
+Code: `driver.ts` `buildOptions` (85-93), `claude-jsonl.ts` `bashEditOf`, `transcript.ts` `bashPatchesOf`. Source: `.ai-notes/app/README.md` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
 
 ## Plans
 
-- ExitPlanMode's `tool_use` input in the JSONL can hold an older plan revision than `canUseTool`'s `input.plan`: the CLI reads the plan file when it asks, and a revision changed it. The page shows the request's plan while pending. Code: `transcript.ts` 400-401.
+- ExitPlanMode's `tool_use` input in the JSONL can hold an older plan revision than `canUseTool`'s `input.plan`: the CLI reads the plan file when it asks, and a revision changed it. The page shows the request's plan while pending. Code: `transcript.ts` `toolUse` (`planOf`).
 - The mode before plan mode falls back to `auto` when the transcript has no non-plan `permission-mode` record, even in a folder whose settings say `default`.
 - During plan mode the transcript's `requestedModel` can differ from the session's model.
 
 ## Fixture rules
 
 - Fixtures under `app/backend/test/fixtures/` are invented, never copied from `~/.claude/projects`.
-- Assistant records in fixtures hold one content block each, as the CLI writes them. The multi-block records in `claude/44444444…`, `claude-states/f6f6…` and `claude-rail/…/agent-bbbb0001` break this rule.
+- Assistant records in fixtures hold one content block each, as the CLI writes them; the records of one response share `message.id`, and block 2 onward of a response has the uuid `<uuid>-b<n>`. `claude-ext/e1e1…` holds a pending AskUserQuestion followed by a later block of the same response.
 - Records whose status depends on age are dated at test time; see [Page checks](Page%20checks.md#date-relative-fixtures).

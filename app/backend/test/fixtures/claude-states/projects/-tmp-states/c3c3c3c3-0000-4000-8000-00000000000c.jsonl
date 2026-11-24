@@ -1,4 +1,5 @@
 {"type":"permission-mode","permissionMode":"auto","sessionId":"c3c3c3c3-0000-4000-8000-00000000000c"}
 {"type":"user","uuid":"c3c3c3c3-0000-4000-8000-00000000000c-u1","timestamp":"2026-11-23T09:00:00.000Z","cwd":"/Users/fixture/dev/states","message":{"role":"user","content":"Check the changelog against the tags."}}
 {"type":"ai-title","aiTitle":"Changelog check","sessionId":"c3c3c3c3-0000-4000-8000-00000000000c"}
-{"type":"assistant","uuid":"c3c3c3c3-0000-4000-8000-00000000000c-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I'll read the tags first."},{"type":"tool_use","id":"toolu_c3c3","name":"Bash","input":{"command":"git tag --sort=-v:refname","description":"Changelog check"}}]}}
+{"type":"assistant","uuid":"c3c3c3c3-0000-4000-8000-00000000000c-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"id":"msg_c3c3c3c3-0000-4000-8000-00000000000c-a1","role":"assistant","content":[{"type":"text","text":"I'll read the tags first."}]}}
+{"type":"assistant","uuid":"c3c3c3c3-0000-4000-8000-00000000000c-a1-b1","timestamp":"2026-11-23T09:00:05.000Z","message":{"id":"msg_c3c3c3c3-0000-4000-8000-00000000000c-a1","role":"assistant","content":[{"type":"tool_use","id":"toolu_c3c3","name":"Bash","input":{"command":"git tag --sort=-v:refname","description":"Changelog check"}}]}}

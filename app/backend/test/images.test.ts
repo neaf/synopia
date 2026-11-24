@@ -8,6 +8,7 @@ import path from 'node:path';
 import { request } from 'node:http';
 import { deflateSync, crc32 } from 'node:zlib';
 import { Transcript, imageSize, imageRefs, parseRef, readImage } from '../src/transcript.ts';
+import { imageBlocks } from '../src/claude-jsonl.ts';
 import { Tailer } from '../src/tail.ts';
 import type { JsonRecord, Span } from '../src/tail.ts';
 import { Views } from '../src/views.ts';
@@ -69,7 +70,7 @@ test('refs: a prompt with images and a tool result with an image, no bytes kept'
   assert.equal(tool.out?.text, 'one image', 'the image is not in the text preview');
   assert.ok(!JSON.stringify(t.items).includes(data.slice(0, 40)), 'no base64 in the items');
   assert.equal(t.imageAt('u1:0'), null, 'no span pushed, so nothing to read');
-  assert.deepEqual(imageRefs('x', 'plain text'), []);
+  assert.deepEqual(imageRefs('x', imageBlocks('plain text')), []);
   assert.deepEqual(parseRef('r1:0.1'), { recordId: 'r1', path: [0, 1] });
   assert.deepEqual(parseRef('user@3:2'), { recordId: 'user@3', path: [2] });
   assert.equal(parseRef('r1'), null);

@@ -1,4 +1,5 @@
 {"type":"permission-mode","permissionMode":"auto","sessionId":"d4d4d4d4-0000-4000-8000-00000000000d"}
 {"type":"user","uuid":"d4d4d4d4-0000-4000-8000-00000000000d-u1","timestamp":"2026-11-23T09:00:00.000Z","cwd":"/Users/fixture/dev/states","message":{"role":"user","content":"Audit the tickets of the last sprint."}}
 {"type":"ai-title","aiTitle":"Ticket audit","sessionId":"d4d4d4d4-0000-4000-8000-00000000000d"}
-{"type":"assistant","uuid":"d4d4d4d4-0000-4000-8000-00000000000d-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I'll read the sprint export."},{"type":"tool_use","id":"toolu_d4d4","name":"Bash","input":{"command":"ls exports","description":"Ticket audit"}}]}}
+{"type":"assistant","uuid":"d4d4d4d4-0000-4000-8000-00000000000d-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"id":"msg_d4d4d4d4-0000-4000-8000-00000000000d-a1","role":"assistant","content":[{"type":"text","text":"I'll read the sprint export."}]}}
+{"type":"assistant","uuid":"d4d4d4d4-0000-4000-8000-00000000000d-a1-b1","timestamp":"2026-11-23T09:00:05.000Z","message":{"id":"msg_d4d4d4d4-0000-4000-8000-00000000000d-a1","role":"assistant","content":[{"type":"tool_use","id":"toolu_d4d4","name":"Bash","input":{"command":"ls exports","description":"Ticket audit"}}]}}

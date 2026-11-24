@@ -33,8 +33,8 @@ A test can pass variables to an app it launches only through `open --env NAME=va
 
 - Symptom: a folder under `/tmp` shows as `/private/tmp/…`; a home folder reached through a link shows its target.
 - Cause: on macOS `/tmp` is a link to `/private/tmp`, and the CLI and `listSessions()` give real paths.
-- Workaround: `paths.ts` maps the real path of `/tmp` back to `/tmp` and the real path of home back to home, then home to `~`. Other links (a project folder reached through a symlink) show their real path.
-- Code: `paths.ts` 1-25. Test: `paths.test.ts`.
+- Workaround: `paths.ts` maps the real path of `/tmp` back to `/tmp` and the real path of home back to home, then home to `~`. Inside a text it maps only where a path starts (the start, or after a space, quote, bracket or shell operator), so `https://host/Users/x` and `/mnt/private/tmp` stay. Other links (a project folder reached through a symlink) show their real path.
+- Code: `paths.ts` `rules`, `displayPath`, `displayIn`. Test: `paths.test.ts`.
 
 ## fs.watch merges and drops events
 

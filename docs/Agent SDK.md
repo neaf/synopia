@@ -141,7 +141,7 @@ Source: capture by `spike/dump_menu.mjs` (tag `rearch-base`; `prototype/menu.js`
 - `backgroundTasks()` before that returns true and moves nothing, so "send to background" waits for `task_started`.
 - After `backgroundTasks()`: `background_tasks_changed` (one entry), `task_updated`, then the tool's result with `backgroundTaskId` and `backgroundedByUser` (Bash) or `agentId, canContinueAgent, isAsync, outputFile, status, …` (Agent). At the end: `task_updated`, `task_notification`, `background_tasks_changed` with no entries.
 
-Code: `transcript.ts` 929-931. Source: background live run (CLI 2.1.330).
+Code: `transcript.ts` `refreshTool` (`fg`). Source: background live run (CLI 2.1.330).
 
 ### stopTask and task notifications
 

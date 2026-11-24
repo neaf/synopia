@@ -1,4 +1,5 @@
 {"type":"permission-mode","permissionMode":"auto","sessionId":"e5e5e5e5-0000-4000-8000-00000000000e"}
 {"type":"user","uuid":"e5e5e5e5-0000-4000-8000-00000000000e-u1","timestamp":"2026-11-23T09:00:00.000Z","cwd":"/Users/fixture/dev/states","message":{"role":"user","content":"Sync the open tickets with the board."}}
 {"type":"ai-title","aiTitle":"Linear sync","sessionId":"e5e5e5e5-0000-4000-8000-00000000000e"}
-{"type":"assistant","uuid":"e5e5e5e5-0000-4000-8000-00000000000e-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"role":"assistant","content":[{"type":"text","text":"I'll fetch the board first."},{"type":"tool_use","id":"toolu_e5e5","name":"Bash","input":{"command":"curl -s localhost:8080/board","description":"Linear sync"}}]}}
+{"type":"assistant","uuid":"e5e5e5e5-0000-4000-8000-00000000000e-a1","timestamp":"2026-11-23T09:00:05.000Z","message":{"id":"msg_e5e5e5e5-0000-4000-8000-00000000000e-a1","role":"assistant","content":[{"type":"text","text":"I'll fetch the board first."}]}}
+{"type":"assistant","uuid":"e5e5e5e5-0000-4000-8000-00000000000e-a1-b1","timestamp":"2026-11-23T09:00:05.000Z","message":{"id":"msg_e5e5e5e5-0000-4000-8000-00000000000e-a1","role":"assistant","content":[{"type":"tool_use","id":"toolu_e5e5","name":"Bash","input":{"command":"curl -s localhost:8080/board","description":"Linear sync"}}]}}

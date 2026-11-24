@@ -171,12 +171,13 @@ test('status, pending, stream and close are broadcast', async () => {
   assert.equal(views.sessions().length, 0);
 });
 
-test('turns: an interrupted turn says so to the writer', () => {
+test('turns: an interrupted turn says so to the writer; a turned-down tool does not (seams#B3)', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000ab';
-  const dir = tempSession(id, you(1) + line({ type: 'user', uuid: 'x2', timestamp: '2026-11-20T10:00:02.000Z', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } }) + you(3));
+  const marker = (uuid: string, s: number, text: string) => line({ type: 'user', uuid, timestamp: `2026-11-20T10:00:0${s}.000Z`, message: { role: 'user', content: [{ type: 'text', text }] } });
+  const dir = tempSession(id, you(1) + marker('x2', 2, '[Request interrupted by user for tool use]') + you(3) + marker('x4', 4, '[Request interrupted by user]'));
   const { views } = setup(dir);
   views.open(id);
-  assert.deepEqual(views.turns(id), [{ you: 'prompt 1', claude: '(You interrupted this turn.)' }, { you: 'prompt 3', claude: '' }]);
+  assert.deepEqual(views.turns(id), [{ you: 'prompt 1', claude: '' }, { you: 'prompt 3', claude: '(You interrupted this turn.)' }]);
 });
 
 test('model: a new session with no choice shows settings.model, not the CLI default', () => {

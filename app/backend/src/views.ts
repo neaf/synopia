@@ -10,6 +10,7 @@ import os from 'node:os';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord } from './tail.ts';
 import { Transcript, findTranscript, sessionDirOf, readResult, readImage, IMAGE_TYPES } from './transcript.ts';
+import { landedBlocks, cwdOfRecords } from './claude-jsonl.ts';
 import type { Item, PendingAsk } from './transcript.ts';
 import type { BangRun } from './bang.ts';
 import type { Client } from './server.ts';
@@ -148,7 +149,7 @@ export class Views {
     s.tailer = new Tailer(file, {
       ...tail,
       onRecords: (records, spans) => {
-        if (!s.cwd) s.cwd = cwdOf(records);
+        if (!s.cwd) s.cwd = cwdOfRecords(records);
         s.t.pushAll(records, spans);
         if (this.opts.onAssistant) landed(records, (mid, types) => this.opts.onAssistant?.(s.id, mid, types));
         this.queue(s);
@@ -349,6 +350,7 @@ export class Views {
     if (!s) return undefined;
     const out: { you: string; claude: string }[] = [];
     for (const i of s.t.items) {
+      if (i.k === 'you' && i.turnedDown) continue; // a tool you turned down: Claude carried on
       if (i.k === 'you' && !i.interrupted) out.push({ you: i.text ?? '', claude: '' });
       else if (i.k === 'you' && out.length) {
         // An Esc Esc interrupt: say so, or the writer reads the turn as still waiting on its tool.
@@ -779,17 +781,9 @@ function landsAs(q: Outbox, it: Item): boolean {
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {
   for (const r of records) {
-    if (r.type !== 'assistant' || r.isSidechain === true) continue;
-    const m = r.message as { id?: unknown; content?: unknown } | undefined;
-    if (!m || typeof m.id !== 'string') continue;
-    const types = Array.isArray(m.content) ? m.content.map((b) => String((b as { type?: unknown })?.type ?? '')) : [];
-    fn(m.id, types);
+    const l = landedBlocks(r);
+    if (l) fn(l.messageId, l.types);
   }
-}
-
-function cwdOf(records: JsonRecord[]): string {
-  for (const r of records) if (typeof r.cwd === 'string' && r.cwd) return r.cwd;
-  return '';
 }
 
 function mtimeOf(file: string | null): number {

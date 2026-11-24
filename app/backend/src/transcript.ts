@@ -1,15 +1,18 @@
-// JSONL records to items for one conversation (the main one or a subagent's).
-// Stateful (docs/Claude Code transcripts.md, plan section 7): records arrive in
-// file order, and a later record (a tool result, a task notification) updates an earlier item
-// in place. Every item has a stable id; takeChanges() lists what changed since the last call.
+// Claude Code records to items for one conversation (the main one or a subagent's): a reducer over
+// the typed records of claude-jsonl.ts, which reads every raw field. Records arrive in file order,
+// and a later record (a tool result, a task notification) updates an earlier item in place. Every
+// item has a stable id; takeChanges() lists what changed since the last call.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
-import { parseBashInput, parseBashOutput, BANG_CAP } from './bang.ts';
+import { BANG_CAP } from './bang.ts';
 import type { BashOutput } from './bang.ts';
+import { classify, agentMetaOf, resultTextIn, imageIn } from './claude-jsonl.ts';
+import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
 
+export type { Question } from './claude-jsonl.ts';
 export type Hunk = { o: number; n: number; lines: string[] };
 // `bare`: a file a shell command changed with no diff in the record (bashEditDiff.changedFiles).
 export type Patch = {
@@ -22,12 +25,14 @@ export type Output = { text: string; lines: number; cut: boolean; interrupted?: 
 // is, never its bytes. `ref` is `<record id>:<block path>` (`3`, or `1.0` for a block in a tool_result's
 // content); the page loads it from `GET /api/image`. `w` and `h` come from the image's header when cheap.
 export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
-export type Question = { q: string; header: unknown; multi: boolean; opts: [string, string][] };
 export type Item = {
   id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang'; ts: string | null;
   cmd?: string; sh?: BashOutput; // bang: a bash-mode command (`!`) and its output, from Synopia or the CLI (R5.13)
   title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
-  text?: string; images?: number; interrupted?: boolean; workedMs?: number; // you
+  text?: string; images?: number; workedMs?: number; // you
+  // you: an interrupt marker. `interrupted`: you stopped the turn; `turnedDown`: you turned a tool
+  // down and Claude carries on (docs/Claude Code transcripts.md#interrupts).
+  interrupted?: boolean; turnedDown?: boolean;
   imgs?: ImageRef[]; // you, tool: the images the prompt sent or the result holds (R5.13)
   agent?: string | null; // report
   name?: string; verb?: string; obj?: string; to?: string; state?: string; toolUseId?: string; patch?: Patch; // tool (to: SendMessage's recipient)
@@ -48,7 +53,7 @@ export type Agent = {
   start: string | null; end: string | null; total: number;
 };
 // A question or plan card waiting in the transcript: an AskUserQuestion or ExitPlanMode tool_use of
-// the latest assistant record with no tool_result yet (Transcript.pendingAsk). `agentId`: the
+// the latest assistant message with no tool_result yet (Transcript.pendingAsk). `agentId`: the
 // subagent that asked (null: the main conversation). `since`: the tool_use's time (ms, 0 unknown).
 export type PendingAsk = { kind: 'question' | 'plan'; toolUseId: string; agentId: string | null; since: number; qs?: Question[]; plan?: string };
 // A title Synopia's writer gave the session, and when (ms): state.json `written[sid].history`.
@@ -58,11 +63,9 @@ export type Changes = { items: string[]; background: string[]; agents: string[];
 const MAX_TEXT = 6000;
 const MAX_BANG_CMD = 4000;
 const MAX_DIFF_LINES = 400;
-const REPORT_PREFIX = 'Another Claude session sent a message';
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const titleKey = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase();
-const obj = (v: unknown): JsonRecord => (v && typeof v === 'object' && !Array.isArray(v) ? (v as JsonRecord) : {});
 
 export function clip(s: string, n = MAX_TEXT): string {
   return s.length <= n ? s : s.slice(0, n) + '\n\n[cut: message continues]';
@@ -73,8 +76,10 @@ function tilde(p: string, home: string): string {
   return displayIn(p, home);
 }
 
-export function toolLine(name: string, input: unknown, home: string): [string, string] {
-  const inp = obj(input);
+// A step's verb and object. `input` is the tool's own parameters (the Claude Code tools' inputs),
+// read here for display only.
+export function toolLine(name: string, input: JsonRecord, home: string): [string, string] {
+  const inp = input;
   if (name === 'Bash') return ['Ran', str(inp.description) || str(inp.command).slice(0, 120)];
   if (name === 'Read' || name === 'Edit' || name === 'Write' || name === 'NotebookEdit') {
     const p = str(inp.file_path) || str(inp.notebook_path);
@@ -88,7 +93,7 @@ export function toolLine(name: string, input: unknown, home: string): [string, s
   if (name === 'WebSearch') return ['Searched the web', str(inp.query)];
   if (name === 'AskUserQuestion') {
     const qs = Array.isArray(inp.questions) ? inp.questions : [];
-    return ['Asked you', qs.map((q) => str(obj(q).question)).join('; ')];
+    return ['Asked you', qs.map((q) => str((q as JsonRecord | null)?.question)).join('; ')];
   }
   if (name === 'ExitPlanMode') return ['Plan', 'shown for approval'];
   if (name === 'ToolSearch') return ['Loaded tools', str(inp.query).split('select:').join('')];
@@ -103,42 +108,28 @@ export function toolLine(name: string, input: unknown, home: string): [string, s
   return [name, ''];
 }
 
-export function patchOf(tur: JsonRecord, home: string): Patch {
-  let hunks = (Array.isArray(tur.structuredPatch) ? tur.structuredPatch : []).map(obj);
-  if (!hunks.length && tur.type === 'create') {
-    const lines = str(tur.content).split('\n');
-    if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop(); // the final newline is not a line
-    hunks = [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: lines.length, lines: lines.map((l) => '+' + l) }];
-  }
-  return patchFrom(hunks, str(tur.filePath), tur.type === 'create', home);
+// An Edit's or Write's change as a patch.
+export function patchOf(edit: FileEdit, home: string): Patch {
+  return patchFrom(edit.hunks, edit.filePath, edit.created, home);
 }
 
-// The files a Bash command edited (toolUseResult.bashEditDiff): one patch per `files` entry, built
-// as an Edit's, then each `changedFiles` path with no entry as a bare patch (no counts, no diff).
-// Relative paths resolve against the record's cwd.
-export function bashPatchesOf(diff: JsonRecord, cwd: string, home: string): { patches: Patch[]; more: number } {
-  const abs = (p: string) => (p && !path.isAbsolute(p) && cwd ? path.resolve(cwd, p) : p);
-  const patches: Patch[] = [];
-  for (const f of (Array.isArray(diff.files) ? diff.files : []).map(obj)) {
-    const file = abs(str(f.filePath));
-    if (file) patches.push(patchFrom((Array.isArray(f.hunks) ? f.hunks : []).map(obj), file, f.created === true, home));
-  }
-  for (const p of Array.isArray(diff.changedFiles) ? diff.changedFiles.map(str) : []) {
-    const file = abs(p);
-    if (file && !patches.some((x) => x.abs === file)) {
+// The files a Bash command edited: one patch per diffed file, built as an Edit's, then each
+// changed file with no diff as a bare patch (no counts, no diff).
+export function bashPatchesOf(edit: BashEdit, home: string): { patches: Patch[]; more: number } {
+  const patches = edit.files.map((f) => patchFrom(f.hunks, f.filePath, f.created, home));
+  for (const file of edit.changedFiles) {
+    if (!patches.some((x) => x.abs === file)) {
       patches.push({ file: tilde(file, home), abs: file, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true });
     }
   }
-  const more = typeof diff.moreFiles === 'number' && diff.moreFiles > 0 ? diff.moreFiles : 0;
-  return { patches, more };
+  return { patches, more: edit.moreFiles };
 }
 
-function patchFrom(hunks: JsonRecord[], abs: string, created: boolean, home: string): Patch {
-  const linesOf = (h: JsonRecord): string[] => (Array.isArray(h.lines) ? h.lines.map(str) : []);
+function patchFrom(hunks: RawHunk[], abs: string, created: boolean, home: string): Patch {
   let add = 0;
   let del = 0;
   for (const h of hunks) {
-    for (const l of linesOf(h)) {
+    for (const l of h.lines) {
       if (l.startsWith('+')) add++;
       else if (l.startsWith('-')) del++;
     }
@@ -146,29 +137,16 @@ function patchFrom(hunks: JsonRecord[], abs: string, created: boolean, home: str
   const out: Hunk[] = [];
   let budget = MAX_DIFF_LINES;
   for (const h of hunks) {
-    const lines = linesOf(h).slice(0, Math.max(budget, 0));
+    const lines = h.lines.slice(0, Math.max(budget, 0));
     budget -= lines.length;
-    out.push({ o: Number(h.oldStart ?? 0), n: Number(h.newStart ?? 0), lines });
+    out.push({ o: h.oldStart, n: h.newStart, lines });
     if (budget <= 0) break;
   }
   return { file: tilde(abs, home), abs, add, del, created, cut: budget <= 0, hunks: out };
 }
 
-function textOf(content: unknown): string {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
-  return content.filter((b) => obj(b).type === 'text').map((b) => str(obj(b).text)).join('\n');
-}
-
-const isBlock = (b: unknown, type: string): boolean => obj(b).type === type;
-
 export const PREVIEW_LINES = 20;
 export const PREVIEW_BYTES = 4096;
-
-// A tool_result block's text, as Claude got it (for Bash: stdout, then stderr). Images aren't text.
-export function resultText(block: JsonRecord): string {
-  return textOf(block.content);
-}
 
 export function previewOf(text: string): Output {
   const body = text.endsWith('\n') ? text.slice(0, -1) : text;
@@ -190,12 +168,11 @@ export function previewOf(text: string): Output {
 
 // The input of a tool as an expanded step shows it: a Bash command in full (4 KB at most), else one
 // `key: value` line per short field. Edit and Write show nothing here: their diff is the way to see them.
-export function inputOf(name: string, input: unknown): string {
-  const inp = obj(input);
-  if (name === 'Bash') return clip(str(inp.command), PREVIEW_BYTES);
+export function inputOf(name: string, input: JsonRecord): string {
+  if (name === 'Bash') return clip(str(input.command), PREVIEW_BYTES);
   if (name === 'Edit' || name === 'Write' || name === 'NotebookEdit' || name === 'AskUserQuestion' || name === 'ExitPlanMode') return '';
   const out: string[] = [];
-  for (const [k, v] of Object.entries(inp)) {
+  for (const [k, v] of Object.entries(input)) {
     if (typeof v !== 'string' && typeof v !== 'number' && typeof v !== 'boolean') continue;
     const s = String(v);
     out.push(`${k}: ${s.length > 300 ? s.slice(0, 300) + '…' : s}`);
@@ -204,27 +181,30 @@ export function inputOf(name: string, input: unknown): string {
   return out.join('\n');
 }
 
-// Reads one record line again (`span`, from the tailer) and gives the full text of the tool_result for
-// `toolUseId` in it; null when the file is gone or no longer has that record there (rewritten, rotated).
-export function readResult(file: string, span: Span, toolUseId: string): string | null {
+// Reads one record line again (`span`, from the tailer) and parses it; undefined when the file is
+// gone or the bytes there aren't one JSON value.
+function readLine(file: string, span: Span): unknown {
   let fd: number;
   try {
     fd = fs.openSync(file, 'r');
   } catch {
-    return null;
+    return undefined;
   }
   try {
     const buf = Buffer.alloc(span.length);
-    if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return null;
-    const d = JSON.parse(buf.toString('utf8'));
-    const content = obj(obj(d).message).content;
-    const b = Array.isArray(content) ? content.find((x) => isBlock(x, 'tool_result') && obj(x).tool_use_id === toolUseId) : undefined;
-    return b ? resultText(obj(b)) : null;
+    if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return undefined;
+    return JSON.parse(buf.toString('utf8'));
   } catch {
-    return null;
+    return undefined;
   } finally {
     fs.closeSync(fd);
   }
+}
+
+// The full text of the tool_result for `toolUseId` in the record at `span`; null when the file is
+// gone or no longer has that record there (rewritten, rotated).
+export function readResult(file: string, span: Span, toolUseId: string): string | null {
+  return resultTextIn(readLine(file, span), toolUseId);
 }
 
 // The image types the page is served (GET /api/image); any other gets a 415.
@@ -279,20 +259,15 @@ function sizeAs(mediaType: string, b64: string): { w: number; h: number } | null
   return null;
 }
 
+
 // The image blocks of a content array (a user record's, or a tool_result's under `at`), as refs.
-export function imageRefs(recordId: string, content: unknown, at = ''): ImageRef[] {
-  if (!Array.isArray(content)) return [];
-  const out: ImageRef[] = [];
-  content.forEach((raw, i) => {
-    const b = obj(raw);
-    if (b.type !== 'image') return;
-    const src = obj(b.source);
-    const ref: ImageRef = { ref: `${recordId}:${at}${i}`, mediaType: str(src.media_type) };
-    const size = src.type === 'base64' && typeof src.data === 'string' ? imageSize(ref.mediaType, src.data) : null;
+export function imageRefs(recordId: string, blocks: ImageBlock[], at = ''): ImageRef[] {
+  return blocks.map((b) => {
+    const ref: ImageRef = { ref: `${recordId}:${at}${b.index}`, mediaType: b.mediaType };
+    const size = b.data !== null ? imageSize(b.mediaType, b.data) : null;
     if (size) Object.assign(ref, size);
-    out.push(ref);
+    return ref;
   });
-  return out;
 }
 
 // A ref's record id and block path (`[3]`, or `[1, 0]` inside a tool_result); null when it isn't one.
@@ -304,33 +279,17 @@ export function parseRef(ref: string): { recordId: string; path: number[] } | nu
 // Reads one record line again (`span`) and decodes the image block at `path` in it. null when the file
 // is gone, the line no longer holds that record (rewritten), or there is no base64 image there.
 export function readImage(file: string, span: Span, recordId: string, at: number[]): { mediaType: string; data: Buffer } | null {
-  let fd: number;
-  try {
-    fd = fs.openSync(file, 'r');
-  } catch {
-    return null;
-  }
-  try {
-    const buf = Buffer.alloc(span.length);
-    if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return null;
-    const d = obj(JSON.parse(buf.toString('utf8')));
-    if (d.uuid ? d.uuid !== recordId : !recordId.includes('@')) return null; // `user@<n>`: a record with no uuid
-    // a message queued during a turn keeps its blocks in the attachment's prompt
-    let b: unknown = d.type === 'attachment' ? obj(d.attachment).prompt : obj(d.message).content;
-    at.forEach((i, k) => { b = k === 0 ? (Array.isArray(b) ? b[i] : undefined) : (Array.isArray(obj(b).content) ? (obj(b).content as unknown[])[i] : undefined); });
-    const src = obj(obj(b).source);
-    if (obj(b).type !== 'image' || src.type !== 'base64' || typeof src.data !== 'string') return null;
-    return { mediaType: str(src.media_type), data: Buffer.from(src.data, 'base64') };
-  } catch {
-    return null;
-  } finally {
-    fs.closeSync(fd);
-  }
+  const img = imageIn(readLine(file, span), recordId, at);
+  return img ? { mediaType: img.mediaType, data: Buffer.from(img.data, 'base64') } : null;
 }
 
-export class Transcript {
-  readonly sidechain: boolean;
-  readonly home: string;
+type ToolUseRef = { id: string; ts: string | null; name: string };
+type Note = { status: string; summary: string; end: string | null };
+type AgentLink = { meta: AgentMeta | null; sub: Transcript | null };
+
+// What a file's records built: a new one when the file is rewritten (Transcript.reset), so a reset
+// can't keep a stale field.
+class ReadState {
   items: Item[] = [];
   customTitle: string | null = null;
   aiTitle: string | null = null;
@@ -344,55 +303,76 @@ export class Transcript {
   // you typed (a user record, a slash command or a queued_command attachment), closed by
   // system/turn_duration, system/stop_hook_summary or an interrupt marker. An assistant record
   // after a marker opens it again: Claude carried on.
-  private turnOpen = false;
-  private afterMarker = false;
-  private lastToolUses: { id: string; ts: string | null; name: string }[] = []; // of the latest main assistant record
-  private allPrs: unknown[] = [];
-  private byId = new Map<string, Item>();
-  private seq = 0;
-  private lastYou: Item | null = null;
-  private lastBang: Item | null = null; // the bash-mode command whose output comes next
-  private results = new Map<string, boolean>(); // tool_use id -> is_error
-  private asks = new Set<string>();
-  private answers = new Map<string, string>();
-  private patches = new Map<string, Patch>();
-  private bashPatches = new Map<string, { patches: Patch[]; more: number }>();
+  turnOpen = false;
+  afterMarker = false;
+  // The tool uses of the latest assistant message: every record of its `message.id` (one block per
+  // record), or the one record when it has no id.
+  message: { key: string; uses: ToolUseRef[] } = { key: '', uses: [] };
+  prs: unknown[] = [];
+  byId = new Map<string, Item>();
+  seq = 0;
+  lastYou: Item | null = null;
+  lastBang: Item | null = null; // the bash-mode command whose output comes next
+  results = new Map<string, boolean>(); // tool_use id -> is_error
+  asks = new Set<string>();
+  answers = new Map<string, string>();
+  patches = new Map<string, Patch>();
+  bashPatches = new Map<string, { patches: Patch[]; more: number }>();
   // A tool's result: only its preview stays in memory, and where its record sits for the rest.
-  private outs = new Map<string, Output>();
-  private outSpans = new Map<string, Span>();
-  private span: Span | undefined; // of the record being pushed
+  outs = new Map<string, Output>();
+  outSpans = new Map<string, Span>();
+  span: Span | undefined; // of the record being pushed
   // Images: the line of each record that holds one (by record id), and the images of each tool's result.
-  private imageSpans = new Map<string, Span>();
-  private outImgs = new Map<string, ImageRef[]>();
-  private bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
-  private fgBash = new Map<string, Pick<Background, 'description' | 'command' | 'timeout' | 'start'>>(); // foreground Bash uses, in case one moves to the background
-  private notes = new Map<string, { status: string; summary: string; end: string | null }>();
-  private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
-  private sdkTasks = new Map<string, string>(); // the same, from the SDK's task_started (kept over a reset)
-  // The SDK's background_tasks_changed level (task ids) for a Synopia-driven process, and the tasks
-  // that left it before any notification said how they ended (both kept over a reset; a note wins).
-  private live = new Set<string>();
-  private gone = new Map<string, { status: string; summary: string; end: string | null }>();
-  private reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
-  private bg = new Map<string, Background>();
-  private agentMeta = new Map<string, { meta: JsonRecord | null; sub: Transcript | null }>();
-  private changed = new Set<string>();
-  private changedBg = new Set<string>();
-  private changedAgents = new Set<string>();
-  private metaChanged = false;
-  private answerOf: (toolUseId: string) => string | undefined;
-  // Slice 5: the session's process ended then (ISO): work started before it can't still run.
-  private ended: string | null = null;
-  private endedFailed = false; // that end was a process failure (else close, idle end or quit)
-  private interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
-  private lastErrors: string[] = []; // the error results of the record just read, if it held results
+  imageSpans = new Map<string, Span>();
+  outImgs = new Map<string, ImageRef[]>();
+  bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
+  fgBash = new Map<string, Pick<Background, 'description' | 'command' | 'timeout' | 'start'>>(); // foreground Bash uses, in case one moves to the background
+  notes = new Map<string, Note>();
+  taskIds: Map<string, string>; // tool_use id -> the task id stopTask takes
+  reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
+  bg = new Map<string, Background>();
+  changed = new Set<string>();
+  changedBg = new Set<string>();
+  changedAgents = new Set<string>();
+  metaChanged = false;
+  interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
+  lastErrors: string[] = []; // the error results of the record just read, if it held results
   // Title items (R5.x): the shown title's sources as read so far, in record and time order (a
   // custom-title, else the writer's, else the ai-title, as the header picks), the last shown one's
   // key, whether a prompt came yet, and the writer's history entries already placed (by `at`).
-  private titles: { you: string; written: string; ai: string } = { you: '', written: '', ai: '' };
-  private shownTitle: string | null = null;
-  private prompted = false;
-  private writtenAt = -Infinity;
+  titles: { you: string; written: string; ai: string } = { you: '', written: '', ai: '' };
+  shownTitle: string | null = null;
+  prompted = false;
+  writtenAt = -Infinity;
+
+  // `taskIds`: the SDK's task_started ids, which a rewrite keeps.
+  constructor(taskIds: Map<string, string>) {
+    this.taskIds = new Map(taskIds);
+  }
+}
+
+const msOf = (ts: string | null | undefined): number | null => {
+  const n = ts ? Date.parse(ts) : NaN;
+  return Number.isFinite(n) ? n : null;
+};
+
+export class Transcript {
+  readonly sidechain: boolean;
+  readonly home: string;
+  private r: ReadState;
+  private agentMeta = new Map<string, AgentLink>();
+  // Kept over a rewrite, not read from the file:
+  // the session's process ended then (ISO, and as ms): work started before it can't still run.
+  private ended: string | null = null;
+  private endedMs: number | null = null;
+  private endedFailed = false; // that end was a process failure (else close, idle end or quit)
+  private sdkTasks = new Map<string, string>(); // tool_use id -> task id, from the SDK's task_started
+  // The SDK's background_tasks_changed level (task ids) for a Synopia-driven process, and the tasks
+  // that left it before any notification said how they ended (a note wins).
+  private live = new Set<string>();
+  private gone = new Map<string, Note>();
+  private answerOf: (toolUseId: string) => string | undefined;
+  private planOf: (toolUseId: string) => string | undefined;
   private titlesOf: () => WrittenTitle[] | undefined;
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
@@ -406,365 +386,354 @@ export class Transcript {
     this.answerOf = opts.answerOf ?? (() => undefined);
     this.planOf = opts.planOf ?? (() => undefined);
     this.titlesOf = opts.titlesOf ?? (() => undefined);
+    this.r = new ReadState(this.sdkTasks);
   }
-  private planOf: (toolUseId: string) => string | undefined;
+
+  get items(): Item[] { return this.r.items; }
+  get customTitle(): string | null { return this.r.customTitle; }
+  get aiTitle(): string | null { return this.r.aiTitle; }
+  get permissionMode(): string | null { return this.r.permissionMode; }
+  get lastNonPlanMode(): string | null { return this.r.lastNonPlanMode; }
+  get requestedModel(): unknown { return this.r.requestedModel; }
+  get effort(): unknown { return this.r.effort; }
+  get firstTs(): string | null { return this.r.firstTs; }
+  get lastTs(): string | null { return this.r.lastTs; }
 
   get title(): string | null {
-    return this.customTitle || this.aiTitle;
+    return this.r.customTitle || this.r.aiTitle;
   }
 
   get prs(): unknown[] {
-    return this.allPrs.slice(-4);
+    return this.r.prs.slice(-4);
   }
 
   get total(): number {
-    return this.items.length;
+    return this.r.items.length;
   }
 
   get(id: string): Item | undefined {
-    return this.byId.get(id);
+    return this.r.byId.get(id);
   }
 
   // The last `last` items, for a first view.
   view(last = 160): { items: Item[]; total: number } {
-    return { items: this.items.slice(-last), total: this.items.length };
+    return { items: this.r.items.slice(-last), total: this.r.items.length };
   }
 
-  // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
+  // Back to empty, for a file that was rewritten (docs/Claude Code transcripts.md#quirk-plan-approval-rewrites-the-file).
+  // Subagent links, the process end and what the SDK said are kept: they don't come from the file.
   reset(): void {
-    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed, sdkTasks = this.sdkTasks, live = this.live, gone = this.gone;
-    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf, titlesOf: this.titlesOf });
-    Object.assign(this, fresh);
-    this.agentMeta = keep;
-    this.sdkTasks = sdkTasks;
-    this.taskIds = new Map(sdkTasks);
-    this.live = live;
-    this.gone = gone;
-    this.ended = ended;
-    this.endedFailed = endedFailed;
-    this.metaChanged = true;
+    this.r = new ReadState(this.sdkTasks);
+    this.r.metaChanged = true;
   }
 
   takeChanges(): Changes {
+    const r = this.r;
     this.placeWritten(Infinity); // the writer's newest titles come after every record read so far
     // Subagents' shells and monitors: their own changes, and all of a changed subagent's (they end with it).
-    const bg = new Set(this.changedBg);
+    const bg = new Set(r.changedBg);
     for (const [aid, a] of this.agentMeta) {
       if (!a.sub) continue;
       for (const id of a.sub.takeBackgroundChanges()) bg.add(id);
-      if (this.changedAgents.has(aid)) for (const b of a.sub.background()) bg.add(b.toolUseId);
+      if (r.changedAgents.has(aid)) for (const b of a.sub.background()) bg.add(b.toolUseId);
     }
     const out = {
-      items: [...this.changed], background: [...bg], agents: [...this.changedAgents], meta: this.metaChanged,
+      items: [...r.changed], background: [...bg], agents: [...r.changedAgents], meta: r.metaChanged,
     };
-    this.changed.clear();
-    this.changedBg.clear();
-    this.changedAgents.clear();
-    this.metaChanged = false;
+    r.changed.clear();
+    r.changedBg.clear();
+    r.changedAgents.clear();
+    r.metaChanged = false;
     return out;
   }
 
   // spans: where each record's line sits in the file (Tailer), so a tool's full result can be read again.
   pushAll(records: JsonRecord[], spans?: Span[]): void {
-    records.forEach((r, i) => this.push(r, spans?.[i]));
+    records.forEach((d, i) => this.push(d, spans?.[i]));
   }
 
   // Where an image block sits: its record's line in this conversation's file and the path inside it.
   imageAt(ref: string): { span: Span; recordId: string; path: number[] } | null {
-    const r = parseRef(ref);
-    const span = r && this.imageSpans.get(r.recordId);
-    return r && span ? { span, ...r } : null;
+    const p = parseRef(ref);
+    const span = p && this.r.imageSpans.get(p.recordId);
+    return p && span ? { span, ...p } : null;
   }
 
   // Where the record holding a tool's result sits in this conversation's file.
   resultSpan(toolUseId: string): Span | undefined {
-    return this.outSpans.get(toolUseId);
+    return this.r.outSpans.get(toolUseId);
   }
 
   push(d: JsonRecord, span?: Span): void {
-    this.span = span;
-    this.seq++;
-    const t = d.type;
-    const ts = typeof d.timestamp === 'string' ? d.timestamp : null;
+    this.reduce(classify(d), span);
+  }
+
+  private reduce(rec: ClaudeRecord, span?: Span): void {
+    const r = this.r;
+    r.span = span;
+    r.seq++;
+    const ts = rec.ts;
     if (ts) {
-      this.firstTs ??= ts;
-      this.lastTs = ts;
-      const ms = Date.parse(ts);
-      if (Number.isFinite(ms)) this.placeWritten(ms);
+      r.firstTs ??= ts;
+      r.lastTs = ts;
+      const ms = msOf(ts);
+      if (ms !== null) this.placeWritten(ms);
     }
-    if (t === 'ai-title') {
-      this.aiTitle = str(d.aiTitle) || null;
-      this.metaChanged = true;
-      this.retitle('ai', this.aiTitle ?? '', str(d.uuid) || `title@${this.seq}`, ts);
-    } else if (t === 'custom-title') {
-      this.customTitle = str(d.customTitle) || this.customTitle;
-      this.metaChanged = true;
-      this.retitle('you', this.customTitle ?? '', str(d.uuid) || `title@${this.seq}`, ts);
-    } else if (t === 'pr-link') {
-      if (d.prNumber != null && !this.allPrs.includes(d.prNumber)) {
-        this.allPrs.push(d.prNumber);
-        this.metaChanged = true;
-      }
-    } else if (t === 'permission-mode') {
-      const mode = str(d.permissionMode);
-      if (mode) {
-        this.permissionMode = mode;
-        if (mode !== 'plan') this.lastNonPlanMode = mode;
-        this.metaChanged = true;
-      }
+    // A subagent's record inside the main file (sidechain) is the subagent's, not this thread's.
+    const foreign = rec.sidechain && !this.sidechain;
+    switch (rec.kind) {
+      case 'ai-title':
+        r.aiTitle = rec.title || null;
+        r.metaChanged = true;
+        this.retitle('ai', rec.title, rec.uuid || `title@${r.seq}`, ts);
+        return;
+      case 'custom-title':
+        // An empty one removes your rename.
+        r.customTitle = rec.title || null;
+        r.metaChanged = true;
+        this.retitle('you', rec.title, rec.uuid || `title@${r.seq}`, ts);
+        return;
+      case 'pr-link':
+        if (rec.pr != null && !r.prs.includes(rec.pr)) {
+          r.prs.push(rec.pr);
+          r.metaChanged = true;
+        }
+        return;
+      case 'permission-mode':
+        if (rec.mode) {
+          r.permissionMode = rec.mode;
+          if (rec.mode !== 'plan') r.lastNonPlanMode = rec.mode;
+          r.metaChanged = true;
+        }
+        return;
+      case 'turn-end':
+        if (!foreign) this.turnEnd(rec.by, rec.durationMs, rec.sidechain, ts);
+        return;
+      case 'queued':
+        if (foreign) return;
+        r.turnOpen = true; // written when a turn takes it in
+        r.afterMarker = false;
+        if (rec.user) this.user(rec.user, rec.uuid || `attachment@${r.seq}`);
+        return;
+      case 'user':
+        if (!foreign) this.user(rec, rec.uuid || `user@${r.seq}`);
+        return;
+      case 'assistant':
+        if (!foreign) this.assistant(rec, rec.uuid || `assistant@${r.seq}`);
+        return;
+      case 'other':
+        return;
     }
-    if (t === 'system' && (d.subtype === 'turn_duration' || d.subtype === 'stop_hook_summary') && !(d.isSidechain && !this.sidechain)) {
-      this.turnOpen = false;
-      this.afterMarker = false;
-    }
-    if (t === 'system' && d.subtype === 'turn_duration') {
-      if (this.lastYou && typeof d.durationMs === 'number') {
-        this.lastYou.workedMs = d.durationMs;
-        this.changed.add(this.lastYou.id);
+  }
+
+  // turn_duration or stop_hook_summary (docs/Claude Code transcripts.md#turn-ends).
+  private turnEnd(by: 'turn_duration' | 'stop_hook_summary', durationMs: number | null, sidechain: boolean, ts: string | null): void {
+    const r = this.r;
+    r.turnOpen = false;
+    r.afterMarker = false;
+    const you = r.lastYou;
+    if (by === 'turn_duration') {
+      if (you && durationMs !== null) {
+        you.workedMs = durationMs;
+        r.changed.add(you.id);
       }
+      return;
     }
     // An SDK-driven CLI (entrypoint sdk-cli, as Synopia's own sessions are) writes stop_hook_summary
     // but rarely turn_duration (2 of 19 turns seen): the time from your prompt to it stands in, and a
     // turn_duration after it (the interactive CLI writes one right after) wins.
-    if (t === 'system' && d.subtype === 'stop_hook_summary' && !d.isSidechain && !this.sidechain) {
-      const you = this.lastYou;
-      const ms = you && you.workedMs === undefined && !you.interrupted && you.ts && ts ? Date.parse(ts) - Date.parse(you.ts) : NaN;
-      if (you && Number.isFinite(ms) && ms >= 0) {
-        you.workedMs = ms;
-        this.changed.add(you.id);
-      }
+    if (sidechain || this.sidechain || !you || you.workedMs !== undefined || you.interrupted) return;
+    const from = msOf(you.ts), to = msOf(ts);
+    if (from !== null && to !== null && to >= from) {
+      you.workedMs = to - from;
+      r.changed.add(you.id);
     }
-    if (t === 'attachment' && !(d.isSidechain && !this.sidechain)) this.queuedCommand(d, ts);
-    if ((d.isSidechain && !this.sidechain) || (t !== 'user' && t !== 'assistant')) return;
-    const uuid = str(d.uuid) || `${t}@${this.seq}`;
-    const content = obj(d.message).content;
-    if (t === 'user') this.user(d, uuid, ts, content);
-    else this.assistant(d, uuid, ts, content);
   }
 
-  // A task notification or a subagent's hand-back queued during a turn lands as an `attachment`
-  // record (`queued_command`, the text in `prompt`), not as a user record. So does a message you
-  // sent during a turn (`commandMode: 'prompt'`; slice 3 saw no user record for it), so it shows too.
-  // `prompt` is a string, or (a message with a pasted image) an array of text and image blocks.
-  private queuedCommand(d: JsonRecord, ts: string | null): void {
-    const a = obj(d.attachment);
-    const blocks = Array.isArray(a.prompt) ? a.prompt : null;
-    const prompt = blocks ? textOf(blocks) : str(a.prompt);
-    const images = blocks ? blocks.some((b) => isBlock(b, 'image')) : false;
-    if (a.type !== 'queued_command' || (!prompt && !images)) return;
-    this.turnOpen = true; // written when a turn takes it in
-    this.afterMarker = false;
-    const typed = a.commandMode === 'prompt' && (!prompt.startsWith('<') || images);
-    if (!typed && !prompt.startsWith('<task-notification>') && !prompt.startsWith('<agent-message')) return;
-    this.user({ ...d, type: 'user' }, str(d.uuid) || `attachment@${this.seq}`, ts, blocks ?? prompt);
-  }
-
-  private user(d: JsonRecord, uuid: string, ts: string | null, content: unknown): void {
-    const tur = d.toolUseResult;
-    if (tur && typeof tur === 'object' && !Array.isArray(tur) && Array.isArray(content)) {
-      const first = content.find((b) => isBlock(b, 'tool_result'));
-      const tid = first && str(obj(first).tool_use_id);
-      const r = tur as JsonRecord;
-      if (tid) {
-        // An Agent launched in the background returns at once: its launch result isn't the end.
-        if (r.status === 'async_launched') this.bgTool.set(tid, true);
-        const task = str(r.backgroundTaskId) || str(r.taskId) || (r.status === 'async_launched' ? str(r.agentId) : '');
-        // A foreground Bash moved to the background while it ran (Ctrl+B, a timeout, or a message
-        // sent during it) returns a backgroundTaskId too (17 such results seen): a background shell from then.
-        const fg = this.fgBash.get(tid);
-        if (fg && str(r.backgroundTaskId) && !this.bg.has(tid)) {
-          this.bg.set(tid, { ...fg, toolUseId: tid, taskId: null, kind: 'shell', persistent: false, status: 'running', summary: '', end: null });
-          this.stopIfEnded(tid);
-          this.changedBg.add(tid);
-        }
-        if (task) this.setTask(tid, task);
+  private user(u: UserRecord, uuid: string): void {
+    const r = this.r;
+    const tu = u.toolUse;
+    if (tu && tu.toolUseId) {
+      const tid = tu.toolUseId;
+      // An Agent launched in the background returns at once: its launch result isn't the end.
+      if (tu.asyncLaunched) r.bgTool.set(tid, true);
+      // A foreground Bash moved to the background while it ran (Ctrl+B, a timeout, or a message
+      // sent during it) returns a backgroundTaskId too (17 such results seen): a background shell from then.
+      const fg = r.fgBash.get(tid);
+      if (fg && tu.backgroundTaskId && !r.bg.has(tid)) {
+        r.bg.set(tid, { ...fg, toolUseId: tid, taskId: null, kind: 'shell', persistent: false, status: 'running', summary: '', end: null });
+        this.stopIfEnded(tid);
+        r.changedBg.add(tid);
       }
-    }
-    if (tur && typeof tur === 'object' && !Array.isArray(tur) && str((tur as JsonRecord).filePath) && Array.isArray(content)) {
-      const first = content.find((b) => isBlock(b, 'tool_result'));
-      const tid = first && str(obj(first).tool_use_id);
-      if (tid) {
-        this.patches.set(tid, patchOf(tur as JsonRecord, this.home));
+      if (tu.taskId) this.setTask(tid, tu.taskId);
+      if (tu.edit) {
+        r.patches.set(tid, patchOf(tu.edit, this.home));
+        this.refreshTool(tid);
+      }
+      if (tu.bashEdit) {
+        r.bashPatches.set(tid, bashPatchesOf(tu.bashEdit, this.home));
         this.refreshTool(tid);
       }
     }
-    const bashDiff = tur && typeof tur === 'object' && !Array.isArray(tur) ? (tur as JsonRecord).bashEditDiff : undefined;
-    if (bashDiff && typeof bashDiff === 'object' && !Array.isArray(bashDiff) && Array.isArray(content)) {
-      const first = content.find((b) => isBlock(b, 'tool_result'));
-      const tid = first && str(obj(first).tool_use_id);
-      if (tid) {
-        this.bashPatches.set(tid, bashPatchesOf(bashDiff as JsonRecord, str(d.cwd), this.home));
-        this.refreshTool(tid);
-      }
-    }
-    if (Array.isArray(content) && content.some((b) => isBlock(b, 'tool_result'))) {
+    if (u.results.length) {
       const errors: string[] = [];
-      for (const b of content) {
-        if (!isBlock(b, 'tool_result')) continue;
-        const r = obj(b);
-        const tid = str(r.tool_use_id);
-        this.results.set(tid, Boolean(r.is_error));
-        this.fgBash.delete(tid);
-        if (r.is_error) errors.push(tid);
-        if (r.is_error && /^\[(Request interrupted by user|Tool call interrupted)/.test(textOf(r.content).trim())) this.interrupted.add(tid);
-        if (this.asks.has(tid)) this.answers.set(tid, clip(textOf(r.content), 2000));
+      for (const res of u.results) {
+        const tid = res.toolUseId;
+        r.results.set(tid, res.isError);
+        r.fgBash.delete(tid);
+        if (res.isError) errors.push(tid);
+        if (res.cutShort) r.interrupted.add(tid);
+        if (r.asks.has(tid)) r.answers.set(tid, clip(res.text, 2000));
         else {
-          const interrupted = this.interrupted.has(tid) || (r === obj(content.find((x) => isBlock(x, 'tool_result'))) && obj(tur).interrupted === true);
-          this.outs.set(tid, { ...previewOf(resultText(r)), ...(interrupted ? { interrupted } : {}) });
-          if (this.span) this.outSpans.set(tid, this.span);
-          const imgs = imageRefs(uuid, r.content, `${content.indexOf(b)}.`);
+          const interrupted = r.interrupted.has(tid) || (res === u.results[0] && tu?.interrupted === true);
+          r.outs.set(tid, { ...previewOf(res.text), ...(interrupted ? { interrupted } : {}) });
+          if (r.span) r.outSpans.set(tid, r.span);
+          const imgs = imageRefs(uuid, res.images, `${res.index}.`);
           if (imgs.length) {
-            this.outImgs.set(tid, imgs);
-            if (this.span) this.imageSpans.set(uuid, this.span);
+            r.outImgs.set(tid, imgs);
+            if (r.span) r.imageSpans.set(uuid, r.span);
           }
         }
         this.refreshTool(tid);
       }
-      this.lastErrors = errors;
-      if (content.every((b) => isBlock(b, 'tool_result'))) return;
+      r.lastErrors = errors;
     }
-    const txt = textOf(content);
-    // Bash mode (R5.13), as the CLI records it: a user record `<bash-input>…</bash-input>`, then one
-    // `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` with its output. Neither is a turn.
-    if (txt.startsWith('<bash-input>')) {
-      const cmd = parseBashInput(txt);
-      if (cmd !== null) this.lastBang = this.put({ id: uuid, k: 'bang', ts, cmd: clip(cmd, MAX_BANG_CMD) });
+    const body = u.body;
+    if (body.kind === 'results' || body.kind === 'meta') return;
+    // Bash mode (R5.13), as the CLI records it: a `<bash-input>` record, then one with its output.
+    // Neither is a turn.
+    if (body.kind === 'bash-input') {
+      if (body.cmd !== null) r.lastBang = this.put({ id: uuid, k: 'bang', ts: u.ts, cmd: clip(body.cmd, MAX_BANG_CMD) });
       return;
     }
-    if (txt.startsWith('<bash-stdout>')) {
-      const sh = parseBashOutput(txt);
-      const b = this.lastBang;
-      if (sh && b && !b.sh) {
-        b.sh = { ...sh, out: clip(sh.out, BANG_CAP), err: clip(sh.err, BANG_CAP) };
-        this.changed.add(b.id);
+    if (body.kind === 'bash-output') {
+      const b = r.lastBang;
+      if (body.out && b && !b.sh) {
+        b.sh = { ...body.out, out: clip(body.out.out, BANG_CAP), err: clip(body.out.err, BANG_CAP) };
+        r.changed.add(b.id);
       }
       return;
     }
-    if (d.isMeta && !txt.startsWith(REPORT_PREFIX)) return;
-    const images = Array.isArray(content) ? content.filter((b) => isBlock(b, 'image')).length : 0;
-    for (const tn of txt.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
-      const task = /<task-id>([^<]+)/.exec(tn[1]);
-      // A subagent woken again after its first end notifies by task id only.
-      const tid = /<tool-use-id>([^<]+)/.exec(tn[1])?.[1] ?? (task ? this.toolOfAgent(task[1]) : null);
-      const st = /<status>([^<]+)/.exec(tn[1]);
-      if (!tid) continue; // a monitor's event: it keeps running
-      const su = /<summary>([^<]+)/.exec(tn[1]);
-      if (task) this.setTask(tid, task[1]);
-      this.notes.set(tid, { status: st ? st[1] : 'completed', summary: su ? su[1] : '', end: ts });
-      // A subagent's last message comes back as <result>: its report, unless it sent one itself.
-      const res = /<result>([\s\S]*?)<\/result>/.exec(tn[1]);
-      const tool = this.byId.get(tid);
-      if (res && task && tool && (tool.name === 'Agent' || tool.name === 'Task') && !this.reportKind.has(task[1])) {
-        this.reportKind.set(task[1], 'result');
-        this.put({ id: `report:${task[1]}`, k: 'report', ts, agent: task[1], text: clip(res[1].trim(), 3000) });
-      }
-      this.refreshTool(tid);
-    }
-    if (txt.startsWith('<task-notification>')) return;
-    if (txt.startsWith(REPORT_PREFIX) || txt.startsWith('<agent-message')) {
-      let body = txt.includes('The report follows:')
-        ? txt.replace(/^[\s\S]*?The report follows:[ \t]*\r?\n?/, '')
-        : txt.replace(/^<agent-message[^>]*>\s*/, '');
-      body = body.replace(/<\/agent-message>[\s\S]*$/, '');
-      body = body.split(/\r?\n/).map((l) => (l.startsWith('  ') ? l.slice(2) : l)).join('\n');
-      const frm = /agent-message from="([0-9a-z]+)/.exec(txt);
-      const agent = frm ? frm[1] : null;
+    for (const n of u.notes) this.note(n, u.ts);
+    if (body.kind === 'notification' || body.kind === 'system') return;
+    if (body.kind === 'report') {
       // A message from one of this session's own subagents is its report: one per subagent, in
       // place of the <result> one. Messages from other sessions stay one item each.
-      const own = Boolean(agent && this.toolOfAgent(agent as string));
-      if (own) this.reportKind.set(agent as string, 'message');
-      this.put({ id: own ? `report:${agent}` : uuid, k: 'report', ts, agent, text: clip(body.trim(), 3000) });
+      const agent = body.agent;
+      const own = Boolean(agent && this.toolOfAgent(agent));
+      if (own && agent) r.reportKind.set(agent, 'message');
+      this.put({ id: own ? `report:${agent}` : uuid, k: 'report', ts: u.ts, agent, text: clip(body.text.trim(), 3000) });
       return;
     }
-    if (txt.startsWith('<command-name>')) {
-      const m = /<command-name>([^<]+)/.exec(txt);
-      const args = /<command-args>([^<]*)/.exec(txt);
-      this.lastYou = this.put({ id: uuid, k: 'you', ts, text: `${m ? m[1] : ''} ${args ? args[1] : ''}`.trim() });
-      this.turnOpen = true;
-      this.afterMarker = false;
+    if (body.kind === 'command') {
+      r.lastYou = this.put({ id: uuid, k: 'you', ts: u.ts, text: body.text });
+      r.turnOpen = true;
+      r.afterMarker = false;
       return;
     }
-    if (txt.startsWith('<') && !images) return; // system reminders, local command output, hooks
-    const item: Item = { id: uuid, k: 'you', ts, text: clip(txt), images };
+    const images = u.images.length;
+    const item: Item = { id: uuid, k: 'you', ts: u.ts, text: clip(u.text), images };
     if (images) {
-      item.imgs = imageRefs(uuid, content);
-      if (this.span) this.imageSpans.set(uuid, this.span);
+      item.imgs = imageRefs(uuid, u.images);
+      if (r.span) r.imageSpans.set(uuid, r.span);
     }
-    if (txt.startsWith('[Request interrupted by user')) {
-      item.interrupted = true;
+    if (body.kind === 'interrupt') {
+      // Stopped by you, or a tool you turned down (Claude carries on after it).
+      if (body.interrupt === 'stop') item.interrupted = true;
+      else item.turnedDown = true;
       // The CLI writes the tools the interrupt cut short as error results just before this marker.
-      for (const tid of this.lastErrors) {
-        this.interrupted.add(tid);
+      for (const tid of r.lastErrors) {
+        r.interrupted.add(tid);
         this.refreshTool(tid);
       }
+      // Either marker ends the turn for now (a later assistant record means Claude carried on).
+      r.turnOpen = false;
+      r.afterMarker = true;
+      r.lastErrors = [];
+      const put = this.put(item);
+      // A turned-down tool is not a prompt: the turn's time still counts from yours.
+      if (body.interrupt === 'stop') r.lastYou = put;
+      return;
     }
-    // Either marker ends the turn for now (a later assistant record means Claude carried on);
-    // any other prompt you typed opens one.
-    this.turnOpen = !item.interrupted;
-    this.afterMarker = Boolean(item.interrupted);
-    this.lastErrors = [];
-    this.lastYou = this.put(item);
+    // Any other prompt you typed opens a turn.
+    r.turnOpen = true;
+    r.afterMarker = false;
+    r.lastErrors = [];
+    r.lastYou = this.put(item);
   }
 
-  private assistant(d: JsonRecord, uuid: string, ts: string | null, content: unknown): void {
-    this.lastErrors = [];
-    if (d.requestedModel !== undefined) this.requestedModel = d.requestedModel;
-    if (d.effort !== undefined) this.effort = d.effort;
-    if (this.afterMarker) this.turnOpen = true;
-    this.afterMarker = false;
-    if (Array.isArray(content)) {
-      this.lastToolUses = content.map((b, i) => ({ b: obj(b), i }))
-        .filter(({ b }) => b.type === 'tool_use')
-        .map(({ b, i }) => ({ id: str(b.id) || `${uuid}:${i}`, ts, name: str(b.name) }));
+  // One task notification: the task it ends, and a subagent's last message as its report.
+  private note(n: TaskNote, ts: string | null): void {
+    const r = this.r;
+    // A subagent woken again after its first end notifies by task id only.
+    const tid = n.toolUseId ?? (n.taskId ? this.toolOfAgent(n.taskId) : null);
+    if (!tid) return; // a monitor's event: it keeps running
+    if (n.taskId) this.setTask(tid, n.taskId);
+    r.notes.set(tid, { status: n.status ?? 'completed', summary: n.summary ?? '', end: ts });
+    // A subagent's last message comes back as <result>: its report, unless it sent one itself.
+    const tool = r.byId.get(tid);
+    if (n.result !== null && n.taskId && tool && (tool.name === 'Agent' || tool.name === 'Task') && !r.reportKind.has(n.taskId)) {
+      r.reportKind.set(n.taskId, 'result');
+      this.put({ id: `report:${n.taskId}`, k: 'report', ts, agent: n.taskId, text: clip(n.result.trim(), 3000) });
     }
-    if (!Array.isArray(content)) return;
-    content.forEach((raw, i) => {
-      const b = obj(raw);
-      if (b.type === 'text' && str(b.text).trim()) {
-        this.put({ id: `${uuid}:${i}`, k: 'claude', ts, text: clip(str(b.text)) });
-        return;
+    this.refreshTool(tid);
+  }
+
+  private assistant(a: AssistantRecord, uuid: string): void {
+    const r = this.r;
+    const ts = a.ts;
+    r.lastErrors = [];
+    if (a.requestedModel !== undefined) r.requestedModel = a.requestedModel;
+    if (a.effort !== undefined) r.effort = a.effort;
+    if (r.afterMarker) r.turnOpen = true;
+    r.afterMarker = false;
+    // One block per record: the latest message's tool uses span all records of its id.
+    const key = a.messageId || `record:${uuid}`;
+    if (r.message.key !== key) r.message = { key, uses: [] };
+    for (const b of a.blocks) {
+      if (b.type === 'text') {
+        if (b.text.trim()) this.put({ id: `${uuid}:${b.index}`, k: 'claude', ts, text: clip(b.text) });
+        continue;
       }
-      if (b.type !== 'tool_use') return;
-      const name = str(b.name);
-      const inp = obj(b.input);
-      const tid = str(b.id) || `${uuid}:${i}`;
-      this.bgTool.set(tid, Boolean(inp.run_in_background));
-      if (name === 'Monitor' || (name === 'Bash' && inp.run_in_background)) {
-        this.bg.set(tid, {
-          toolUseId: tid, taskId: this.taskIds.get(tid) ?? null, kind: name === 'Monitor' ? 'monitor' : 'shell', description: str(inp.description),
-          command: str(inp.command).slice(0, 300), timeout: inp.timeout_ms, persistent: Boolean(inp.persistent),
-          start: ts, status: 'running', summary: '', end: null,
-        });
-        this.stopIfEnded(tid);
-        this.changedBg.add(tid);
-      } else if (name === 'Bash') {
-        this.fgBash.set(tid, { description: str(inp.description), command: str(inp.command).slice(0, 300), timeout: inp.timeout, start: ts });
-        if (this.isLive(tid)) this.toBackground(tid); // backgrounded before this file was read again
-      }
-      if (name === 'AskUserQuestion') {
-        const qs: Question[] = (Array.isArray(inp.questions) ? inp.questions : []).map((q0) => {
-          const q = obj(q0);
-          return {
-            q: str(q.question), header: q.header, multi: Boolean(q.multiSelect),
-            opts: (Array.isArray(q.options) ? q.options : []).map((o) => [str(obj(o).label), str(obj(o).description)]),
-          };
-        });
-        this.asks.add(tid);
-        this.put({ id: tid, k: 'ask', ts, qs, answer: null, state: 'pending' });
-      } else {
-        // The plan sits in the transcript as Claude's reply (R6.6); the card holds only the decision.
-        const plan = name === 'ExitPlanMode' ? this.planOf(tid) ?? str(inp.plan) : '';
-        if (plan.trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(plan) });
-        const [verb, o] = toolLine(name, inp, this.home);
-        const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
-        if (name === 'SendMessage' && typeof obj(inp).to === 'string') item.to = String(obj(inp).to).slice(0, 80); // whom it went to
-        if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
-        const input = inputOf(name, inp);
-        if (input) item.input = input;
-        this.put(item);
-      }
-      this.refreshTool(tid);
-    });
+      if (b.type !== 'tool_use') continue;
+      const tid = b.id || `${uuid}:${b.index}`;
+      r.message.uses.push({ id: tid, ts, name: b.name });
+      this.toolUse(b, tid, ts);
+    }
+  }
+
+  private toolUse(b: ToolUse, tid: string, ts: string | null): void {
+    const r = this.r;
+    const name = b.name;
+    r.bgTool.set(tid, b.background);
+    if (name === 'Monitor' || (name === 'Bash' && b.background)) {
+      r.bg.set(tid, {
+        toolUseId: tid, taskId: r.taskIds.get(tid) ?? null, kind: name === 'Monitor' ? 'monitor' : 'shell', description: b.description,
+        command: b.command.slice(0, 300), timeout: b.timeoutMs, persistent: b.persistent,
+        start: ts, status: 'running', summary: '', end: null,
+      });
+      this.stopIfEnded(tid);
+      r.changedBg.add(tid);
+    } else if (name === 'Bash') {
+      r.fgBash.set(tid, { description: b.description, command: b.command.slice(0, 300), timeout: b.timeout, start: ts });
+      if (this.isLive(tid)) this.toBackground(tid); // backgrounded before this file was read again
+    }
+    if (name === 'AskUserQuestion') {
+      r.asks.add(tid);
+      this.put({ id: tid, k: 'ask', ts, qs: b.questions, answer: null, state: 'pending' });
+    } else {
+      // The plan sits in the transcript as Claude's reply (R6.6); the card holds only the decision.
+      const plan = name === 'ExitPlanMode' ? this.planOf(tid) ?? b.plan : '';
+      if (plan.trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(plan) });
+      const [verb, o] = toolLine(name, b.input, this.home);
+      const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
+      if (name === 'SendMessage' && b.to !== null) item.to = b.to.slice(0, 80); // whom it went to
+      if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
+      const input = inputOf(name, b.input);
+      if (input) item.input = input;
+      this.put(item);
+    }
+    this.refreshTool(tid);
   }
 
   // Slice 5: the session's process ended at `at` (close, idle end, quit, failure). Background shells,
@@ -772,36 +741,38 @@ export class Transcript {
   // stopped. A notification that arrives later still wins. A foreground tool started before then
   // with no result reads as failed when the process failed (`failed`), else as stopped.
   processEnded(at: string, failed = false): void {
-    if (this.ended && this.ended >= at) return;
+    const ms = msOf(at);
+    if (ms === null || (this.endedMs !== null && this.endedMs >= ms)) return;
     this.ended = at;
+    this.endedMs = ms;
     this.endedFailed = failed;
     this.live.clear(); // the level is per process: the next one starts empty
-    for (const tid of this.bg.keys()) this.stopIfEnded(tid);
-    for (const it of this.items) if (it.k === 'tool' && it.state === 'running') this.refreshTool(it.id);
+    const r = this.r;
+    for (const tid of r.bg.keys()) this.stopIfEnded(tid);
+    for (const it of r.items) if (it.k === 'tool' && it.state === 'running') this.refreshTool(it.id);
     for (const [aid, a] of this.agentMeta) {
-      const tid = str(a.meta?.toolUseId);
+      const tid = a.meta?.toolUseId;
       if (tid) this.refreshTool(tid);
-      this.changedAgents.add(aid);
+      r.changedAgents.add(aid);
     }
   }
 
   // A task ended, as the SDK's task_notification says (`end` ISO): it reads as ended until the
   // JSONL's own notification lands, which wins.
   taskEnded(tid: string, status: string, summary: string, end: string): void {
-    if (this.notes.has(tid)) return;
-    this.notes.set(tid, { status, summary, end });
+    if (this.r.notes.has(tid)) return;
+    this.r.notes.set(tid, { status, summary, end });
     this.refreshTool(tid);
   }
 
   // A task started, as the SDK's task_started says: its task id for stopTask, and for a foreground
-  // Bash or Agent the sign that b, b can move it. An SDK-driven CLI
-  // writes no toolUseResult in a subagent's file, so for a subagent's shell this is the only typed
-  // source of it (live check 2026-11-24: stopTask with it stopped a background subagent's `sleep`).
+  // Bash or Agent the sign that b, b can move it (docs/Claude Code
+  // transcripts.md#quirk-subagent-shells-have-no-task-id-in-sdk-sessions).
   taskStarted(tid: string, task: string): void {
     if (!tid || !task || this.sdkTasks.has(tid)) return;
     this.sdkTasks.set(tid, task);
-    if (!this.taskIds.has(tid)) this.setTask(tid, task);
-    for (const a of this.agentMeta.values()) if (a.sub?.getBackground(tid)) this.changedBg.add(tid);
+    if (!this.r.taskIds.has(tid)) this.setTask(tid, task);
+    for (const a of this.agentMeta.values()) if (a.sub?.getBackground(tid)) this.r.changedBg.add(tid);
     this.refreshTool(tid); // a foreground step can go to the background from now (`fg`)
   }
 
@@ -812,10 +783,10 @@ export class Transcript {
   // that leaves it with no notification yet reads as completed until one says how it ended.
   backgroundTasks(taskIds: string[], at: string): void {
     const now = new Set(taskIds);
-    const byTask = new Map([...this.taskIds].map(([tid, task]) => [task, tid]));
+    const byTask = new Map([...this.r.taskIds].map(([tid, task]) => [task, tid]));
     for (const task of this.live) {
       const tid = byTask.get(task);
-      if (now.has(task) || !tid || this.notes.has(tid)) continue;
+      if (now.has(task) || !tid || this.r.notes.has(tid)) continue;
       this.gone.set(tid, { status: 'completed', summary: '', end: at });
       this.refreshTool(tid);
     }
@@ -827,118 +798,129 @@ export class Transcript {
   }
 
   private isLive(tid: string): boolean {
-    const task = this.taskIds.get(tid);
+    const task = this.r.taskIds.get(tid);
     return Boolean(task && this.live.has(task));
   }
 
   // A foreground Bash or Agent of this file that is background work now; nothing for other tools.
   private toBackground(tid: string): void {
-    const fg = this.fgBash.get(tid);
-    const it = this.byId.get(tid);
-    if (fg && !this.bg.has(tid)) {
-      this.bg.set(tid, { ...fg, toolUseId: tid, taskId: this.taskIds.get(tid) ?? null, kind: 'shell', persistent: false, status: 'running', summary: '', end: null });
+    const r = this.r;
+    const fg = r.fgBash.get(tid);
+    const it = r.byId.get(tid);
+    if (fg && !r.bg.has(tid)) {
+      r.bg.set(tid, { ...fg, toolUseId: tid, taskId: r.taskIds.get(tid) ?? null, kind: 'shell', persistent: false, status: 'running', summary: '', end: null });
       this.stopIfEnded(tid);
-      this.changedBg.add(tid);
-    } else if (it && (it.name === 'Agent' || it.name === 'Task') && !this.bgTool.get(tid)) {
-      this.bgTool.set(tid, true);
+      r.changedBg.add(tid);
+    } else if (it && (it.name === 'Agent' || it.name === 'Task') && !r.bgTool.get(tid)) {
+      r.bgTool.set(tid, true);
     } else return;
     this.refreshTool(tid);
   }
 
+  // Started no later than the process ended (by time, not by text). No time: before.
   private endedBefore(ts: string | null | undefined): boolean {
-    return this.ended !== null && (!ts || ts <= this.ended);
+    if (this.endedMs === null) return false;
+    const ms = msOf(ts);
+    return ms === null || ms <= this.endedMs;
   }
 
   private stopIfEnded(tid: string): void {
-    const b = this.bg.get(tid);
+    const b = this.r.bg.get(tid);
     if (!b || b.status !== 'running' || this.noteOf(tid) || !this.endedBefore(b.start)) return;
     b.status = 'stopped';
     b.end = this.ended;
-    this.changedBg.add(tid);
+    this.r.changedBg.add(tid);
   }
 
   // The writer's titles up to `ms` (inclusive) not placed yet, oldest first, as title items here.
   private placeWritten(ms: number): void {
     if (this.sidechain) return;
-    const due = (this.titlesOf() ?? []).filter((h) => h.at > this.writtenAt && h.at <= ms).sort((a, b) => a.at - b.at);
+    const r = this.r;
+    const due = (this.titlesOf() ?? []).filter((h) => h.at > r.writtenAt && h.at <= ms).sort((a, b) => a.at - b.at);
     for (const h of due) {
-      this.writtenAt = h.at;
+      r.writtenAt = h.at;
       this.retitle('written', h.title, `title:${h.at}`, new Date(h.at).toISOString());
     }
   }
 
-  // One source of the title changed. A title item when the title the header shows (custom, else
-  // written, else ai) changes to one that differs in more than case and spaces; none for the first
-  // title (it names the session, nothing was retitled) nor before your first prompt.
+  // One source of the title changed ('' : that source has none now, as when you remove a rename).
+  // A title item when the title the header shows (custom, else written, else ai) changes to one
+  // that differs in more than case and spaces; none for the first title (it names the session,
+  // nothing was retitled) nor before your first prompt.
   private retitle(source: 'you' | 'written' | 'ai', title: string, id: string, ts: string | null): void {
-    if (this.sidechain || !title.trim()) return;
-    this.titles[source] = title.replace(/\s+/g, ' ').trim();
-    const shown = this.titles.you || this.titles.written || this.titles.ai;
+    const r = this.r;
+    const clean = title.replace(/\s+/g, ' ').trim();
+    if (this.sidechain || (!clean && source !== 'you')) return;
+    r.titles[source] = clean;
+    const shown = r.titles.you || r.titles.written || r.titles.ai;
+    if (!shown) return; // no title left: the header falls back to the first prompt
     const key = titleKey(shown);
-    const prev = this.shownTitle;
-    this.shownTitle = key;
-    if (prev === null || prev === key || !this.prompted) return;
-    this.put({ id, k: 'title', ts, title: shown, by: this.titles.you ? 'you' : 'claude' });
+    const prev = r.shownTitle;
+    r.shownTitle = key;
+    if (prev === null || prev === key || !r.prompted) return;
+    this.put({ id, k: 'title', ts, title: shown, by: r.titles.you ? 'you' : 'claude' });
   }
 
   private put(item: Item): Item {
-    if (item.k === 'you') this.prompted = true;
-    const old = this.byId.get(item.id);
+    const r = this.r;
+    if (item.k === 'you') r.prompted = true;
+    const old = r.byId.get(item.id);
     if (old) {
       for (const key of Object.keys(old)) delete (old as Record<string, unknown>)[key];
       Object.assign(old, item);
       item = old;
     } else {
-      this.items.push(item);
-      this.byId.set(item.id, item);
+      r.items.push(item);
+      r.byId.set(item.id, item);
     }
-    this.changed.add(item.id);
+    r.changed.add(item.id);
     return item;
   }
 
   // Recomputes everything a tool id feeds: the item's state, patch or answer, the background
   // entry and the subagents linked to it. Order-independent, like the reference parser's final pass.
   private refreshTool(tid: string): void {
-    const it = this.byId.get(tid);
-    const res = this.results.get(tid);
+    const r = this.r;
+    const it = r.byId.get(tid);
+    const res = r.results.get(tid);
     const note = this.noteOf(tid);
     if (it && it.k === 'ask') {
-      const answer = this.answers.get(tid) ?? null;
+      const answer = r.answers.get(tid) ?? null;
       const state = res !== undefined ? 'answered' : 'pending';
       if (it.answer !== answer || it.state !== state) {
         it.answer = answer;
         it.state = state;
-        this.changed.add(tid);
+        r.changed.add(tid);
       }
     } else if (it && it.k === 'tool') {
       let state: string;
       const answer = res !== undefined ? this.answerOf(tid) : undefined;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
-        state = note || !this.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
+        state = note || !r.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
       } else if (res !== undefined) {
         // You denied it, or sent the plan back: your answer above says so, it didn't fail.
-        state = !res ? 'done' : this.interrupted.has(tid) ? 'stopped' : answer && /^(Denied|Changes)\b/.test(answer) ? 'denied' : 'failed';
+        state = !res ? 'done' : r.interrupted.has(tid) ? 'stopped' : answer && /^(Denied|Changes)\b/.test(answer) ? 'denied' : 'failed';
       }
       // A plan with no answer stays running: the page shows it as "Not answered".
       else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
       else state = 'running';
-      const patch = this.patches.get(tid);
-      const bash = this.bashPatches.get(tid);
-      const out = this.outs.get(tid);
-      const imgs = this.outImgs.get(tid);
+      const patch = r.patches.get(tid);
+      const bash = r.bashPatches.get(tid);
+      const out = r.outs.get(tid);
+      const imgs = r.outImgs.get(tid);
       // Only once the CLI registered it as a task (the SDK's task_started, about 2 s into a Bash
       // command, live check 2026-11-24): backgroundTasks() before then moves nothing.
-      const fg = state === 'running' && res === undefined && (it.name === 'Bash' || it.name === 'Agent' || it.name === 'Task') && !this.bgTool.get(tid) && !this.bg.has(tid) && this.sdkTasks.has(tid);
+      const fg = state === 'running' && res === undefined && (it.name === 'Bash' || it.name === 'Agent' || it.name === 'Task') && !r.bgTool.get(tid) && !r.bg.has(tid) && this.sdkTasks.has(tid);
       if (Boolean(it.fg) !== fg) {
         if (fg) it.fg = true;
         else delete it.fg;
-        this.changed.add(tid);
+        r.changed.add(tid);
       }
       const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
-      const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
+      const planItem = plan ? r.byId.get(`plan:${tid}`) : undefined;
       if (plan && planItem && planItem.text !== clip(plan)) {
         planItem.text = clip(plan);
-        this.changed.add(planItem.id);
+        r.changed.add(planItem.id);
       }
       if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (imgs && it.imgs !== imgs) || (answer && it.answer !== answer)) {
         it.state = state;
@@ -950,17 +932,17 @@ export class Transcript {
           if (bash.more) it.moreFiles = bash.more;
         }
         if (answer) it.answer = answer;
-        this.changed.add(tid);
+        r.changed.add(tid);
       }
     }
-    const b = this.bg.get(tid);
+    const b = r.bg.get(tid);
     if (b && note && (b.status !== note.status || b.end !== note.end || b.summary !== note.summary)) {
       Object.assign(b, note);
-      this.changedBg.add(tid);
+      r.changedBg.add(tid);
     }
     for (const [aid, a] of this.agentMeta) {
-      if (a.meta && a.meta.toolUseId === tid) this.changedAgents.add(aid);
-      if (!b && a.sub?.getBackground(tid)) this.changedBg.add(tid); // a subagent's, notified in this file
+      if (a.meta && a.meta.toolUseId === tid) r.changedAgents.add(aid);
+      if (!b && a.sub?.getBackground(tid)) r.changedBg.add(tid); // a subagent's, notified in this file
     }
   }
 
@@ -968,32 +950,33 @@ export class Transcript {
   private toolOfAgent(agentId: string): string | null {
     if (!agentId) return null;
     const meta = this.agentMeta.get(agentId)?.meta;
-    if (meta && str(meta.toolUseId)) return str(meta.toolUseId);
-    for (const [tid, task] of this.taskIds) {
-      const it = this.byId.get(tid);
+    if (meta && meta.toolUseId) return meta.toolUseId;
+    for (const [tid, task] of this.r.taskIds) {
+      const it = this.r.byId.get(tid);
       if (task === agentId && it && (it.name === 'Agent' || it.name === 'Task')) return tid;
     }
     return null;
   }
 
   // How a task ended: its notification (the JSONL's or the SDK's), else its leaving the live set.
-  private noteOf(tid: string): { status: string; summary: string; end: string | null } | undefined {
-    return this.notes.get(tid) ?? this.gone.get(tid);
+  private noteOf(tid: string): Note | undefined {
+    return this.r.notes.get(tid) ?? this.gone.get(tid);
   }
 
   private setTask(tid: string, task: string): void {
-    if (this.taskIds.get(tid) === task) return;
-    this.taskIds.set(tid, task);
-    const b = this.bg.get(tid);
+    const r = this.r;
+    if (r.taskIds.get(tid) === task) return;
+    r.taskIds.set(tid, task);
+    const b = r.bg.get(tid);
     if (b) {
       b.taskId = task;
-      this.changedBg.add(tid);
+      r.changedBg.add(tid);
     }
   }
 
   // The main thread's shells and monitors, then each subagent's, tagged with its id.
   background(): Background[] {
-    const out = [...this.bg.values()];
+    const out = [...this.r.bg.values()];
     for (const aid of [...this.agentMeta.keys()].sort()) {
       const sub = this.agentMeta.get(aid)?.sub;
       if (sub) for (const b of sub.background()) out.push(this.subBackground(aid, sub, b));
@@ -1002,7 +985,7 @@ export class Transcript {
   }
 
   getBackground(id: string): Background | undefined {
-    const own = this.bg.get(id);
+    const own = this.r.bg.get(id);
     if (own) return own;
     for (const [aid, a] of this.agentMeta) {
       const b = a.sub?.getBackground(id);
@@ -1015,7 +998,7 @@ export class Transcript {
   // land there (already in `b`) or in this file. With none, it runs while its subagent runs; once
   // the subagent is over it reads as stopped, ended with its subagent.
   private subBackground(aid: string, sub: Transcript, b0: Background): Background {
-    const b: Background = { ...b0, taskId: b0.taskId ?? this.taskIds.get(b0.toolUseId) ?? null, agentId: aid };
+    const b: Background = { ...b0, taskId: b0.taskId ?? this.r.taskIds.get(b0.toolUseId) ?? null, agentId: aid };
     if (b.status !== 'running') return b;
     const note = this.noteOf(b.toolUseId);
     if (note) return Object.assign(b, note);
@@ -1025,8 +1008,8 @@ export class Transcript {
 
   // This (subagent's) conversation's background ids that changed since last asked.
   takeBackgroundChanges(): string[] {
-    const out = [...this.changedBg];
-    this.changedBg.clear();
+    const out = [...this.r.changedBg];
+    this.r.changedBg.clear();
     return out;
   }
 
@@ -1034,24 +1017,29 @@ export class Transcript {
   // arrives), `sub` its own Transcript. Call again when either changes.
   setAgent(id: string, meta: JsonRecord | null | undefined, sub?: Transcript | null): void {
     const a = this.agentMeta.get(id) ?? { meta: null, sub: null };
-    if (meta !== undefined) a.meta = meta;
+    if (meta !== undefined) a.meta = meta ? agentMetaOf(meta) : null;
     if (sub !== undefined) a.sub = sub;
     this.agentMeta.set(id, a);
-    this.changedAgents.add(id);
+    this.r.changedAgents.add(id);
   }
 
-  // The main thread's turn runs (by the transcript alone): the latest assistant record has a
+  // The latest message's tool uses still waiting for a result (and the process didn't end after them).
+  private waiting(): ToolUseRef[] {
+    return this.r.message.uses.filter((u) => !this.r.results.has(u.id) && !this.endedBefore(u.ts));
+  }
+
+  // The main thread's turn runs (by the transcript alone): the latest assistant message has a
   // tool_use with no result yet (and the process didn't end after it), or a turn is open and the
   // transcript changed within `quietMs`, so a crashed process doesn't read as working for ever.
   // A question or plan with no result waits on you, not on work: it is pendingAsk's, and goes stale.
   turnRunning(now: number, quietMs: number): boolean {
-    if (this.lastToolUses.some((u) => !this.results.has(u.id) && !this.endedBefore(u.ts) && u.name !== 'AskUserQuestion' && u.name !== 'ExitPlanMode')) return true;
-    if (!this.turnOpen || this.endedBefore(this.lastTs)) return false;
-    const last = this.lastTs ? Date.parse(this.lastTs) : NaN;
-    return Number.isFinite(last) && now - last < quietMs;
+    if (this.waiting().some((u) => u.name !== 'AskUserQuestion' && u.name !== 'ExitPlanMode')) return true;
+    if (!this.r.turnOpen || this.endedBefore(this.r.lastTs)) return false;
+    const last = msOf(this.r.lastTs);
+    return last !== null && now - last < quietMs;
   }
 
-  // A question or plan waiting for its answer (R6.8): the latest assistant record of this thread
+  // A question or plan waiting for its answer (R6.8): the latest assistant message of this thread
   // has an AskUserQuestion or ExitPlanMode with no result (and the process didn't end after it);
   // else the first running subagent's own. Null when none waits. With `now` and `staleMs`, also null
   // when no record here or in a subagent's file is younger than `staleMs`, nor the file itself
@@ -1061,11 +1049,11 @@ export class Transcript {
       const last = this.lastActivity();
       if (last && now - last >= staleMs && now - (changedAt?.() ?? 0) >= staleMs) return null;
     }
-    const u = this.lastToolUses.find((x) => (x.name === 'AskUserQuestion' || x.name === 'ExitPlanMode') && !this.results.has(x.id) && !this.endedBefore(x.ts));
+    const u = this.waiting().find((x) => x.name === 'AskUserQuestion' || x.name === 'ExitPlanMode');
     if (u) {
-      const since = (u.ts && Date.parse(u.ts)) || 0;
-      if (u.name === 'AskUserQuestion') return { kind: 'question', toolUseId: u.id, agentId: null, since, qs: this.byId.get(u.id)?.qs ?? [] };
-      return { kind: 'plan', toolUseId: u.id, agentId: null, since, plan: this.byId.get(`plan:${u.id}`)?.text ?? '' };
+      const since = msOf(u.ts) ?? 0;
+      if (u.name === 'AskUserQuestion') return { kind: 'question', toolUseId: u.id, agentId: null, since, qs: this.r.byId.get(u.id)?.qs ?? [] };
+      return { kind: 'plan', toolUseId: u.id, agentId: null, since, plan: this.r.byId.get(`plan:${u.id}`)?.text ?? '' };
     }
     for (const [aid, a] of [...this.agentMeta].sort(([x], [y]) => (x < y ? -1 : 1))) {
       if (!a.sub || !this.agentRunning(aid)) continue;
@@ -1077,8 +1065,8 @@ export class Transcript {
 
   // The latest record time (ms) in this file or a subagent's, 0 when none has one.
   private lastActivity(): number {
-    let last = (this.lastTs && Date.parse(this.lastTs)) || 0;
-    for (const a of this.agentMeta.values()) last = Math.max(last, (a.sub?.lastTs && Date.parse(a.sub.lastTs)) || 0);
+    let last = msOf(this.r.lastTs) ?? 0;
+    for (const a of this.agentMeta.values()) last = Math.max(last, msOf(a.sub?.lastTs) ?? 0);
     return last;
   }
 
@@ -1087,39 +1075,39 @@ export class Transcript {
   agentRunning(id: string): boolean {
     const a = this.agentMeta.get(id);
     if (!a) return false;
-    const meta = a.meta ?? {};
-    if (meta.finished === true) return false;
-    const tid = str(meta.toolUseId);
+    if (a.meta?.finished) return false;
+    const tid = a.meta?.toolUseId ?? '';
     if (this.noteOf(tid)) return false;
     if (this.endedAgent(id)) return false;
     if (!tid) return true;
-    const res = this.results.get(tid);
+    const res = this.r.results.get(tid);
     if (res === undefined) return true;
-    return !res && Boolean(this.bgTool.get(tid));
+    return !res && Boolean(this.r.bgTool.get(tid));
   }
 
   // A subagent that had not finished when the session's process ended (it started before then).
   private endedAgent(id: string): boolean {
     const a = this.agentMeta.get(id);
-    if (!a || this.ended === null || a.meta?.finished === true) return false;
-    const tid = str(a.meta?.toolUseId);
-    if (tid && this.notes.has(tid)) return false;
-    if (tid && this.results.get(tid) !== undefined && !(this.results.get(tid) === false && this.bgTool.get(tid))) return false; // its result came: finished
-    return this.endedBefore((tid && this.byId.get(tid)?.ts) || a.sub?.firstTs);
+    if (!a || this.endedMs === null || a.meta?.finished) return false;
+    const r = this.r;
+    const tid = a.meta?.toolUseId ?? '';
+    if (tid && r.notes.has(tid)) return false;
+    if (tid && r.results.get(tid) !== undefined && !(r.results.get(tid) === false && r.bgTool.get(tid))) return false; // its result came: finished
+    return this.endedBefore((tid && r.byId.get(tid)?.ts) || a.sub?.firstTs);
   }
 
   getAgent(id: string): Agent | undefined {
     const a = this.agentMeta.get(id);
     if (!a) return undefined;
-    const meta = a.meta ?? {};
-    const description = str(meta.description);
+    const meta = a.meta;
+    const description = meta?.description ?? '';
     const running = this.agentRunning(id);
-    const status = this.noteOf(str(meta.toolUseId))?.status ?? '';
+    const status = this.noteOf(meta?.toolUseId ?? '')?.status ?? '';
     return {
-      id, type: str(meta.agentType) || 'subagent', fork: Boolean(meta.isFork), description,
-      toolUseId: str(meta.toolUseId) || null, model: meta.model ?? null, depth: meta.spawnDepth ?? 1,
+      id, type: meta?.agentType || 'subagent', fork: meta?.isFork ?? false, description,
+      toolUseId: meta?.toolUseId || null, model: meta?.model ?? null, depth: meta?.spawnDepth ?? 1,
       finished: !running, running, review: /^for review:/i.test(description),
-      stopped: meta.stoppedByUser === true || status === 'stopped' || status === 'killed' || (!status && meta.finished !== true && this.endedAgent(id)),
+      stopped: meta?.stoppedByUser === true || status === 'stopped' || status === 'killed' || (!status && !meta?.finished && this.endedAgent(id)),
       start: a.sub?.firstTs ?? null, end: a.sub?.lastTs ?? null, total: a.sub?.total ?? 0,
     };
   }
@@ -1128,7 +1116,6 @@ export class Transcript {
     return [...this.agentMeta.keys()].sort().map((id) => this.getAgent(id) as Agent);
   }
 }
-
 // The first `projects/*/<id>.jsonl` under the claude dir, or null.
 export function findTranscript(claudeDir: string, sessionId: string): string | null {
   const projects = path.join(claudeDir, 'projects');
