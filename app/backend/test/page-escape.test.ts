@@ -67,7 +67,7 @@ test('markdown: a single newline is a line break, a blank line a paragraph, as i
 test('sidebar rows, the rail, files changed, waves and cards escape their data', () => {
   const P = page();
   const agent = { id: `a"1`, description: BAD, toolUseId: `t"1`, start: '2026-11-20T10:00:00.000Z', finished: false, items: [] };
-  const s = { id: `s"1`, title: BAD, now: BAD, cwd: BAD, prs: [BAD], status: 'idle', statusAt: Date.now(), items: [], total: 0, agents: [agent],
+  const s = { id: `s"1`, title: BAD, now: BAD, cwd: BAD, prs: [BAD], state: { status: 'idle', since: Date.now(), detail: {}, light: 'amber', tone: 'amber', word: BAD, mark: 'stopped', stopped: false, needsYou: null, review: 1, driven: true }, items: [], total: 0, agents: [agent],
     background: [{ toolUseId: `b"1`, taskId: `k"1`, kind: 'shell', description: BAD, command: BAD, start: '2026-11-20T10:00:00.000Z', status: 'running' }], stream: null, held: [BAD] };
   P.store.sessions.set(s.id, s); P.syncData();
   clean(P.rowHTML(s), 'rowHTML');

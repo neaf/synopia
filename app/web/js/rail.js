@@ -37,7 +37,7 @@ function railHTML(s, A) {
   const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
-      <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running).length)}</span><span class="w">${esc(wordOf(s))}</span></button>
+      <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running).length)}</span><span class="w">${esc(s.state.word)}</span></button>
       ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}" ${attrs(x)}>${x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${detail(x)}${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>

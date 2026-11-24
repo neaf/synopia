@@ -42,8 +42,10 @@ await ev(`(() => {
   window.TW_PUT = put; window.TW_S = S;
   window.TW_CHANGE = { bgOn: () => put({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg', kind: 'shell', status: 'running', start: iso(), description: 'tween check' }] }),
     bgOff: () => put({ t: 'session', id: TWID, background: (S().background || []).filter(b => b.toolUseId !== 'tw-bg') }),
-    revOn: () => put({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-rev', toolUseId: 'tw-rev-t', description: 'For review: tween check', finished: true, start: iso() }] }),
-    revOff: () => put({ t: 'session', id: TWID, agents: (S().agents || []).filter(a => a.id !== 'tw-rev') }) };
+    // the backend sends a deliverable with review: true and counts it in the session's state (status.ts)
+    revOn: () => { put({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-rev', toolUseId: 'tw-rev-t', description: 'For review: tween check', finished: true, review: true, start: iso() }] });
+      put({ t: 'session', id: TWID, state: { ...S().state, review: S().state.review + 1 } }); },
+    revOff: () => put({ t: 'session', id: TWID, agents: (S().agents || []).filter(a => a.id !== 'tw-rev'), state: { ...S().state, review: S().state.review - 1 } }) };
   const geo = () => { const r = row(); if (!r) return null; const b = r.getBoundingClientRect(), tg = r.querySelector('.tg').getBoundingClientRect(), nx = r.nextElementSibling?.getBoundingClientRect();
     return { top: b.top, h: b.height, tgTop: tg.top - b.top, tgBot: tg.bottom - b.bottom, gapNext: nx ? nx.top - b.bottom : null, dragging: r.classList.contains('dragging') }; };
   window.TW_GEO = geo;

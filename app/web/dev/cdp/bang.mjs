@@ -35,7 +35,7 @@ const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
 const shot = (name) => c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, name), Buffer.from(r.result.data, 'base64')));
-await c.load(`${url}#${D.slice(0, 8)}`, `__synopia.current() === '${D}' && !!__synopia.mounted() && __synopia.cur().driven === true && __synopia.cur().items.length === 3`);
+await c.load(`${url}#${D.slice(0, 8)}`, `__synopia.current() === '${D}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.length === 3`);
 const type = (t) => c.cdp('Input.insertText', { text: t });
 const box = () => ev(`(() => { const ta = document.getElementById('msg'), b = ta.closest('.composer'); return { value: ta.value, mark: b.querySelector(':scope > .g').textContent, bash: b.classList.contains('bash'), ph: ta.placeholder, slash: !document.getElementById('slash').hidden }; })()`);
 const enter = () => key('Enter', { code: 'Enter', vk: 13 });

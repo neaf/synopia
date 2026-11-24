@@ -47,7 +47,7 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
   const sessions = new Sessions({ store, views, sdk: q.sdk, home: root, idleMs: o.idleMs, registry, log: (e) => logs.push(e) });
   sessions.start();
   const take = (t: string) => { const out = got.filter((m) => m.t === t); for (const m of out) got.splice(got.indexOf(m), 1); return out; };
-  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { status: string; statusDetail: Record<string, unknown> } | undefined;
+  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;
   return { sessions, store, views, q, logs, checks, take, last, s: () => sessions.get(SID)! };
 }
 
@@ -79,7 +79,7 @@ test('session: the start check runs first; messages wait in starting, then go in
   assert.equal(t.s().phase, 'running');
   assert.equal(t.q.calls.length, 1);
   assert.deepEqual(t.q.calls[0].inputs.map((m) => m.message.content), ['one', 'two']);
-  assert.equal(t.last()?.status, 'busy');
+  assert.equal(t.last()?.state.status, 'busy');
   t.sessions.stop();
 });
 
@@ -93,7 +93,7 @@ test('session: a terminal the start check finds keeps the messages in the box, r
   assert.equal(t.s().phase, 'yielded');
   assert.deepEqual(t.take('restore').map((m) => m.texts), [['hello']]);
   assert.match(String(t.take('toast')[0]?.text), /terminal holds this session \(pid 4321\)/);
-  assert.equal(t.last()?.statusDetail.terminal, 4321);
+  assert.equal(t.last()?.state.detail.terminal, 4321);
 });
 
 test('session: a close while the start check runs starts nothing', async () => {
@@ -118,7 +118,7 @@ test('session: after quit a process exit runs nothing: no toast, no next process
   await tick(80);
   assert.equal(t.q.calls.length, 1, 'the queued message starts no process during the quit');
   assert.equal(t.take('toast').length, 0);
-  assert.notEqual(t.last()?.status, 'failed');
+  assert.notEqual(t.last()?.state.status, 'failed');
 });
 
 test('session: an id swap onto another open session is refused, logged and toasted (sessions-sdk#B6)', async () => {

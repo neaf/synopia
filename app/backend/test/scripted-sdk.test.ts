@@ -15,6 +15,7 @@ import { readMenu } from '../src/sdk.ts';
 import { openScripted, seedState, ScriptClock, SCRIPT_FILE } from '../dev/scripted-sdk.ts';
 import type { Script } from '../dev/scripted-sdk.ts';
 import type { Client } from '../src/server.ts';
+import type { SessionState } from '../src/status.ts';
 
 const FIXTURES = path.join(import.meta.dirname, 'fixtures');
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S4 = '44444444-0000-4000-8000-000000000004';
@@ -49,7 +50,7 @@ async function setup(tree = 'claude', edit?: (s: Script) => void) {
   await scripted.whenPlayed();
   await sleep(10);
   views.check();
-  const meta = (sid: string) => views.meta(sid) as NonNullable<ReturnType<Views['meta']>> & { driven: boolean };
+  const meta = (sid: string) => views.meta(sid)!.state;
   const stop = () => { sessions?.stop(); views.stop(); store.close(); };
   return { root, claudeDir, stateDir, scripted, store, views, sessions: sessions as Sessions, got, meta, stop };
 }
@@ -79,7 +80,7 @@ test('scripted: the main fixture\'s cards, working session and stream preview, o
     assert.equal(perm.cwd, '~/dev/demo');
     assert.ok(Math.abs(Date.now() - 120_000 - perm.since) < 2000, 'the card is 2 min old (ago)');
     assert.equal(meta(S2).status, 'waiting');
-    assert.ok(Math.abs(Date.now() - 240_000 - meta(S2).statusAt) < 2000);
+    assert.ok(Math.abs(Date.now() - 240_000 - meta(S2).since) < 2000);
     await sleep(700); // the stream's last delta is 600 ms in
     assert.equal(meta(S4).status, 'busy');
     const stream = got.filter((m) => m.t === 'stream' && m.sid === S4).pop();
@@ -102,16 +103,16 @@ test('scripted: the states fixture plays one session per wired state, on the rea
   const { views, meta, stop } = await setup('claude-states');
   try {
     await sleep(30); // e5e5's stale timer, armed 16 min in the past, is due at once
-    const all = views.sessions() as { id: string; status: string; statusAt: number; statusDetail: { queued?: number; retry?: { attempt: number; max: number; at: number }; external?: true }; driven: boolean }[];
+    const all = (views.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
     assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy', 'busy']);
-    assert.equal(all[0].statusDetail.queued, 1, 'the message sent during the turn');
-    assert.deepEqual([all[2].statusDetail.retry?.attempt, all[2].statusDetail.retry?.max], [3, 10]);
-    assert.ok(Math.abs((all[2].statusDetail.retry?.at ?? 0) - Date.now() - 38_000) < 2000, 'the retry 38 s off');
-    assert.ok(Math.abs(Date.now() - 300_000 - all[3].statusAt) < 2000, 'signed out 5 min ago');
-    assert.ok(Math.abs(Date.now() - 960_000 - all[4].statusAt) < 2000, 'no message for 16 min');
+    assert.equal(all[0].detail.queued, 1, 'the message sent during the turn');
+    assert.deepEqual([all[2].detail.retry?.attempt, all[2].detail.retry?.max], [3, 10]);
+    assert.ok(Math.abs((all[2].detail.retry?.at ?? 0) - Date.now() - 38_000) < 2000, 'the retry 38 s off');
+    assert.ok(Math.abs(Date.now() - 300_000 - all[3].since) < 2000, 'signed out 5 min ago');
+    assert.ok(Math.abs(Date.now() - 960_000 - all[4].since) < 2000, 'no message for 16 min');
     assert.equal(all[5].driven, true, 'f6f6: its own background subagents, no other process');
     assert.equal(all[6].driven, false, 'f7f7: its main turn runs in another process');
-    assert.equal(all[6].statusDetail.external, true);
+    assert.equal(all[6].detail.external, true);
     assert.equal(meta(all[6].id).status, 'busy');
   } finally { stop(); }
 });
@@ -139,7 +140,7 @@ test('scripted: an interrupt cancels the queued messages not in the transcript, 
     assert.equal(sessions.send(S1, 'First, queued.', [], a).ok, true);
     assert.equal(sessions.send(S1, 'Second, queued.', [], b).ok, true);
     await sleep(10);
-    assert.equal(meta(S1).statusDetail.queued, 2);
+    assert.equal(meta(S1).detail.queued, 2);
     // the first lands, as the CLI writes a queued message it took in
     const file = path.join(claudeDir, 'projects', '-tmp-fixture', `${S1}.jsonl`);
     fs.appendFileSync(file, JSON.stringify({ type: 'attachment', uuid: 'land-1', timestamp: new Date().toISOString(), sessionId: S1, attachment: { type: 'queued_command', prompt: 'First, queued.' } }) + '\n');

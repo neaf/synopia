@@ -151,7 +151,7 @@ function openModelPicker() {
 /* ---------- Esc, Esc: the message box turns into "Interrupt?" while a turn runs (R9.4) ---------- */
 let interruptAsk = null; // the session id the prompt is for
 /* a running turn, or one waiting on a card (Esc with no in-place field open, plan section 6) */
-const canInterrupt = s => Boolean(s) && s.driven !== false && !termPid(s) && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting" || bangRunning(s)); // never for a session another process runs
+const canInterrupt = s => Boolean(s) && s.state.driven && !termPid(s) && (s.state.light === "green" || s.state.light === "red" && s.state.status === "waiting" || bangRunning(s)); // never for a session another process runs
 /* a `!` command of this session still runs: Esc, Esc ends it first (sessions.ts) */
 const bangRunning = s => Boolean(s?.bang?.running);
 /* the message box's one prompt line: Esc, Esc's or b, b's, whichever came last */
@@ -175,7 +175,7 @@ function dismissInterrupt() {
 let bgAsk = null; // the session id the prompt is for
 /* the main conversation's steps that can go: a running foreground Bash or Agent (the backend's `fg`), in a running
    turn of a session Synopia drives */
-const bgSteps = s => !s || !s.driven || termPid(s) || view || stateOf(s) !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
+const bgSteps = s => !s || !s.state.driven || termPid(s) || view || s.state.light !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
 /* the first b: those steps are marked in the transcript and the box asks; false when nothing can go */
 function askBackground() {
   const box = conv.querySelector(".dock .composer"), log = document.getElementById("log");
@@ -221,7 +221,7 @@ function askClose() {
   if (interruptAsk) dismissInterrupt(); // the newest prompt replaces the other
   if (bgAsk) dismissBackground();
   closeAsk = current;
-  const other = s.driven === false || Boolean(termPid(s));
+  const other = !s.state.driven || Boolean(termPid(s));
   const stops = other ? "" : closeStops(s);
   askInBox(box, other
     ? `<b>Remove it from Synopia?</b> <kbd>x</kbd> again. Its other process keeps running.`
@@ -312,7 +312,7 @@ function mountComposer(s) {
    The `!` itself leaves the text and becomes the box's mark; Backspace on the empty box leaves the mode. Enter
    runs the command in the session's folder (`bang`); its output shows in the transcript and goes to Claude as
    context, with no turn. Not in a session another process runs, nor one a terminal holds. */
-const bashOk = s => Boolean(s) && s.driven !== false && !termPid(s);
+const bashOk = s => Boolean(s) && s.state.driven && !termPid(s);
 /* the box's text as a draft keeps it: with the `!` of bash mode (ui.js) */
 const boxValue = ta => (ta.dataset.bash ? "!" : "") + ta.value;
 function setBash(ta, on) {
@@ -353,7 +353,7 @@ function runBang(s, ta) {
 
 /* ---------- a terminal holds the session (R3.2): the box's one line, and the message that takes it back ---------- */
 let takeoverWait = null; // { sid, text, seen }: a message the box keeps until the session is back from the terminal
-const termPid = s => s?.statusDetail?.terminal || 0;
+const termPid = s => s?.state?.detail?.terminal || 0;
 /* Enter: the backend takes the session back once the terminal is idle; the text stays until then */
 function takeBack(s, ta, images) {
   takeoverWait = { sid: s.id, text: ta.value, seen: false };
@@ -374,10 +374,10 @@ function mountTakeover(s, ta) {
 function syncTakeover() {
   const s = cur(), ta = document.getElementById("msg"), box = ta?.closest(".composer");
   if (!s || !box) return;
-  const d = s.statusDetail || {}, pid = termPid(s), w = takeoverWait?.sid === s.id ? takeoverWait : null;
+  const d = s.state.detail, pid = termPid(s), w = takeoverWait?.sid === s.id ? takeoverWait : null;
   if (w && d.takeover) w.seen = true;
   else if (w && (w.seen || !pid)) {
-    if (!pid && stateOf(s) === "green") { // it went, as after any send
+    if (!pid && s.state.light === "green") { // it went, as after any send
       if (ta.value === w.text) { ta.value = ""; ta.style.height = "auto"; attachments.length = 0; renderAttachments(); uiFlush(); }
       takeoverWait = null;
     } else if (w.seen) takeoverWait = null; // it didn't: the text stays, and the toast said why

@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { SessionStatus, transcriptStatus, outcomeOf, restored } from '../src/status.ts';
-import type { StatusEntry } from '../src/status.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter } from '../src/status.ts';
+import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
+import { Views } from '../src/views.ts';
+import type { Client } from '../src/server.ts';
 
 function tracker(init: StatusEntry | null = null) {
   let t = 1000;
@@ -331,4 +336,155 @@ test('status: a question another process asks is needs you over working, aged fr
   assert.equal(s.status, 'waiting', "a subagent's plan too");
   assert.equal(transcriptStatus(asking), 'waiting', 'a session no driver set reads it from its transcript');
   assert.equal(transcriptStatus({ ...asking, ask: null }), 'busy');
+});
+
+// ---------- sessionState: what the page shows (seams#I4) ----------
+const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, review: 0, driven: true, ...f });
+const show = (status: Status, f: Partial<StateFacts> = {}, detail: StatusDetail = {}) => {
+  const st = sessionState({ status, at: 7, detail }, facts(f));
+  return [st.light, st.tone, st.word, st.mark];
+};
+
+test('state: each status has its light, tone, word and mark (R8.2)', () => {
+  assert.deepEqual(show('busy'), ['green', 'green', 'Working', 'work']);
+  assert.deepEqual(show('busy', {}, { queued: 2 }), ['green', 'green', 'Working', 'queued']);
+  assert.deepEqual(show('compacting'), ['green', 'green', 'Compacting', 'compact']);
+  assert.deepEqual(show('retrying'), ['green', 'amber', 'Rate limited', 'ratelimit']);
+  assert.deepEqual(show('stale'), ['green', 'grey', 'No updates', 'stale']);
+  assert.deepEqual(show('signedout'), ['amber', 'red', 'Signed out', 'creds']);
+  assert.deepEqual(show('idle'), ['amber', 'amber', 'Your turn', 'stopped']);
+  assert.deepEqual(show('stopped'), ['amber', 'amber', 'Stopped', 'stopped']);
+  assert.deepEqual(show('failed'), ['amber', 'amber', 'Failed', 'failed']);
+  assert.deepEqual(show('waiting'), ['red', 'red', 'Needs you', 'pause']);
+  const st = sessionState({ status: 'idle', at: 7, detail: { terminal: 9 } }, facts({ driven: false }));
+  assert.deepEqual([st.status, st.since, st.detail, st.driven], ['idle', 7, { terminal: 9 }, false]);
+});
+
+test('state: needs you wins, with what it waits on (R6.1)', () => {
+  assert.deepEqual(show('signedout', { pending: ['permission'] }), ['red', 'red', 'Needs you', 'pause'], 'a request on a signed-out session');
+  assert.deepEqual(show('busy', { pending: ['permission'] }), ['red', 'red', 'Needs you', 'pause']);
+  const need = (status: Status, f: Partial<StateFacts>) => sessionState({ status, at: 0 }, facts(f)).needsYou;
+  assert.equal(need('waiting', { pending: ['plan', 'question'] }), 'plan', 'the oldest request');
+  assert.equal(need('waiting', { ask: { kind: 'question' } }), 'question', 'another process asks (R6.8)');
+  assert.equal(need('waiting', {}), 'permission');
+  assert.equal(need('busy', { ask: { kind: 'plan' } }), null, 'an ask is passed only while it is why the session waits');
+});
+
+test('state: stopped by you is the stop marker on your turn, not a turned-down tool (seams#B3)', () => {
+  assert.deepEqual(show('idle', { interrupted: true }), ['amber', 'amber', 'Stopped', 'stopped']);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, facts({ interrupted: true })).stopped, true);
+  assert.equal(sessionState({ status: 'stopped', at: 0 }, facts()).stopped, true);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, facts()).stopped, false);
+  assert.deepEqual(show('failed', { interrupted: true }), ['amber', 'amber', 'Failed', 'failed'], 'a failed turn says so');
+  assert.deepEqual(show('busy', { interrupted: true }), ['green', 'green', 'Working', 'work'], 'a new turn runs');
+  assert.deepEqual(show('signedout', { interrupted: true }), ['amber', 'red', 'Signed out', 'creds']);
+});
+
+test('state: the badge share is needs you plus the deliverables to review (R2.6)', () => {
+  const of = (status: Status, f: Partial<StateFacts> = {}) => badgeOf(sessionState({ status, at: 0 }, facts(f)));
+  assert.deepEqual((['waiting', 'signedout', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle', 'stopped'] as Status[]).map((s) => of(s)), [1, 0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.equal(of('signedout', { pending: ['question'] }), 1);
+  assert.equal(of('busy', { review: 2 }), 2);
+  assert.equal(of('waiting', { review: 1 }), 2);
+});
+
+test('badge counter: the total moves as sessions change, and says so only when it moves', () => {
+  const seen: number[] = [];
+  const b = new BadgeCounter((n) => seen.push(n));
+  b.set('a', 1);
+  b.set('b', 2);
+  b.set('a', 1);
+  assert.equal(b.count, 3);
+  b.drop('b');
+  b.drop('b');
+  b.set('c', 0);
+  assert.equal(b.count, 1);
+  b.set('a', 0);
+  assert.deepEqual(seen, [1, 3, 1, 0]);
+});
+
+// ---------- the badge through Views: open sessions only, nothing rebuilt per read ----------
+const CLAUDE = path.join(import.meta.dirname, 'fixtures', 'claude');
+const IDLE = '11111111-0000-4000-8000-000000000001';
+const ASKS = '22222222-0000-4000-8000-000000000002';
+const AGENTS = '44444444-0000-4000-8000-000000000004';
+const REVIEW = 'aaaa0004'; // "For review: Draft the demo release notes", finished in the fixture
+const tick = () => new Promise((r) => setImmediate(r));
+
+function badgeViews(claudeDir = CLAUDE, reviewed: Set<string> = new Set()) {
+  const badge = new BadgeCounter();
+  const views = new Views({ claudeDir, clients: () => new Set<Client>(), home: '/Users/fixture', pollMs: 0, watch: false, badge, reviewed: (id) => reviewed.has(id) });
+  return { badge, views, reviewed };
+}
+
+test('badge: needs-you sessions and deliverables to review, open sessions only', async () => {
+  // A question in a transcript whose file is 12 hours quiet is your turn (ASK_STALE_MS): the fixture's
+  // records are older, so its file counts as just changed, whenever it was checked out.
+  const now = new Date();
+  fs.utimesSync(path.join(CLAUDE, 'projects', '-tmp-fixture', `${ASKS}.jsonl`), now, now);
+  const { views, badge, reviewed } = badgeViews();
+  views.open(IDLE);
+  views.open(ASKS);
+  views.open(AGENTS);
+  await tick();
+  // its transcript ends on a question with no answer and no driver set a status: another process asks (R6.8)
+  assert.equal(badge.count, 2, 'the finished For review subagent and the question the transcript waits on');
+  views.setStatus(ASKS, 'busy');
+  assert.equal(badge.count, 1, 'the driver says working: only the For review subagent');
+
+  views.setPending(ASKS, { id: 'q1', kind: 'question', since: 1 });
+  await tick();
+  assert.equal(badge.count, 2, 'a pending request');
+  views.setStatus(ASKS, 'waiting');
+  assert.equal(badge.count, 2, 'one session counts once');
+  views.setStatus(IDLE, 'waiting');
+  assert.equal(badge.count, 3, 'the status waiting alone');
+
+  reviewed.add(REVIEW);
+  views.reviewed(REVIEW);
+  assert.equal(badge.count, 2, 'marked reviewed drops it');
+  assert.equal(views.meta(AGENTS)?.state.review, 0);
+
+  views.close(AGENTS);
+  views.close(ASKS);
+  assert.equal(badge.count, 1, 'closed sessions are left out');
+  views.stop();
+});
+
+test('badge: a session whose turn runs in another process, with nothing pending, does not count', () => {
+  const { views, badge } = badgeViews(path.join(import.meta.dirname, 'fixtures', 'claude-states'));
+  views.open('f7f7f7f7-0000-4000-8000-000000000007');
+  views.check();
+  const st = views.meta('f7f7f7f7-0000-4000-8000-000000000007')!.state;
+  assert.deepEqual([st.status, st.word, st.driven, st.detail.external], ['busy', 'Working', false, undefined]);
+  assert.equal(badge.count, 0);
+  views.stop();
+});
+
+test('badge: a question or plan another process asks counts, with its ask for the page, until its result lands (R6.8)', () => {
+  const src = path.join(import.meta.dirname, 'fixtures', 'claude-ext');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-ext-'));
+  fs.cpSync(src, dir, { recursive: true });
+  const { views, badge } = badgeViews(dir);
+  const Q = 'e1e1e1e1-0000-4000-8000-00000000000a', P = 'e2e2e2e2-0000-4000-8000-00000000000b';
+  views.open(Q);
+  views.open(P);
+  views.check();
+  const q = views.meta(Q);
+  assert.deepEqual([q?.state.status, q?.state.needsYou, q?.state.word], ['waiting', 'question', 'Needs you'], 'needs you, though the turn runs by the transcript');
+  assert.equal(q?.state.since, Date.parse('2026-11-24T09:00:40.000Z'), 'aged from the tool_use');
+  assert.deepEqual([q?.ask?.kind, q?.ask?.qs?.length, q?.ask?.qs?.[1].multi], ['question', 2, true]);
+  assert.deepEqual([views.meta(P)?.state.needsYou, views.meta(P)?.ask?.kind, views.meta(P)?.ask?.plan?.startsWith('## Move')], ['plan', 'plan', true]);
+  assert.equal(badge.count, 2);
+  views.setPending(P, { id: 'r1', kind: 'plan', since: 1 });
+  views.setStatus(P, 'waiting');
+  assert.equal(views.meta(P)?.ask, null, 'a request of ours is the card: no read-only one');
+  const file = path.join(dir, 'projects', '-tmp-ext', `${Q}.jsonl`);
+  // dated now: a turn quiet for STALE_MS reads as ended, so a fixed date fails once it is 15 minutes old
+  fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid: 'x1-u3', timestamp: new Date().toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_xask1', content: 'User has answered your questions: "Which release channel should the checklist target?"="Beta". You can now continue.' }] } }) + '\n');
+  views.check();
+  assert.deepEqual([views.meta(Q)?.state.status, views.meta(Q)?.ask], ['busy', null], 'answered there: the turn goes on');
+  assert.equal(badge.count, 1);
+  views.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
 });

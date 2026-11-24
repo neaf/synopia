@@ -305,7 +305,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - a blue badge
   - a "To review" group in Background work
   - "N to review" under the session in the sidebar
-- R10.2 It stays until the user clicks "Mark reviewed". Opening it doesn't count. No custom per-type handling yet: a review item might be a PR, a file or anything else.
+- R10.2 It stays until the user clicks "Mark reviewed". Opening it doesn't count. The backend stores the marks (the last 1000; an older one goes, decided 2026-11-24). No custom per-type handling yet: a review item might be a PR, a file or anything else.
 
 ## 11. Visual system
 

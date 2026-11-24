@@ -12,7 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { acquireLock, LockedError } from './lock.ts';
 import { openLog } from './log.ts';
-import { openStore, reconcileLayout } from './store.ts';
+import { openStore, reconcileLayout, REVIEWED_MAX } from './store.ts';
 import { startServer } from './server.ts';
 import { Views } from './views.ts';
 import { Sessions } from './sessions.ts';
@@ -24,7 +24,7 @@ import { loadLoginEnv } from './login-env.ts';
 import { displayPath } from './paths.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
-import { Badge, badgeCount } from './badge.ts';
+import { BadgeCounter } from './status.ts';
 import {
   DAEMON_LOG, IDLE_EXIT_MS, IdleExit, UPDATE_READ_MS, UpdateCheck, awaitHandover, codeHash, ownStart, removeDaemonInfo, rotateLog,
   startSuccessor, writeDaemonInfo,
@@ -34,7 +34,6 @@ import type { Image } from './sessions.ts';
 import type { CardAnswer } from './cards.ts';
 import type { Lock } from './lock.ts';
 import type { Successor } from './daemon.ts';
-import type { BadgeSession } from './badge.ts';
 import type { Layout } from './store.ts';
 import type { Client, Server } from './server.ts';
 
@@ -112,7 +111,11 @@ const VERSION = String(JSON.parse(readFileSync(new URL('../package.json', import
 const updates = new UpdateCheck(CODE);
 let server: Server | undefined;
 const noClients = new Set<Client>();
-let badge: Badge | null = null;
+// The Dock badge (requirements R2.6): status.ts keeps the count as sessions change; the shell polls
+// GET /api/badge, and each change is logged.
+const badge = new BadgeCounter((n) => log('badge', { n }));
+const reviewed = () => new Set(store.state.reviewed);
+let reviewedSet = reviewed();
 const views = new Views({
   claudeDir, clients: () => server?.clients ?? noClients, home, log,
   onAssistant: (sid, mid, types) => sessions.landed(sid, mid, types),
@@ -120,7 +123,8 @@ const views = new Views({
   answerOf: (toolUseId) => store.state.answers[toolUseId],
   planOf: (toolUseId) => store.state.plans[toolUseId],
   defaultModel: () => store.state.settings.model,
-  onChange: () => badge?.changed(),
+  reviewed: (id) => reviewedSet.has(id),
+  badge,
   onRunning: (sid, r) => sessions.runningChanged(sid, r),
   onWorkEnded: (sid) => writer.workEnded(sid),
 });
@@ -157,8 +161,6 @@ const sessions = new Sessions({
     if (folder) menus.commandsChanged(folder, commands);
   },
 });
-
-const badgeSource = { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed };
 
 // Something runs that the idle exit must not end: a turn, a subagent, a background shell or
 // monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer. The update restart waits on the same.
@@ -215,9 +217,12 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
-    if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);
-    store.changed();
-    badge?.changed();
+    if (!reviewedSet.has(msg.agentId)) {
+      store.state.reviewed = [...store.state.reviewed, msg.agentId].slice(-REVIEWED_MAX);
+      reviewedSet = reviewed();
+      store.changed();
+      views.reviewed(msg.agentId);
+    }
   } else if (msg.t === 'background' && typeof msg.sid === 'string') { // b, b (R9): a toast only when nothing moved
     void sessions.background(msg.sid).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (msg.t === 'open') {
@@ -247,7 +252,6 @@ try {
     hello: () => ({
       sessions: views.sessions(),
       layout: store.state.layout,
-      reviewed: store.state.reviewed,
       menu: menus.all(),
       settings: store.state.settings,
       pending: views.pending(),
@@ -255,7 +259,7 @@ try {
       update: updates.pending,
     }),
     quitCheck: () => sessions.quitCheck(),
-    badge: () => badgeCount(badgeSource),
+    badge: () => badge.count,
     ping: () => ({ code: CODE }),
     onStop: () => void shutdown('stopAll'),
     // "Restart Backend Now…": a handover at once, whatever runs (the shell asked first). Not under dev.sh.
@@ -284,7 +288,6 @@ async function shutdown(reason: string) {
   if (idleTimer) clearInterval(idleTimer);
   if (updateTimer) clearInterval(updateTimer);
   removeDaemonInfo(stateDir, process.pid);
-  badge?.stop();
   writer.stop();
   menus.stop();
   terminals.stop();
@@ -319,10 +322,6 @@ log('daemon.ready', { port: (server as Server).port, code: CODE });
 terminals.start();
 sessions.start();
 scripted?.attach(sessions); // the scripted sessions' processes start
-// The Dock badge (requirements R2.6): the shell polls GET /api/badge; each change is logged.
-badge = new Badge({ source: badgeSource, emit: (n) => log('badge', { n }) });
-badge.changed();
-
 // The idle exit: 30 min with no page connected and nothing running (none under dev.sh). The same
 // timer rotates daemon.log at 5 MB, each minute (or a tenth of a shorter test timeout).
 const exitIdleMs = flags['exit-idle-ms'] === undefined ? IDLE_EXIT_MS : Number(flags['exit-idle-ms']);

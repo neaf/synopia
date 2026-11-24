@@ -310,6 +310,11 @@ export class SessionStatus {
   }
 }
 
+// Whether a turn runs that a message sent now queues behind (R5.5).
+export function queuesBehind(s: Status): boolean {
+  return s === 'busy' || s === 'retrying' || s === 'compacting';
+}
+
 // The status of a session no driver set (the transcript alone): working while its subagents or
 // forks or its main turn run, else your turn. A question or plan waiting there is needs you.
 export function transcriptStatus(r: Running): Status {
@@ -328,4 +333,96 @@ function uuidsOf(m: Loose): string[] {
 
 function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
   return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.external === b.external && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
+}
+
+// ---------- what the page shows: the one derivation (seams#I4) ----------
+// The page renders `session.state` and decides nothing about status itself.
+//   light    red: needs you. green: a turn runs, interruptible (working, compacting, rate limited,
+//            no updates). amber: your turn (idle, stopped, failed, signed out).
+//   tone     the state word's colour: red for needs you and signed out, amber for rate limited,
+//            grey for no updates, else the light.
+//   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
+//            ("Signed out", "No updates", "Rate limited", "Compacting").
+//   mark     the session mark's key (marks.js).
+//   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
+//            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
+//            `Interrupt`; a turned-down tool is not one, seams#B3).
+//   needsYou what the session waits on: the oldest request's kind, or the question or plan
+//            another process asks; null when it waits on nothing.
+//   review   finished "For review: …" subagents not marked reviewed (R10.1).
+//   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
+//            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
+export type Light = 'red' | 'amber' | 'green';
+export type Needs = 'question' | 'permission' | 'plan';
+export type SessionState = {
+  status: Status; since: number; detail: StatusDetail;
+  light: Light; tone: Light | 'grey'; word: string; mark: string;
+  stopped: boolean; needsYou: Needs | null; review: number; driven: boolean;
+};
+export type StateFacts = {
+  pending: Needs[]; // the session's requests' kinds, oldest first
+  ask: { kind: 'question' | 'plan' } | null; // a card another process waits on
+  interrupted: boolean; // the latest item (titles aside) is a `stop` interrupt marker
+  review: number;
+  driven: boolean;
+};
+
+const LIGHT: Record<Status, Light> = {
+  waiting: 'red', busy: 'green', compacting: 'green', retrying: 'green', stale: 'green',
+  idle: 'amber', stopped: 'amber', failed: 'amber', signedout: 'amber',
+};
+const PHASE: Partial<Record<Status, { word: string; mark: string }>> = {
+  signedout: { word: 'Signed out', mark: 'creds' },
+  stale: { word: 'No updates', mark: 'stale' },
+  retrying: { word: 'Rate limited', mark: 'ratelimit' },
+  compacting: { word: 'Compacting', mark: 'compact' },
+};
+
+export function sessionState(e: { status: Status; at: number; detail?: StatusDetail }, f: StateFacts): SessionState {
+  const status = e.status, detail = e.detail ?? {};
+  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : null);
+  const light: Light = needsYou ? 'red' : LIGHT[status];
+  const phase = light === 'red' ? undefined : PHASE[status];
+  const stopped = light === 'amber' && !phase && status !== 'failed' && (status === 'stopped' || f.interrupted);
+  const word = phase ? phase.word : light === 'red' ? 'Needs you' : light === 'green' ? 'Working'
+    : status === 'failed' ? 'Failed' : stopped ? 'Stopped' : 'Your turn';
+  const tone: Light | 'grey' = light === 'red' || status === 'signedout' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' ? 'grey' : light;
+  // your turn shows the grey square, whether or not background work runs
+  const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (detail.queued ? 'queued' : 'work')
+    : status === 'failed' ? 'failed' : 'stopped';
+  return { status, since: e.at, detail, light, tone, word, mark, stopped, needsYou, review: f.review, driven: f.driven };
+}
+
+// What a session adds to the Dock badge (R2.6): 1 while it needs you, plus its deliverables to review.
+// Signed out, no updates, rate limited, compacting and working don't count.
+export const badgeOf = (s: SessionState): number => (s.needsYou ? 1 : 0) + s.review;
+
+// The Dock badge's count, kept as sessions change: the shell polls it every 2 s and nothing is rebuilt
+// per poll (seams#B6, backend-core#B3). `onChange` runs when the total moves (the `badge` log line).
+export class BadgeCounter {
+  private per = new Map<string, number>();
+  private total = 0;
+  private onChange: (n: number) => void;
+
+  constructor(onChange: (n: number) => void = () => {}) {
+    this.onChange = onChange;
+  }
+
+  get count(): number {
+    return this.total;
+  }
+
+  set(sid: string, n: number): void {
+    const was = this.per.get(sid) ?? 0;
+    if (n > 0) this.per.set(sid, n);
+    else this.per.delete(sid);
+    if (n === was) return;
+    this.total += n - was;
+    this.onChange(this.total);
+  }
+
+  // A closed session no longer counts.
+  drop(sid: string): void {
+    this.set(sid, 0);
+  }
 }

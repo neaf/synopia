@@ -69,7 +69,7 @@ function stepHTML(t) {
   return runView({
     key: t.id, input: t.input || "", out: o ? (full !== undefined ? full : o.text || "") : null,
     truncatedTotal: o && o.cut && full === undefined ? +o.lines : 0,
-    running, startedAt: t.since || null, note: running && cur()?.driven ? "Output shows when it finishes" : "", stopped: !!(o && o.interrupted),
+    running, startedAt: t.since || null, note: running && cur()?.state.driven ? "Output shows when it finishes" : "", stopped: !!(o && o.interrupted),
   });
 }
 function showAll(id) {
@@ -193,7 +193,7 @@ function waveHTML(tools, s) {
   // A subagent whose turn ended but whose own background shell or monitor still runs isn't done: it
   // resumes when that work reports, so it reads as running.
   const busy = a => a && (!a.finished || bgOf(s).some(b => b.agentId === a.id && bgState(b) === "running"));
-  const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
+  const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : a.review ? "review" : (a.fork ? "s_fork" : "s_sub");
   // in a wave the name carries the b, b mark (R9); a single line carries it on the whole line
   const nameOf = (t, a, mark = fgMark(t)) => a ? `<button class="alink"${mark} data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span${mark}>${esc(t.obj)}</span>`;
   const time = a => a ? (busy(a) ? live(a.start, a.finished ? NOWISH - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
@@ -252,7 +252,7 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
-      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
+      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(a.review ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
       out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
@@ -317,24 +317,23 @@ function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "") => {
     const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${objOf(t)}` : "")}</span>`;
     const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
-    return `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span>${body}</div>`;
+    return `<div class="ln liveln" data-state="${A ? "green" : s.state.tone}"><span class="g">${ind(mark)}</span>${body}</div>`;
   };
   /* the step named on the live line: the newest step only while it runs. Once it's done (Claude writing,
      thinking, between steps) the line just says Working, rather than naming a finished step */
   const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool"); return last && last.state === "running" ? last : null; };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
-  if (stateOf(s) !== "green") return "";
-  const t = runningStep(s.items);
-  return s.status === "busy" ? line(sessionMarkKey(s), t, "Working", phaseText(s)) : line(sessionMarkKey(s), t, wordOf(s), phaseText(s));
+  if (s.state.light !== "green") return "";
+  return line(sessionMarkKey(s), runningStep(s.items), s.state.word, phaseText(s));
 }
 /* what the state means, after its word (status.ts: the source of each) */
 function phaseText(s) {
-  const d = s.statusDetail || {};
-  if (s.status === "compacting") return "Summing up the conversation to free space";
-  if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
-  if (s.status === "stale") return `Nothing for ${age(s.statusAt)}; the session may be gone`;
-  if (s.status === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
-  if (s.status === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
+  const st = s.state.status, d = s.state.detail;
+  if (st === "compacting") return "Summing up the conversation to free space";
+  if (st === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
+  if (st === "stale") return `Nothing for ${age(s.state.since)}; the session may be gone`;
+  if (st === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
+  if (st === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";
 }
 /* an age that the 1 s timer keeps current */
@@ -343,19 +342,21 @@ const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
 const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
 const until = at => `<span data-until="${esc(at)}">${esc(left(at))}</span>`;
 const queuedText = n => `${n === 1 ? "Your message is" : `${esc(n)} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
+/* background work still running, for "Claude finished …, background work still running" */
+const bgRunning = s => agentsOf(s).some(a => !a.finished) || bgOf(s).some(b => bgState(b) === "running");
 function statusLine(s) {
-  const st = stateOf(s);
+  const st = s.state.light;
   const last = [...s.items].reverse();
   if (st === "green") {
     const t = last.find(x => x.k === "tool");
     return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${objOf(t)}` : ""}</span></div>`;
   }
-  if (s.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
+  if (s.state.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
   if (st === "red") {
-    const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[pending(s)] || "Claude is waiting for a permission";
-    return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.statusAt)}</span></div>`;
+    const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[s.state.needsYou] || "Claude is waiting for a permission";
+    return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
   }
-  const w = wordOf(s), why = w === "Failed" ? `The last turn failed ${age(s.statusAt)} ago. Send a message to try again` : w === "Stopped" ? "You interrupted it" : `Claude finished ${age(s.statusAt)} ago`;
+  const w = s.state.word, at = s.state.since, why = s.state.status === "failed" ? `The last turn failed ${age(at)} ago. Send a message to try again` : s.state.stopped ? "You interrupted it" : `Claude finished ${age(at)} ago`;
   return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${w}</b><span>${why}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
 }
 
@@ -415,7 +416,7 @@ function logEntries(s, A) {
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
-  out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
+  out.push(...itemsHTML(items, A ? !A.finished : s.state.light === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   if (!A) out.push(...sentHTML(s)); // sent while idle: the new turn's prompt, at once, until its record lands
@@ -514,7 +515,7 @@ conv.addEventListener("click", e => {
     view = t.dataset.agent; renderConv();
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card
-  else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
+  else if (t.dataset.reviewed) { e.stopPropagation(); send({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") openModelPicker();

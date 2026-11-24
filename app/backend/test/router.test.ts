@@ -5,11 +5,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, connectPage, waitFor, scripted, tmp } from './daemon-harness.ts';
+import { startDaemon, connectPage, waitFor, scripted, tmp, api } from './daemon-harness.ts';
 import type { Daemon } from './daemon-harness.ts';
 
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S3 = '33333333-0000-4000-8000-000000000003';
 const S4 = '44444444-0000-4000-8000-000000000004', S5 = '55555555-0000-4000-8000-000000000005';
+const REVIEW = 'aaaa0004'; // S4's "For review: Draft the demo release notes", finished
 
 let d: Daemon;
 test.before(async () => { d = await startDaemon([...scripted(), '--no-parent', '--dry-run']); });
@@ -27,9 +28,20 @@ async function sendThenHello(...msgs: object[]) {
 }
 const logged = (re: RegExp) => waitFor(() => re.test(d.log()), 5000, String(re));
 
-test('reviewed: stored once, in the next hello', async () => {
-  const hello = await sendThenHello({ t: 'reviewed', agentId: 'aaaa0002' }, { t: 'reviewed', agentId: 'aaaa0002' }, { t: 'reviewed' });
-  assert.deepEqual(hello.reviewed, ['aaaa0002']);
+test('reviewed: stored once; the next hello shows the deliverable reviewed and the badge drops (R10.2)', async () => {
+  type S = { id: string; state: { review: number }; agents: { id: string; review: boolean }[] };
+  const of = (hello: Record<string, unknown>) => (hello.sessions as S[]).find((s) => s.id === S4)!;
+  const badge = async () => ((await (await api(d.info, 'badge')).json()) as { badge: number }).badge;
+  const before = of(await sendThenHello());
+  assert.equal(before.agents.find((a) => a.id === REVIEW)?.review, true, 'a finished "For review: …" subagent');
+  assert.equal(before.state.review, 1);
+  const n = await badge();
+  const hello = await sendThenHello({ t: 'reviewed', agentId: REVIEW }, { t: 'reviewed', agentId: REVIEW }, { t: 'reviewed' });
+  const after = of(hello);
+  assert.equal(after.agents.find((a) => a.id === REVIEW)?.review, false);
+  assert.equal(after.state.review, 0);
+  assert.equal(await badge(), n - 1);
+  assert.equal(hello.reviewed, undefined, 'the page gets the marks only as the subagents\' review flag (backend-core#B5)');
 });
 
 test('layout: reconciled with the open sessions (unknown and repeated ids dropped, the rest in others)', async () => {

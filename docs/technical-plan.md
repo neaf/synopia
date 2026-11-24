@@ -188,7 +188,7 @@ Server to page:
 | Type | Fields | When |
 |---|---|---|
 | `hello` | `sessions[]` (meta and status, no items), `layout`, `reviewed[]`, `menu`, `settings`, `pending[]`, `ui` (section 11) | after `auth` |
-| `session` | `id`, `replaces` (the placeholder id, once), and the changed fields: `title`, `now`, `cwd`, `prs`, `status`, `statusAt`, `model`, `effort`, `bg` counts, `toReview`, `bang` (bash mode, R5.13: the `!` command that runs or just ran, `{id, cmd, out, err, cut, running, exit, interrupted, at, error?, landed?}`, streamed at most every 100 ms; `landed` is the bash item it became, and the next flush drops it) | on change |
+| `session` | `id`, `replaces` (the placeholder id, once), and the changed fields: `title`, `now`, `cwd`, `prs`, `state` (`status.ts` `sessionState`: `status`, `since`, `detail`, `light`, `tone`, `word`, `mark`, `stopped`, `needsYou`, `review` count, `driven`; the page decides no status itself), `model`, `effort`, `bang` (bash mode, R5.13: the `!` command that runs or just ran, `{id, cmd, out, err, cut, running, exit, interrupted, at, error?, landed?}`, streamed at most every 100 ms; `landed` is the bash item it became, and the next flush drops it) | on change |
 | `removed` | `id` | closed |
 | `items` | `sid`, `agent` (null for the main conversation), `upsert[]` (items with `id`), `total`, `reset`, `prepend` | after a tail read; `reset` on first view and after a file is rewritten; `prepend` in reply to `earlier`, with the items before the oldest shown, oldest first |
 | `agents` | `sid`, `upsert[]` (the subagent fields the page reads today) | a new subagent file or a meta change |
@@ -327,11 +327,11 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
 | signed out (lock) | `error` `authentication_failed` or `cloud_credential_error` on an `assistant` message or `api_retry`, or `auth_status` with an `error`; until the next turn starts or a main-thread reply comes without an error. Wins over everything but needs you |
 | needs you (red seesaw) | a pending canUseTool request, which wins over everything (R6.8) |
 | your turn (still grey square) | `idle` after a normal `result` with no subagent or fork running, and the state of a session whose process isn't running; its age counts from when the last subagent finished |
-| stopped by you (grey square) | `idle` after a turn that ended by interrupt, or the last item is exactly `[Request interrupted by user]` (not `… for tool use`, a tool you turned down) with no assistant record after it |
+| stopped by you (grey square) | `idle` after a turn that ended by interrupt, or the last item (a retitle aside) is the `stop` interrupt marker `[Request interrupted by user]` (`claude-jsonl.ts` `Interrupt`; not `… for tool use`, a tool you turned down). Decided in `status.ts` `sessionState` only |
 | failed (red square) | `result` is an error that isn't an interrupt, or the process failed |
 
 - **Without the undocumented flag** (a later CLI drops it), working runs from the first `send` to `result`. A unit test covers that path.
-- **Age:** `statusAt` is the backend's clock when the status last changed, and it is stored, so ages survive a restart.
+- **Age:** `state.since` is the backend's clock when the status last changed, and it is stored, so ages survive a restart.
 - **Background items** keep the prototype's rules: done, failed, stopped, and timed out computed for monitors.
 
 ## 9. Needs you: questions, permissions, plans

@@ -46,8 +46,8 @@ const pendingAsk = s => { const r = requestsOf(s)[0]; return r ? askOf(r) : null
 /* A question or plan another Claude Code process asks (R6.8): the server's `ask` fact, sent only while
    it is why the session needs you and no request of ours waits. Shown read-only: no cursor, no keys. */
 function extAsk(s) {
-  const x = s.ask; if (!x || requestsOf(s).length || s.status !== "waiting") return null;
-  const r = { id: `ext:${x.toolUseId}`, kind: x.kind, toolName: x.kind === "plan" ? "ExitPlanMode" : "AskUserQuestion", toolUseId: x.toolUseId, agentId: x.agentId, since: x.since || s.statusAt, input: { plan: x.plan || "" } };
+  const x = s.ask; if (!x || requestsOf(s).length) return null;
+  const r = { id: `ext:${x.toolUseId}`, kind: x.kind, toolName: x.kind === "plan" ? "ExitPlanMode" : "AskUserQuestion", toolUseId: x.toolUseId, agentId: x.agentId, since: x.since || s.state.since, input: { plan: x.plan || "" } };
   const a = { ...askOf(r), ext: true };
   if (x.kind !== "plan") a.qs = (x.qs || []).map(q => ({ q: q.q, header: q.header, multi: !!q.multi, opts: q.opts || [] }));
   return a;
@@ -169,7 +169,7 @@ function renderCard() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
   const pa = !A && pendingAsk(s), ea = !A && !pa && extAsk(s);
-  const html = pa ? qaHTML(s, pa) : ea ? extHTML(s, ea) : !A && (stateOf(s) === "red" || s.status === "signedout") ? statusLine(s) : "";
+  const html = pa ? qaHTML(s, pa) : ea ? extHTML(s, ea) : !A && (s.state.light === "red" || s.state.status === "signedout") ? statusLine(s) : "";
   if (still(html) === lastCard) return;
   lastCard = still(html);
   const dock = conv.querySelector(".dock-inner"), composer = dock.querySelector(".composer");

@@ -33,7 +33,7 @@ const [url, stateDir, claude] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
 const shot = (name) => c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, name), Buffer.from(r.result.data, 'base64')));
-await c.load(`${url}#${A.slice(0, 8)}`, `__synopia.current() === '${A}' && !!__synopia.mounted() && __synopia.cur().driven === true && __synopia.cur().status === 'busy' && __synopia.cur().items.length === 3`);
+await c.load(`${url}#${A.slice(0, 8)}`, `__synopia.current() === '${A}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().state.status === 'busy' && __synopia.cur().items.length === 3`);
 const sendText = (t) => ev(`(() => { const ta = document.getElementById('msg'); ta.value = ${JSON.stringify(t)}; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
 // the log's blocks in order: queued bands as q, your prompts as you, the live line as live
 const order = () => ev(`[...document.querySelectorAll('#log .log-inner > *')].map(e => e.matches('.prompt.queued') ? 'q:' + e.querySelector('.md').textContent.replace('Queued, goes to Claude at its next step', '').trim()

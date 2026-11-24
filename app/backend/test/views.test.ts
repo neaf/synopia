@@ -55,7 +55,7 @@ test('view: a reset with the items, then upserts for changed ids only', async ()
   const meta = c.take('session');
   assert.equal(meta.length, 1);
   assert.equal(meta[0].title, 'prompt 1');
-  assert.equal(meta[0].status, 'busy', 'its last tool has no result yet: the turn runs (status.ts)');
+  assert.equal((meta[0].state as { status: string }).status, 'busy', 'its last tool has no result yet: the turn runs (status.ts)');
 
   views.view(c, id, null);
   const [reset] = c.take('items');
@@ -158,7 +158,7 @@ test('status, pending, stream and close are broadcast', async () => {
   await Promise.resolve();
   c.take();
   views.setStatus(AGENTS, 'busy', 5);
-  assert.deepEqual(c.take('session').map((m) => [m.status, m.statusAt]), [['busy', 5]]);
+  assert.deepEqual(c.take('session').map((m) => [(m.state as { status: string }).status, (m.state as { since: number }).since]), [['busy', 5]]);
   views.setPending(AGENTS, { id: 'r1', kind: 'plan', since: 1 });
   assert.deepEqual(views.pending().map((p) => p.request.id), ['r1']);
   views.clearPending(AGENTS, 'r1');
@@ -178,6 +178,48 @@ test('turns: an interrupted turn says so to the writer; a turned-down tool does 
   const { views } = setup(dir);
   views.open(id);
   assert.deepEqual(views.turns(id), [{ you: 'prompt 1', claude: '' }, { you: 'prompt 3', claude: '(You interrupted this turn.)' }]);
+});
+
+test('state: a turned-down tool reads "Your turn", an Esc Esc stop "Stopped", a retitle after it keeps it (seams#B3)', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000ac';
+  const marker = (uuid: string, s: number, text: string) => line({ type: 'user', uuid, timestamp: `2026-11-20T10:00:0${s}.000Z`, message: { role: 'user', content: [{ type: 'text', text }] } });
+  const dir = tempSession(id, you(1) + marker('x2', 2, '[Request interrupted by user for tool use]'));
+  const { views } = setup(dir);
+  views.open(id);
+  views.check();
+  views.setStatus(id, 'idle', 5);
+  const word = () => { const st = views.meta(id)!.state; return [st.word, st.stopped, st.mark]; };
+  assert.deepEqual(word(), ['Your turn', false, 'stopped']);
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  fs.appendFileSync(file, you(3) + marker('x4', 4, '[Request interrupted by user]'));
+  views.check();
+  assert.deepEqual(word(), ['Stopped', true, 'stopped']);
+  fs.appendFileSync(file, line({ type: 'custom-title', customTitle: 'Renamed', sessionId: id }));
+  views.check();
+  assert.equal(views.meta(id)!.title, 'Renamed');
+  assert.deepEqual(word(), ['Stopped', true, 'stopped'], 'a retitle is no new turn');
+  views.setStatus(id, 'busy', 6);
+  assert.deepEqual(word(), ['Working', false, 'work']);
+  views.stop();
+});
+
+test('review: a finished "For review: …" subagent is sent with review until marked, and counts in the state (R10.1)', async () => {
+  const reviewed = new Set<string>();
+  const clients = new Set<Client>();
+  const views = new Views({ claudeDir: CLAUDE, clients: () => clients, home: HOME, pollMs: 0, watch: false, reviewed: (a) => reviewed.has(a) });
+  const c = client();
+  clients.add(c);
+  views.open(AGENTS);
+  await Promise.resolve();
+  const agent = (list: { id: string; review: boolean }[]) => list.find((a) => a.id === 'aaaa0004')?.review;
+  const hello = () => (views.sessions() as { agents: { id: string; review: boolean }[]; state: { review: number } }[])[0];
+  assert.deepEqual([agent(hello().agents), hello().state.review], [true, 1]);
+  c.take();
+  reviewed.add('aaaa0004');
+  views.reviewed('aaaa0004');
+  assert.equal(agent(c.take('agents')[0].upsert as { id: string; review: boolean }[]), false);
+  assert.deepEqual([agent(hello().agents), hello().state.review], [false, 0]);
+  views.stop();
 });
 
 test('model: a new session with no choice shows settings.model, not the CLI default', () => {

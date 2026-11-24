@@ -83,7 +83,7 @@ check('a single step opens', await ev(`${step('Say hi')}.open && ${step('Say hi'
 const reload = async (u, extra) => { await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200); return c.load(u, extra); };
 const LIVE = `document.querySelector('#log .liveln details.step[data-step="toolu_live1"]')`;
 const OWN = `document.querySelector('#log .ln.tool details.step[data-step="toolu_live1"]')`;
-await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
+await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
 check('the live line names the running step and can expand', (await ev(`${LIVE}?.querySelector('summary').textContent`)) === `Working Bash(${DESC})`, await ev(`document.querySelector('#log .liveln')?.outerHTML`));
 check('its own line can expand too', await ev(`!!${OWN} && !${OWN}.open && !${LIVE}.open`));
 await ev(`${LIVE}.querySelector('summary').click()`);

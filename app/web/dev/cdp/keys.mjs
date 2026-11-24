@@ -54,7 +54,7 @@ await K.prev();
 
 // j/k/g/G scroll the transcript when no card waits
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 420, deviceScaleFactor: 1, mobile: false });
-const idle = await ev(`__synopia.data().find(s => !__synopia.pending(s.id).length && s.status === 'idle')?.id[0]`);
+const idle = await ev(`__synopia.data().find(s => !__synopia.pending(s.id).length && s.state.status === 'idle')?.id[0]`);
 await go(idle);
 await ev(`document.getElementById('log').scrollTop = 0`);
 const h = await ev(`(() => { const l = document.getElementById('log'); return l.scrollHeight - l.clientHeight; })()`);
@@ -87,7 +87,7 @@ await K.J();
 check('card: J still switches sessions', (await shownId()) !== q);
 
 // the interrupt prompt: any other key dismisses it, J included (no switch); Esc, Esc interrupts
-const busy = await ev(`__synopia.data().find(s => s.status === 'busy' && !__synopia.pending(s.id).length)?.id[0]`);
+const busy = await ev(`__synopia.data().find(s => s.state.status === 'busy' && !__synopia.pending(s.id).length)?.id[0]`);
 await go(busy);
 await K.esc();
 check('busy: Esc asks to interrupt', await ev('!!document.querySelector(".composer.asking")'));

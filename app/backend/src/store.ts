@@ -15,6 +15,9 @@ export type Layout = { groups: Group[]; others: string[] };
 // `model`: the model of new sessions when set (else the CLI's default).
 export type Settings = { newSessionCwd?: string; writerModel: string; model?: string };
 
+// The subagents marked reviewed (R10.2), newest last: the oldest go past this many (backend-core#B5).
+export const REVIEWED_MAX = 1000;
+
 export type State = {
   version: 1;
   open: OpenEntry[];
@@ -99,7 +102,7 @@ export function normalize(raw: unknown): State {
     }));
   }
   s.layout = cleanLayout(raw.layout);
-  if (isStrArr(raw.reviewed)) s.reviewed = [...raw.reviewed];
+  if (isStrArr(raw.reviewed)) s.reviewed = raw.reviewed.slice(-REVIEWED_MAX);
   for (const k of ['models', 'rules', 'answers', 'plans', 'status', 'written', 'ended', 'endedFailed'] as const) {
     if (isObj(raw[k])) (s as Record<string, unknown>)[k] = raw[k];
   }

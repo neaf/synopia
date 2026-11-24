@@ -16,9 +16,10 @@ import type { BangRun } from './bang.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { transcriptStatus, QUIET_MS, ASK_STALE_MS } from './status.ts';
-import type { Running } from './status.ts';
+import { transcriptStatus, sessionState, badgeOf, queuesBehind, QUIET_MS, ASK_STALE_MS } from './status.ts';
+import type { BadgeCounter, Running, SessionState, Needs } from './status.ts';
 import type { Status, StatusDetail } from './status.ts';
+import type { Agent } from './transcript.ts';
 import { displayPath } from './paths.ts';
 import { resolveModel } from './session.ts';
 import type { ModelChoice } from './session.ts';
@@ -30,7 +31,7 @@ export const WINDOW = 160;
 export type { PendingRequest } from './cards.ts';
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
-  status: Status; statusAt: number; statusDetail: StatusDetail; model: unknown; effort: unknown;
+  state: SessionState; model: unknown; effort: unknown;
   ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null;
 };
 // Bash mode (R5.13): the `!` command that runs, or ran, shown at the end of the transcript until
@@ -40,7 +41,6 @@ export type ShownBang = BangRun & { landed?: string };
 // `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
 export type QueuedMessage = { id: string; text: string; images: number; landed?: string; queued?: boolean }; // queued: sent during a turn
 type Outbox = QueuedMessage & { at: number };
-const RUNNING = new Set<Status>(['busy', 'retrying', 'compacting']);
 // A queued message that hasn't landed by this long after the turn stopped running is dropped (it
 // landed in a form the match missed, or it is gone).
 export const OUTBOX_GRACE_MS = 5000;
@@ -80,8 +80,10 @@ export type ViewsOptions = {
   planOf?: (toolUseId: string) => string | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
   defaultModel?: () => string | undefined;
-  // After each message to the pages (the Dock badge recounts from it, debounced).
-  onChange?: () => void;
+  // Whether a subagent's deliverable was marked reviewed (state.json `reviewed`).
+  reviewed?: (agentId: string) => boolean;
+  // The Dock badge's count: each session's share is set whenever its state is worked out.
+  badge?: BadgeCounter;
   // What runs by the transcript changed: subagents and forks, and the main turn (status.ts setRunning).
   onRunning?: (sid: string, r: Running) => void;
   // A background shell, monitor or subagent of the session stopped running.
@@ -212,6 +214,7 @@ export class Views {
     if (!s) return;
     this.stopOne(s);
     this.live.delete(id);
+    this.opts.badge?.drop(id);
     for (const [c, sub] of this.subs) if (sub.sid === id) this.subs.delete(c);
     this.broadcast({ t: 'removed', id });
   }
@@ -225,6 +228,7 @@ export class Views {
     if (!s || this.live.has(newId)) return;
     this.stopOne(s);
     this.live.delete(oldId);
+    this.opts.badge?.drop(oldId);
     s.id = newId;
     s.t = this.transcript(newId);
     s.path = null;
@@ -239,6 +243,7 @@ export class Views {
     this.read(s, findTranscript(this.opts.claudeDir, newId));
     const meta = this.metaOf(s);
     s.sent = JSON.stringify(meta);
+    this.opts.badge?.set(newId, badgeOf(meta.state));
     this.broadcast({ t: 'session', replaces: oldId, ...meta });
     for (const [client, sub] of this.liveSubs()) {
       if (sub.sid !== oldId) continue;
@@ -314,7 +319,7 @@ export class Views {
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
     const w = this.opts.written?.(s.id);
     const ran = runningOf(t, s.path);
-    const status = s.status ?? transcriptStatus(ran);
+    const status: Status = s.status ?? transcriptStatus(ran);
     let statusAt = s.statusAt;
     if (!s.status) {
       statusAt = (t.lastTs && Date.parse(t.lastTs)) || mtimeOf(s.path) || 0;
@@ -322,6 +327,10 @@ export class Views {
       for (const a of t.agents()) if (a.end && !a.running) statusAt = Math.max(statusAt, Date.parse(a.end) || 0);
       if (ran.ask?.since) statusAt = ran.ask.since;
     }
+    // R6.8: the question or plan another process asks, which the page shows read-only. Only while
+    // it is what makes the session need you: not with a request of ours, nor for an ask our own
+    // process left behind (status.ts gives that no waiting, and the page reads "Not answered").
+    const ask = status === 'waiting' && !s.pending.length ? ran.ask ?? null : null;
     // Section 10: your rename, then Claude's title, then the CLI's ai-title.
     const title = t.customTitle || w?.title || t.aiTitle || first.split('\n')[0].slice(0, 80) || 'New session';
     return {
@@ -334,19 +343,17 @@ export class Views {
       cwd: tilde(s.cwd, this.home),
       prs: t.prs,
       // From the transcript until a driver sets it: working while subagents or forks run, else your
-      // turn, or the main turn runs in another process (status.ts transcriptStatus). "Stopped" is read
-      // from the items by the page.
-      status,
-      statusAt,
-      statusDetail: s.statusDetail,
-      // whether this status comes from Synopia's own process rather than another process's (the
-      // transcript alone, or a terminal that holds it): only then can the page offer Esc, Esc, b, b
-      // and bash mode
-      driven: s.status !== null && !s.statusDetail.terminal && !s.statusDetail.external,
-      // R6.8: the question or plan another process asks, which the page shows read-only. Only while
-      // it is what makes the session need you: not with a request of ours, nor for an ask our own
-      // process left behind (status.ts gives that no waiting, and the page reads "Not answered").
-      ask: status === 'waiting' && !s.pending.length ? ran.ask ?? null : null,
+      // turn, or the main turn runs in another process (status.ts transcriptStatus). The page shows
+      // what status.ts sessionState makes of it, words and marks included.
+      state: sessionState({ status, at: statusAt, detail: s.statusDetail }, {
+        pending: s.pending.map((r) => needsOf(r.kind)),
+        ask,
+        interrupted: interruptedLast(t.items),
+        review: t.agents().filter((a) => a.finished && this.toReview(a)).length,
+        // a status from Synopia's own process, not the transcript alone nor a terminal that holds it
+        driven: s.status !== null && !s.statusDetail.terminal && !s.statusDetail.external,
+      }),
+      ask,
       ...resolveModel(s.choice, { model: typeof t.requestedModel === 'string' ? t.requestedModel : null, effort: effortOf(t.effort) }, this.opts.defaultModel?.()),
       outbox: s.outbox.map(({ id, text, images, landed, queued }) => (landed ? { id, text, images, landed, queued } : { id, text, images, queued })),
       bang: s.bang,
@@ -417,7 +424,7 @@ export class Views {
   // The sessions part of `hello`: meta, status, subagents, background work and the stream preview.
   sessions(): object[] {
     return [...this.live.values()].map((s) => ({
-      ...this.metaOf(s), agents: s.t.agents(), background: s.t.background(), stream: s.stream, held: s.held,
+      ...this.metaOf(s), agents: this.agentsOut(s.t.agents()), background: s.t.background(), stream: s.stream, held: s.held,
     }));
   }
 
@@ -433,7 +440,7 @@ export class Views {
     return {
       ...this.metaOf(s), items: v.items, total: v.total, background: s.t.background(), stream: s.stream,
       pending: s.pending,
-      agents: s.t.agents().map((a) => ({ ...a, items: s.children.get(a.id)?.t.view(WINDOW).items ?? [] })),
+      agents: this.agentsOut(s.t.agents()).map((a) => ({ ...a, items: s.children.get(a.id)?.t.view(WINDOW).items ?? [] })),
     };
   }
 
@@ -502,7 +509,7 @@ export class Views {
     s.statusAt = at;
     s.statusDetail = detail;
     // the turn stopped with messages still queued: they go once they've had time to land
-    if (!RUNNING.has(status) && s.outbox.some((o) => !o.landed)) this.later(s, OUTBOX_GRACE_MS);
+    if (!queuesBehind(status) && s.outbox.some((o) => !o.landed)) this.later(s, OUTBOX_GRACE_MS);
     this.flush(s);
   }
 
@@ -519,6 +526,7 @@ export class Views {
     if (!s) return;
     s.pending = [...s.pending.filter((r) => r.id !== request.id), request];
     this.broadcast({ t: 'pending', sid, request });
+    this.queue(s); // needs you, and on what: after the card count reaches the status (cards.ts)
   }
 
   clearPending(sid: string, id: string): void {
@@ -526,6 +534,7 @@ export class Views {
     if (!s || !s.pending.some((r) => r.id === id)) return;
     s.pending = s.pending.filter((r) => r.id !== id);
     this.broadcast({ t: 'pending', sid, cleared: id });
+    this.queue(s);
   }
 
   setStream(sid: string, text: string | null): void {
@@ -623,7 +632,7 @@ export class Views {
   // Whether a turn runs that a message sent now would queue behind.
   queues(sid: string): boolean {
     const s = this.live.get(sid);
-    return Boolean(s?.status && RUNNING.has(s.status));
+    return Boolean(s?.status && queuesBehind(s.status));
   }
 
   // A message the driver took while a turn ran (main.ts): it is queued, and the
@@ -680,7 +689,7 @@ export class Views {
     if (s.outboxTimer) clearTimeout(s.outboxTimer);
     s.outboxTimer = setTimeout(() => {
       s.outboxTimer = null;
-      if (s.status && RUNNING.has(s.status)) { this.flush(s); return; }
+      if (s.status && queuesBehind(s.status)) { this.flush(s); return; }
       if (Date.now() - s.statusAt >= OUTBOX_GRACE_MS - 50) s.outbox = s.outbox.filter((o) => o.landed);
       this.flush(s);
       if (s.outbox.length) this.later(s, OUTBOX_GRACE_MS);
@@ -724,6 +733,7 @@ export class Views {
     this.settleOutbox(s, ch.items);
     this.settleBang(s, ch.items);
     const meta = this.metaOf(s);
+    this.opts.badge?.set(s.id, badgeOf(meta.state));
     const key = JSON.stringify(meta);
     if (key !== s.sent) {
       s.sent = key;
@@ -736,7 +746,7 @@ export class Views {
       this.opts.onRunning?.(s.id, ran);
     }
     if (ch.agents.length) {
-      this.broadcast({ t: 'agents', sid: s.id, upsert: ch.agents.map((id) => s.t.getAgent(id)).filter(Boolean) });
+      this.broadcast({ t: 'agents', sid: s.id, upsert: this.agentsOut(ch.agents.map((id) => s.t.getAgent(id)).filter((a): a is Agent => Boolean(a))) });
     }
     if (ch.background.length) {
       this.broadcast({ t: 'background', sid: s.id, upsert: ch.background.map((id) => s.t.getBackground(id)).filter(Boolean) });
@@ -778,7 +788,26 @@ export class Views {
 
   private broadcast(msg: object): void {
     for (const c of this.opts.clients()) c.send(msg);
-    this.opts.onChange?.();
+  }
+
+  // A "For review: …" subagent not marked reviewed yet (R10.1).
+  private toReview(a: Agent): boolean {
+    return a.review && !this.opts.reviewed?.(a.id);
+  }
+
+  // Subagents as the pages get them: `review` is true while the deliverable waits to be reviewed.
+  private agentsOut(list: Agent[]): Agent[] {
+    return list.map((a) => (a.review && !this.toReview(a) ? { ...a, review: false } : a));
+  }
+
+  // "Mark reviewed" (the caller stores it): the subagent's line and its session's count change.
+  reviewed(agentId: string): void {
+    for (const s of this.live.values()) {
+      const a = s.t.getAgent(agentId);
+      if (!a) continue;
+      this.broadcast({ t: 'agents', sid: s.id, upsert: this.agentsOut([a]) });
+      this.flush(s);
+    }
   }
 }
 
@@ -795,6 +824,21 @@ function landsAs(q: Outbox, it: Item): boolean {
   if (ts < q.at - 2000) return false;
   const text = (it.text ?? '').replace(/\n\n\[cut: message continues\]$/, '').trim(), sent = q.text.trim();
   return text ? sent === text || (sent.startsWith(text) && it.text !== text) : q.images > 0 && !sent && Boolean(it.images);
+}
+
+// The page's kinds for a request: a plan, a permission, else a question.
+function needsOf(kind: string): Needs {
+  return kind === 'plan' ? 'plan' : kind === 'permission' ? 'permission' : 'question';
+}
+
+// Stopped by you: the latest item (a retitle after Esc Esc aside) is the `stop` interrupt marker.
+// claude-jsonl.ts sets `interrupted` for that marker only; a turned-down tool is `turnedDown`.
+function interruptedLast(items: Item[]): boolean {
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].k === 'title') continue;
+    return items[i].k === 'you' && items[i].interrupted === true;
+  }
+  return false;
 }
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {

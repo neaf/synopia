@@ -36,7 +36,7 @@ const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
-await c.load(`${url}#${A.slice(0, 8)}`, `__synopia.current() === '${A}' && __synopia.cur().items.some(i => i.id === 'toolu_bfg') && __synopia.cur().driven === true`);
+await c.load(`${url}#${A.slice(0, 8)}`, `__synopia.current() === '${A}' && __synopia.cur().items.some(i => i.id === 'toolu_bfg') && __synopia.cur().state.driven === true`);
 const sentOf = await spySent(c);
 const K = keyTable(key); // b, l (x has its own prompt, close.mjs), j, i, esc
 const asking = () => ev(`(() => { const p = document.querySelector('.composer.asking .int-ask'); return p && getComputedStyle(p).display !== 'none' ? p.textContent : null; })()`);
@@ -86,11 +86,11 @@ check('Esc then l:the interrupt prompt alone, still nothing sent', (await asking
 
 // the turn ending, or the steps going to the background some other way, cancels it
 await K.b();
-await ev(`__synopia.inject({ t: 'session', id: '${A}', status: 'idle', statusAt: Date.now() })`);
+await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'idle', light: 'amber', tone: 'amber', word: 'Your turn', mark: 'stopped', since: Date.now() } })`);
 check('the turn ending cancels it', (await asking()) === null && (await marked()).length === 0);
 await K.b();
 check('with the turn over, b asks nothing', (await asking()) === null);
-await ev(`__synopia.inject({ t: 'session', id: '${A}', status: 'busy', statusAt: Date.now() })`);
+await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'busy', light: 'green', tone: 'green', word: 'Working', mark: 'work', since: Date.now() } })`);
 await K.b();
 await ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total, upsert: s.items.filter(i => i.fg).map(i => { const { fg, ...rest } = i; return rest; }) }))(__synopia.cur())`);
 check('the steps no longer foreground: cancelled', (await asking()) === null && (await marked()).length === 0);
@@ -105,8 +105,8 @@ await ev('document.getElementById("msg").value = ""'); await K.esc();
 // a session Synopia doesn't drive: the first b does nothing. Its Bash runs in the other process's
 // foreground (no SDK task of Synopia's marks it `fg`: task_started reaches only the process that runs it)
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`); await ev('document.activeElement.blur()');
-check('the other session: not driven, its Bash runs in the foreground', await c.until(`(s => s?.id === '${B}' && s.driven === false && s.items.some(i => i.id === 'toolu_bother' && i.state === 'running') && !s.background.some(b => b.toolUseId === 'toolu_bother'))(__synopia.cur())`),
-  JSON.stringify(await ev(`(s => ({ current: __synopia.current(), driven: s?.driven, items: s?.items.map(i => [i.id, i.fg, i.state]), background: s?.background.map(b => b.toolUseId) }))(__synopia.cur())`)));
+check('the other session: not driven, its Bash runs in the foreground', await c.until(`(s => s?.id === '${B}' && s.state.driven === false && s.items.some(i => i.id === 'toolu_bother' && i.state === 'running') && !s.background.some(b => b.toolUseId === 'toolu_bother'))(__synopia.cur())`),
+  JSON.stringify(await ev(`(s => ({ current: __synopia.current(), driven: s?.state.driven, items: s?.items.map(i => [i.id, i.fg, i.state]), background: s?.background.map(b => b.toolUseId) }))(__synopia.cur())`)));
 await K.b();
 check('not driven: b asks nothing and sends nothing', (await asking()) === null && (await marked()).length === 0 && (await sent()).length === 1);
 await sleep(50);

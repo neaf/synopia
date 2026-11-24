@@ -55,21 +55,14 @@
   const kind = (k, glyphOnly) => `<span class="kind kd-${k}${glyphOnly ? " g" : ""}"${glyphOnly ? ` title="${KG[k][0]}" aria-label="${KG[k][0]}" role="img"` : ""}>${ind("s_" + k)}${glyphOnly ? "" : KG[k][0]}</span>`;
 
 /* which mark each thing shows */
-function sessionMarkKey(s) {
-  const st = stateOf(s);
-  if (st === "red") return "pause";
-  /* the storyboard's states (status.ts says what drives each): lock, frozen grey arc, amber dashes turning back, rings shrinking */
-  const phase = { signedout: "creds", stale: "stale", retrying: "ratelimit", compacting: "compact" }[s.status];
-  if (phase) return phase;
-  if (st === "green") return s.statusDetail?.queued ? "queued" : "work";
-  if (s.status === "failed") return "failed";
-  return "stopped"; // your turn: Claude stopped and waits for you (grey square), whether or not background work runs
-}
+/* the session's mark comes with its state (status.ts sessionState): the storyboard's states, a lock, a frozen
+   grey arc, amber dashes turning back, rings shrinking, the turning arc, the red stripes, the squares */
+const sessionMarkKey = s => s.state.mark;
 const sessionMark = s => ind(sessionMarkKey(s));
 const kindKey = x => x.agent ? (x.agent.fork ? "fork" : "sub") : x.bg ? (x.bg.kind === "monitor" ? "mon" : "shell") : "sub";
 function bgMarkKey(x) {
   if (x.running) return "k_" + kindKey(x);
-  if (x.agent && isReview(x.agent) && !reviewed.has(x.agent.id)) return "review";
+  if (x.agent && x.agent.review) return "review"; // a finished deliverable not marked reviewed (the backend's flag)
   if (x.failed) return "failed";
   if (x.st === "timed out") return "timeout";
   if (x.st === "stopped" || x.st === "killed") return "stopped";

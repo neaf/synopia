@@ -170,7 +170,7 @@ function setup() {
   const q = fakeQuery({ onInput: (_, m) => { inputs.push(m); } });
   const sessions = new Sessions({ store, views, sdk: q.sdk, home: root });
   sessions.start();
-  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { status: string; bang: (BangRun & { landed?: string }) | null } | undefined;
+  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string }; bang: (BangRun & { landed?: string }) | null } | undefined;
   return { sessions, SID, cwd, inputs, q, got, last };
 }
 const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
@@ -190,12 +190,12 @@ test('delivery: the command and its output go as shouldQuery:false user messages
   // A process started only for this: its init starts no turn.
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
   await new Promise((r) => setTimeout(r, 20));
-  assert.notEqual(last()?.status, 'busy');
+  assert.notEqual(last()?.state.status, 'busy');
   // The next message goes as usual and starts the turn.
   assert.equal(sessions.send(SID, 'what did it print?').ok, true);
   await until(() => inputs.length === 3);
   assert.equal(inputs[2].shouldQuery, undefined);
-  assert.equal(last()?.status, 'busy');
+  assert.equal(last()?.state.status, 'busy');
   sessions.stop();
 });
 

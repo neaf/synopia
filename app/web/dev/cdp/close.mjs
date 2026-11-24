@@ -47,7 +47,7 @@ const c = await connect();
 const { ev, check, key } = c;
 const dialogs = [];
 c.onEvent((m) => { if (m.method === 'Page.javascriptDialogOpening') { dialogs.push(m.params.type); c.cdp('Page.handleJavaScriptDialog', { accept: false }); } });
-await c.load(`${url}#${A.slice(0, 8)}`, `(s => s?.id === '${A}' && s.driven === true && s.agents.length === 2)(__synopia.cur()) && __synopia.data().filter(s => s.id === '${B}' || s.id === '${C}').length === 2`);
+await c.load(`${url}#${A.slice(0, 8)}`, `(s => s?.id === '${A}' && s.state.driven === true && s.agents.length === 2)(__synopia.cur()) && __synopia.data().filter(s => s.id === '${B}' || s.id === '${C}').length === 2`);
 const sent = await spySent(c);
 const K = keyTable(key);
 const asking = () => ev(`(() => { const p = document.querySelector('.composer.asking .int-ask'); return p && getComputedStyle(p).display !== 'none' ? p.textContent : null; })()`);
@@ -95,7 +95,7 @@ check('an idle session: the prompt alone', (await asking()) === ASK, await askin
 await K.j();
 // a session another process drives: only removed from Synopia
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`); await ev('document.activeElement.blur()');
-check('the other session is not driven', await c.until(`__synopia.current() === '${B}' && !!__synopia.mounted() && __synopia.cur().driven === false`));
+check('the other session is not driven', await c.until(`__synopia.current() === '${B}' && !!__synopia.mounted() && __synopia.cur().state.driven === false`));
 await K.x();
 check('not driven: "Remove it from Synopia?"', (await asking()) === 'Remove it from Synopia? x again. Its other process keeps running.', await asking());
 await K.j();

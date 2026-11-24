@@ -37,9 +37,10 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 
 A step has one or more of: `message` (an SDK message the query yields; `session_id` and `uuid` filled in), `ask` (a `canUseTool` call: `tool`, `input`, `id` the request id, `toolUseId`, `suggestions`, `agentId`; the next step waits for its answer), `append` (records written to the transcript), `send` (a message you send, through `Sessions.send`), plus `after` (ms after the step before) and `ago` (ms: the step plays in the past).
 - The clock: while a step with `ago` plays, Sessions' clock reads that much earlier, so a status, a card's `since` or a stale timer starts in the past. Steps play one at a time across sessions, each handled before the clock moves back.
+- A check that injects a `session` frame to change a status sends the whole `state` the backend would (`background.mjs`, `tween.mjs`): the page derives nothing from `status`.
 - Seeding: a state folder whose `state.json` has no `open` list gets every `projects/*/<id>.jsonl` of the tree in id order, each with the script's status, else "your turn" since its last record. Fields already there stay (titles.mjs writes `written` first). A restart on the same folder seeds nothing and plays the steps again.
 - Terminals: every `<tree>/sessions/<pid>.json` is a live Claude Code in a terminal that isn't Synopia's (`helpers.mjs` `terminal`); its process is never asked. A take-over's signal is logged as `scripted.kill` and the pretend CLI exits. Nothing real is signalled and no login shell runs.
-- What reads as whose: a session with its own process is `driven`; one a terminal holds, or whose turn or question the transcript alone shows (no process of Synopia's), is not (`status.ts` `detail.external`). A transcript turn left open with recent records reads as another process's: a "driven, idle" session of a check has `start: true`.
+- What reads as whose: a session with its own process is `driven` (`state.driven`); one a terminal holds, or whose turn or question the transcript alone shows (no process of Synopia's), is not (`status.ts` `detail.external`). A transcript turn left open with recent records reads as another process's: a "driven, idle" session of a check has `start: true`.
 - The script writes to the tree's transcripts as a CLI would, so `run.sh`, `dev.sh --script` and the backend tests run on a copy.
 
 ## Comparing with the prototype
@@ -118,7 +119,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `mode()` | `"normal"` or `"insert"` |
 | `mounted()` | `"<sid>\|<agent>"` of the view on screen, or null |
 | `restoring()` | `true` while a restored view still waits for its items |
-| `cur()` | the shown session: `{id, title, status, driven, items, total, agents, background, outbox, …}` |
+| `cur()` | the shown session: `{id, title, state, items, total, agents, background, outbox, …}`; `state` is the backend's (`status.ts` `sessionState`: `status`, `since`, `detail`, `light`, `tone`, `word`, `mark`, `stopped`, `needsYou`, `review`, `driven`) |
 | `data()` | every session, in the server's order (only the viewed one holds items) |
 | `pending(sid)` | that session's requests (question, permission, plan), oldest first |
 | `layout()` | the sidebar's groups, closed sessions' ids included |

@@ -13,6 +13,7 @@ import { Sessions } from '../../backend/src/sessions.ts';
 import { openStore } from '../../backend/src/store.ts';
 import { toCommands, toModels } from '../../backend/src/sdk.ts';
 import { openScripted, SCRIPT_FILE } from '../../backend/dev/scripted-sdk.ts';
+import type { SessionState } from '../../backend/src/status.ts';
 
 const [src, outDir] = process.argv.slice(2);
 if (!src || !outDir) {
@@ -41,12 +42,13 @@ scripted.attach(sessions);
 await scripted.whenPlayed(); // every step at load: the cards wait, the stream preview is whole
 views.check();
 
-type Dump = { items: object[]; pending: object[]; stream: string | null; [k: string]: unknown };
+type Dump = { items: object[]; pending: object[]; stream: string | null; state: SessionState; [k: string]: unknown };
 const sessionsOut = views.ids().map((id) => {
-  const { items, pending, stream, ...rest } = views.dump(id) as Dump;
+  const { items, pending, stream, state, ...rest } = views.dump(id) as Dump;
   const all = withPending(items, pending);
   if (stream) all.push({ id: 'stream', k: 'claude', ts: new Date().toISOString(), text: stream });
-  return { ...rest, name: '', items: all };
+  // the prototype reads the status and its age as fields of their own
+  return { ...rest, status: state.status, statusAt: state.since, name: '', items: all };
 });
 sessions.stop();
 views.stop();
