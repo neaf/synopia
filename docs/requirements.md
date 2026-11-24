@@ -140,7 +140,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - A click on any thumbnail opens it at full size, fit to the window (its real size if smaller). Esc or a click outside closes it, and ← → move between that message's images. While it shows, no other key acts.
 
 ### 5.3 Message box
-- R5.13 One line: `❯` and the field, centred; it grows for long messages. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
+- R5.13 At least three lines tall, `❯` on the first line, the field growing for long messages; a click anywhere in the box focuses the field. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
   - Pasted images show as thumbnails below the text (R5.12b sizes), each with a small ✕ on hover that removes it. Enter sends them with the text, as base64 PNG or JPEG of at most 5 MB each. The thumbnails come from the pasted image itself, never the server (2026-11-24).
 - R5.14 `/` opens an autocomplete of the session's real commands and skills, with argument hints and descriptions aligned. ↑↓ moves, Tab or Enter fills, Esc closes.
 

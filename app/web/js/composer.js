@@ -166,6 +166,13 @@ function mountComposer(s) {
   };
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; });
+  /* the whole box is the touch target: a press anywhere in it that isn't on a control focuses the field,
+     with the caret at the end when it lands outside the text */
+  const box = ta.closest(".composer");
+  box.addEventListener("mousedown", e => {
+    if (e.target === ta || e.target.closest("button, a, input, .slash, .attach img")) return;
+    e.preventDefault(); ta.focus(); const n = ta.value.length; ta.setSelectionRange(n, n);
+  });
   ta.addEventListener("paste", e => {
     for (const item of e.clipboardData?.items || []) if (item.type.startsWith("image/")) {
       e.preventDefault(); const file = item.getAsFile(), a = { id: uiNewId(), mediaType: file.type, url: URL.createObjectURL(file), data: null };

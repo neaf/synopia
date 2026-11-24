@@ -669,7 +669,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 
 .composer { padding: 9px 14px; }
 .composer { align-items: center; }
-.composer textarea { min-height: 0; height: 1.45em; display: block; }
+.composer textarea { min-height: 3lh; height: auto; display: block; } /* three transcript lines at least, growing as you type */
+.composer { cursor: text; } /* the whole box focuses the field */
+.composer button, .composer .attach img, .composer .slash { cursor: default; }
 .composer > .g { align-self: start; }
 .model-btn { font-size: 12px; color: var(--ink-2); }
 
@@ -686,7 +688,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 /* modes */
 .composer { grid-template-columns: 2ch minmax(0, 1fr); }
 .composer > textarea { grid-column: 2; grid-row: 1; }
-.composer > .g { grid-column: 1; grid-row: 1; align-self: center; }
+.composer > .g { grid-column: 1; grid-row: 1; align-self: start; } /* on the first line, as in the CLI */
 .composer > .slash { grid-column: 1 / -1; }
 body[data-mode="normal"] .dock .composer { background: var(--sub); }
 body[data-mode="normal"] .composer textarea::placeholder { color: var(--faint); }
