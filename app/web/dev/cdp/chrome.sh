@@ -1,8 +1,9 @@
 #!/bin/bash
 # usage: chrome.sh <profile-dir>; starts headless Chrome with its own profile and a remote-debugging port
 # Chrome picks itself (port 0), waits until it answers, writes <profile-dir>/pid and prints the port.
+# ../chrome-bin.sh picks the binary: chrome-headless-shell when installed, so no window takes focus.
 dir=$1; mkdir -p "$dir"; rm -f "$dir/DevToolsActivePort"
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=0 --user-data-dir="$dir" \
+"$("$(dirname "$0")/../chrome-bin.sh")" --headless=new --remote-debugging-port=0 --user-data-dir="$dir" \
   --window-size=1280,820 --no-first-run --no-default-browser-check --disable-background-timer-throttling \
   --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
   about:blank > "$dir/out" 2>&1 &
