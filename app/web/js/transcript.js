@@ -5,7 +5,9 @@ function took(ms) {
   if (m < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
-const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/* times follow macOS's 12- or 24-hour setting, which the app passes in (the web view's locale can't see it) */
+const hourOpts = () => typeof window.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: window.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {};
+const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...hourOpts() });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 /* a foreground Bash or Agent still running: b, b can send it to the background, and the first b marks it (R9) */
@@ -173,6 +175,9 @@ function waveHTML(tools, s) {
    can keep the blocks that didn't change and replace the ones that did. */
 function itemsHTML(items, sessionBusy, s) {
   const out = []; let run = []; let turnStart = null; let turnKey = null; let turnMs = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
+  /* title changes (R5.x) wait for the next block: one between turns goes after the turn's "Worked for" line */
+  let titles = [];
+  const putTitles = () => { out.push(...titles); titles = []; };
   const flush = () => {
     if (!run.length) return;
     const agents = run.filter(t => t.name === "Agent" || t.name === "Task"), other = run.filter(t => !(t.name === "Agent" || t.name === "Task"));
@@ -183,7 +188,7 @@ function itemsHTML(items, sessionBusy, s) {
   const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   const prompt = (html, ts, key) => {
-    flush(); endTurn();
+    flush(); endTurn(); putTitles();
     if (ts && day(ts) !== lastDay) { out.push([`day:${key}`, `<div class="done">${day(ts)}</div>`]); lastDay = day(ts); }
     out.push([`you:${key}`, `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`]); turnStart = ts; turnKey = key; turnMs = null;
   };
@@ -194,6 +199,9 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images && !it.imgs?.length ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}${thumbsHTML(it.imgs, current, view, "your message")}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
+    /* the shown title changed (R5.x): a quiet line in place, like a day separator */
+    if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }
+    if (titles.length && it.k !== "you" && !(it.k === "tool" && it.answer)) { flush(); putTitles(); }
     flush();
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
@@ -218,11 +226,16 @@ function itemsHTML(items, sessionBusy, s) {
   }
   flush();
   if (waiting) flushFiles(); else if (!sessionBusy) endTurn(); else flushFiles();
+  putTitles();
   return out;
 }
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
 const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
+/* messages you sent while the turn runs, oldest first: your prompt's band, dimmed, with the moving
+   queued mark, just above the live line, where each lands. Once its prompt item is in, that shows instead. */
+const queuedOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
+const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt queued"><span class="g">❯</span><div class="md">${q.images ? `<p class="img">[${q.images} pasted image${q.images > 1 ? "s" : ""}]</p>` : ""}${md(q.text)}<p class="qlabel">${ind("queued")}Queued, goes to Claude at its next step</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
    compacting, rate limited or no updates instead, and say a message you sent is queued. */
 function liveLine(s, A) {
@@ -239,7 +252,7 @@ function phaseText(s) {
   if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
   if (s.status === "stale") return `Nothing for ${age(s.statusAt)}; the session may be gone`;
   if (s.status === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
-  if (s.status === "busy" && d.queued) return queuedText(d.queued);
+  if (s.status === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";
 }
 /* an age that the 1 s timer keeps current */
@@ -323,6 +336,7 @@ function logEntries(s, A) {
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
+  if (!A) out.push(...queuedHTML(s));
   out.push(["live", liveLine(s, A)]);
   return out;
 }
@@ -418,7 +432,7 @@ conv.addEventListener("click", e => {
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
-  else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
+  else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") openModelPicker();
 });
 /* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */

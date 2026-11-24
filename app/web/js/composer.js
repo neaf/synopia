@@ -1,6 +1,6 @@
 /* Composer: the message box, pasted images, the slash menu and the model picker (split from prototype/app.html).
    mountComposer runs once per session view (renderConv), so data never resets what you type. */
-const attachments = []; // pasted images: { url (an object URL, for the thumbnail), data (its data: URL, for sending) }
+const attachments = []; // pasted images: { n (its [Image #n] tag in the text), url (an object URL, for the thumbnail), data (its data: URL, for sending) }
 const newUuid = () => crypto.randomUUID ? crypto.randomUUID() : "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c => (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16));
 
 /* ---------- slash commands and /model, from the menu of the session's folder ---------- */
@@ -82,6 +82,56 @@ function attachSlash(ta, onModel) {
   ta.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== ta) close(); }, 120)); // the model button refocuses it
 }
 
+/* ---------- pasted images and their [Image #N] tags, as in the Claude Code CLI (R5.13) ---------- */
+/* A paste puts the image's tag at the caret; the number counts up through the session, as the CLI's does
+   (one more than any tag in this session's prompts or the draft). The ✕ removes the image and its tag; the
+   other tags keep their numbers. An image whose tag is deleted from the text stays in the row, dimmed, and
+   is not sent unless the tag comes back. */
+const imageTag = n => `[Image #${n}]`;
+const tagged = (a, text) => a.n > 0 && text.includes(imageTag(a.n));
+function nextImageNumber(s, text) {
+  let max = 0;
+  for (const t of [text, ...(s?.items || []).filter(it => it.k === "you").map(it => it.text || "")])
+    for (const m of String(t).matchAll(/\[Image #(\d+)\]/g)) max = Math.max(max, +m[1]);
+  for (const a of attachments) max = Math.max(max, a.n || 0);
+  return max + 1;
+}
+/* the tag goes in at the caret, a space between it and any text it touches */
+function insertTag(ta, n) {
+  const v = ta.value, i = ta.selectionStart, j = ta.selectionEnd;
+  const tag = (i > 0 && !/\s/.test(v[i - 1]) ? " " : "") + imageTag(n) + (j < v.length && !/\s/.test(v[j]) ? " " : "");
+  ta.setRangeText(tag, i, j, "end");
+  ta.dispatchEvent(new Event("input"));
+}
+/* the ✕: the image goes, with its tag and one space beside it */
+function unattach(i) {
+  const [a] = attachments.splice(i, 1), ta = document.getElementById("msg");
+  if (a && ta && a.n) {
+    const v = ta.value, k = v.indexOf(imageTag(a.n));
+    if (k >= 0) {
+      let from = k, to = k + imageTag(a.n).length;
+      if (v[to] === " ") to++; else if (from > 0 && v[from - 1] === " ") from--;
+      ta.value = v.slice(0, from) + v.slice(to); ta.setSelectionRange(from, from);
+      ta.dispatchEvent(new Event("input"));
+    }
+  }
+  renderAttachments(); uiChanged();
+}
+/* a draft kept before tags (its images without a number): each gets one, its tag at the end of the text */
+function tagLoose(s, ta) {
+  const loose = attachments.filter(a => !(a.n > 0)); if (!loose.length) return;
+  for (const a of loose) { a.n = nextImageNumber(s, ta.value); ta.value += (ta.value && !/\s$/.test(ta.value) ? " " : "") + imageTag(a.n); }
+  ta.dispatchEvent(new Event("input")); renderAttachments(); uiChanged();
+}
+/* the thumbnails of images whose tag is gone from the text: dimmed, a dashed line, not sent */
+function markUntagged() {
+  const ta = document.getElementById("msg"); if (!ta) return;
+  conv.querySelectorAll(".composer .attach .thumb-wrap").forEach((f, i) => {
+    const a = attachments[i], off = Boolean(a) && !tagged(a, ta.value);
+    f.classList.toggle("untagged", off);
+    f.title = off ? `Not sent: ${imageTag(a.n)} is no longer in the message` : "";
+  });
+}
 /* the pasted images as thumbnails (images.js), each with a ✕ on hover; a removed one's object URL is freed */
 let attachedUrls = [];
 function renderAttachments() {
@@ -89,7 +139,8 @@ function renderAttachments() {
   attachedUrls = attachments.map(a => a.url);
   const box = conv.querySelector(".composer .attach"); if (!box) return;
   box.classList.add("thumbs");
-  box.innerHTML = attachments.map((a, i) => `<figure class="thumb-wrap">${thumbHTML(a.url, 0, 0, `Pasted image ${i + 1}`)}<button class="unattach" data-unattach="${i}" aria-label="Remove pasted image ${i + 1}" title="Remove">✕</button></figure>`).join("");
+  box.innerHTML = attachments.map((a, i) => `<figure class="thumb-wrap" data-n="${a.n || 0}">${thumbHTML(a.url, 0, 0, `Pasted image ${a.n || i + 1}`)}<button class="unattach" data-unattach="${i}" aria-label="Remove pasted image ${a.n || i + 1}" title="Remove">✕</button></figure>`).join("");
+  markUntagged();
 }
 /* the header's model button and /model open the same picker */
 function openModelPicker() {
@@ -212,15 +263,16 @@ function mountComposer(s) {
   /* Enter sends the text and the pasted images (base64 PNG or JPEG, 5 MB each) to the session's input.
      s.id follows the session when its id changes (a new session's real id), so the message reaches it. */
   const sendMsg = () => {
-    if (!ta.value.trim() && !attachments.length) return;
-    if (ta.value.trim() === "/model" && !attachments.length) { openModelPicker(); return; } // typed in full: the picker, not a message
+    const going = attachments.filter(a => tagged(a, ta.value)); // an image whose tag was deleted stays behind
+    if (!ta.value.trim() && !going.length) return;
+    if (ta.value.trim() === "/model" && !going.length) { openModelPicker(); return; } // typed in full: the picker, not a message
     const images = [];
-    for (const a of attachments) {
+    for (const a of going) {
       if (!a.data) { toast("An image is still being read. Press Enter again in a moment."); return; }
       const m = /^data:(image\/(?:png|jpeg));base64,(.*)$/.exec(a.data);
       if (!m) { toast("Only PNG and JPEG images can be sent. Remove the others first."); return; }
       if (m[2].length * 3 / 4 > 5 * 1024 * 1024) { toast("An image is over 5 MB. Remove it, or paste a smaller one."); return; }
-      images.push({ mediaType: m[1], data: m[2] });
+      images.push({ mediaType: m[1], data: m[2], n: a.n }); // the backend sends the text, then these in tag order (content.ts)
     }
     if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your message is still in the box."); return; }
     if (termPid(cur()) || takeoverWait?.sid === s.id) { takeBack(s, ta, images); return; } // the box keeps it until the session is back
@@ -230,7 +282,7 @@ function mountComposer(s) {
     uiFlush(); // the sent draft is gone from the backend at once, its images too
   };
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
-  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; });
+  ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; markUntagged(); });
   /* the whole box is the touch target: a press anywhere in it that isn't on a control focuses the field,
      with the caret at the end when it lands outside the text */
   const box = ta.closest(".composer");
@@ -240,12 +292,13 @@ function mountComposer(s) {
   });
   ta.addEventListener("paste", e => {
     for (const item of e.clipboardData?.items || []) if (item.type.startsWith("image/")) {
-      e.preventDefault(); const file = item.getAsFile(), a = { id: uiNewId(), mediaType: file.type, url: URL.createObjectURL(file), data: null };
-      attachments.push(a); renderAttachments();
+      e.preventDefault(); const file = item.getAsFile(), a = { id: uiNewId(), n: nextImageNumber(cur(), ta.value), mediaType: file.type, url: URL.createObjectURL(file), data: null };
+      attachments.push(a); insertTag(ta, a.n); renderAttachments();
       const r = new FileReader(); r.onload = () => { a.data = r.result; uiChanged(); }; r.readAsDataURL(file); // then kept with the draft
     }
   });
   uiEnterComposer(s, ta); // this session's draft: its text, cursor and pasted images (ui.js)
+  tagLoose(s, ta);
   takeRestored(s.id);
   mountTakeover(s, ta);
 }

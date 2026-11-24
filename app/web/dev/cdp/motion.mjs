@@ -98,4 +98,11 @@ const gut = await ev(`(() => { const log = document.querySelector('.log-inner');
 check('gutter marks centred on the ● column and the first line', Math.abs(gut.dx) < .3 && Math.abs(gut.dy) < .3, JSON.stringify(gut));
 await reduce(false);
 console.log('reduced-motion shot: ' + stateDir + '/motion-reduced.png');
+
+// a re-render keeps each running mark's phase (syncMarks pins startTime to the timeline origin)
+const phase = () => ev(`(() => { const a = document.getAnimations().find(a => a.effect?.target?.closest?.('.side .ind')); return a ? { t: a.startTime, cur: a.currentTime } : null; })()`);
+await sleep(200); const p1 = await phase();
+await ev('renderSide()'); await sleep(120);
+const p2 = await phase();
+check('a rebuilt mark keeps its phase (startTime pinned to 0)', !!p1 && !!p2 && p1.t === 0 && p2.t === 0, JSON.stringify([p1, p2]));
 c.print(); c.close();

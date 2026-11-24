@@ -130,7 +130,13 @@ details.step > summary::-webkit-details-marker { display: none; }
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
+/* a message you sent while the turn runs (R5.5): the same band, open and dashed at the edge until
+   Claude takes it in, the text dimmed, a quiet label with the moving queued mark */
+.prompt.queued { background: none; border-left-style: dashed; }
+.prompt.queued > .g, .prompt.queued .md { color: var(--ink-3); }
+.prompt.queued .qlabel { display: flex; align-items: center; gap: .6ch; margin: -.5em 0 0; color: var(--ink-3); }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
+.retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
 .opt-line { color: var(--ink-3); }
 .opt-line.picked { color: var(--ink); font-weight: 700; }
 .md p { margin: 0 0 .85em; }
@@ -224,6 +230,10 @@ button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px
 .thumb-wrap .unattach { position: absolute; top: -5.5px; right: -5.5px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--panel); background: var(--ink-2); color: #fff; font-size: 9px; line-height: 14px; padding: 0; text-align: center; opacity: 0; cursor: pointer; }
 .thumb-wrap:hover .unattach, .thumb-wrap .unattach:focus-visible { opacity: 1; }
 .thumb-wrap .unattach:hover { background: var(--ink); }
+/* a pasted image whose [Image #N] tag was deleted from the text: kept in the row, dimmed with a dashed line, not sent (R5.13) */
+.thumb-wrap.untagged .thumb { opacity: .45; }
+.thumb-wrap.untagged .thumb img { border: 1px dashed var(--ink-3); }
+.img-tag { color: var(--ink-3); }
 
 /* the viewer: one image on the canvas colour, clear of the title bar; the stage scrolls at 100%, the
    footer has the count, the source and the keys (as .nd-foot). Fit: never larger than its real size. */
@@ -567,7 +577,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 /* running cards: neutral, kind colour on the left edge */
 .card { background: var(--panel); border: 1px solid var(--line); } /* no coloured left edge: the mark carries the kind */
 .card:hover { background: var(--sub); }
-.card .d { color: var(--ink); }
+.card .d { color: var(--ink-3); font-weight: 400; font-size: 11px; } /* quiet like "Working" and the Past times */
 .kw { font-weight: 700; color: var(--kc); }
 .kc-sub { --kc: var(--k-sub); } .kc-fork { --kc: var(--k-fork); } .kc-shell { --kc: var(--k-shell); } .kc-mon { --kc: var(--k-mon); }
 

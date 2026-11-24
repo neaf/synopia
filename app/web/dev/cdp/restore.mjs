@@ -55,8 +55,9 @@ await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = Math.
 await sleep(200);
 const mid = await anchor();
 check('session 1 is scrolled mid-way', !JSON.parse(mid).bottom && await ev(`document.getElementById('log').scrollTop > 40`), mid);
-await ev(`(() => { const t = document.getElementById('msg'); t.value = 'a draft to keep'; t.dispatchEvent(new Event('input')); t.setSelectionRange(2, 7); })()`);
-await paste();
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'a draft to keep'; t.dispatchEvent(new Event('input')); t.setSelectionRange(15, 15); })()`);
+await paste(); // its [Image #1] tag at the caret (R5.13)
+await ev(`document.getElementById('msg').setSelectionRange(2, 7)`);
 check('the pasted image is read', await until(`attachments.length === 1 && !!attachments[0].data`));
 check('session 2 shows its card', await goTo(S2) && await until(`!!document.querySelector('.qa-card')`));
 for (const k of ['j', ' ', 'Enter', 'j', ' ']) await key(k);
@@ -77,7 +78,7 @@ async function checkSession1(tag, firstLoad) {
   if (!firstLoad) check(`${tag}: session 1 shows`, await goTo(S1));
   else check(`${tag}: session 1 is the one shown`, await until(`current === '${S1}' && mounted === '${S1}|' && !uiRestoring`));
   check(`${tag}: the scroll lands on the same item within 2 px`, near(await anchor(), mid), `${await anchor()} vs ${mid}`);
-  check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
+  check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep [Image #1]' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
   check(`${tag}: the pasted image is back`, await until(`attachments.length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
   check(`${tag}: its bytes are back for sending`, await until(`/^data:image\\/png;base64,/.test(attachments[0].data || '')`));
   check(`${tag}: the step is open`, await stepOpen('List the demo folder'));

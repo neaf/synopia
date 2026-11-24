@@ -115,14 +115,41 @@ export class FakeDriver {
     if (step.task) this.views.taskStarted(step.sid, step.task.toolUseId, step.task.taskId);
   }
 
-  // Page messages the fake answers: an answer settles its request and the session works for a while.
+  // Page messages the fake answers: an answer settles its request and the session works for a
+  // while. A message sent while a session works is queued (shown pending until a prompt record
+  // with its text lands in the fixture file), and an interrupt sends the queued ones back to the box.
   onMessage(_client: Client, msg: { t: string; [k: string]: unknown }): boolean {
+    if (msg.t === 'send' && typeof msg.sid === 'string' && typeof msg.uuid === 'string' && this.views.queues(msg.sid)) {
+      this.views.sent(msg.sid, msg.uuid, typeof msg.text === 'string' ? msg.text : '', Array.isArray(msg.images) ? msg.images.length : 0);
+      this.recount(msg.sid);
+      return true;
+    }
+    if (msg.t === 'interrupt' && typeof msg.sid === 'string' && this.views.queues(msg.sid)) {
+      const texts = this.waiting(msg.sid).map((q) => q.text).filter((t) => t.trim());
+      this.views.setStatus(msg.sid, 'stopped');
+      if (texts.length) this.views.restore(msg.sid, texts);
+      return true;
+    }
     if (msg.t !== 'answer' || typeof msg.sid !== 'string' || typeof msg.requestId !== 'string') return false;
     const sid = msg.sid;
     this.views.clearPending(sid, msg.requestId);
     this.views.setStatus(sid, 'busy');
     this.later(3000, () => this.views.setStatus(sid, 'idle'));
     return true;
+  }
+
+  // The session's queued messages that haven't landed.
+  private waiting(sid: string) {
+    return (this.views.meta(sid)?.outbox ?? []).filter((q) => !q.landed);
+  }
+
+  // The queued count of the status, as status.ts keeps it: looked at again each 250 ms until none is left.
+  private recount(sid: string): void {
+    const meta = this.views.meta(sid);
+    if (!meta || !this.views.queues(sid)) return;
+    const n = this.waiting(sid).length;
+    if (n !== (meta.statusDetail.queued ?? 0)) this.views.setStatus(sid, meta.status, meta.statusAt, n ? { queued: n } : {});
+    if (n) this.later(250, () => this.recount(sid));
   }
 
   private later(ms: number, fn: () => void): void {

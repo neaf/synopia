@@ -53,7 +53,7 @@ function uiApplyHello(u) {
     if (x.draft) {
       const atts = (x.draft.images || []).map(im => {
         uiStored.add(im.id);
-        const a = { id: im.id, mediaType: im.mediaType, url: imageUrl(sid, null, `draft:${im.id}`), data: null };
+        const a = { id: im.id, n: im.n || 0, mediaType: im.mediaType, url: imageUrl(sid, null, `draft:${im.id}`), data: null };
         fetch(a.url).then(r => r.ok ? r.blob() : null).then(b => { if (!b) return; const fr = new FileReader(); fr.onload = () => { a.data = fr.result; }; fr.readAsDataURL(b); }).catch(() => {});
         return a;
       });
@@ -209,7 +209,7 @@ function uiTop() {
 function uiSessionNow(sid, fresh) {
   const u = uiS[sid], live = mounted && mounted.startsWith(sid + "|") && document.getElementById("msg");
   const d = live ? { text: live.value, cursor: [live.selectionStart, live.selectionEnd], atts: attachments } : uiDrafts.get(sid);
-  const images = d ? d.atts.filter(a => a.id && (uiStored.has(a.id) || a.data)).map(a => ({ id: a.id, mediaType: a.mediaType })) : [];
+  const images = d ? d.atts.filter(a => a.id && (uiStored.has(a.id) || a.data)).map(a => ({ id: a.id, mediaType: a.mediaType, n: a.n })) : [];
   if (d) for (const a of d.atts) if (a.id && !uiStored.has(a.id) && a.data) fresh.push(a);
   const steps = [...openSteps].filter(k => k.startsWith(sid + "|")).map(k => k.slice(sid.length + 1));
   const ids = new Set(requestsOf({ id: sid }).map(r => r.id)), cards = {};

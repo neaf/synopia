@@ -105,3 +105,14 @@ test('image thumbnails: a hostile ref, size or session stays inside its attribut
   assert.ok(!html.includes('background:url'), 'a size that is not a number is dropped');
   assert.ok(html.includes('style="--iw:400;--ih:100"'));
 });
+
+test('markdown lists: nested content, numbering kept across blank lines, a written start', () => {
+  const { md } = page();
+  const src = "1. **Counts** (`x.rb`). Main issue.\n   - `a` counts files.\n   - `b` counts more.\n\n   So it's wrong.\n\n2. **Checks** outside.\n\n3. **Small one.**";
+  const html = md(src);
+  assert.equal((html.match(/<ol/g) || []).length, 1, 'one list, not one per point');
+  assert.equal((html.match(/<ol>/g) || []).length, 1, 'it starts at 1');
+  assert.match(html, /<li><p><b>Counts<\/b>[\s\S]*<ul><li><code>a<\/code> counts files.<\/li><li><code>b<\/code> counts more.<\/li><\/ul><p>So it&#39;s wrong.<\/p><\/li><li><b>Checks<\/b> outside.<\/li><li><b>Small one.<\/b><\/li><\/ol>/);
+  assert.equal(md('4. four\n5. five'), '<ol start="4"><li>four</li><li>five</li></ol>');
+  assert.equal(md('- a\n- b\n  more of b\n- c'), '<ul><li>a</li><li>b<br>more of b</li><li>c</li></ul>');
+});

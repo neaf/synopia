@@ -30,6 +30,8 @@ import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
 import { pruneUi, rekeyUi } from './ui.ts';
+import { userContent } from './content.ts';
+import type { Image } from './content.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -41,7 +43,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const RECENT = 50;
 export type ListFn = (opts?: ListSessionsOptions) => Promise<SDKSessionInfo[]>;
 export type Recent = { id: string; title: string; cwd: string; lastModified: number; terminal?: number };
-export type Image = { mediaType: string; data: string };
+export type { Image } from './content.ts';
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
 // The streaming preview (plan section 7): text deltas of the main conversation, per message id
@@ -271,13 +273,8 @@ export class Sessions {
       if (!IMAGE_TYPES.includes(im.mediaType)) return { ok: false, error: 'Only PNG and JPEG images can be sent.' };
       if (Buffer.byteLength(im.data, 'base64') > MAX_IMAGE_BYTES) return { ok: false, error: 'An image is over 5 MB. Send a smaller one.' };
     }
-    if (!text.trim() && !images.length) return { ok: false, error: 'Nothing to send.' };
-    const content: Content = images.length
-      ? [
-        ...images.map((im) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: im.mediaType as 'image/png', data: im.data } })),
-        ...(text.trim() ? [{ type: 'text' as const, text }] : []),
-      ]
-      : text;
+    const content: Content = userContent(text, images); // the text, then the images whose tags it holds
+    if (typeof content === 'string' && !text.trim()) return { ok: false, error: 'Nothing to send.' };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     if (a.terminal) return this.queueTakeover(a, content, id, text);
     return this.deliver(a, content, id, text, false);
@@ -327,6 +324,12 @@ export class Sessions {
     this.log('takeover.queued', { sid: a.id, pid: a.terminal?.pid ?? null });
     this.tryTakeover(a);
     return { ok: true, sid: a.id };
+  }
+
+  // A terminal holds it (or a message of yours waits to take it back): a send stays in the box.
+  terminalHolds(sid: string): boolean {
+    const a = this.live.get(this.resolve(sid));
+    return Boolean(a && (a.terminal || a.takeover));
   }
 
   // Esc or an edit in the box: the message no longer waits for the terminal.

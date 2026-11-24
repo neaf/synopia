@@ -49,6 +49,7 @@
 
 /* ---------- transcript ---------- */
 :root[data-theme="dark"] .prompt { background: #2C3644; }
+:root[data-theme="dark"] .prompt.queued { background: none; }
 :root[data-theme="dark"] .atype.fork { color: var(--fork); }
 /* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
 :root[data-theme="dark"] .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }

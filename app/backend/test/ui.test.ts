@@ -80,6 +80,9 @@ test('ui: draft images are files, served back, and removed when the draft drops 
   patchUi(store, { sessions: { [SID]: { draft: { text: 'hello!', cursor: [6, 6], images: [{ id: 'img1', mediaType: 'image/png' }] } } } });
   assert.deepEqual(fs.readdirSync(drafts(SID)), ['img1.png']);
   assert.equal(store.state.ui.sessions[SID].draft?.images[0].size, 100);
+  // each image keeps the number of its [Image #n] tag; a bad number is dropped
+  patchUi(store, { sessions: { [SID]: { draft: { text: 'a [Image #2] b', cursor: [0, 0], images: [{ id: 'img1', mediaType: 'image/png', n: 2 }, { id: 'img3', mediaType: 'image/png', n: -1, data: png(10) }] } } } });
+  assert.deepEqual(store.state.ui.sessions[SID].draft?.images, [{ id: 'img1', mediaType: 'image/png', size: 100, n: 2 }, { id: 'img3', mediaType: 'image/png', size: 10 }]);
   // sent: the draft is cleared, and its folder goes
   patchUi(store, { sessions: { [SID]: { draft: { text: '', cursor: [0, 0], images: [] } } } });
   assert.equal(store.state.ui.sessions[SID], undefined, 'nothing left for the session');

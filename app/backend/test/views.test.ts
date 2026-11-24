@@ -520,3 +520,46 @@ test('toolOutput: the full result read again from its line, also after the file 
   assert.equal(views.toolOutput(c, id, null, 'toolu_o'), false);
   assert.match(String(c.take('toast')[0].text), /gone or was rewritten/);
 });
+
+test('outbox: a message sent during a turn is queued, lands by its prompt record once, an interrupt takes the rest (R5.5)', async () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000e1';
+  const dir = tempSession(id, you(1));
+  const { clients, views } = setup(dir);
+  const c = client();
+  clients.add(c);
+  views.open(id);
+  await Promise.resolve();
+  const outbox = () => (views.meta(id)?.outbox ?? []).map((q) => `${q.text}${q.landed ? `@${q.landed}` : ''}`);
+  assert.equal(views.queues(id), false, 'not driven: nothing runs that a message waits behind');
+  views.setStatus(id, 'busy');
+  assert.equal(views.queues(id), true);
+  views.sent(id, '11111111-0000-4000-8000-000000000001', 'First, **then**');
+  views.sent(id, '11111111-0000-4000-8000-000000000002', 'Second');
+  views.sent(id, '11111111-0000-4000-8000-000000000002', 'Second'); // the same uuid once
+  assert.deepEqual(outbox(), ['First, **then**', 'Second']);
+  views.view(c, id, null);
+  c.take();
+  // the CLI writes it as a queued_command attachment of its own uuid, after it was sent
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), line({
+    type: 'attachment', uuid: 'att1', timestamp: new Date().toISOString(), attachment: { type: 'queued_command', prompt: 'First, **then**', commandMode: 'prompt' },
+  }));
+  views.check();
+  assert.deepEqual(outbox(), ['First, **then**@att1', 'Second'], 'landed, still sent once so the page swaps it with its prompt');
+  const order = c.got.map((m) => m.t);
+  assert.ok(order.includes('items') && order.indexOf('session') < order.indexOf('items'), 'the meta naming it landed, then the prompt item');
+  views.refresh(id);
+  assert.deepEqual(outbox(), ['Second'], 'the next flush drops it');
+  // an older prompt with the same text doesn't count
+  views.sent(id, '11111111-0000-4000-8000-000000000003', 'prompt 1');
+  views.check();
+  assert.deepEqual(outbox(), ['Second', 'prompt 1']);
+  c.take();
+  views.restore(id, ['Second', 'prompt 1']);
+  assert.deepEqual(outbox(), []);
+  assert.deepEqual(c.take('restore').map((m) => m.texts), [['Second', 'prompt 1']]);
+  // not behind a card: those are held
+  views.setPending(id, { id: 'r1', kind: 'question', since: 1 });
+  views.sent(id, '11111111-0000-4000-8000-000000000004', 'held');
+  assert.deepEqual(outbox(), []);
+  views.stop();
+});
