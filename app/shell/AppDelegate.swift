@@ -89,19 +89,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   /// A failed check doesn't block it.
   @objc func stopAllWork(_ sender: Any?) {
     guard !stoppingAll else { return }
+    confirmIfRunning(ask: "Stop all work?", button: "Stop All Work") { self.stopAndQuit() }
+  }
+
+  /// "Restart Backend Now…": the daemon hands over to a new one at once (a backend update without
+  /// waiting for idle). Running work stops, so the same check as Stop All Work asks first
+  /// ("Restart the backend? 1 session is working and will stop."). The page shows "Reconnecting…"
+  /// and reloads from the new daemon.
+  @objc func restartBackend(_ sender: Any?) {
+    guard !stoppingAll else { return }
+    confirmIfRunning(ask: "Restart the backend?", button: "Restart Backend") { self.backend.restartDaemon() }
+  }
+
+  /// Runs `action` at once when `GET /api/quit-check` lists nothing running (or fails), else after
+  /// an NSAlert on the window ("<ask> 2 sessions are working and 1 background shell will stop.").
+  private func confirmIfRunning(ask: String, button: String, _ action: @escaping () -> Void) {
     guard let r = backend.ready,
-          let url = URL(string: "http://127.0.0.1:\(r.port)/api/quit-check?token=\(r.token)") else { return stopAndQuit() }
+          let url = URL(string: "http://127.0.0.1:\(r.port)/api/quit-check?token=\(r.token)") else { return action() }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2
     URLSession.shared.dataTask(with: req) { data, _, _ in
       let check = data.flatMap { try? JSONDecoder().decode(QuitCheck.self, from: $0) }
       DispatchQueue.main.async {
-        guard let check, let text = AppDelegate.stopText(check) else { return self.stopAndQuit() }
+        guard let check, let text = AppDelegate.stopText(check, ask: ask) else { return action() }
         let alert = NSAlert()
         alert.messageText = text
-        alert.addButton(withTitle: "Stop All Work")
+        alert.addButton(withTitle: button)
         alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: self.window) { if $0 == .alertFirstButtonReturn { self.stopAndQuit() } }
+        alert.beginSheetModal(for: self.window) { if $0 == .alertFirstButtonReturn { action() } }
       }
     }.resume()
   }
@@ -112,7 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   }
 
   /// "Stop all work? 2 sessions are working and 1 background shell will stop.", or nil when nothing runs.
-  private static func stopText(_ c: QuitCheck) -> String? {
+  private static func stopText(_ c: QuitCheck, ask: String) -> String? {
     func count(_ n: Int, _ one: String, _ many: String) -> String? { n == 0 ? nil : "\(n) \(n == 1 ? one : many)" }
     let kinds = c.background.map(\.kind)
     let work = [
@@ -125,9 +140,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let turns = n == 0 ? nil : n == 1 ? "1 session is working" : "\(n) sessions are working"
     let list = work.count > 1 ? work.dropLast().joined(separator: ", ") + " and " + work.last! : work.first
     switch (turns, list) {
-    case let (t?, l?): return "Stop all work? \(t) and \(l) will stop."
-    case let (t?, nil): return "Stop all work? \(t) and will stop."
-    case let (nil, l?): return "Stop all work? \(l) will stop."
+    case let (t?, l?): return "\(ask) \(t) and \(l) will stop."
+    case let (t?, nil): return "\(ask) \(t) and will stop."
+    case let (nil, l?): return "\(ask) \(l) will stop."
     default: return nil
     }
   }

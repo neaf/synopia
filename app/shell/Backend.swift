@@ -4,7 +4,12 @@
 // GET /api/ping answers with the token. Otherwise it starts one detached (its own session through
 // POSIX_SPAWN_SETSID, stdin /dev/null, stdout and stderr appended to daemon.log) and waits for the
 // file. It polls GET /api/badge every 2 s for the Dock badge, which also notices a daemon that went
-// away. "Stop All Work" is POST /api/stop.
+// away. "Stop All Work" is POST /api/stop, "Restart Backend Now…" POST /api/restart.
+//
+// Updates are the daemon's own: it notices its checkout's code changed, and once nothing runs it
+// starts its successor and exits. The shell sees that as a daemon that went away, with daemon.log's
+// last line "… Synopia backend: stop (update)" (or "(restart)"): it waits for the successor's
+// daemon.json and reloads the page from it, without starting one or counting it as a crash.
 import Darwin
 import Foundation
 
@@ -58,12 +63,13 @@ final class Backend {
     }
   }
 
-  /// Finds the running daemon or starts one, then calls onReady (or onExit).
-  func connect() {
+  /// Finds the running daemon or starts one, then calls onReady (or onExit). `wait`: seconds to
+  /// wait for another daemon's file first (a handover's successor) before starting one.
+  func connect(wait: Double = 0) {
     guard !connecting, !stopping else { return }
     connecting = true
     queue.async {
-      let result = self.findOrStart()
+      let result = self.findOrStart(wait: wait)
       DispatchQueue.main.async {
         self.connecting = false
         switch result {
@@ -95,13 +101,27 @@ final class Backend {
     }
   }
 
+  /// "Restart Backend Now…": POST /api/restart. The daemon hands over to a new one, which the
+  /// badge poll then finds as after an update.
+  func restartDaemon() {
+    guard let r = ready, !stopping else { return connect() }
+    queue.async {
+      self.log("restart pid \(r.pid)")
+      _ = self.request(r, "restart", method: "POST", timeout: 3)
+    }
+  }
+
   // MARK: finding and starting
 
-  private func findOrStart() -> Result<Ready, ShellError> {
-    if let r = live() {
-      log("daemon found pid \(r.pid)")
-      return .success(r)
-    }
+  private func findOrStart(wait: Double) -> Result<Ready, ShellError> {
+    let waitUntil = Date().addingTimeInterval(wait)
+    repeat {
+      if let r = live() {
+        log("daemon found pid \(r.pid)")
+        return .success(r)
+      }
+      if Date() < waitUntil { usleep(100_000) }
+    } while Date() < waitUntil
     let config: BackendConfig
     do { config = try BackendConfig.load() } catch { return .failure(ShellError("\(error)")) }
     let pid: pid_t
@@ -251,12 +271,23 @@ final class Backend {
     ready = nil
     badgeTimer?.invalidate()
     setBadge(0)
+    // A handover: the new daemon is starting (it waits for the old pid, then writes daemon.json).
+    if handover() {
+      log("handover from pid \(r.pid)")
+      return connect(wait: 20)
+    }
     if Date().timeIntervalSince(lastRestart) < 60 {
       onExit?(lastLogLine() ?? "The Synopia backend stopped.")
       return
     }
     lastRestart = Date()
     connect()
+  }
+
+  /// Whether the daemon that went away handed over to a new one (an update or a restart).
+  private func handover() -> Bool {
+    guard let line = lastLogLine() else { return false }
+    return line.hasSuffix("Synopia backend: stop (update)") || line.hasSuffix("Synopia backend: stop (restart)")
   }
 
   // MARK: helpers

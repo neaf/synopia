@@ -33,6 +33,7 @@ function onMessage(m) {
   switch (m.t) {
     case "hello": {
       applyHello(m); uiApplyHello(m.ui); layout = null; pickCurrent(); // the stored ui state first: no default view flashes (ui.js)
+      showUpdate(m.update);
       const before = mounted; renderAll(); // mounting a view asks the server for it
       if (mounted && mounted === before) { requestView(current, view); uiExpectReset(); } // a reconnect keeps the composer as it was
       uiAfterRender();
@@ -96,6 +97,7 @@ function onMessage(m) {
     case "recent": applyRecent(m); break;
     case "preview": showPreview(m); break;
     case "restore": restoreTexts(m.sid, m.texts); break;
+    case "update": showUpdate(m.pending); break;
     default: break;
   }
 }
@@ -112,6 +114,9 @@ function renamed(from, to) {
   for (const k of Object.keys(qstate)) if (k.startsWith(from + ":")) { qstate[to + k.slice(from.length)] = qstate[k]; delete qstate[k]; }
   uiRekey(from, to); // its scroll, draft, open steps and the rest (ui.js)
 }
+
+/* a backend update waits for the running work to end: one quiet footer line, until the daemon hands over */
+function showUpdate(pending) { document.getElementById("upd").hidden = !pending; }
 
 /* the ?agent= and ?open= hooks, once the view they need has its items */
 function runHooks(m) {

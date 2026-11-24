@@ -26,6 +26,10 @@ export type ServerOptions = {
   badge?: () => number;
   // POST /api/stop: "Stop All Work". Called once the 200 has gone out.
   onStop?: () => void;
+  // POST /api/restart: "Restart Backend Now…", a handover to a new daemon. Called once the 200 has gone out.
+  onRestart?: () => void;
+  // More of GET /api/ping's answer: the daemon's code version.
+  ping?: () => object;
   onMessage?: (client: Client, msg: { t: string; [k: string]: unknown }) => void;
   // GET /api/image?sid&agent&ref: one image of a transcript, decoded (views.ts); 404 when there is none.
   image?: (sid: string, agent: string | null, ref: string) => { status: number; type?: string; body?: Buffer };
@@ -122,7 +126,7 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
       if (!tokenMatches(opts.token, url.searchParams.get('token'))) return deny(res, 403);
       if (req.method === 'GET' && url.pathname === '/api/ping') { // the app's liveness check of daemon.json
         res.writeHead(200, { 'Content-Type': TYPES['.json'] });
-        res.end(JSON.stringify({ ok: true, pid: process.pid }));
+        res.end(JSON.stringify({ ok: true, pid: process.pid, ...opts.ping?.() }));
         return;
       }
       if (req.method === 'GET' && url.pathname === '/api/badge' && opts.badge) {
@@ -134,6 +138,12 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
         const stop = opts.onStop;
         res.writeHead(200, { 'Content-Type': TYPES['.json'] });
         res.end(JSON.stringify({ ok: true }), () => stop());
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/restart' && opts.onRestart) {
+        const restart = opts.onRestart;
+        res.writeHead(200, { 'Content-Type': TYPES['.json'] });
+        res.end(JSON.stringify({ ok: true }), () => restart());
         return;
       }
       if (req.method === 'GET' && url.pathname === '/api/quit-check') {
