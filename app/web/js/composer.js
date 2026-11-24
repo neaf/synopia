@@ -12,7 +12,8 @@ const modelValue = () => modelOf(cur())?.value ?? cur()?.model ?? "default";
 const modelName = () => {
   const s = cur(), m = modelOf(s);
   const cm = (m?.description || "").match(/currently ([^()]+)/);
-  const name = !m ? modelLabel(s?.model) : // no menu row yet (a folder's first launch): a name from the id m.value === "default" && cm ? `Default (${cm[1].trim()})` : m.name;
+  // no menu row yet (a folder's first launch): a name from the id (md.js)
+  const name = !m ? modelLabel(s?.model) : m.value === "default" && cm ? `Default (${cm[1].trim()})` : m.name;
   return s?.effort ? `${name}, ${s.effort} effort` : name;
 };
 function rank(list, q, key) {
