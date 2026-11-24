@@ -1,5 +1,7 @@
 /* Light theme with visible panels. Sizes are 81% of the first draft (two 90% steps). */
 :root {
+  /* one speed for every moving mark (R8.1); a monitor only watches, so its sweep is slower */
+  --mark-period: 2s; --mark-watch: 3s;
   --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
   --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
   --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
@@ -247,6 +249,10 @@ button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px
 .composer.asking .int-ask { display: block; }
 .composer.asking textarea, .composer.asking .attach { visibility: hidden; }
 body[data-mode] .composer.asking > .g { color: var(--ink); }
+/* "Send to background?": the steps b, b would send are marked like a selected row, a 1px blue ring on the
+   selection tint, drawn outside the line (box-shadow) so nothing moves; their own running marks stay as they are */
+.log.bg-asking [data-fg] { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px #DDF4FF, 0 0 0 3px #54AEFF; }
 /* the Open list: past sessions over the main area, rows drawn like the command menu's */
 .app > .side { grid-column: 1; grid-row: 1; }
 .app > .conv { grid-column: 2; grid-row: 1; }
@@ -282,15 +288,20 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .pr .in { color: var(--faint); } /* the subagent a shell or monitor ran in */
 .pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
 .pr.failed .d, .pr.failed .k { color: var(--red); }
-.pr:hover { background: var(--sub); }
+/* hover and the open item draw in a frame on the cards' edges (7 px in), behind the text, so a Past row lines up with the cards above */
+.pr { position: relative; isolation: isolate; }
+.pr::before { content: ""; position: absolute; inset: 0 7px; z-index: -1; border: 1px solid transparent; border-radius: 5.5px; pointer-events: none; }
+.pr:hover::before { background: var(--sub); }
 .pr:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
-.pr[aria-current="true"] { box-shadow: inset 0 0 0 1px var(--ink-3); border-radius: 5.5px; background: var(--sub); }
+/* the item you're viewing, of any kind: its one 1px edge turns ink, nothing else around it */
+.pr[aria-current="true"]::before { border-color: var(--ink); }
+.pr[aria-current="true"] .n { color: var(--ink); }
 .now { border-bottom: 1px solid var(--line-2); padding: 7px 0 7px; flex: none; max-height: 55%; overflow-y: auto; }
 .card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
   margin: 0 7px 5.5px; width: calc(100% - 14.5px); padding: 7px 9px; border-radius: 5.5px; background: #E6F6EA; border: 1px solid #B4E2C0; cursor: pointer; }
 .card:hover { background: #DAF2E0; }
 .card:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
-.card[aria-current="true"] { box-shadow: 0 0 0 2px var(--dot-green); }
+.card[aria-current="true"] { border-color: var(--ink); }
 .card .n { font-weight: 700; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .d { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 2; }
@@ -335,7 +346,7 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes stripes { from { background-position: 0 0; } to { background-position: 14.5px 0; } }
 .spinner { display: inline-block; flex: none; width: 11px; height: 11px; border-radius: 50%; box-sizing: border-box;
-  border: 2px solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin .75s linear infinite; vertical-align: -2px; }
+  border: 2px solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin var(--mark-period) linear infinite; vertical-align: -2px; }
 .spinner.lg { width: 11px; height: 11px; }
 .status .spinner { margin-right: .6ch; }
 .card { grid-template-columns: 12.5px minmax(0, 1fr) auto; }
@@ -407,7 +418,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 .ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
 
 /* circle family: working */
-.ind .arc { width: 1em; height: 1em; border-radius: 50%; border: .17em solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin .75s linear infinite; }
+.ind .arc { width: 1em; height: 1em; border-radius: 50%; border: .17em solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin var(--mark-period) linear infinite; }
 .ind .arc.dual { border-color: #C6E9D0; border-top-color: var(--green); border-bottom-color: var(--green); animation-duration: .6s; }
 .ind .arc.fork { border-color: #E2D6F8; border-top-color: var(--fork); border-right-color: var(--fork); }
 .ind .arc.grey { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
@@ -415,31 +426,31 @@ body:not(.is-dragging) .g-empty { display: none; }
 .ind .arc.slow { animation-duration: 2.4s; }
 .ind .arc.frozen { animation: none; border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); transform: rotate(-20deg); }
 .ind .qdot { width: .36em; height: .36em; border-radius: 50%; background: var(--link); }
-.ind .cr { width: 1em; height: 1em; border-radius: 50%; border: .13em solid var(--green); animation: shrink 1.8s linear infinite; }
+.ind .cr { width: 1em; height: 1em; border-radius: 50%; border: .13em solid var(--green); animation: shrink var(--mark-period) linear infinite; }
 .ind .cr:nth-child(2) { animation-delay: -.6s; } .cr:nth-child(3) { animation-delay: -1.2s; }
 .ind .radar { width: 1em; height: 1em; border-radius: 50%; border: .12em solid var(--green); position: relative; }
-.ind .radar .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin 2.4s linear infinite;
+.ind .radar .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin var(--mark-watch) linear infinite;
   background: conic-gradient(from 270deg, transparent 0deg, rgba(45,164,78,.42) 90deg, transparent 90deg); }
 .ind .radar .sweep::before { content: ""; position: absolute; left: 50%; top: .02em; width: .14em; height: .37em; margin-left: -.07em; background: var(--green); border-radius: .07em; }
-.ind .rl { animation: spinback 3s linear infinite; }
+.ind .rl { animation: spinback var(--mark-period) linear infinite; }
 .ind .rl circle { stroke: var(--amber); }
-.ind .hg { width: .62em; height: .82em; background: var(--dot-amber); clip-path: polygon(0 0, 100% 0, 50% 50%, 100% 100%, 0 100%, 50% 50%); animation: spin 2.4s linear infinite; }
-.ind .cd .run { animation: count 3s linear infinite; }
+.ind .hg { width: .62em; height: .82em; background: var(--dot-amber); clip-path: polygon(0 0, 100% 0, 50% 50%, 100% 100%, 0 100%, 50% 50%); animation: spin var(--mark-period) linear infinite; }
+.ind .cd .run { animation: count var(--mark-period) linear infinite; }
 
 /* two stripes: needs you */
 .ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
 .ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; }
-.ind .v-seesaw .bars i { animation: see 1.1s linear infinite; }
+.ind .v-seesaw .bars i { animation: see var(--mark-period) linear infinite; }
 .ind .v-seesaw .bars i + i { animation-delay: -.55s; }
 .ind .v-meter .bars { align-items: flex-end; }
-.ind .v-meter .bars i { animation: see 1.1s linear infinite; transform-origin: 50% 100%; }
+.ind .v-meter .bars i { animation: see var(--mark-period) linear infinite; transform-origin: 50% 100%; }
 .ind .v-meter .bars i + i { animation-delay: -.55s; }
-.ind .v-escal .bars i { background: linear-gradient(180deg, var(--red) 0 .19em, #FF9A92 .19em .3em); background-size: 100% .3em; animation: up .45s linear infinite; }
+.ind .v-escal .bars i { background: linear-gradient(180deg, var(--red) 0 .19em, #FF9A92 .19em .3em); background-size: 100% .3em; animation: up var(--mark-period) linear infinite; }
 .ind .v-escal .bars i + i { animation-name: down; }
 .ind .v-slide .bars { height: .7em; }
-.ind .v-slide .bars i { animation: slide 1.1s linear infinite; }
+.ind .v-slide .bars i { animation: slide var(--mark-period) linear infinite; }
 .ind .v-slide .bars i + i { animation-delay: -.55s; }
-.ind .v-rot .bars { animation: spin 2s linear infinite; }
+.ind .v-rot .bars { animation: spin var(--mark-period) linear infinite; }
 .ind .bars.qbar i:first-child { height: .84em; }
 
 /* still shapes */
@@ -448,15 +459,15 @@ body:not(.is-dragging) .g-empty { display: none; }
 .ind .hring { width: .62em; height: .62em; border-radius: 50%; border: .16em solid var(--dot-amber); }
 .ind .hring.faint { width: .56em; height: .56em; border-width: .12em; border-color: var(--dot-off); }
 .ind .caret { width: .42em; height: .42em; border: solid var(--amber); border-width: .17em .17em 0 0; transform: translateX(-.08em) rotate(45deg); }
-.ind .orb { width: 1.22em; height: 1.22em; position: relative; animation: spin 1.4s linear infinite; }
+.ind .orb { width: 1.22em; height: 1.22em; position: relative; animation: spin var(--mark-period) linear infinite; }
 .ind .orb i { position: absolute; top: 0; left: 50%; width: .26em; height: .26em; margin-left: -.13em; border-radius: 50%; background: var(--dot-green); }
 .ind .sq { width: .66em; height: .66em; border-radius: .1em; background: var(--ink-3); }
 .ind .sq.red { background: var(--red); }
 .ind .sq.amber { background: var(--dot-amber); }
-.ind .sq.spin { animation: spin 1.6s linear infinite; }
+.ind .sq.spin { animation: spin var(--mark-period) linear infinite; }
 .ind .sqo { width: .64em; height: .64em; border-radius: .1em; border: .15em solid var(--ink-3); }
 .ind .sqo.amber { border-color: var(--amber); }
-.ind .march-r { animation: march .6s linear infinite; }
+.ind .march-r { animation: march var(--mark-period) linear infinite; }
 .ind .chk { width: .32em; height: .6em; border: solid var(--ink-3); border-width: 0 .16em .16em 0; transform: translateY(-.07em) rotate(45deg); }
 .ind .chk.sm { width: .22em; height: .42em; border-width: 0 .12em .12em 0; }
 .ind .ring-thin { width: .96em; height: .96em; border-radius: 50%; border: .1em solid var(--ink-3); }
@@ -517,10 +528,10 @@ body:not(.is-dragging) .g-empty { display: none; }
 
 /* kind = spinner + colour: subagent orbit (slate), fork two arcs (purple), shell turning bar (teal), monitor radar (pink) */
 :root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
-.ind .sat { width: 1em; height: 1em; border-radius: 50%; border: .13em solid #AFB8C1; position: relative; animation: spin 1.1s linear infinite; box-sizing: border-box; }
+.ind .sat { width: 1em; height: 1em; border-radius: 50%; border: .13em solid #AFB8C1; position: relative; animation: spin var(--mark-period) linear infinite; box-sizing: border-box; }
 .ind .sat i { position: absolute; top: -.25em; left: 50%; width: .4em; height: .4em; margin-left: -.2em; border-radius: 50%; background: var(--k-sub); }
 .ind .arc.k2 { border-color: #E2D6F8; border-top-color: var(--k-fork); border-bottom-color: var(--k-fork); animation-duration: .9s; }
-.ind .rbar { width: .22em; height: .95em; border-radius: .11em; background: var(--k-shell); animation: spin .9s linear infinite; }
+.ind .rbar { width: .22em; height: .95em; border-radius: .11em; background: var(--k-shell); animation: spin var(--mark-period) linear infinite; }
 .ind .radar { border-color: var(--k-mon); }
 .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(14, 107, 168, .34) 90deg, transparent 90deg); }
 .ind .radar .sweep::before { background: var(--k-mon); }
@@ -544,7 +555,7 @@ body:not(.is-dragging) .g-empty { display: none; }
   75%  { transform: translateX(0) scaleX(1); }
   100% { transform: translateX(0) scaleX(.42); }
 }
-.ind .bounce { transform-box: fill-box; transform-origin: 0 50%; animation: bounce 1.2s linear infinite; }
+.ind .bounce { transform-box: fill-box; transform-origin: 0 50%; animation: bounce var(--mark-period) linear infinite; }
 @media (prefers-reduced-motion: reduce) { .ind .rot, .ind .bounce { animation: none; } }
 
 /* groups as a tree: a heading, sessions indented under it with thin guides; a hairline between every two sessions */
@@ -683,10 +694,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .main-row[data-state="green"] { background: #E6F6EA; border-color: #B4E2C0; }
 .main-row[data-state="red"] { background: #FFEBE9; border-color: #FFCECB; }
 .main-row[data-state="amber"] { background: var(--sub); }
-/* selected: the same 2px ring as a selected subagent card, in the session's state colour */
-.main-row[aria-current="true"][data-state="green"] { box-shadow: 0 0 0 2px var(--dot-green); }
-.main-row[aria-current="true"][data-state="red"] { box-shadow: 0 0 0 2px var(--red); }
-.main-row[aria-current="true"][data-state="amber"] { box-shadow: 0 0 0 2px var(--ink-3); }
+/* selected: its border turns ink, as on a selected card or Past row, over any state tint */
+.main-row[aria-current="true"] { border-color: var(--ink); }
 .main-row:hover { filter: brightness(.98); }
 
 /* modes */

@@ -29,6 +29,7 @@ export type Item = {
   name?: string; verb?: string; obj?: string; state?: string; toolUseId?: string; patch?: Patch; // tool
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
   input?: string; out?: Output; // tool: its input as the expanded step shows it, and its result's preview (R5.6)
+  fg?: boolean; // tool: a foreground Bash or Agent still running, which b, b can send to the background (R9)
   qs?: Question[]; answer?: string | null; // ask
 };
 export type Background = {
@@ -349,6 +350,10 @@ export class Transcript {
   private notes = new Map<string, { status: string; summary: string; end: string | null }>();
   private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
   private sdkTasks = new Map<string, string>(); // the same, from the SDK's task_started (kept over a reset)
+  // The SDK's background_tasks_changed level (task ids) for a Synopia-driven process, and the tasks
+  // that left it before any notification said how they ended (both kept over a reset; a note wins).
+  private live = new Set<string>();
+  private gone = new Map<string, { status: string; summary: string; end: string | null }>();
   private reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
   private bg = new Map<string, Background>();
   private agentMeta = new Map<string, { meta: JsonRecord | null; sub: Transcript | null }>();
@@ -398,12 +403,14 @@ export class Transcript {
 
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
-    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed, sdkTasks = this.sdkTasks;
+    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed, sdkTasks = this.sdkTasks, live = this.live, gone = this.gone;
     const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
     this.sdkTasks = sdkTasks;
     this.taskIds = new Map(sdkTasks);
+    this.live = live;
+    this.gone = gone;
     this.ended = ended;
     this.endedFailed = endedFailed;
     this.metaChanged = true;
@@ -682,6 +689,7 @@ export class Transcript {
         this.changedBg.add(tid);
       } else if (name === 'Bash') {
         this.fgBash.set(tid, { description: str(inp.description), command: str(inp.command).slice(0, 300), timeout: inp.timeout, start: ts });
+        if (this.isLive(tid)) this.toBackground(tid); // backgrounded before this file was read again
       }
       if (name === 'AskUserQuestion') {
         const qs: Question[] = (Array.isArray(inp.questions) ? inp.questions : []).map((q0) => {
@@ -716,6 +724,7 @@ export class Transcript {
     if (this.ended && this.ended >= at) return;
     this.ended = at;
     this.endedFailed = failed;
+    this.live.clear(); // the level is per process: the next one starts empty
     for (const tid of this.bg.keys()) this.stopIfEnded(tid);
     for (const it of this.items) if (it.k === 'tool' && it.state === 'running') this.refreshTool(it.id);
     for (const [aid, a] of this.agentMeta) {
@@ -733,14 +742,56 @@ export class Transcript {
     this.refreshTool(tid);
   }
 
-  // A task started, as the SDK's task_started says: its task id for stopTask. An SDK-driven CLI
+  // A task started, as the SDK's task_started says: its task id for stopTask, and for a foreground
+  // Bash or Agent the sign that b, b can move it. An SDK-driven CLI
   // writes no toolUseResult in a subagent's file, so for a subagent's shell this is the only typed
   // source of it (live check 2026-11-24: stopTask with it stopped a background subagent's `sleep`).
   taskStarted(tid: string, task: string): void {
-    if (!tid || !task || this.taskIds.has(tid)) return;
+    if (!tid || !task || this.sdkTasks.has(tid)) return;
     this.sdkTasks.set(tid, task);
-    this.setTask(tid, task);
+    if (!this.taskIds.has(tid)) this.setTask(tid, task);
     for (const a of this.agentMeta.values()) if (a.sub?.getBackground(tid)) this.changedBg.add(tid);
+    this.refreshTool(tid); // a foreground step can go to the background from now (`fg`)
+  }
+
+  // The SDK's background_tasks_changed: the whole set of the process's live background tasks (task
+  // ids; the caller leaves ambient ones out). A foreground Bash or Agent that joins it went to the
+  // background (b, b or Ctrl+B): at once a running shell, or an Agent that runs until its
+  // notification, under its tool use id, so the transcript's own result later adds nothing. A task
+  // that leaves it with no notification yet reads as completed until one says how it ended.
+  backgroundTasks(taskIds: string[], at: string): void {
+    const now = new Set(taskIds);
+    const byTask = new Map([...this.taskIds].map(([tid, task]) => [task, tid]));
+    for (const task of this.live) {
+      const tid = byTask.get(task);
+      if (now.has(task) || !tid || this.notes.has(tid)) continue;
+      this.gone.set(tid, { status: 'completed', summary: '', end: at });
+      this.refreshTool(tid);
+    }
+    this.live = now;
+    for (const task of now) {
+      const tid = byTask.get(task);
+      if (tid) this.toBackground(tid);
+    }
+  }
+
+  private isLive(tid: string): boolean {
+    const task = this.taskIds.get(tid);
+    return Boolean(task && this.live.has(task));
+  }
+
+  // A foreground Bash or Agent of this file that is background work now; nothing for other tools.
+  private toBackground(tid: string): void {
+    const fg = this.fgBash.get(tid);
+    const it = this.byId.get(tid);
+    if (fg && !this.bg.has(tid)) {
+      this.bg.set(tid, { ...fg, toolUseId: tid, taskId: this.taskIds.get(tid) ?? null, kind: 'shell', persistent: false, status: 'running', summary: '', end: null });
+      this.stopIfEnded(tid);
+      this.changedBg.add(tid);
+    } else if (it && (it.name === 'Agent' || it.name === 'Task') && !this.bgTool.get(tid)) {
+      this.bgTool.set(tid, true);
+    } else return;
+    this.refreshTool(tid);
   }
 
   private endedBefore(ts: string | null | undefined): boolean {
@@ -749,7 +800,7 @@ export class Transcript {
 
   private stopIfEnded(tid: string): void {
     const b = this.bg.get(tid);
-    if (!b || b.status !== 'running' || this.notes.has(tid) || !this.endedBefore(b.start)) return;
+    if (!b || b.status !== 'running' || this.noteOf(tid) || !this.endedBefore(b.start)) return;
     b.status = 'stopped';
     b.end = this.ended;
     this.changedBg.add(tid);
@@ -774,7 +825,7 @@ export class Transcript {
   private refreshTool(tid: string): void {
     const it = this.byId.get(tid);
     const res = this.results.get(tid);
-    const note = this.notes.get(tid);
+    const note = this.noteOf(tid);
     if (it && it.k === 'ask') {
       const answer = this.answers.get(tid) ?? null;
       const state = res !== undefined ? 'answered' : 'pending';
@@ -799,6 +850,14 @@ export class Transcript {
       const bash = this.bashPatches.get(tid);
       const out = this.outs.get(tid);
       const imgs = this.outImgs.get(tid);
+      // Only once the CLI registered it as a task (the SDK's task_started, about 2 s into a Bash
+      // command, live check 2026-11-24): backgroundTasks() before then moves nothing.
+      const fg = state === 'running' && res === undefined && (it.name === 'Bash' || it.name === 'Agent' || it.name === 'Task') && !this.bgTool.get(tid) && !this.bg.has(tid) && this.sdkTasks.has(tid);
+      if (Boolean(it.fg) !== fg) {
+        if (fg) it.fg = true;
+        else delete it.fg;
+        this.changed.add(tid);
+      }
       const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;
       const planItem = plan ? this.byId.get(`plan:${tid}`) : undefined;
       if (plan && planItem && planItem.text !== clip(plan)) {
@@ -841,6 +900,11 @@ export class Transcript {
     return null;
   }
 
+  // How a task ended: its notification (the JSONL's or the SDK's), else its leaving the live set.
+  private noteOf(tid: string): { status: string; summary: string; end: string | null } | undefined {
+    return this.notes.get(tid) ?? this.gone.get(tid);
+  }
+
   private setTask(tid: string, task: string): void {
     if (this.taskIds.get(tid) === task) return;
     this.taskIds.set(tid, task);
@@ -877,7 +941,7 @@ export class Transcript {
   private subBackground(aid: string, sub: Transcript, b0: Background): Background {
     const b: Background = { ...b0, taskId: b0.taskId ?? this.taskIds.get(b0.toolUseId) ?? null, agentId: aid };
     if (b.status !== 'running') return b;
-    const note = this.notes.get(b.toolUseId);
+    const note = this.noteOf(b.toolUseId);
     if (note) return Object.assign(b, note);
     if (!this.agentRunning(aid)) Object.assign(b, { status: 'stopped', summary: 'Ended with its subagent', end: sub.lastTs ?? this.ended });
     return b;
@@ -950,7 +1014,7 @@ export class Transcript {
     const meta = a.meta ?? {};
     if (meta.finished === true) return false;
     const tid = str(meta.toolUseId);
-    if (this.notes.has(tid)) return false;
+    if (this.noteOf(tid)) return false;
     if (this.endedAgent(id)) return false;
     if (!tid) return true;
     const res = this.results.get(tid);
@@ -974,7 +1038,7 @@ export class Transcript {
     const meta = a.meta ?? {};
     const description = str(meta.description);
     const running = this.agentRunning(id);
-    const status = this.notes.get(str(meta.toolUseId))?.status ?? '';
+    const status = this.noteOf(str(meta.toolUseId))?.status ?? '';
     return {
       id, type: str(meta.agentType) || 'subagent', fork: Boolean(meta.isFork), description,
       toolUseId: str(meta.toolUseId) || null, model: meta.model ?? null, depth: meta.spawnDepth ?? 1,

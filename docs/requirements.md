@@ -199,12 +199,13 @@ These requirements come from a day of prototyping against the user's real sessio
 ## 7. Background work panel
 
 - R7.1 A panel to the right of the transcript (under it below 990 px). From the top:
-  - "Main conversation", a card like the running ones, tinted by the session's state (green while working, red when it needs you, grey otherwise). A coloured left edge marks that you're viewing it. Its mark on the left, its state word on the right, and under its name a quiet count: "2 running in the background", or "Nothing running in the background". No separate "Running" heading.
+  - "Main conversation", a card like the running ones, tinted by the session's state (green while working, red when it needs you, grey otherwise). Its mark on the left, its state word on the right, and under its name a quiet count: "2 running in the background", or "Nothing running in the background". No separate "Running" heading.
   - Under it, inset as its children: a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer. The sidebar's 1px tree guides join them (R4.3): a vertical line down from the main card's mark, a tick into each card at its mark's height, a corner on the last. The line runs past an expanded card's Stop row to the last child.
   - A card that comes or goes tweens like a sidebar sub-line (R8.1): coming, the height opens, then the card fades in; going, the card fades out, then the height closes. The guides follow the height on every frame. A card whose item finishes stays in its place for 5 s, as in R4.2 (the status and still kind marks, the final duration), then leaves and its line appears in "Past".
   - A subagent's own shells and monitors (in its own transcript) hang under its card, one level deeper, with the same guides. They show only here: not under Main conversation, not in the sidebar's count, not in the main transcript. With no notification they run while their subagent runs; after it, they read as stopped, ended with their subagent. In "Past" they name it: "Resize the images in Build image thumbnails".
   - "To review": items waiting for review (section 10).
   - "Past": one dim line per finished item, newest first, fading out at the bottom edge. Each line shows the status mark, the still kind mark, the name and the duration; failed and timed out are named.
+  - The item you're viewing shows it one way, whatever its kind (Main conversation, a subagent or fork card, a Past line): its 1px edge turns ink, and that is its only edge, over any state tint. A Past line gets the edge as a frame on the cards' edges, with its name in ink. Nothing moves or resizes when the selection moves. Hover only shades; keyboard focus is the blue ring.
 - R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. Each running card has a Stop row that stops only that item.
 - R7.3 Covers forks, subagents (including the `Explore` and `general-purpose` types), background shells (`Bash` with `run_in_background`) and monitors (`Monitor`).
 - R7.4 Rejected:
@@ -216,7 +217,7 @@ These requirements come from a day of prototyping against the user's real sessio
 ## 8. Status and kind vocabulary
 
 - R8.1 Running things always move: their motion is linear, infinite, with no pause, ease, fade, pulse, ping or blink. A scanning eye never waits. Spinners and moving shapes, never opacity changes, on a running mark.
-  - Layout transitions are other motion and allowed: a sidebar sub-line or a background panel card that appears tweens the row's height open, then fades in; one that leaves fades out, then the height closes. About 150 ms a step, instant with reduced motion. A line whose text alone changes (a timer, a count) doesn't animate.
+  - Layout transitions are other motion and allowed: a sidebar sub-line or a background panel card that appears tweens the row's height open, then fades in; one that leaves fades out, then the height closes. About 150 ms a step, instant with reduced motion. A line whose text alone changes (a timer, a count) doesn't animate. Every moving mark turns at the same speed (one cycle per 2 s); a monitor, which only watches, sweeps at 3 s.
 - R8.2 Session status marks:
   - working: agent mark turning. Also while the main turn is over but background subagents or forks still run, in every open session. Also while another process (a terminal) runs the session's main turn, read from its transcript: a tool waiting for its result, or a turn opened by a prompt and not yet ended. A turn that changed nothing for 30 minutes, with no tool waiting, is your turn.
   - working with a message queued: the same mark with a blue centre, "Working, 1 message queued". The message was sent during the turn and Claude hasn't read it yet.
@@ -274,6 +275,10 @@ These requirements come from a day of prototyping against the user's real sessio
 - R9.4 Interrupt: Esc in normal mode while a turn runs turns the message box into "Interrupt?". A second Esc interrupts. Any other key or click dismisses it. An open in-place field on a card takes Esc first (R6.4).
   - The interrupt stops only the foreground turn. Background subagents, shells and monitors keep running, as in the CLI; each is stopped with its own Stop row (R7.2).
   - Messages still queued at the interrupt go back to the message box.
+- R9.5 Send to background, as Ctrl+B in the CLI: b in normal mode, in a session Synopia drives whose turn runs a foreground Bash command or subagent, marks each such step in the transcript (a 1px blue ring on the selection tint) and turns the message box into "Send to background? b again. Any other key to keep it in front." A second b sends them all to the background. Any other key, a click or the turn ending dismisses it.
+  - With nothing that can go, or in a session another process runs, b does nothing.
+  - One prompt at a time: Esc under this prompt asks "Interrupt?" instead, and b under "Interrupt?" asks this.
+  - The steps then show as background work in the right panel (R7) and end there with their notification. A toast says so only when nothing could go.
 
 ## 10. Deliverables for review
 

@@ -40,6 +40,7 @@ type Call = {
   interrupts: unknown[]; reply: { still_queued: string[]; cancelled?: string[] } | undefined;
   controls: [string, unknown][]; // slice 5: setModel and applyFlagSettings calls
   exitDelay?: number; // ms between the input closing and the process ending (L1)
+  background?: boolean | Error; // what backgroundTasks() returns or throws (default true)
 };
 function fakeQuery() {
   const calls: Call[] = [];
@@ -57,6 +58,11 @@ function fakeQuery() {
       interrupt: async (req?: unknown) => { call.interrupts.push(req); return call.reply; },
       setModel: async (m?: string) => { call.controls.push(['setModel', m]); },
       applyFlagSettings: async (x: unknown) => { call.controls.push(['applyFlagSettings', x]); },
+      backgroundTasks: async (id?: string) => {
+        call.controls.push(['backgroundTasks', id]);
+        if (call.background instanceof Error) throw call.background;
+        return call.background ?? true;
+      },
     });
   };
   return { calls, fn };
@@ -822,6 +828,91 @@ test("stop task: the SDK's task_notification ends the task between turns", async
   await tick();
   assert.equal(bg().find((b) => b.toolUseId === run.toolUseId)!.status, 'stopped');
   assert.deepEqual(t.sessions.quitCheck().background, []);
+  t.sessions.stop();
+  t.views.stop();
+});
+
+// b, b (R9): a session whose turn runs a foreground Bash and a foreground Agent (made up)
+function backgroundSetup() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const BGS = '88888888-0000-4000-8000-000000000008';
+  const dir = path.join(root, 'claude', 'projects', '-tmp-bg');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `${BGS}.jsonl`);
+  const rec = (r: object) => JSON.stringify({ sessionId: BGS, cwd: path.join(root, 'scratch'), ...r }) + '\n';
+  fs.writeFileSync(file, rec({ type: 'user', uuid: 'b-u1', timestamp: '2026-11-24T10:00:00.000Z', message: { role: 'user', content: 'Wait, then look' } })
+    + rec({ type: 'assistant', uuid: 'b-a1', timestamp: '2026-11-24T10:00:01.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sl', name: 'Bash', input: { command: 'sleep 40; echo done', description: 'Wait' } }] } })
+    + rec({ type: 'assistant', uuid: 'b-a2', timestamp: '2026-11-24T10:00:01.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ag', name: 'Agent', input: { description: 'Look around', prompt: 'x' } }] } }));
+  const t = setup(root, [info(BGS, { cwd: path.join(root, 'scratch') })]);
+  return { ...t, BGS, file, rec };
+}
+
+test('background: b, b calls backgroundTasks; background_tasks_changed shows the steps as background work at once, once', async () => {
+  const t = backgroundSetup();
+  const { BGS } = t;
+  await t.sessions.openSession(BGS);
+  t.views.check();
+  const sess = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string; taskId: string | null }[] }[]).find((s) => s.id === BGS)!;
+  const item = (id: string) => (t.views.dump(BGS) as { items: { id: string; fg?: boolean; state?: string }[] }).items.find((i) => i.id === id)!;
+  assert.equal(item('toolu_sl').fg, undefined, 'not before its task_started');
+  assert.equal((await t.sessions.background(BGS)).ok, false, 'no process: nothing to move');
+  t.sessions.send(BGS, 'go');
+  await tick();
+  const call = t.q.calls[0];
+  emit(call, init(BGS));
+  emit(call, { type: 'system', subtype: 'task_started', task_id: 'bsl1', tool_use_id: 'toolu_sl', description: 'Wait', is_backgrounded: false, task_type: 'local_bash', uuid: 'u-ts1', session_id: BGS });
+  emit(call, { type: 'system', subtype: 'task_started', task_id: 'aag1', tool_use_id: 'toolu_ag', description: 'Look around', is_backgrounded: false, task_type: 'local_agent', uuid: 'u-ts2', session_id: BGS });
+  await tick();
+  assert.equal(item('toolu_sl').fg, true, 'a foreground Bash can go');
+  assert.equal(item('toolu_ag').fg, true, 'a foreground Agent can go');
+  t.take();
+  assert.deepEqual(await t.sessions.background(BGS), { ok: true, sid: BGS });
+  assert.deepEqual(call.controls.filter(([k]) => k === 'backgroundTasks'), [['backgroundTasks', undefined]], 'every foreground task: no tool use id');
+  emit(call, { type: 'system', subtype: 'background_tasks_changed', tasks: [
+    { task_id: 'bsl1', task_type: 'local_bash', description: 'Wait' },
+    { task_id: 'aag1', task_type: 'local_agent', description: 'Look around' },
+    { task_id: 'amb1', task_type: 'local_bash', description: 'watcher', ambient: true },
+  ], uuid: 'u-btc1', session_id: BGS });
+  await tick();
+  assert.deepEqual(sess().background.map((b) => [b.toolUseId, b.taskId, b.status]), [['toolu_sl', 'bsl1', 'running']], 'the shell shows as running background work');
+  assert.equal(item('toolu_sl').fg, undefined);
+  assert.equal(item('toolu_ag').fg, undefined);
+  assert.equal(item('toolu_ag').state, 'running', 'the Agent runs on in the background');
+  assert.ok(t.take('background').some((m) => (m.upsert as { toolUseId: string }[]).some((b) => b.toolUseId === 'toolu_sl')), 'pages get it');
+  // the transcript's own record of the move adds nothing
+  fs.appendFileSync(t.file, t.rec({ type: 'user', uuid: 'b-r1', timestamp: '2026-11-24T10:00:05.000Z', toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bsl1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sl', content: 'Command was moved to the background with ID: bsl1.' }] } })
+    + t.rec({ type: 'user', uuid: 'b-r2', timestamp: '2026-11-24T10:00:05.000Z', toolUseResult: { status: 'async_launched', agentId: 'aag1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ag', content: 'Moved to the background.' }] } }));
+  t.views.check();
+  await tick();
+  assert.deepEqual(sess().background.map((b) => [b.toolUseId, b.status]), [['toolu_sl', 'running']], 'one shell, not two');
+  assert.equal(item('toolu_ag').state, 'running');
+  // leaving the live set ends them at once; the notification later says how
+  emit(call, { type: 'system', subtype: 'background_tasks_changed', tasks: [], uuid: 'u-btc2', session_id: BGS });
+  await tick();
+  assert.equal(sess().background[0].status, 'completed');
+  assert.equal(item('toolu_ag').state, 'done');
+  emit(call, { type: 'system', subtype: 'task_notification', task_id: 'bsl1', tool_use_id: 'toolu_sl', status: 'failed', output_file: '', summary: 'exit 1', uuid: 'u-tn', session_id: BGS });
+  await tick();
+  assert.equal(sess().background[0].status, 'failed', 'the notification wins');
+  assert.equal(sess().background.length, 1);
+  t.sessions.stop();
+  t.views.stop();
+});
+
+test('background: a toast when nothing could go, or background tasks are turned off', async () => {
+  const t = backgroundSetup();
+  await t.sessions.openSession(t.BGS);
+  t.sessions.send(t.BGS, 'go');
+  await tick();
+  const call = t.q.calls[0];
+  emit(call, init(t.BGS));
+  await tick();
+  call.background = false;
+  assert.deepEqual(await t.sessions.background(t.BGS), { ok: false, error: 'Nothing could go to the background.' });
+  call.background = new Error('disabled');
+  const r = await t.sessions.background(t.BGS);
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /turned off.*CLAUDE_CODE_DISABLE_BACKGROUND_TASKS/);
   t.sessions.stop();
   t.views.stop();
 });
