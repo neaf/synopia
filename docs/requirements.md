@@ -40,16 +40,20 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 3. Sessions
 
-- R3.1 Synopia shows only the sessions it holds open, not the whole history. Those are the new sessions started in it and the past sessions opened from its "Open session" list. A session that isn't open in Synopia doesn't appear.
-- R3.2 Synopia is unaware of the terminal. It doesn't read `~/.claude/sessions`, doesn't show terminal sessions and doesn't take them over. "Open session" lists past sessions from the SDK's `listSessions()`, newest first; opening one resumes it by id on the first message. To move a session out of the terminal, the user closes it there and opens it here. Running one session in both places at once is the user's responsibility.
+- R3.1 Synopia shows only the sessions it holds open, not the whole history. Those are the new sessions started in it and the past sessions opened from its "Open session" list. A session that isn't open in Synopia doesn't appear, even when a terminal runs it; the "Open session" list marks those (R3.2).
+- R3.2 Synopia sees the terminal and takes over in both directions, so one session never has two writers (decided 2026-11-24, reversing "Synopia is unaware of the terminal": the user typed in Synopia on a session a terminal still held, and both processes wrote the same transcript).
+  - It reads Claude Code's pid files in `~/.claude/sessions/<pid>.json` (never the `*.key` files): a file counts when its pid is alive with the same start time (`procStart`), it is an interactive `cli` process, and it isn't one of Synopia's own. If the format changes, Synopia stops seeing terminals and logs it once.
+  - A terminal takes a session Synopia holds (the user types there, or runs `claude --resume <id>`): Synopia yields at once. It interrupts its turn if one runs and ends its process. The session shows read-only, the transcript still live, and the message box holds one line: "Open in a terminal (pid 54166). Type there, or send here to bring it back." When that CLI exits, the session is Synopia's again, quietly.
+  - Synopia takes a session a terminal holds (the user sends here): when the CLI is idle (nothing running or waiting in it), Synopia checks again right before, writes a note to the CLI's terminal, ends it (SIGTERM, then SIGINT, never SIGKILL; if it won't exit within 10 s the message stays in the box with a toast), waits for the transcript to settle, resumes the session and sends. The message stays in the box until then. When the CLI is busy or waiting, the box keeps it, marked "Waiting for the terminal to finish…", and the take-over runs once the CLI is idle; any edit or Esc cancels the wait.
+  - The note, written to the CLI's own terminal after it exits: "Synopia took over this session at 12:04. To continue here instead: claude --resume <id>". Without a terminal to write to, it is skipped.
+  - "Open session" lists past sessions from the SDK's `listSessions()`, newest first; one a terminal holds says "Open in a terminal" in its row and opens read-only. Opening one resumes it by id on the first message.
 - R3.3 New session: "New session" opens an empty session in `~/dev/demo-project` (a config value). There's no dialog and no new worktree yet. The first prompt sets the tone, and Claude names the session from there.
 - R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it.
 - R3.5 No drift detection. The user keeps one session per topic (see Rejected).
 - R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. x, x in normal mode (R9.6) marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
 - R3.7 Model per session: the header shows the model; clicking it, or typing `/model`, opens the model picker (list from the SDK). Effort levels come from the same list.
 - R3.8 Rejected:
-  - Taking over terminal sessions.
-  - Showing terminal sessions read-only.
+  - Listing every terminal session in the sidebar: only the sessions open in Synopia show (R3.1).
   - Drift detection ("Topic changed: …") and "Split into a new session": the user keeps one session per topic.
 - R3.9 Exact state after a reload, a crash or a quit: reopening Synopia shows exactly what was on screen. The page is only UI; this state lives in the backend, so it survives page reloads, app crashes and quits. Restored:
   - the current session, and the subagent view if one was open;
@@ -59,6 +63,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - a half-answered card: the picks, notes, typed answers and the cursor, as long as the request still waits;
   - the Open list (open, with its filter), the file preview (its file, scroll and find query) and the image viewer.
   - A closed session's state is dropped; a `/clear` or a new session's real id carries it over. There's no live sharing between two pages: the last one to write wins.
+- R3.10 One writer, always: before any Synopia process starts on a session, Synopia checks for a live terminal that holds it. If one does and the take-over conditions of R3.2 aren't met, it doesn't start, and the message is kept.
 
 ## 4. Sidebar
 
@@ -191,7 +196,7 @@ These requirements come from a day of prototyping against the user's real sessio
 - R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place).
 - R6.7 Answers appear in the transcript as your turn ("Allow once", "Denied: …", "Changes: …").
 - R6.8 Detection: a session needs you while it has a pending `canUseTool` request: a question, a permission or a plan.
-  - It also needs you, with no Synopia process, while its transcript ends a thread (the main conversation or a subagent) on a question or plan (AskUserQuestion or ExitPlanMode) that has no result yet: another Claude Code process asks it. This beats working, the Dock badge counts it, its age counts from the question, and it clears when the answer lands.
+  - It also needs you, with no Synopia process, while its transcript ends a thread (the main conversation or a subagent) on a question or plan (AskUserQuestion or ExitPlanMode) that has no result yet: another Claude Code process asks it, typically a terminal that took the session (R3.2). A message sent then waits ("Waiting for the terminal to finish…"): the take-over doesn't end a CLI that waits on you. This beats working, the Dock badge counts it, its age counts from the question, and it clears when the answer lands.
   - The message panel then shows the card read-only: the red "Needs you" header with the reason and "for N min", every question open with its options (Recommended, descriptions, checkboxes for a multi-select), or the plan's two decisions under the plan in the transcript. It has no cursor, selection or keys, and its footer is one quiet line: "Asked in another Claude Code process. Answer it there." The transcript line says "Waiting for you: …, asked in another process". Once answered, the card goes and the answer shows as your turn.
   - A session Synopia drives keeps the interactive card. A question its own process left without a request (after a crash) stays "Not answered (Synopia quit)".
 - R6.9 Rejected:
@@ -322,7 +327,7 @@ These requirements come from a day of prototyping against the user's real sessio
 ## 12. Data the app relies on
 
 Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_transcripts.py`):
-- Open sessions: Synopia's own list of the sessions it holds open, kept across restarts. Past sessions for the "Open session" list come from the SDK's `listSessions()`. Synopia doesn't read `~/.claude/sessions`.
+- Open sessions: Synopia's own list of the sessions it holds open, kept across restarts. Past sessions for the "Open session" list come from the SDK's `listSessions()`. Terminals come from `~/.claude/sessions/<pid>.json` (undocumented, read by one module, R3.2).
 - Transcripts: `~/.claude/projects/<encoded-cwd>/<id>.jsonl`.
   - Subagents: `<id>/subagents/agent-<aid>.jsonl` plus `.meta.json` (agentType, isFork, description, toolUseId, spawnDepth, finished).
   - Edits: `toolUseResult.structuredPatch` holds the diff hunks with line numbers.
@@ -339,7 +344,7 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
   - The user's settings use `defaultMode: auto`, so `canUseTool` fires only when `auto` would ask. Synopia keeps it that way (R6.5).
   - `interrupt()` doesn't drop queued messages.
   - Resuming or forking re-sends the whole history, which costs real money on big sessions.
-  - Nothing stops two writers on one transcript. Synopia doesn't guard against it (R3.2).
+  - Nothing in the CLI stops two writers on one transcript. Synopia guards against it itself (R3.2, R3.10).
   - Read-only Bash and `Agent` don't reach `canUseTool`.
 
 ## 13. Icon and favicon

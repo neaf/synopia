@@ -17,6 +17,7 @@ import { startServer } from './server.ts';
 import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
+import { Registry } from './registry.ts';
 import { openTarget } from './open.ts';
 import { loadBat, previewFile, themeOf } from './preview.ts';
 import { loadLoginEnv } from './login-env.ts';
@@ -138,9 +139,11 @@ const writer = fake ? null : new Writer({
     work: (sid) => views.work(sid),
   },
 });
+// R3.2: the terminals that hold sessions, from the CLI's pid files (registry.ts).
+const registry = fake ? null : new Registry({ dir: join(claudeDir, 'sessions'), log });
 if (!fake) {
   sessions = new Sessions({
-    store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined,
+    store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined, registry: registry ?? undefined,
     onTurnEnded: (sid) => writer?.turnEnded(sid),
     onOpened: (sid) => writer?.opened(sid),
     onWaiting: (sid) => writer?.waitingChanged(sid),
@@ -206,6 +209,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   } else if (sessions && msg.t === 'close' && typeof msg.sid === 'string') {
     const r = sessions.close(msg.sid);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
+  } else if (sessions && msg.t === 'cancelTakeover' && typeof msg.sid === 'string') {
+    sessions.cancelTakeover(msg.sid);
   } else if (sessions && msg.t === 'interrupt' && typeof msg.sid === 'string') {
     void sessions.interrupt(msg.sid);
   } else if (sessions && msg.t === 'send' && typeof msg.sid === 'string') {
@@ -213,7 +218,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
       : [];
     const text = typeof msg.text === 'string' ? msg.text : '', uuid = typeof msg.uuid === 'string' ? msg.uuid : undefined;
-    const queues = views.queues(sessions.resolve(msg.sid)); // sent during a turn: shown pending until it lands (R5.5)
+    // sent during a turn: shown pending until it lands (R5.5); not one that waits for a terminal (it stays in the box)
+    const queues = views.queues(sessions.resolve(msg.sid)) && !sessions.terminalHolds(msg.sid);
     const r = sessions.send(msg.sid, text, images, uuid);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
     else if (queues && uuid) views.sent(r.sid, uuid, text, images.length);
@@ -296,6 +302,7 @@ async function shutdown(reason: string) {
   badge?.stop();
   writer?.stop();
   menus?.stop();
+  registry?.stop();
   sessions?.stop();
   views.stop();
   store.close();
@@ -325,7 +332,10 @@ if (flags['no-parent']) process.stdout.write(JSON.stringify({ port: (server as S
 writeDaemonInfo(stateDir, { pid: process.pid, procStart: procStart(process.pid), port: (server as Server).port, token, version: VERSION, code: CODE });
 log('daemon.ready', { port: (server as Server).port, code: CODE });
 if (fake) fake.start(claudeDir);
-else sessions?.start();
+else {
+  registry?.start();
+  sessions?.start();
+}
 // The Dock badge (requirements R2.6): the shell polls GET /api/badge; each change is logged.
 badge = new Badge({ source: badgeSource, emit: (n) => log('badge', { n }) });
 badge.changed();

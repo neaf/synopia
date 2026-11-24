@@ -32,6 +32,9 @@
 // (Transcript.pendingAsk) is needs you, over working; its age counts from the tool_use. It clears
 // when the result lands, or once the transcript has been quiet for ASK_STALE_MS (your turn then).
 // An ask our own process left behind (a crash) is not one: "Not answered".
+// A terminal (R3.2, 2026-11-24): `detail.terminal` is the pid of the terminal's Claude Code that holds
+// the session (registry.ts), whatever the status, and `detail.takeover` says a message of yours waits
+// for it (`waiting`: it runs a turn or waits on you) or is taking it back (`taking`).
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.
 // Without CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS (no `session_state_changed` seen yet), a turn
@@ -45,7 +48,8 @@ export type Status = 'busy' | 'idle' | 'waiting' | 'stopped' | 'failed' | 'signe
 type Outcome = 'idle' | 'stopped' | 'failed';
 export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string };
 // queued: messages waiting for the running turn. retry: the attempt, its cap and when it goes (ms).
-export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number } };
+export type Takeover = 'waiting' | 'taking';
+export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover };
 export type StatusEntry = { status: Status; at: number; detail?: StatusDetail };
 
 // 15 min: longer than the Bash tool's longest timeout (10 min), the longest a foreground tool
@@ -107,6 +111,8 @@ export class SessionStatus {
   private timer: Timer;
   private cancelStale: (() => void) | null = null;
   private resulted = false; // the running turn's result came (with the state flag, idle follows it)
+  private terminal = 0; // the pid of a terminal's CLI that holds the session, 0 for none
+  private takeover: Takeover | null = null;
 
   constructor(init: StatusEntry | null, onChange: (e: StatusEntry) => void, now: () => number = Date.now, opts: { staleMs?: number; timer?: Timer } = {}) {
     this.onChange = onChange;
@@ -226,6 +232,18 @@ export class SessionStatus {
     this.update();
   }
 
+  // A terminal's CLI holds the session (its pid), or no longer (0).
+  setTerminal(pid: number): void {
+    this.terminal = pid > 0 ? pid : 0;
+    this.update();
+  }
+
+  // A message waits to take the session back from the terminal, or no longer (null).
+  setTakeover(t: Takeover | null): void {
+    this.takeover = t;
+    this.update();
+  }
+
   // The process ended: on purpose (idle timeout, close, quit) or not (failed).
   processEnded(failed: boolean): void {
     this.turnOver();
@@ -259,6 +277,8 @@ export class SessionStatus {
     const detail: StatusDetail = {};
     if (next === 'busy' && this.queued.length) detail.queued = this.queued.length;
     if (next === 'retrying' && this.retry) detail.retry = { ...this.retry };
+    if (this.terminal) detail.terminal = this.terminal;
+    if (this.takeover) detail.takeover = this.takeover;
     this.armStale(next, silentFor - (now - this.last));
     // another process's card: its age counts from the tool_use, a new card's from its own
     const askAt = next === 'waiting' && this.pending === 0 && this.ask ? this.ask.since || now : null;
@@ -304,5 +324,5 @@ function uuidsOf(m: Loose): string[] {
 }
 
 function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
-  return a.queued === b.queued && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
+  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
 }

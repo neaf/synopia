@@ -150,7 +150,7 @@ function openModelPicker() {
 /* ---------- Esc, Esc: the message box turns into "Interrupt?" while a turn runs (R9.4) ---------- */
 let interruptAsk = null; // the session id the prompt is for
 /* a running turn, or one waiting on a card (Esc with no in-place field open, plan section 6) */
-const canInterrupt = s => Boolean(s) && s.driven !== false && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting"); // never for a session another process runs
+const canInterrupt = s => Boolean(s) && s.driven !== false && !termPid(s) && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting"); // never for a session another process runs
 /* the message box's one prompt line: Esc, Esc's or b, b's, whichever came last */
 function askInBox(box, html) {
   const p = box.querySelector(".int-ask") || box.appendChild(Object.assign(document.createElement("p"), { className: "int-ask" }));
@@ -172,7 +172,7 @@ function dismissInterrupt() {
 let bgAsk = null; // the session id the prompt is for
 /* the main conversation's steps that can go: a running foreground Bash or Agent (the backend's `fg`), in a running
    turn of a session Synopia drives */
-const bgSteps = s => !s || !s.driven || view || stateOf(s) !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
+const bgSteps = s => !s || !s.driven || termPid(s) || view || stateOf(s) !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
 /* the first b: those steps are marked in the transcript and the box asks; false when nothing can go */
 function askBackground() {
   const box = conv.querySelector(".dock .composer"), log = document.getElementById("log");
@@ -218,8 +218,9 @@ function askClose() {
   if (interruptAsk) dismissInterrupt(); // the newest prompt replaces the other
   if (bgAsk) dismissBackground();
   closeAsk = current;
-  const stops = s.driven === false ? "" : closeStops(s);
-  askInBox(box, s.driven === false
+  const other = s.driven === false || Boolean(termPid(s));
+  const stops = other ? "" : closeStops(s);
+  askInBox(box, other
     ? `<b>Remove it from Synopia?</b> <kbd>x</kbd> again. Its other process keeps running.`
     : `<b>Close this session?</b> <kbd>x</kbd> again. Any other key to keep it.${stops ? ` ${esc(stops)}` : ""}`);
   return true;
@@ -274,6 +275,7 @@ function mountComposer(s) {
       images.push({ mediaType: m[1], data: m[2], n: a.n }); // the backend sends the text, then these in tag order (content.ts)
     }
     if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your message is still in the box."); return; }
+    if (termPid(cur()) || takeoverWait?.sid === s.id) { takeBack(s, ta, images); return; } // the box keeps it until the session is back
     send({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() });
     ta.value = ""; ta.style.height = "auto";
     attachments.length = 0; renderAttachments();
@@ -298,4 +300,43 @@ function mountComposer(s) {
   uiEnterComposer(s, ta); // this session's draft: its text, cursor and pasted images (ui.js)
   tagLoose(s, ta);
   takeRestored(s.id);
+  mountTakeover(s, ta);
+}
+
+/* ---------- a terminal holds the session (R3.2): the box's one line, and the message that takes it back ---------- */
+let takeoverWait = null; // { sid, text, seen }: a message the box keeps until the session is back from the terminal
+const termPid = s => s?.statusDetail?.terminal || 0;
+/* Enter: the backend takes the session back once the terminal is idle; the text stays until then */
+function takeBack(s, ta, images) {
+  takeoverWait = { sid: s.id, text: ta.value, seen: false };
+  send({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() });
+  syncTakeover();
+}
+function cancelTakeBack() {
+  if (!takeoverWait) return;
+  send({ t: "cancelTakeover", sid: takeoverWait.sid }); takeoverWait = null; syncTakeover();
+}
+function mountTakeover(s, ta) {
+  ta.closest(".composer").insertAdjacentHTML("beforeend", `<p class="term-line"></p><p class="term-wait" role="status"></p>`);
+  ta.addEventListener("input", () => { if (takeoverWait?.sid === s.id && ta.value !== takeoverWait.text) cancelTakeBack(); }); // any edit cancels the wait
+  ta.addEventListener("keydown", e => { if (e.key === "Escape" && takeoverWait?.sid === s.id) cancelTakeBack(); }, true); // and Esc
+  syncTakeover();
+}
+/* each session message: the line, the mark, and the box emptied once the message went to Claude */
+function syncTakeover() {
+  const s = cur(), ta = document.getElementById("msg"), box = ta?.closest(".composer");
+  if (!s || !box) return;
+  const d = s.statusDetail || {}, pid = termPid(s), w = takeoverWait?.sid === s.id ? takeoverWait : null;
+  if (w && d.takeover) w.seen = true;
+  else if (w && (w.seen || !pid)) {
+    if (!pid && stateOf(s) === "green") { // it went, as after any send
+      if (ta.value === w.text) { ta.value = ""; ta.style.height = "auto"; attachments.length = 0; renderAttachments(); uiFlush(); }
+      takeoverWait = null;
+    } else if (w.seen) takeoverWait = null; // it didn't: the text stays, and the toast said why
+  }
+  const line = box.querySelector(".term-line"), mark = box.querySelector(".term-wait");
+  if (line) line.textContent = pid ? `Open in a terminal (pid ${pid}). Type there, or send here to bring it back.` : "";
+  if (mark) mark.textContent = d.takeover === "taking" ? "Bringing it back from the terminal…" : d.takeover || takeoverWait?.sid === s.id ? "Waiting for the terminal to finish…" : "";
+  box.classList.toggle("held", Boolean(pid));
+  box.classList.toggle("taking", Boolean(mark?.textContent));
 }
