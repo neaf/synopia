@@ -247,6 +247,10 @@ button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px
 .composer.asking .int-ask { display: block; }
 .composer.asking textarea, .composer.asking .attach { visibility: hidden; }
 body[data-mode] .composer.asking > .g { color: var(--ink); }
+/* "Send to background?": the steps b, b would send are marked like a selected row, a 1px blue ring on the
+   selection tint, drawn outside the line (box-shadow) so nothing moves; their own running marks stay as they are */
+.log.bg-asking [data-fg] { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px #DDF4FF, 0 0 0 3px #54AEFF; }
 /* the Open list: past sessions over the main area, rows drawn like the command menu's */
 .app > .side { grid-column: 1; grid-row: 1; }
 .app > .conv { grid-column: 2; grid-row: 1; }

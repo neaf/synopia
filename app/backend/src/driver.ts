@@ -15,6 +15,7 @@ export type QueryLike = AsyncIterable<SDKMessage> & {
   supportedModels?: () => Promise<ModelInfo[]>;
   setModel?: (model?: string) => Promise<void>;
   applyFlagSettings?: (settings: { effortLevel?: EffortLevel | null }) => Promise<void>;
+  backgroundTasks?: (toolUseId?: string) => Promise<boolean>;
 };
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 export type Content = SDKUserMessage['message']['content'];
@@ -213,5 +214,13 @@ export class SessionProcess {
     const q = this.q as QueryLike & { stopTask?: (id: string) => Promise<void> };
     if (this.done || !q.stopTask) throw new Error('no running process');
     await q.stopTask(taskId);
+  }
+
+  // b, b (R9): every foreground Bash and subagent in flight goes to the background, as Ctrl+B does
+  // in the terminal (the typed Query.backgroundTasks, no tool use id). Throws when the session has
+  // background tasks turned off.
+  async backgroundTasks(): Promise<boolean> {
+    if (this.done || !this.q.backgroundTasks) throw new Error('no running process');
+    return this.q.backgroundTasks();
   }
 }

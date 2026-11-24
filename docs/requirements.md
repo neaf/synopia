@@ -274,6 +274,10 @@ These requirements come from a day of prototyping against the user's real sessio
 - R9.4 Interrupt: Esc in normal mode while a turn runs turns the message box into "Interrupt?". A second Esc interrupts. Any other key or click dismisses it. An open in-place field on a card takes Esc first (R6.4).
   - The interrupt stops only the foreground turn. Background subagents, shells and monitors keep running, as in the CLI; each is stopped with its own Stop row (R7.2).
   - Messages still queued at the interrupt go back to the message box.
+- R9.5 Send to background, as Ctrl+B in the CLI: b in normal mode, in a session Synopia drives whose turn runs a foreground Bash command or subagent, marks each such step in the transcript (a 1px blue ring on the selection tint) and turns the message box into "Send to background? b again. Any other key to keep it in front." A second b sends them all to the background. Any other key, a click or the turn ending dismisses it.
+  - With nothing that can go, or in a session another process runs, b does nothing.
+  - One prompt at a time: Esc under this prompt asks "Interrupt?" instead, and b under "Interrupt?" asks this.
+  - The steps then show as background work in the right panel (R7) and end there with their notification. A toast says so only when nothing could go.
 
 ## 10. Deliverables for review
 

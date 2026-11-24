@@ -217,6 +217,7 @@ Page to server:
 | `close` | `sid` | marks it closed and ends its process |
 | `setModel` | `sid`, `model`, `effort` | stored, and applied when the process runs |
 | `stopTask` | `sid`, `taskId` | stops one background subagent, shell or monitor |
+| `background` | `sid` | b, b (R9.5): `Query.backgroundTasks()` on the session's process sends every foreground Bash and subagent in flight to the background; `toast` only when nothing could go (no process, a false return, or background tasks turned off) |
 | `layout` | `layout` | replaces the stored layout |
 | `ui` | `patch` | merged into the stored ui state (section 11); a draft image refused by the caps gets `toast` |
 | `reviewed` | `agentId` | adds a reviewed mark |

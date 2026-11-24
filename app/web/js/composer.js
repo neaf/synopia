@@ -100,16 +100,52 @@ function openModelPicker() {
 let interruptAsk = null; // the session id the prompt is for
 /* a running turn, or one waiting on a card (Esc with no in-place field open, plan section 6) */
 const canInterrupt = s => Boolean(s) && s.driven !== false && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting"); // never for a session another process runs
+/* the message box's one prompt line: Esc, Esc's or b, b's, whichever came last */
+function askInBox(box, html) {
+  const p = box.querySelector(".int-ask") || box.appendChild(Object.assign(document.createElement("p"), { className: "int-ask" }));
+  p.setAttribute("role", "alert"); p.innerHTML = html;
+  box.classList.add("asking");
+}
 function askInterrupt() {
   const box = conv.querySelector(".dock .composer"); if (!box) return;
+  if (bgAsk) dismissBackground(); // the newest prompt replaces the other
   interruptAsk = current;
-  if (!box.querySelector(".int-ask")) box.insertAdjacentHTML("beforeend", `<p class="int-ask" role="alert"><b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.</p>`);
-  box.classList.add("asking");
+  askInBox(box, `<b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.`);
 }
 function dismissInterrupt() {
   interruptAsk = null;
   conv.querySelectorAll(".composer.asking").forEach(b => b.classList.remove("asking"));
 }
+/* ---------- b, b: the turn's foreground Bash commands and subagents go to the background, as Ctrl+B in the CLI (R9) ---------- */
+let bgAsk = null; // the session id the prompt is for
+/* the main conversation's steps that can go: a running foreground Bash or Agent (the backend's `fg`), in a running
+   turn of a session Synopia drives */
+const bgSteps = s => !s || !s.driven || view || stateOf(s) !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
+/* the first b: those steps are marked in the transcript and the box asks; false when nothing can go */
+function askBackground() {
+  const box = conv.querySelector(".dock .composer"), log = document.getElementById("log");
+  if (!box || !log || !bgSteps(cur()).length) return false;
+  if (interruptAsk) dismissInterrupt();
+  bgAsk = current;
+  askInBox(box, `<b>Send to background?</b> <kbd>b</kbd> again. Any other key to keep it in front.`);
+  log.classList.add("bg-asking");
+  return true;
+}
+function dismissBackground() {
+  bgAsk = null;
+  document.getElementById("log")?.classList.remove("bg-asking");
+  conv.querySelectorAll(".composer.asking").forEach(b => b.classList.remove("asking"));
+}
+/* the second b: the backend calls backgroundTasks() on the session's process, and says so only when nothing moved */
+function confirmBackground() {
+  const sid = bgAsk; dismissBackground();
+  if (sid && sid === current && bgSteps(cur()).length) send({ t: "background", sid });
+}
+/* the turn ended, the steps finished or the view changed under the prompt */
+function syncBackground() {
+  if (bgAsk && (bgAsk !== current || !bgSteps(cur()).length || !document.getElementById("log")?.classList.contains("bg-asking"))) dismissBackground();
+}
+document.addEventListener("mousedown", () => { if (bgAsk) dismissBackground(); }, true);
 /* the second Esc: stop the turn, if it still runs */
 function confirmInterrupt() {
   const sid = interruptAsk; dismissInterrupt();
@@ -139,7 +175,7 @@ function takeRestored(sid) {
 
 function mountComposer(s) {
   const ta = document.getElementById("msg");
-  interruptAsk = null;
+  interruptAsk = null; bgAsk = null;
   renderAttachments();
   /* a pick is stored per session (the backend's session message updates the header) and applied to a running process (setModel, the effort through applyFlagSettings) */
   attachSlash(ta, (m, effort) => {

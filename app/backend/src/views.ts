@@ -529,6 +529,15 @@ export class Views {
     this.flush(s);
   }
 
+  // The SDK's background_tasks_changed for a Synopia-driven session: the task ids of its live
+  // background work (REPLACE semantics). Steps that just went to the background show at once.
+  backgroundTasks(sid: string, taskIds: string[]): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.t.backgroundTasks(taskIds, new Date().toISOString());
+    this.flush(s);
+  }
+
   // Messages an interrupt cancelled, back to the session's message box.
   restore(sid: string, texts: string[]): void {
     if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });
