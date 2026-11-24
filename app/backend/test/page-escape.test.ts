@@ -12,7 +12,7 @@ const FILES = ['marks.js', 'md.js', 'store.js', 'tween.js', 'sidebar.js', 'image
 function page() {
   const el = (): Record<string, unknown> => ({ addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], classList: { toggle() {}, add() {}, remove() {} }, dataset: {}, style: {} });
   const document = { getElementById: el, querySelector: el, querySelectorAll: () => [], addEventListener() {}, body: { dataset: {} } };
-  const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, console, TOKEN: 't' });
+  const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, MutationObserver: class { observe() {} }, console, TOKEN: 't' });
   const names = ['md', 'esc', 'rowHTML', 'railHTML', 'filesHTML', 'itemsHTML', 'qaHTML', 'askOf', 'store', 'syncData', 'heldHTML', 'thumbsHTML'];
   vm.runInContext(FILES.map((f) => readFileSync(join(JS, f), 'utf8')).join('\n;\n') + `\n;globalThis.P = { ${names.join(', ')} };`, ctx);
   return (ctx as unknown as { P: Record<string, (...a: unknown[]) => string> & { store: { sessions: Map<string, unknown>; pending: Map<string, unknown> } } }).P;

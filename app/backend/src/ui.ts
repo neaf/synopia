@@ -34,7 +34,7 @@ export type UiState = {
   openBg?: string | null;
   openList?: { filter: string } | null;
   preview?: { path: string; scroll: number; find: string } | null;
-  viewer?: { srcs: string[]; i: number } | null;
+  viewer?: { srcs: string[]; froms?: string[]; i: number } | null;
   theme?: 'light' | 'dark' | null; // the page's theme choice; null follows the system
   sessions: Record<string, UiSession>;
 };
@@ -116,7 +116,9 @@ function cleanTop(v: Record<string, unknown>, out: UiState): void {
   if ('viewer' in v) {
     const x = v.viewer;
     const srcs = isObj(x) ? (strList(x.srcs) ?? []).filter((s) => s.startsWith('/api/image?')).slice(0, 100) : [];
-    out.viewer = isObj(x) && srcs.length ? { srcs, i: num(x.i) ? Math.min(srcs.length - 1, Math.max(0, Math.round(x.i))) : 0 } : null;
+    // froms: the source each image names in the viewer (a file path, "your message"), by position
+    const froms = isObj(x) ? (strList(x.froms) ?? []).slice(0, srcs.length) : [];
+    out.viewer = isObj(x) && srcs.length ? { srcs, froms, i: num(x.i) ? Math.min(srcs.length - 1, Math.max(0, Math.round(x.i))) : 0 } : null;
   }
 }
 
