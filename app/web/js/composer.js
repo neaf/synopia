@@ -84,7 +84,7 @@ function attachSlash(ta, onModel) {
 /* the pasted images as thumbnails (images.js), each with a ✕ on hover; a removed one's object URL is freed */
 let attachedUrls = [];
 function renderAttachments() {
-  for (const u of attachedUrls) if (!attachments.some(a => a.url === u)) URL.revokeObjectURL(u);
+  for (const u of attachedUrls) if (!attachments.some(a => a.url === u) && !uiHeld(u)) URL.revokeObjectURL(u); // another session's draft may still show it
   attachedUrls = attachments.map(a => a.url);
   const box = conv.querySelector(".composer .attach"); if (!box) return;
   box.classList.add("thumbs");
@@ -161,15 +161,17 @@ function mountComposer(s) {
     send({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() });
     ta.value = ""; ta.style.height = "auto";
     attachments.length = 0; renderAttachments();
+    uiFlush(); // the sent draft is gone from the backend at once, its images too
   };
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; });
   ta.addEventListener("paste", e => {
     for (const item of e.clipboardData?.items || []) if (item.type.startsWith("image/")) {
-      e.preventDefault(); const file = item.getAsFile(), a = { url: URL.createObjectURL(file), data: null };
+      e.preventDefault(); const file = item.getAsFile(), a = { id: uiNewId(), mediaType: file.type, url: URL.createObjectURL(file), data: null };
       attachments.push(a); renderAttachments();
-      const r = new FileReader(); r.onload = () => { a.data = r.result; }; r.readAsDataURL(file);
+      const r = new FileReader(); r.onload = () => { a.data = r.result; uiChanged(); }; r.readAsDataURL(file); // then kept with the draft
     }
   });
+  uiEnterComposer(s, ta); // this session's draft: its text, cursor and pasted images (ui.js)
   takeRestored(s.id);
 }

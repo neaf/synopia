@@ -22,6 +22,7 @@ import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
+import { pruneUi, rekeyUi } from './ui.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -295,6 +296,7 @@ export class Sessions {
       e.closedAt = this.now();
       this.store.changed();
     }
+    pruneUi(this.store, id); // its scroll, draft and the rest of the page's state for it (R3.9)
     this.views.close(id);
     this.log('sessions.close', { sid: id, running: Boolean(proc && !proc.done) });
     return { ok: true, sid: id };
@@ -643,6 +645,7 @@ export class Sessions {
       else if (old in st.written) { st.written[newId] = st.written[old]; delete st.written[old]; }
     }
     st.status[newId] = { status: a.status.status, at: a.status.at };
+    rekeyUi(this.store, old, newId); // the page's state for it moves too (R3.9)
     this.store.changed();
     this.views.rekey(old, newId);
     this.log('sessions.swap', { from: old, to: newId, why });

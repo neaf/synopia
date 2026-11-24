@@ -269,6 +269,7 @@ function renderConv() {
   if (view && !agentById(s, view)) view = null;
   const key = `${s.id}|${view || ""}`;
   if (mounted !== key) {
+    uiLeave(); // the draft of the view going away is kept (ui.js)
     mounted = key;
     conv.innerHTML = `
     <header class="c-head panel"></header>
@@ -282,6 +283,7 @@ function renderConv() {
     lastCard = null;
     mountComposer(s);
     requestView(s.id, view);
+    uiExpectReset(); // its stored scroll goes on once the items are in
   }
   renderHeader(); renderLog(); renderCard(); renderRail();
 }
@@ -347,6 +349,7 @@ function renderLog() {
   const log = document.getElementById("log");
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   patchChildren(log.querySelector(".log-inner"), logEntries(s, view && agentById(s, view)));
+  uiAfterLog(); // open diffs and folds stay open (ui.js)
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
 /* live times tick in place, so they don't count as a change */

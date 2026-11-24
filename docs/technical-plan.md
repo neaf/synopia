@@ -179,7 +179,7 @@ Server to page:
 
 | Type | Fields | When |
 |---|---|---|
-| `hello` | `sessions[]` (meta and status, no items), `layout`, `reviewed[]`, `menu`, `settings`, `pending[]` | after `auth` |
+| `hello` | `sessions[]` (meta and status, no items), `layout`, `reviewed[]`, `menu`, `settings`, `pending[]`, `ui` (section 11) | after `auth` |
 | `session` | `id`, `replaces` (the placeholder id, once), and the changed fields: `title`, `now`, `cwd`, `prs`, `status`, `statusAt`, `model`, `effort`, `bg` counts, `toReview` | on change |
 | `removed` | `id` | closed |
 | `items` | `sid`, `agent` (null for the main conversation), `upsert[]` (items with `id`), `total`, `reset`, `prepend` | after a tail read; `reset` on first view and after a file is rewritten; `prepend` in reply to `earlier`, with the items before the oldest shown, oldest first |
@@ -211,6 +211,7 @@ Page to server:
 | `setModel` | `sid`, `model`, `effort` | stored, and applied when the process runs |
 | `stopTask` | `sid`, `taskId` | stops one background subagent, shell or monitor |
 | `layout` | `layout` | replaces the stored layout |
+| `ui` | `patch` | merged into the stored ui state (section 11); a draft image refused by the caps gets `toast` |
 | `reviewed` | `agentId` | adds a reviewed mark |
 | `open` | `path` or `url` | opens a file or an `https?` URL |
 | `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does; a bad path gets `toast` |
@@ -377,9 +378,27 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
   "answers":  {"<toolUseId>": "Allow once"},
   "status":   {"<sid>": {"status": "idle", "at": 0}},
   "written":  {"<sid>": {"title": "…", "now": "…", "at": 0}},
-  "settings": {"newSessionCwd": "~/dev/demo-project", "writerModel": "haiku"}
+  "settings": {"newSessionCwd": "~/dev/demo-project", "writerModel": "haiku"},
+  "ui": {
+    "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "openBg": "<key>|null",
+    "openList": {"filter": "…"}, "preview": {"path": "…", "scroll": 0, "find": "…"}, "viewer": {"srcs": ["/api/image?sid=…&ref=…"], "i": 0},
+    "sessions": {"<sid>": {
+      "scroll":  {"<view>": {"id": "<block key>", "off": 0}, "<view>": {"bottom": true}},
+      "earlier": {"<view>": "<oldest item id loaded>"},
+      "steps": ["<view>|<item id>"], "diffs": ["<view>|<diff id>"], "folds": ["<view>|<block key>#<n>"],
+      "draft": {"text": "…", "cursor": [0, 0], "images": [{"id": "…", "mediaType": "image/png", "size": 0}]},
+      "cards": {"<requestId>": {"qi": 0, "oi": 0, "picks": {}, "own": {}, "notes": {}, "target": null, "noteRow": null, "typing": "…"}},
+      "rail": null
+    }}
+  }
 }
 ```
+
+- **`ui`** (requirements R3.9, `ui.ts`, page side `js/ui.js`): the page's exact UI state. `<view>` is `""` for the main conversation, else the agent id.
+  - The page sends `ui {patch}`, only the fields that changed, 300 ms after the last change (2 s at most) and at once on `visibilitychange` (hidden), `pagehide` and a send. A top-level field replaces the stored one; `sessions` merges per session and per field, `null` removing it. Unknown fields and malformed values are dropped. It is never broadcast to other pages: the last writer wins. `hello` returns it.
+  - The page applies it before its first render. The scroll waits for the view's reset items, then re-requests the earlier items up to the stored oldest id, then goes to the anchor: the first item block whose bottom is below the top of the log and the pixels into it, or the bottom. A missing anchor block goes to the bottom.
+  - Draft images: the page sends an image's base64 once, with the first patch that lists it; the backend writes `<state-dir>/drafts/<sid>/<id>.png|jpg` (at most 5 MB each, 20 MB per session; past that a toast and it isn't kept) and keeps only `{id, mediaType, size}`. A patch that no longer lists an image removes its file; a send clears the draft. After a restore the page loads them from `GET /api/image?sid&ref=draft:<id>`.
+  - A card's state is dropped once its request is gone. `close` prunes the session's data and its drafts folder; an id swap (init, a `/clear`) moves both (`Sessions.swap`, and the page's `renamed`).
 
 - **Layout** keeps the prototype's shape and is authoritative once stored. The page sends the whole layout after each drop or rename, and the backend reconciles it:
   - new sessions go to "Not in a group";

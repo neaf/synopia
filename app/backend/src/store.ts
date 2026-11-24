@@ -1,10 +1,12 @@
 // state.json: the open sessions, the layout, reviewed marks, models, session
-// rules, written text and settings. Loaded once, kept in memory, and written
+// rules, written text, settings and the page's ui state. Loaded once, kept in memory, and written
 // atomically (temp file, then rename) at most once per second.
 import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { normalizeUi } from './ui.ts';
+import type { UiState } from './ui.ts';
 
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
 export type Group = { id: string; name: string; ids: string[] };
@@ -29,6 +31,8 @@ export type State = {
   endedFailed: Record<string, boolean>;
   written: Record<string, { title?: string; now?: string; at: number }>;
   settings: Settings;
+  // The page's UI state, restored after a reload, a crash or a quit (ui.ts).
+  ui: UiState;
 };
 
 export function defaultState(): State {
@@ -46,6 +50,7 @@ export function defaultState(): State {
     ended: {},
     endedFailed: {},
     settings: { newSessionCwd: '~/dev/demo-project', writerModel: 'haiku' },
+    ui: { sessions: {} },
   };
 }
 
@@ -87,6 +92,7 @@ export function normalize(raw: unknown): State {
   for (const k of ['models', 'rules', 'answers', 'plans', 'status', 'written', 'ended', 'endedFailed'] as const) {
     if (isObj(raw[k])) (s as Record<string, unknown>)[k] = raw[k];
   }
+  s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
     const st = raw.settings;
     if (typeof st.newSessionCwd === 'string') s.settings.newSessionCwd = st.newSessionCwd;

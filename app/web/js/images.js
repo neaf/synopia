@@ -36,11 +36,15 @@ let viewer = null; // { srcs, i, el }
 const viewerShown = () => !!viewer;
 function openViewer(thumb) {
   const srcs = [...thumb.closest(".thumbs").querySelectorAll(".thumb[data-full-src]")].map(b => b.dataset.fullSrc);
+  showViewer(srcs, srcs.indexOf(thumb.dataset.fullSrc));
+}
+/* the viewer on these images at i (also how a reload puts it back, ui.js) */
+function showViewer(srcs, i) {
   closeViewer();
   const el = document.createElement("div");
   el.className = "viewer"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.tabIndex = -1;
   document.body.append(el);
-  viewer = { srcs, i: Math.max(0, srcs.indexOf(thumb.dataset.fullSrc)), el, back: document.activeElement };
+  viewer = { srcs, i: Math.min(srcs.length - 1, Math.max(0, i)), el, back: document.activeElement };
   drawViewer(); el.focus({ preventScroll: true });
 }
 function drawViewer() {

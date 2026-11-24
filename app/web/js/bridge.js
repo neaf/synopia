@@ -27,9 +27,10 @@ const isViewed = (sid, agent) => sid === current && (agent || null) === (view ||
 function onMessage(m) {
   switch (m.t) {
     case "hello": {
-      applyHello(m); layout = null; pickCurrent();
+      applyHello(m); uiApplyHello(m.ui); layout = null; pickCurrent(); // the stored ui state first: no default view flashes (ui.js)
       const before = mounted; renderAll(); // mounting a view asks the server for it
-      if (mounted && mounted === before) requestView(current, view); // a reconnect keeps the composer as it was
+      if (mounted && mounted === before) { requestView(current, view); uiExpectReset(); } // a reconnect keeps the composer as it was
+      uiAfterRender();
       break;
     }
     case "session": {
@@ -52,8 +53,9 @@ function onMessage(m) {
     case "items": {
       if (!applyItems(m)) break;
       if (!isViewed(m.sid, m.agent)) break;
-      if (m.prepend) { renderLogKeepingPlace(); break; } // earlier items: the card and header don't change
+      if (m.prepend) { renderLogKeepingPlace(); uiItems(m); break; } // earlier items: the card and header don't change
       render("log", "card", "header"); // the header drops its Now line while a new session is empty
+      uiItems(m); // a restored scroll waits for these (ui.js)
       runHooks(m);
       break;
     }
@@ -102,6 +104,7 @@ function renamed(from, to) {
   /* a card still up moves with it, with what you picked on it */
   if (store.pending.has(from)) { store.pending.set(to, store.pending.get(from)); store.pending.delete(from); }
   for (const k of Object.keys(qstate)) if (k.startsWith(from + ":")) { qstate[to + k.slice(from.length)] = qstate[k]; delete qstate[k]; }
+  uiRekey(from, to); // its scroll, draft, open steps and the rest (ui.js)
 }
 
 /* the ?agent= and ?open= hooks, once the view they need has its items */

@@ -50,6 +50,14 @@ These requirements come from a day of prototyping against the user's real sessio
   - Taking over terminal sessions.
   - Showing terminal sessions read-only.
   - Drift detection ("Topic changed: …") and "Split into a new session": the user keeps one session per topic.
+- R3.9 Exact state after a reload, a crash or a quit: reopening Synopia shows exactly what was on screen. The page is only UI; this state lives in the backend, so it survives page reloads, app crashes and quits. Restored:
+  - the current session, and the subagent view if one was open;
+  - each session's scroll position, on the same item and the same pixels into it (so it lands on the same content when the window size changed or new items arrived), or at the bottom, pinned there, if it was within 40 px of the end. An item that is gone (a rewritten file) lands at the bottom;
+  - each session's message box draft: its text, its cursor, its pasted images (kept as files, at most 5 MB each and 20 MB per session, removed on send), and normal or insert mode;
+  - expanded steps, open diffs, unfolded runs, the expanded background card, and the earlier items loaded (asked for again);
+  - a half-answered card: the picks, notes, typed answers and the cursor, as long as the request still waits;
+  - the Open list (open, with its filter), the file preview (its file, scroll and find query) and the image viewer.
+  - A closed session's state is dropped; a `/clear` or a new session's real id carries it over. There's no live sharing between two pages: the last one to write wins.
 
 ## 4. Sidebar
 

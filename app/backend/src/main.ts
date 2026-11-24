@@ -23,6 +23,7 @@ import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
 import { Badge, badgeCount } from './badge.ts';
 import { DAEMON_LOG, IDLE_EXIT_MS, IdleExit, procStart, removeDaemonInfo, rotateLog, writeDaemonInfo } from './daemon.ts';
+import { patchUi, draftImage } from './ui.ts';
 import type { Image } from './sessions.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
@@ -206,6 +207,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
       bat: b, log, display: (p) => displayPath(p, script?.home ?? homedir()), reply: (r) => client.send(r), toast,
       open: (p) => openTarget({ path: p }, { dryRun: flags['dry-open'], log, onError: toast }),
     }));
+  } else if (msg.t === 'ui') { // the page's UI state (R3.9): stored, returned in hello, never broadcast
+    patchUi(store, msg.patch, { resolve: (id) => sessions?.resolve(id) ?? id, known: (id) => views.meta(id) !== undefined, toast: (text) => client.send({ t: 'toast', text }) });
   } else if (msg.t === 'layout' && msg.layout && typeof msg.layout === 'object') {
     store.state.layout = reconcileLayout(msg.layout as Layout, store.state.layout, openEntries());
     store.changed();
@@ -227,11 +230,12 @@ try {
       menu: fake ? fake.menu() : menus?.all() ?? {},
       settings: store.state.settings,
       pending: views.pending(),
+      ui: store.state.ui,
     }),
     quitCheck: () => sessions?.quitCheck() ?? { running: [], background: [] },
     badge: () => badgeCount(badgeSource),
     onStop: () => void shutdown('stopAll'),
-    image: (sid, agent, ref) => views.image(sessions ? sessions.resolve(sid) : sid, agent, ref),
+    image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions ? sessions.resolve(sid) : sid, ref) : views.image(sessions ? sessions.resolve(sid) : sid, agent, ref),
     onMessage,
   });
 } catch (e) {
