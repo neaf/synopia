@@ -14,7 +14,8 @@ import { acquireLock, LockedError } from './lock.ts';
 import { openLog } from './log.ts';
 import { openStore, reconcileLayout, REVIEWED_MAX } from './store.ts';
 import { startServer } from './server.ts';
-import { Views } from './views.ts';
+import { Transcripts } from './transcripts.ts';
+import { Publisher } from './publisher.ts';
 import { Sessions } from './sessions.ts';
 import { CliTerminals, realEnd } from './cli-terminals.ts';
 import { realSdk } from './sdk.ts';
@@ -116,12 +117,17 @@ const noClients = new Set<Client>();
 const badge = new BadgeCounter((n) => log('badge', { n }));
 const reviewed = () => new Set(store.state.reviewed);
 let reviewedSet = reviewed();
-const views = new Views({
-  claudeDir, clients: () => server?.clients ?? noClients, home, log,
+// The reading set (every open transcript) and the one sender of frames to the pages.
+const transcripts = new Transcripts({
+  claudeDir, home, log,
   onAssistant: (sid, mid, types) => sessions.landed(sid, mid, types),
   written: (sid) => store.state.written[sid],
   answerOf: (toolUseId) => store.state.answers[toolUseId],
   planOf: (toolUseId) => store.state.plans[toolUseId],
+});
+const publisher = new Publisher({
+  transcripts, clients: () => server?.clients ?? noClients, home,
+  written: (sid) => store.state.written[sid],
   defaultModel: () => store.state.settings.model,
   reviewed: (id) => reviewedSet.has(id),
   badge,
@@ -131,17 +137,17 @@ const views = new Views({
 // bat for the file preview, found once (plain text without it)
 const bat = loadBat({ log });
 // Slice 5: the slash menu and the model list per folder.
-const menus = new Menus({ clients: () => server?.clients ?? noClients, log, cacheFile: join(stateDir, 'menu-cache.json'), sdk });
+const menus = new Menus({ clients: () => server?.clients ?? noClients, reply: (c, msg) => publisher.reply(c, msg), log, cacheFile: join(stateDir, 'menu-cache.json'), sdk });
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
 // Slice 6: Claude-written titles and Now lines, after each turn and on open.
 const writer = new Writer({
   store, stateDir, log, sdk,
   source: {
-    title: (sid) => views.meta(sid)?.title,
-    turns: (sid) => views.turns(sid),
+    title: (sid) => publisher.meta(sid)?.title,
+    turns: (sid) => transcripts.turns(sid),
     resolve: (sid) => sessions.resolve(sid),
-    changed: (sid) => views.refresh(sid),
-    work: (sid) => views.work(sid),
+    changed: (sid) => publisher.changed(sid),
+    work: (sid) => publisher.work(sid),
   },
 });
 // FR-SES-08: the terminals that hold sessions, from the CLI's pid files (cli-terminals.ts). Under the
@@ -151,13 +157,13 @@ const terminals = new CliTerminals({
   dir: join(claudeDir, 'sessions'), log, probe: scripted?.probe, end: scripted?.end ?? (flags['dry-run'] ? dryEnd : undefined),
 });
 const sessions = new Sessions({
-  store, views, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer,
+  store, transcripts, publisher, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer,
   idleMs: idleMs && idleMs > 0 ? idleMs : undefined, registry: terminals,
   onTurnEnded: (sid) => writer.turnEnded(sid),
   onOpened: (sid) => writer.opened(sid),
   onWaiting: (sid) => writer.waitingChanged(sid),
   onCommands: (sid, commands) => {
-    const folder = views.meta(sid)?.cwd;
+    const folder = publisher.meta(sid)?.cwd;
     if (folder) menus.commandsChanged(folder, commands);
   },
 });
@@ -166,75 +172,75 @@ const sessions = new Sessions({
 // monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer. The update restart waits on the same.
 function busy(): boolean {
   const q = sessions.quitCheck();
-  return q.running.length + q.background.length > 0 || views.pending().length > 0;
+  return q.running.length + q.background.length > 0 || publisher.pending().length > 0;
 }
 
 function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
+  const toast = (text: string) => publisher.toast(text, client);
   if (msg.t === 'view' && typeof msg.sid === 'string') {
     const sid = sessions.resolve(msg.sid);
-    views.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null, typeof msg.from === 'string' ? msg.from : null);
-    const folder = views.meta(sid)?.cwd, abs = sessions.cwdOf(sid);
+    publisher.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null, typeof msg.from === 'string' ? msg.from : null);
+    const folder = publisher.meta(sid)?.cwd, abs = sessions.cwdOf(sid);
     if (folder && abs) void menus.viewed(client, folder, abs, sessions.menuSource(sid));
   } else if (msg.t === 'earlier' && typeof msg.sid === 'string' && typeof msg.before === 'string') {
     const sid = sessions.resolve(msg.sid);
-    views.earlier(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.before);
+    publisher.earlier(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.before);
   } else if (msg.t === 'toolOutput' && typeof msg.sid === 'string' && typeof msg.toolUseId === 'string') {
     const sid = sessions.resolve(msg.sid);
-    views.toolOutput(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.toolUseId);
+    publisher.toolOutput(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.toolUseId);
   } else if (msg.t === 'setModel' && typeof msg.sid === 'string' && typeof msg.model === 'string') {
     const effort = typeof msg.effort === 'string' && msg.effort ? msg.effort : null;
-    void sessions.setModel(msg.sid, msg.model, effort).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
+    void sessions.setModel(msg.sid, msg.model, effort).then((r) => { if (!r.ok) toast(r.error); });
   } else if (msg.t === 'newSession') {
     sessions.newSession();
   } else if (msg.t === 'listRecent') {
     sessions.listRecent(typeof msg.filter === 'string' ? msg.filter : '').then(
-      (list) => client.send({ t: 'recent', filter: msg.filter ?? '', sessions: list }),
-      (e) => { log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') }); client.send({ t: 'recent', filter: msg.filter ?? '', sessions: [], error: true }); },
+      (list) => publisher.reply(client, { t: 'recent', filter: msg.filter ?? '', sessions: list }),
+      (e) => { log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') }); publisher.reply(client, { t: 'recent', filter: msg.filter ?? '', sessions: [], error: true }); },
     );
   } else if (msg.t === 'openSession' && typeof msg.id === 'string') {
     sessions.openSession(msg.id).then(
-      (r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); },
-      () => client.send({ t: 'toast', text: "Synopia couldn't read the list of past sessions." }),
+      (r) => { if (!r.ok) toast(r.error); },
+      () => toast("Synopia couldn't read the list of past sessions."),
     );
   } else if (msg.t === 'close' && typeof msg.sid === 'string') {
     const r = sessions.close(msg.sid);
-    if (!r.ok) client.send({ t: 'toast', text: r.error });
+    if (!r.ok) toast(r.error);
   } else if (msg.t === 'cancelTakeover' && typeof msg.sid === 'string') {
     sessions.cancelTakeover(msg.sid);
   } else if (msg.t === 'interrupt' && typeof msg.sid === 'string') {
-    void sessions.interrupt(msg.sid);
+    void sessions.interrupt(msg.sid, client);
   } else if (msg.t === 'send' && typeof msg.sid === 'string') {
     const images = Array.isArray(msg.images)
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
       : [];
     const text = typeof msg.text === 'string' ? msg.text : '', uuid = typeof msg.uuid === 'string' ? msg.uuid : undefined;
-    const r = sessions.send(msg.sid, text, images, uuid); // shown at once, queued while a turn runs (session.ts)
-    if (!r.ok) client.send({ t: 'toast', text: r.error });
+    const r = sessions.send(msg.sid, text, images, uuid, client); // shown at once, queued while a turn runs (session.ts)
+    if (!r.ok) toast(r.error);
   } else if (msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') { // bash mode (R5.13)
-    const r = sessions.bang(msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : undefined);
-    if (!r.ok) client.send({ t: 'toast', text: r.error });
+    const r = sessions.bang(msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : undefined, client);
+    if (!r.ok) toast(r.error);
   } else if (msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
-    if (!r.ok) client.send({ t: 'toast', text: r.error });
+    if (!r.ok) toast(r.error);
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
     if (!reviewedSet.has(msg.agentId)) {
       store.state.reviewed = [...store.state.reviewed, msg.agentId].slice(-REVIEWED_MAX);
       reviewedSet = reviewed();
       store.changed();
-      views.reviewed(msg.agentId);
+      publisher.reviewed(msg.agentId);
     }
   } else if (msg.t === 'background' && typeof msg.sid === 'string') { // b, b (R9): a toast only when nothing moved
-    void sessions.background(msg.sid).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
+    void sessions.background(msg.sid).then((r) => { if (!r.ok) toast(r.error); });
   } else if (msg.t === 'open') {
-    openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-run'], log, onError: (text) => client.send({ t: 'toast', text }) });
+    openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-run'], log, onError: toast });
   } else if (msg.t === 'preview') { // a text file's read-only preview; anything else opens as `open` does
-    const toast = (text: string) => client.send({ t: 'toast', text });
     void bat.then((b) => previewFile(msg.path, {
-      bat: b, theme: themeOf(msg.theme), log, display: (p) => displayPath(p, home), reply: (r) => client.send(r), toast,
+      bat: b, theme: themeOf(msg.theme), log, display: (p) => displayPath(p, home), reply: (r) => publisher.reply(client, r), toast,
       open: (p) => openTarget({ path: p }, { dryRun: flags['dry-run'], log, onError: toast }),
     }));
   } else if (msg.t === 'ui') { // the page's UI state (R3.9): stored, returned in hello, never broadcast
-    patchUi(store, msg.patch, { resolve: (id) => sessions.resolve(id), known: (id) => views.meta(id) !== undefined, toast: (text) => client.send({ t: 'toast', text }) });
+    patchUi(store, msg.patch, { resolve: (id) => sessions.resolve(id), known: (id) => transcripts.has(id), toast });
   } else if (msg.t === 'layout' && msg.layout && typeof msg.layout === 'object') {
     store.state.layout = reconcileLayout(msg.layout as Layout, store.state.layout, sessions.layoutEntries());
     store.changed();
@@ -250,11 +256,11 @@ try {
     webRoot: fileURLToPath(new URL('../../web/', import.meta.url)),
     log,
     hello: () => ({
-      sessions: views.sessions(),
+      sessions: publisher.sessions(),
       layout: store.state.layout,
       menu: menus.all(),
       settings: store.state.settings,
-      pending: views.pending(),
+      pending: publisher.pending(),
       ui: store.state.ui,
       update: updates.pending,
     }),
@@ -264,7 +270,7 @@ try {
     onStop: () => void shutdown('stopAll'),
     // "Restart Backend Now…": a handover at once, whatever runs (the shell asked first). Not under dev.sh.
     onRestart: flags['no-parent'] ? undefined : () => void handOver('restart'),
-    image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions.resolve(sid), ref) : views.image(sessions.resolve(sid), agent, ref),
+    image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions.resolve(sid), ref) : transcripts.image(sessions.resolve(sid), agent, ref),
     // Nothing reaches the sessions once the daemon is stopping (a handover's new daemon takes over).
     onMessage: (client, msg) => { if (!stopping) onMessage(client, msg); },
   });
@@ -292,7 +298,8 @@ async function shutdown(reason: string) {
   menus.stop();
   terminals.stop();
   sessions.stop();
-  views.stop();
+  publisher.stop();
+  transcripts.stop();
   store.close();
   await server?.close();
   lock.release();
@@ -369,7 +376,7 @@ async function handOver(reason: 'update' | 'restart') {
   void shutdown(reason);
 }
 function broadcast(msg: object) {
-  for (const c of (server as Server).clients) c.send(msg);
+  publisher.broadcast(msg);
 }
 if (!flags['no-parent']) {
   let tick = 0;

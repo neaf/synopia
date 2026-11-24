@@ -1,4 +1,4 @@
-// The scripted SDK (dev/scripted-sdk.ts) under the real Sessions and Views: the state folder it seeds,
+// The scripted SDK (dev/scripted-sdk.ts) under the real Sessions, Transcripts and Publisher: the state folder it seeds,
 // the steps it plays with the clock moved, its control calls, what it writes to a transcript, its
 // listSessions, the writer's call, and the pretend terminals.
 import { test } from 'node:test';
@@ -6,7 +6,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import { Writer } from '../src/writer.ts';
 import { openStore } from '../src/store.ts';
@@ -39,20 +40,17 @@ async function setup(tree = 'claude', edit?: (s: Script) => void) {
   const got: Msg[] = [];
   const c: Client = { send: (m) => got.push(JSON.parse(JSON.stringify(m))), close: () => {} };
   let sessions: Sessions | null = null;
-  const views = new Views({
-    claudeDir, clients: () => new Set([c]), home: scripted.home, pollMs: 0, watch: false,
-    onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
-    onRunning: (sid, r) => sessions?.runningChanged(sid, r),
-  });
-  sessions = new Sessions({ store, views, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer });
+  const transcripts = new Transcripts({ claudeDir, home: scripted.home, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
+  const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: scripted.home, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r) });
+  sessions = new Sessions({ store, transcripts, publisher, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer });
   sessions.start();
   scripted.attach(sessions);
   await scripted.whenPlayed();
   await sleep(10);
-  views.check();
-  const meta = (sid: string) => views.meta(sid)!.state;
-  const stop = () => { sessions?.stop(); views.stop(); store.close(); };
-  return { root, claudeDir, stateDir, scripted, store, views, sessions: sessions as Sessions, got, meta, stop };
+  transcripts.poll();
+  const meta = (sid: string) => publisher.meta(sid)!.state;
+  const stop = () => { sessions?.stop(); transcripts.stop(); publisher.stop(); store.close(); };
+  return { root, claudeDir, stateDir, scripted, store, transcripts, publisher, sessions: sessions as Sessions, got, meta, stop };
 }
 
 test('scripted: a fresh state folder gets every fixture session, with the script\'s status, age and folder', () => {
@@ -71,11 +69,11 @@ test('scripted: a fresh state folder gets every fixture session, with the script
 });
 
 test('scripted: the main fixture\'s cards, working session and stream preview, on the real Sessions', async () => {
-  const { views, sessions, meta, got, stop } = await setup();
+  const { transcripts, publisher, sessions, meta, got, stop } = await setup();
   try {
-    const pending = views.pending().map((p) => [p.sid.slice(0, 4), p.request.id, p.request.kind]);
+    const pending = publisher.pending().map((p) => [p.sid.slice(0, 4), p.request.id, p.request.kind]);
     assert.deepEqual(pending, [['2222', 'req-question-1', 'question'], ['3333', 'req-permission-1', 'permission'], ['5555', 'req-plan-1', 'plan']]);
-    const perm = views.pending()[1].request as { always: string | null; cwd: string; since: number };
+    const perm = publisher.pending()[1].request as { always: string | null; cwd: string; since: number };
     assert.ok(perm.always, 'the suggestion gives an "Always allow"');
     assert.equal(perm.cwd, '~/dev/demo');
     assert.ok(Math.abs(Date.now() - 120_000 - perm.since) < 2000, 'the card is 2 min old (ago)');
@@ -83,8 +81,8 @@ test('scripted: the main fixture\'s cards, working session and stream preview, o
     assert.ok(Math.abs(Date.now() - 240_000 - meta(S2).since) < 2000);
     await sleep(700); // the stream's last delta is 600 ms in
     assert.equal(meta(S4).status, 'busy');
-    const stream = got.filter((m) => m.t === 'stream' && m.sid === S4).pop();
-    assert.equal(stream?.text, "Two subagents are still running. I'll merge their changes when both report back.");
+    const stream = (publisher.sessions() as { id: string; stream: string | null }[]).find((s) => s.id === S4);
+    assert.equal(stream?.stream, "Two subagents are still running. I'll merge their changes when both report back.");
     assert.ok([S1, S2, S4].every((s) => meta(s).driven), 'Synopia\'s own processes drive them');
     // the menu from S1's running process: HTML unescaped, internal commands left out
     const menu = await readMenu(sessions.menuSource(S1)!, 1000);
@@ -93,17 +91,17 @@ test('scripted: the main fixture\'s cards, working session and stream preview, o
     assert.deepEqual(menu.models.map((m) => m.value), ['default', 'fixture-large', 'fixture-small']);
     // an answer settles the request: working, then the script's result 3 s later
     assert.equal(sessions.answer(S2, 'req-question-1', { questions: [{ picks: ['No'] }, { picks: ['Docs'] }] }).ok, true);
-    assert.ok(!views.pending().some((p) => p.request.id === 'req-question-1'));
+    assert.ok(!publisher.pending().some((p) => p.request.id === 'req-question-1'));
     await sleep(20);
     assert.equal(meta(S2).status, 'busy');
   } finally { stop(); }
 });
 
 test('scripted: the states fixture plays one session per wired state, on the real status rules', async () => {
-  const { views, meta, stop } = await setup('claude-states');
+  const { transcripts, publisher, meta, stop } = await setup('claude-states');
   try {
     await sleep(30); // e5e5's stale timer, armed 16 min in the past, is due at once
-    const all = (views.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
+    const all = (publisher.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
     assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy', 'busy']);
     assert.equal(all[0].detail.queued, 1, 'the message sent during the turn');
     assert.deepEqual([all[2].detail.retry?.attempt, all[2].detail.retry?.max], [3, 10]);
@@ -131,7 +129,7 @@ test('scripted: the clock reads the past only while a step plays, and its timers
 });
 
 test('scripted: an interrupt cancels the queued messages not in the transcript, and ends the turn stopped', async () => {
-  const { claudeDir, sessions, views, meta, got, stop } = await setup('claude', (s) => {
+  const { claudeDir, sessions, transcripts, publisher, meta, got, stop } = await setup('claude', (s) => {
     s.sessions = { [S1]: { start: true, steps: [running(30_000)] } };
   });
   try {
@@ -147,14 +145,14 @@ test('scripted: an interrupt cancels the queued messages not in the transcript, 
     got.length = 0;
     await sessions.interrupt(S1);
     await sleep(20);
-    views.check();
+    transcripts.poll();
     assert.deepEqual(got.filter((m) => m.t === 'restore').map((m) => m.texts), [['Second, queued.']]);
     assert.equal(meta(S1).status, 'stopped');
   } finally { stop(); }
 });
 
 test('scripted: a message that starts a turn and bash mode\'s context go to the transcript as the CLI writes them', async () => {
-  const { claudeDir, sessions, views, meta, stop } = await setup('claude', (s) => {
+  const { claudeDir, sessions, transcripts, publisher, meta, stop } = await setup('claude', (s) => {
     s.onSend = [{ after: 20, message: { type: 'result', subtype: 'success', is_error: false, result: '' } }, { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } }];
     s.sessions = { [S1]: { start: true } };
   });
@@ -167,7 +165,7 @@ test('scripted: a message that starts a turn and bash mode\'s context go to the 
     const last = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()!);
     assert.deepEqual([last.type, last.uuid, last.sessionId, last.message.content], ['user', uuid, S1, 'Read the notes again.']);
     await sleep(60);
-    views.check();
+    transcripts.poll();
     assert.equal(meta(S1).status, 'idle', 'the script\'s onSend ended the turn');
     // bash mode's context: a user message with shouldQuery false, no turn
     const before = fs.readFileSync(file, 'utf8').split('\n').length;

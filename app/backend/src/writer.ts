@@ -3,7 +3,7 @@
 // reads the last turns and writes a title and a Now line. The call can't act: no tools, no MCP
 // servers, no hooks, its own system prompt, no saved session, and a scratch folder of its own.
 // Its result never reaches the sessions, so a writer call can't start another one.
-// The text is stored in state.json `written[sid]`; views.ts puts it in the `session` message.
+// The text is stored in state.json `written[sid]`; publisher.ts puts it in the `session` message.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Store } from './store.ts';

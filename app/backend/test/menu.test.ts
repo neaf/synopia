@@ -49,7 +49,7 @@ test('menu: one idle query per folder fills the cache; each page gets the folder
   const dir = tmp();
   const a = client(), b = client();
   const q = idleFake();
-  const m = new Menus({ clients: () => new Set([a.c, b.c]), sdk: q.sdk });
+  const m = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c, b.c]), sdk: q.sdk });
   await Promise.all([m.viewed(a.c, '~/x', dir, null), m.viewed(b.c, '~/x', dir, null)]);
   assert.equal(q.calls.length, 1, 'one idle query for two views');
   assert.equal(q.calls[0].options.cwd, dir);
@@ -67,7 +67,7 @@ test('menu: a running process gives the menu, and pages that had the folder get 
   const dir = tmp();
   const a = client();
   const q = idleFake();
-  const m = new Menus({ clients: () => new Set([a.c]), sdk: q.sdk });
+  const m = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: q.sdk });
   await m.viewed(a.c, '~/x', dir, null);
   const proc = { supportedCommands: async () => [{ name: 'skill-x', description: 'From the process', argumentHint: '' }] as SlashCommand[], supportedModels: async () => MODELS };
   await m.viewed(a.c, '~/x', dir, proc);
@@ -83,7 +83,7 @@ test('menu: a running process that never answers times out, and the idle probe f
   const a = client();
   const q = idleFake();
   const logs: string[] = [];
-  const m = new Menus({ clients: () => new Set([a.c]), sdk: q.sdk, processTimeoutMs: 20, log: (e, f) => logs.push(`${e} ${JSON.stringify(f)}`) });
+  const m = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: q.sdk, processTimeoutMs: 20, log: (e, f) => logs.push(`${e} ${JSON.stringify(f)}`) });
   const hung = { supportedCommands: never, supportedModels: async () => MODELS };
   const t0 = Date.now();
   await m.viewed(a.c, '~/x', dir, hung);
@@ -99,7 +99,7 @@ test('menu: a failed probe waits before the next try, longer after each failure 
   let now = 0;
   let broken = true;
   const bad = idleFake(async () => (broken ? fail() : CMDS));
-  const m = new Menus({ clients: () => new Set([a.c]), sdk: bad.sdk, retryMs: 1000, now: () => now });
+  const m = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: bad.sdk, retryMs: 1000, now: () => now });
   await m.viewed(a.c, '~/x', dir, null);
   assert.equal(a.got.length, 0);
   assert.equal(bad.calls[0].closed, true);
@@ -126,7 +126,7 @@ test('menu: an idle query that never answers times out and is closed', async () 
   const dir = tmp();
   const a = client();
   const q = idleFake(never);
-  const m = new Menus({ clients: () => new Set([a.c]), timeoutMs: 20, sdk: q.sdk });
+  const m = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), timeoutMs: 20, sdk: q.sdk });
   await m.viewed(a.c, '~/x', dir, null);
   assert.equal(q.calls[0].closed, true);
   assert.equal(a.got.length, 0);
@@ -136,7 +136,7 @@ test('menu: stop aborts an idle query that is still reading (L8)', async () => {
   const dir = tmp();
   const a = client();
   const q = idleFake(never);
-  const m = new Menus({ clients: () => new Set([a.c]), sdk: q.sdk });
+  const m = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: q.sdk });
   const viewed = m.viewed(a.c, '~/x', dir, null);
   await new Promise((r) => setTimeout(r, 5));
   m.stop();
@@ -149,11 +149,11 @@ test('menu: the model lists are kept across launches, so hello names the model a
   const dir = tmp();
   const cacheFile = path.join(tmp(), 'menu-cache.json');
   const a = client();
-  const first = new Menus({ clients: () => new Set([a.c]), sdk: idleFake().sdk, cacheFile });
+  const first = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: idleFake().sdk, cacheFile });
   await first.viewed(a.c, '~/x', dir, null);
   // the next launch, before any view
   const q = idleFake();
-  const next = new Menus({ clients: () => new Set([a.c]), sdk: q.sdk, cacheFile });
+  const next = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: q.sdk, cacheFile });
   const hello = next.all()['~/x'];
   assert.deepEqual(hello.models.map((m) => [m.value, m.name, m.resolved]), [['default', 'Default', null], ['haiku', 'Haiku', 'claude-haiku-9']]);
   assert.deepEqual(hello.commands, [], 'commands come with the first view');
@@ -163,5 +163,5 @@ test('menu: the model lists are kept across launches, so hello names the model a
   assert.equal((a.got[0].commands as unknown[]).length, 2);
   // a broken cache file is ignored
   fs.writeFileSync(cacheFile, '{nope');
-  assert.deepEqual(new Menus({ clients: () => new Set(), cacheFile }).all(), {});
+  assert.deepEqual(new Menus({ reply: (c, m) => c.send(m), clients: () => new Set(), cacheFile }).all(), {});
 });

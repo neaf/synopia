@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import { resolveModel } from '../src/session.ts';
 import type { TerminalSource } from '../src/session.ts';
@@ -33,7 +34,8 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
   const c: Client = { send: (m) => got.push(JSON.parse(JSON.stringify(m))), close: () => {} };
   const store = openStore(path.join(root, 'state'), { minIntervalMs: 0 });
   for (const id of o.open ?? [SID]) store.state.open.push({ id, cwd, openedAt: 1, closedAt: null });
-  const views = new Views({ claudeDir, clients: () => new Set([c]), home: root, pollMs: 0, watch: false });
+  const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false });
+  const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: root, recheckMs: 0 });
   const q = fakeQuery();
   const logs: string[] = [];
   const checks: ((t: Terminal | null) => void)[] = [];
@@ -44,11 +46,11 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
     end: async () => true,
     ...(o.confirm ? { confirm: () => new Promise<Terminal | null>((r) => checks.push(r)) } : {}),
   };
-  const sessions = new Sessions({ store, views, sdk: q.sdk, home: root, idleMs: o.idleMs, registry, log: (e) => logs.push(e) });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, registry, log: (e) => logs.push(e) });
   sessions.start();
   const take = (t: string) => { const out = got.filter((m) => m.t === t); for (const m of out) got.splice(got.indexOf(m), 1); return out; };
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;
-  return { sessions, store, views, q, logs, checks, take, last, s: () => sessions.get(SID)! };
+  return { sessions, store, transcripts, publisher, q, logs, checks, take, last, s: () => sessions.get(SID)! };
 }
 
 test('session: idle, running, ending at the idle end, idle at the exit, then running again', async () => {

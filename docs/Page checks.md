@@ -45,7 +45,7 @@ A step has one or more of: `message` (an SDK message the query yields; `session_
 
 ## Comparing with the prototype
 
-`compare.sh` starts `dev.sh --script` on a temp state folder, builds `transcripts.js` and `menu.js` for a temp copy of `prototype/app.html` from the same fixtures (`build-proto-fixture.ts`: the backend's Views and Sessions on the scripted SDK in one process, and the page's `card.js`), and screenshots both at 1280 by 820 with reduced motion. States: waiting (question card), permission, plan, busy (subagent wave), diff, agent (subagent view). It never touches `prototype/transcripts.js`.
+`compare.sh` starts `dev.sh --script` on a temp state folder, builds `transcripts.js` and `menu.js` for a temp copy of `prototype/app.html` from the same fixtures (`build-proto-fixture.ts`: the backend's Transcripts, Publisher and Sessions on the scripted SDK in one process, one page viewing each conversation, and the page's `card.js`), and screenshots both at 1280 by 820 with reduced motion. States: waiting (question card), permission, plan, busy (subagent wave), diff, agent (subagent view). It never touches `prototype/transcripts.js`.
 
 Expected differences, all deliberate:
 - no "N open sessions" footer;

@@ -11,7 +11,7 @@ import { Transcript, imageSize, imageRefs, parseRef, readImage } from '../src/tr
 import { imageBlocks } from '../src/claude-jsonl.ts';
 import { Tailer } from '../src/tail.ts';
 import type { JsonRecord, Span } from '../src/tail.ts';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
 import { startServer } from '../src/server.ts';
 import type { Client } from '../src/server.ts';
 
@@ -143,10 +143,10 @@ const TOKEN = 'b'.repeat(64);
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-images-web-'));
 fs.writeFileSync(path.join(base, 'index.html'), '<p>index</p>');
 const s = session();
-const views = new Views({ claudeDir: s.dir, clients: () => new Set<Client>(), home: '/Users/fixture', pollMs: 0, watch: false });
-views.open(SID);
-const server = await startServer({ port: 0, token: TOKEN, webRoot: base, hello: () => ({}), quitCheck: () => ({ running: [], background: [] }), image: (sid, agent, ref) => views.image(sid, agent, ref) });
-after(() => { views.stop(); return server.close(); });
+const transcripts = new Transcripts({ claudeDir: s.dir, home: '/Users/fixture', pollMs: 0, watch: false });
+transcripts.open(SID);
+const server = await startServer({ port: 0, token: TOKEN, webRoot: base, hello: () => ({}), quitCheck: () => ({ running: [], background: [] }), image: (sid, agent, ref) => transcripts.image(sid, agent, ref) });
+after(() => { transcripts.stop(); return server.close(); });
 
 type Res = { status: number; headers: Record<string, unknown>; body: Buffer };
 const get = (q: string): Promise<Res> => new Promise((ok, fail) => {

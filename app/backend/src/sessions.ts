@@ -14,9 +14,10 @@ import type { Image, MenuSource, Sdk } from './sdk.ts';
 import { restored } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import { IDLE_MS, Session, UUID } from './session.ts';
-import type { ModelChoice, SendResult, TerminalSource } from './session.ts';
+import type { By, ModelChoice, SendResult, TerminalSource } from './session.ts';
 import type { CardAnswer } from './cards.ts';
-import type { Views } from './views.ts';
+import type { Transcripts } from './transcripts.ts';
+import type { Publisher } from './publisher.ts';
 import { newSessionFolder } from './store.ts';
 import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
@@ -32,7 +33,8 @@ export { IDLE_MS } from './session.ts';
 
 export type SessionsOptions = {
   store: Store;
-  views: Views;
+  transcripts: Transcripts;
+  publisher: Publisher;
   log?: Log;
   sdk?: Sdk; // tests inject a fake query and listSessions; the default is the SDK
   home?: string;
@@ -54,7 +56,8 @@ const gone: SendResult = { ok: false, error: "That session isn't open any more."
 
 export class Sessions {
   private store: Store;
-  private views: Views;
+  private transcripts: Transcripts;
+  private publisher: Publisher;
   private log: Log;
   private opts: SessionsOptions;
   private home: string;
@@ -66,7 +69,8 @@ export class Sessions {
   constructor(opts: SessionsOptions) {
     this.opts = opts;
     this.store = opts.store;
-    this.views = opts.views;
+    this.transcripts = opts.transcripts;
+    this.publisher = opts.publisher;
     this.log = opts.log ?? nullLog;
     this.home = opts.home ?? os.homedir();
     this.now = opts.now ?? Date.now;
@@ -112,7 +116,7 @@ export class Sessions {
     const background: { sid: string; kind: string }[] = [];
     for (const s of this.live.values()) {
       if (!s.hasProcess) continue;
-      for (const kind of this.views.facts(s.id)?.runningWork ?? []) background.push({ sid: s.id, kind });
+      for (const kind of this.transcripts.facts(s.id)?.runningWork ?? []) background.push({ sid: s.id, kind });
     }
     return { running: this.running(), background };
   }
@@ -195,7 +199,7 @@ export class Sessions {
       this.store.changed();
     }
     pruneUi(this.store, id); // its scroll, draft and the rest of the page's state for it (R3.9)
-    this.views.close(id);
+    this.transcripts.close(id); // the pages get `removed` (publisher.ts)
     this.log('sessions.close', { sid: id, running });
     return { ok: true, sid: id };
   }
@@ -208,20 +212,20 @@ export class Sessions {
 
   // ---------- one session's actions (session.ts), by any id the page holds ----------
 
-  send(sid: string, text: string, images: Image[] = [], uuid?: string): SendResult {
-    return this.get(sid)?.send(text, images, uuid) ?? gone;
+  send(sid: string, text: string, images: Image[] = [], uuid?: string, by: By = null): SendResult {
+    return this.get(sid)?.send(text, images, uuid, by) ?? gone;
   }
 
-  bang(sid: string, cmd: string, uuid?: string): SendResult {
-    return this.get(sid)?.runBang(cmd, uuid) ?? gone;
+  bang(sid: string, cmd: string, uuid?: string, by: By = null): SendResult {
+    return this.get(sid)?.runBang(cmd, uuid, by) ?? gone;
   }
 
   answer(sid: string, requestId: string, answer: CardAnswer): SendResult {
     return this.get(sid)?.answer(requestId, answer) ?? gone;
   }
 
-  async interrupt(sid: string): Promise<void> {
-    await this.get(sid)?.interrupt();
+  async interrupt(sid: string, by: By = null): Promise<void> {
+    await this.get(sid)?.interrupt(by);
   }
 
   async setModel(sid: string, model: string, effort: string | null): Promise<SendResult> {
@@ -272,7 +276,7 @@ export class Sessions {
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Session {
     const s = new Session(id, cwd, placeholder, init, {
-      store: this.store, views: this.views, log: this.log, sdk: this.opts.sdk ?? realSdk, terminals: this.opts.registry ?? null,
+      store: this.store, transcripts: this.transcripts, publisher: this.publisher, log: this.log, sdk: this.opts.sdk ?? realSdk, terminals: this.opts.registry ?? null,
       now: this.now, timer: this.opts.timer, idleMs: this.opts.idleMs ?? IDLE_MS, tilde: (p) => this.tilde(p),
       onTurnEnded: this.opts.onTurnEnded, onWaiting: this.opts.onWaiting, onCommands: this.opts.onCommands,
       rekey: (x, newId, why) => this.rekey(x, newId, why),
@@ -291,7 +295,7 @@ export class Sessions {
     const old = s.id;
     if (this.live.has(newId)) {
       this.log('sessions.swapRefused', { from: old, to: newId, why });
-      this.views.toast(`Claude moved a session to an id another open session has (${newId.slice(0, 8)}). Close one of them and open it again.`);
+      this.publisher.toast(`Claude moved a session to an id another open session has (${newId.slice(0, 8)}). Close one of them and open it again.`);
       return;
     }
     const st = this.store.state;
@@ -318,7 +322,7 @@ export class Sessions {
     st.status[newId] = { status: s.status.status, at: s.status.at };
     rekeyUi(this.store, old, newId); // the page's state for it moves too (R3.9)
     this.store.changed();
-    this.views.rekey(old, newId);
+    this.transcripts.rekey(old, newId); // the reading starts again; the pages follow (publisher.ts)
     this.log('sessions.swap', { from: old, to: newId, why });
   }
 

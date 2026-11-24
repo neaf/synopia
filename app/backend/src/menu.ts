@@ -20,6 +20,7 @@ export const RETRY_MAX_MS = 30 * 60_000;
 
 export type MenusOptions = {
   clients: () => Set<Client>;
+  reply: (client: Client, msg: object) => void; // publisher.ts sends it
   log?: Log;
   sdk?: Pick<Sdk, 'query'>; // tests inject a fake; the default is the SDK
   timeoutMs?: number; // the idle probe's (sdk.ts PROBE_TIMEOUT_MS)
@@ -114,7 +115,7 @@ export class Menus {
     this.sentTo.set(client, sent);
     if (m && !sent.has(folder)) {
       sent.add(folder);
-      client.send({ t: 'menu', cwd: folder, ...m });
+      this.opts.reply(client, { t: 'menu', cwd: folder, ...m });
     }
   }
 
@@ -132,7 +133,7 @@ export class Menus {
     if (JSON.stringify(old?.models) !== JSON.stringify(m.models)) this.save();
     if (!old || JSON.stringify(old) === JSON.stringify(m)) return;
     for (const c of this.opts.clients()) {
-      if (this.sentTo.get(c)?.has(folder)) c.send({ t: 'menu', cwd: folder, ...m });
+      if (this.sentTo.get(c)?.has(folder)) this.opts.reply(c, { t: 'menu', cwd: folder, ...m });
     }
   }
 

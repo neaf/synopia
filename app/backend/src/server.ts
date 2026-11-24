@@ -31,7 +31,7 @@ export type ServerOptions = {
   // More of GET /api/ping's answer: the daemon's code version.
   ping?: () => object;
   onMessage?: (client: Client, msg: { t: string; [k: string]: unknown }) => void;
-  // GET /api/image?sid&agent&ref: one image of a transcript, decoded (views.ts); 404 when there is none.
+  // GET /api/image?sid&agent&ref: one image of a transcript, decoded (transcripts.ts); 404 when there is none.
   image?: (sid: string, agent: string | null, ref: string) => { status: number; type?: string; body?: Buffer };
   log?: Log;
 };

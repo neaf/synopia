@@ -13,13 +13,16 @@ import { randomUUID } from 'node:crypto';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess, imageError, userContent } from './sdk.ts';
 import type { Content, Image, InterruptResult, MenuSource, Sdk, StartOptions } from './sdk.ts';
-import { SessionStatus } from './status.ts';
+import { SessionStatus, queuesBehind } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
 import { takeoverNote } from './cli-terminals.ts';
 import { Cards } from './cards.ts';
 import type { CardAnswer } from './cards.ts';
-import type { Views } from './views.ts';
+import type { Transcripts } from './transcripts.ts';
+import type { Publisher } from './publisher.ts';
+import type { Item } from './transcript.ts';
+import type { Client } from './server.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
@@ -30,12 +33,28 @@ const STREAM_MS = 50; // at most one stream preview per this many ms and session
 const YIELD_INTERRUPT_MS = 3000; // a yield waits this long for the interrupt before it ends the process
 export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+// The page that acted, for its toasts and its message box; null: none, or every page.
+export type By = Client | null;
+
+// A message you sent while a turn ran, shown pending at the end of the transcript until it lands.
+// `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
+// `queued`: sent during a turn.
+export type QueuedMessage = { id: string; text: string; images: number; landed?: string; queued?: boolean };
+type Outbox = QueuedMessage & { at: number };
+// A queued message that hasn't landed by this long after the turn stopped running is dropped (it
+// landed in a form the match missed, or it is gone).
+export const OUTBOX_GRACE_MS = 5000;
+// Bash mode (R5.13): the `!` command that runs, or ran, shown at the end of the transcript until
+// its records land. `landed`: the id of the bash item it became; the page shows that item instead.
+export type ShownBang = BangRun & { landed?: string };
+
 export type SessionState = 'idle' | 'starting' | 'running' | 'ending' | 'yielded' | 'takingOver';
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
 // A message for the process: your prompt (a turn), or bash mode's context (`shouldQuery: false`, no
 // turn). `inBox`: the page still holds the prompt (a take-over), so a refusal leaves it there.
-type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; inBox?: boolean };
+// `by`: the page that sent it, which gets it back in its box if it can't go (backend-core#B8).
+type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; inBox?: boolean; by?: By };
 type Context = { kind: 'context'; text: string; uuid: string };
 type Input = Prompt | Context;
 
@@ -43,7 +62,7 @@ type Input = Prompt | Context;
 // effort of null or missing is the model's default effort.
 export type ModelChoice = { model: string; effort?: string | null };
 
-// The one model resolver, for the header (views.ts) and the process (startOptions): your choice
+// The one model resolver, for the header (publisher.ts) and the process (startOptions): your choice
 // wins whole; else what the transcript last asked for; else settings.model.
 export function resolveModel(choice: ModelChoice | null | undefined, transcript: { model: string | null; effort: string | null }, fallback?: string): { model: string | null; effort: string | null } {
   if (choice) return { model: choice.model, effort: choice.effort || null };
@@ -61,7 +80,8 @@ export type TerminalSource = {
 
 export type SessionDeps = {
   store: Store;
-  views: Views;
+  transcripts: Transcripts; // its transcript: facts and what runs by it
+  publisher: Publisher; // what pages see of it
   log: Log;
   sdk: Sdk;
   terminals: TerminalSource | null;
@@ -99,6 +119,10 @@ export class Session {
   private ownEnd = 0; // when a process of ours last ended (0: none yet), for feedRunning
   private askId = ''; // the tool use id of the question or plan another process asks (R6.8)
   private closed = false;
+  private outbox: Outbox[] = []; // the messages the page shows queued (R5.5), until they land
+  private outboxTimer: NodeJS.Timeout | null = null;
+  private shownBang: ShownBang | null = null; // the `!` run the page shows, until its records land
+  private bangBy: By = null; // the page that ran it
 
   constructor(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null, d: SessionDeps) {
     this.id = id;
@@ -109,11 +133,11 @@ export class Session {
     this.cards = new Cards({
       store: d.store,
       sid: () => this.id,
-      show: (r) => { d.views.setPending(this.id, r); d.onWaiting?.(this.id); },
-      clear: (rid) => { d.views.clearPending(this.id, rid); d.onWaiting?.(this.id); },
+      show: (r) => { d.publisher.setPending(this.id, r); d.onWaiting?.(this.id); },
+      clear: (rid) => { d.publisher.clearPending(this.id, rid); d.onWaiting?.(this.id); },
       count: (n) => this.status.setPending(n),
       drained: () => this.releaseHeld(),
-      context: () => ({ cwd: d.tilde(this.cwd), modeBefore: d.views.facts(this.id)?.modeBeforePlan || 'auto' }),
+      context: () => ({ cwd: d.tilde(this.cwd), modeBefore: d.transcripts.facts(this.id)?.modeBeforePlan || 'auto' }),
       now: d.now,
     });
   }
@@ -124,19 +148,20 @@ export class Session {
 
   // Shown: its transcript tails, and its status, terminal, choice and process end are set.
   open(): void {
-    const { views, store } = this.d;
-    views.open(this.id, { cwd: this.cwd });
+    const { transcripts, publisher, store } = this.d;
+    transcripts.open(this.id, { cwd: this.cwd });
+    publisher.attach(this.id, { outbox: () => this.shownOutbox(), bang: () => this.shownBang, landed: (items) => this.landedItems(items) });
     this.terminal = this.placeholder ? null : this.d.terminals?.holder(this.id) ?? null;
     if (this.terminal) {
       this.state = 'yielded';
       this.status.setTerminal(this.terminal.pid); // read-only from the start (R3.2)
     }
-    views.setStatus(this.id, this.status.status, this.status.at, this.status.detail);
-    views.setChoice(this.id, this.choiceOf() ?? null);
+    publisher.setStatus(this.id, this.status.status, this.status.at, this.status.detail);
+    publisher.setChoice(this.id, this.choiceOf() ?? null);
     this.feedRunning(); // working while its subagents or forks, or a turn of another process, run
-    this.askId = views.running(this.id).ask?.toolUseId ?? ''; // an ask already there at open is no change
+    this.askId = transcripts.running(this.id).ask?.toolUseId ?? ''; // an ask already there at open is no change
     const ended = store.state.ended[this.id];
-    if (ended) views.processEnded(this.id, ended, store.state.endedFailed[this.id] === true);
+    if (ended) transcripts.processEnded(this.id, ended, store.state.endedFailed[this.id] === true);
   }
 
   get working(): boolean {
@@ -163,16 +188,17 @@ export class Session {
   // ---------- sending ----------
 
   // `uuid`: the page's id for the message; the page shows it at once (queued while a turn runs).
-  send(text: string, images: Image[] = [], uuid?: string): SendResult {
+  // `by`: the page that sent it.
+  send(text: string, images: Image[] = [], uuid?: string, by: By = null): SendResult {
     const bad = imageError(images);
     if (bad) return { ok: false, error: bad };
     const content: Content = userContent(text, images); // the text, then the images whose tags it holds
     if (typeof content === 'string' && !text.trim()) return { ok: false, error: 'Nothing to send.' };
-    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text };
+    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, by };
     if (this.terminal) return this.queueTakeover(m);
-    const queues = this.d.views.queues(this.id); // a turn runs: it shows queued until it lands (R5.5)
+    const queues = queuesBehind(this.status.status); // a turn runs: it shows queued until it lands (R5.5)
     const r = this.deliver(m);
-    if (r.ok && uuid && !this.terminalHolds) this.d.views.sent(this.id, uuid, text, images.length, queues);
+    if (r.ok && uuid && !this.terminalHolds && !this.held.includes(m)) this.sent(uuid, text, images.length, queues);
     return r;
   }
 
@@ -186,7 +212,7 @@ export class Session {
     }
     if (this.cards.size) { // queued behind the card (plan section 6), pushed once it is answered
       this.held.push(m);
-      this.d.views.setHeld(this.id, this.held.map((h) => h.text));
+      this.d.publisher.setHeld(this.id, this.held.map((h) => h.text));
       this.d.log('sessions.held', { sid: this.id });
       return { ok: true, sid: this.id };
     }
@@ -222,7 +248,7 @@ export class Session {
   private releaseHeld(): void {
     if (this.cards.size || this.interrupting || !this.proc || this.proc.done || this.state !== 'running' || !this.held.length) return;
     const held = this.held.splice(0);
-    this.d.views.setHeld(this.id, []);
+    this.d.publisher.setHeld(this.id, []);
     this.input(held);
     this.d.log('sessions.released', { sid: this.id, n: held.length });
   }
@@ -231,31 +257,56 @@ export class Session {
   // requests end and the held messages go back to the message box.
   private endCards(): void {
     this.cards.abortAll();
-    const texts = this.held.splice(0).map((h) => h.text).filter((t) => t.trim());
-    if (texts.length) {
-      this.d.views.setHeld(this.id, []);
-      this.d.views.restore(this.id, texts);
+    const held = this.held.splice(0);
+    if (held.length) this.d.publisher.setHeld(this.id, []);
+    this.giveBack(held);
+  }
+
+  // Prompts that didn't go, back to the box of the page that sent each (and out of the outbox).
+  private giveBack(prompts: Prompt[]): void {
+    const by = new Map<By, string[]>();
+    for (const m of prompts) {
+      if (!m.text.trim()) continue;
+      const list = by.get(m.by ?? null) ?? [];
+      list.push(m.text);
+      by.set(m.by ?? null, list);
     }
+    for (const [to, texts] of by) this.restore(texts, to);
+  }
+
+  private restore(texts: string[], to: By): void {
+    if (!texts.length) return;
+    let gone = false;
+    for (const text of texts) {
+      const i = this.outbox.findIndex((o) => !o.landed && o.text === text);
+      if (i >= 0) { this.outbox.splice(i, 1); gone = true; }
+    }
+    if (gone) this.d.publisher.changed(this.id);
+    this.d.publisher.restore(this.id, texts, to);
+  }
+
+  private toast(text: string, to: By = null): void {
+    this.d.publisher.toast(text, to);
   }
 
   // Prompts that can't go because a terminal holds the session: back to the box (a take-over's
   // stays there, waiting), with the reason.
   private refusedText(list: Input[]): SendResult {
-    const texts: string[] = [];
+    const back: Prompt[] = [];
     for (const m of list) {
       if (m.kind !== 'prompt') continue;
       if (m.inBox) this.queueTakeover(m);
-      else if (m.text.trim()) texts.push(m.text);
+      else back.push(m);
     }
-    if (texts.length) this.d.views.restore(this.id, texts);
+    this.giveBack(back);
     return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}). Send again to bring it back.` };
   }
 
   // ---------- bash mode (R5.13): `!` runs a shell command in the session's folder ----------
-  // The output streams to the page (views.setBang) and, once the command ends, the command and its
+  // The output streams to the page (setBang) and, once the command ends, the command and its
   // output go to the session as context that starts no turn (bang.ts). Not in a session a terminal
   // holds (one writer), and one command at a time.
-  runBang(cmd: string, uuid?: string): SendResult {
+  runBang(cmd: string, uuid?: string, by: By = null): SendResult {
     if (!cmd.trim()) return { ok: false, error: 'Type a shell command after the !.' };
     if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}). Run the command there.` };
     if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
@@ -263,18 +314,19 @@ export class Session {
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     const bang = new Bang({
       id, cmd, cwd: this.cwd, now: this.d.now,
-      onUpdate: (run) => { if (this.bang === bang) this.d.views.setBang(this.id, run); },
+      onUpdate: (run) => { if (this.bang === bang) this.setBang(run); },
       onDone: (run) => {
         if (this.bang !== bang) return; // closed meanwhile
         this.d.log('bang.done', { sid: this.id, exit: run.exit, interrupted: run.interrupted, cut: run.cut, chars: run.out.length + run.err.length, failed: Boolean(run.error) });
-        if (run.error) this.d.views.toast(run.error); // it couldn't start
+        if (run.error) this.toast(run.error, this.bangBy); // it couldn't start
         else this.shareBang(run, bang.cap);
-        this.d.views.setBang(this.id, run);
+        this.setBang(run);
       },
     });
     this.bang = bang;
+    this.bangBy = by;
     this.d.log('bang.start', { sid: this.id });
-    this.d.views.setBang(this.id, bang.run);
+    this.setBang(bang.run);
     return { ok: true, sid: this.id };
   }
 
@@ -332,7 +384,8 @@ export class Session {
     this.state = 'idle';
     this.yieldTo(t);
     const r = this.refusedText(waiting);
-    if (!r.ok && waiting.some((m) => m.kind === 'prompt' && !m.inBox)) this.d.views.toast(r.error);
+    const sent = waiting.find((m): m is Prompt => m.kind === 'prompt' && !m.inBox);
+    if (!r.ok && sent) this.toast(r.error, sent.by);
   }
 
   private launch(): void {
@@ -361,7 +414,7 @@ export class Session {
 
   private startOptions(): StartOptions {
     const st = this.d.store.state;
-    const facts = this.d.views.facts(this.id);
+    const facts = this.d.transcripts.facts(this.id);
     const m = resolveModel(this.choiceOf(), { model: facts?.model ?? null, effort: facts?.effort ?? null }, st.settings.model);
     return {
       cwd: this.cwd,
@@ -388,22 +441,21 @@ export class Session {
     if (failed) {
       const tail = proc.stderrTail();
       const why = tail.length ? tail[tail.length - 1] : error?.message || 'it exited';
-      this.d.views.toast(`Claude stopped unexpectedly: ${why.slice(0, 300)}`);
+      this.toast(`Claude stopped unexpectedly: ${why.slice(0, 300)}`);
     }
     // Messages sent while it was ending start the next process (resumed), in order.
     const next = this.queue.splice(0);
     if (!next.length || this.closed) return;
     const why = this.start();
     if (why) {
-      const texts = next.filter((m): m is Prompt => m.kind === 'prompt').map((m) => m.text).filter((t) => t.trim());
-      if (texts.length) this.d.views.restore(this.id, texts);
+      this.giveBack(next.filter((m): m is Prompt => m.kind === 'prompt'));
       return;
     }
     this.input(next);
   }
 
   private onMessage(m: Msg): void {
-    const { views, log } = this.d;
+    const { transcripts, publisher, log } = this.d;
     if (m.type === 'system' && m.subtype === 'init') {
       if (typeof m.session_id === 'string' && m.session_id && m.session_id !== this.id) this.d.rekey(this, m.session_id, this.placeholder ? 'init' : 'moved');
       if (!this.contextOnly) this.status.turnStarted(); // a process started only for bash mode's context runs no turn
@@ -415,18 +467,18 @@ export class Session {
       // A task ended. The CLI writes its notification to the JSONL only when a turn runs, so
       // between turns this is the only sign that it ended (docs/Agent SDK.md, "Task notifications").
       log('driver.task', { sid: this.id, status: String(m.status) });
-      views.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
+      transcripts.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
     } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {
       // A subagent's shell or monitor: its file has no task id when the SDK drives the CLI (docs/Agent SDK.md).
-      views.taskStarted(this.id, m.tool_use_id, m.task_id);
+      transcripts.taskStarted(this.id, m.tool_use_id, m.task_id);
     } else if (m.type === 'system' && m.subtype === 'background_tasks_changed' && Array.isArray(m.tasks)) {
       // The whole live set (b, b moves steps into it): running or ended at once. Ambient tasks aren't work.
       const ids = (m.tasks as { task_id?: unknown; ambient?: unknown }[]).filter((t) => t && typeof t.task_id === 'string' && t.ambient !== true).map((t) => t.task_id as string);
       log('driver.bgTasks', { sid: this.id, n: ids.length });
-      views.backgroundTasks(this.id, ids);
+      transcripts.backgroundTasks(this.id, ids);
     } else if (m.type === 'tool_progress' && typeof m.tool_use_id === 'string' && typeof m.elapsed_time_seconds === 'number') {
       // A running tool's elapsed time, no output (sdk.d.ts SDKToolProgressMessage): its expanded step's timer (R5.6).
-      views.toolProgress(this.id, m.tool_use_id, m.elapsed_time_seconds);
+      publisher.toolProgress(this.id, m.tool_use_id, m.elapsed_time_seconds);
     } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
       this.d.onCommands?.(this.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {
@@ -454,12 +506,14 @@ export class Session {
       else delete st.endedFailed[this.id];
       this.d.store.changed();
     }
-    this.d.views.processEnded(this.id, at, failed);
+    this.d.transcripts.processEnded(this.id, at, failed);
   }
 
   private statusChanged(e: StatusEntry): void {
-    const { views, store } = this.d;
-    views.setStatus(this.id, e.status, e.at, e.detail);
+    const { publisher, store } = this.d;
+    publisher.setStatus(this.id, e.status, e.at, e.detail);
+    // the turn stopped with messages still queued: they go once they've had time to land
+    if (!queuesBehind(e.status) && this.outbox.some((o) => !o.landed)) this.laterOutbox(OUTBOX_GRACE_MS);
     const kept = store.state.status[this.id];
     if (!this.placeholder && (kept?.status !== e.status || kept?.at !== e.at)) {
       store.state.status[this.id] = { status: e.status, at: e.at };
@@ -476,7 +530,7 @@ export class Session {
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       if (!this.proc || this.state !== 'running' || this.status.working) return;
-      if (this.d.views.facts(this.id)?.working) { this.armIdle(); return; }
+      if (this.d.transcripts.facts(this.id)?.working) { this.armIdle(); return; }
       this.d.log('driver.idleEnd', { sid: this.id });
       this.state = 'ending';
       this.proc.end();
@@ -494,7 +548,7 @@ export class Session {
   // Esc, Esc: ends a running `!` command first; else stops the foreground turn, background work
   // keeps running (perTaskStopAffordance). Messages the interrupt cancelled go back to the box. A
   // CLI without the cancel capability runs them afterwards, and the toast says so.
-  async interrupt(): Promise<void> {
+  async interrupt(by: By = null): Promise<void> {
     if (this.bang?.run.running) {
       this.d.log('bang.interrupt', { sid: this.id });
       this.bang.kill();
@@ -511,16 +565,16 @@ export class Session {
       this.interrupting = false;
       this.status.interruptFailed(); // the next turn's result is its own, not "stopped"
       this.d.log('driver.interruptFailed', { sid: this.id });
-      this.d.views.toast(`Synopia couldn't interrupt Claude: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+      this.toast(`Synopia couldn't interrupt Claude: ${String((e as Error)?.message ?? e).slice(0, 200)}`, by);
       return;
     }
     this.interrupting = false;
     this.d.log('driver.interrupt', { sid: this.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
     this.endCards();
-    if (r.restored.length) this.d.views.restore(this.id, r.restored);
+    this.restore(r.restored, by);
     if (r.stillQueued) {
       const n = r.stillQueued;
-      this.d.views.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`);
+      this.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`, by);
     }
   }
 
@@ -528,7 +582,7 @@ export class Session {
   // setModel (when the model changed) and applyFlagSettings for the effort.
   async setModel(model: string, effort: string | null): Promise<SendResult> {
     if (!model) return { ok: false, error: 'No model was chosen.' };
-    const facts = this.d.views.facts(this.id);
+    const facts = this.d.transcripts.facts(this.id);
     const was = resolveModel(this.choiceOf(), { model: facts?.model ?? null, effort: facts?.effort ?? null });
     const choice: ModelChoice = { model, effort: effort || null };
     if (this.placeholder) this.choice = choice;
@@ -536,7 +590,7 @@ export class Session {
       this.d.store.state.models[this.id] = choice;
       this.d.store.changed();
     }
-    this.d.views.setChoice(this.id, choice);
+    this.d.publisher.setChoice(this.id, choice);
     this.d.log('sessions.setModel', { sid: this.id, model, effort: choice.effort ?? null, running: Boolean(this.proc) });
     const proc = this.proc;
     if (!proc || proc.done) return { ok: true, sid: this.id };
@@ -599,8 +653,8 @@ export class Session {
 
   // The CLI runs nothing: idle by its pid file, and no turn, card, subagent or background work in the transcript.
   private terminalIdle(t: Terminal): boolean {
-    const r = this.d.views.running(this.id);
-    return t.status === 'idle' && !r.turn && !r.ask && r.agents === 0 && !this.d.views.facts(this.id)?.working;
+    const r = this.d.transcripts.running(this.id);
+    return t.status === 'idle' && !r.turn && !r.ask && r.agents === 0 && !this.d.transcripts.facts(this.id)?.working;
   }
 
   private tryTakeover(): void {
@@ -630,11 +684,12 @@ export class Session {
       const ok = await terminals.end(fresh, takeoverNote(this.id, new Date(this.d.now())), this.id);
       if (this.closed) return;
       if (!ok) {
+        const waitingBy = this.takeover?.by ?? null;
         this.takeover = null;
         this.state = 'yielded';
         this.status.setTakeover(null);
         this.d.log('takeover.noExit', { sid: this.id, pid: fresh.pid });
-        this.d.views.toast(`The terminal's Claude Code (pid ${fresh.pid}) didn't exit, so Synopia left it running. Your message is still in the box.`);
+        this.toast(`The terminal's Claude Code (pid ${fresh.pid}) didn't exit, so Synopia left it running. Your message is still in the box.`, waitingBy);
         return;
       }
     }
@@ -654,7 +709,7 @@ export class Session {
     if (this.takeover) return; // back to waiting: another terminal took it at the last check
     this.status.setTakeover(null);
     this.d.log('takeover.done', { sid: this.id, ok: r.ok });
-    if (!r.ok) this.d.views.toast(r.error);
+    if (!r.ok) this.toast(r.error, m.by);
   }
 
   // The terminals changed (sessions.ts passes this session's holder): a terminal appeared (yield),
@@ -687,8 +742,7 @@ export class Session {
     this.state = 'yielded';
     if (had) return;
     this.d.log('terminal.took', { sid: this.id, pid: t.pid, running: Boolean(proc) });
-    const texts = waiting.filter((m): m is Prompt => m.kind === 'prompt').map((m) => m.text).filter((x) => x.trim());
-    if (texts.length) this.d.views.restore(this.id, texts);
+    this.giveBack(waiting.filter((m): m is Prompt => m.kind === 'prompt'));
     if (!proc) return;
     const working = this.status.working;
     this.proc = null; // its exit is no failure
@@ -722,7 +776,7 @@ export class Session {
 
   // The transcript's main turn counts only with no process of ours, and only for records written
   // after ours ended (an open turn our own process left behind is not someone else's).
-  private feedRunning(r: Running = this.d.views.running(this.id)): void {
+  private feedRunning(r: Running = this.d.transcripts.running(this.id)): void {
     this.status.setRunning(r, !this.proc && r.lastAt > this.ownEnd);
   }
 
@@ -735,18 +789,88 @@ export class Session {
     if (now) {
       if (this.streamTimer) clearTimeout(this.streamTimer);
       this.streamTimer = null;
-      this.d.views.setStream(this.id, this.stream.text());
+      this.d.publisher.setStream(this.id, this.stream.text());
       return;
     }
     if (this.streamTimer) return;
     this.streamTimer = setTimeout(() => {
       this.streamTimer = null;
-      this.d.views.setStream(this.id, this.stream.text());
+      this.d.publisher.setStream(this.id, this.stream.text());
     }, STREAM_MS);
   }
 
   private clearStream(): void {
     if (this.stream.clear() || this.streamTimer) this.pushStream(true);
+  }
+
+  // ---------- what the page shows of it: queued messages and the `!` run ----------
+
+  // A message the process took: the page shows it pending (queued while a turn runs, R5.5) until
+  // its prompt lands in the transcript. Not one held behind a card.
+  private sent(uuid: string, text: string, images: number, queued: boolean): void {
+    if (this.outbox.some((o) => o.id === uuid)) return;
+    this.outbox.push({ id: uuid, text, images, at: Date.now(), queued });
+    this.d.publisher.changed(this.id);
+  }
+
+  private shownOutbox(): QueuedMessage[] {
+    return this.outbox.map(({ id, text, images, landed, queued }) => (landed ? { id, text, images, landed, queued } : { id, text, images, queued }));
+  }
+
+  // Before each flush (publisher.ts), with the main items that just changed.
+  private landedItems(items: Item[]): void {
+    this.settleOutbox(items);
+    this.settleBang(items);
+  }
+
+  // Drops the messages that landed in an earlier flush (the page has their prompt by now), then
+  // matches the new prompt items to the queued ones, oldest first, by uuid or by text (a message sent
+  // during a turn lands as a `queued_command` record of its own uuid, docs/Claude Code transcripts.md
+  // "Messages sent during a turn").
+  private settleOutbox(items: Item[]): void {
+    if (!this.outbox.length) return;
+    this.outbox = this.outbox.filter((o) => !o.landed);
+    if (!items.length || !this.outbox.length) return;
+    for (const it of items) {
+      if (it.k !== 'you' || this.outbox.some((q) => q.landed === it.id)) continue;
+      const o = this.outbox.find((q) => !q.landed && (q.id === it.id || landsAs(q, it)));
+      if (o) o.landed = it.id;
+    }
+    if (this.outbox.some((o) => o.landed)) this.laterOutbox(1000);
+  }
+
+  // A flush after `ms`, once: landed messages leave, and unlanded ones after the grace.
+  private laterOutbox(ms: number): void {
+    if (this.outboxTimer) clearTimeout(this.outboxTimer);
+    this.outboxTimer = setTimeout(() => {
+      this.outboxTimer = null;
+      if (this.closed) return;
+      if (queuesBehind(this.status.status)) { this.d.publisher.changed(this.id); return; }
+      if (Date.now() - this.status.at >= OUTBOX_GRACE_MS - 50) this.outbox = this.outbox.filter((o) => o.landed);
+      this.d.publisher.changed(this.id);
+      if (this.outbox.length) this.laterOutbox(OUTBOX_GRACE_MS);
+    }, ms);
+    this.outboxTimer.unref?.();
+  }
+
+  // Bash mode: the `!` command's run, while it runs and until its records land.
+  private setBang(run: BangRun): void {
+    this.shownBang = { ...run };
+    this.settleBang(this.d.transcripts.get(this.id)?.items.slice(-8) ?? []); // its records may be in already
+    this.d.publisher.changed(this.id);
+  }
+
+  // A run that landed in an earlier flush goes (the page has its item by now); a finished one lands
+  // as the bash item of its uuid, or of its command written no earlier than it started.
+  private settleBang(items: Item[]): void {
+    const b = this.shownBang;
+    if (!b || b.running) return;
+    if (b.landed && !items.some((i) => i.id === b.landed)) { this.shownBang = null; return; }
+    for (const it of items) {
+      if (it.k !== 'bang' || !it.sh) continue;
+      const ts = it.ts ? Date.parse(it.ts) : NaN;
+      if (it.id === b.id || (it.cmd === b.cmd && !(ts < b.at - 2000))) { b.landed = it.id; return; }
+    }
   }
 
   // ---------- the end ----------
@@ -756,6 +880,7 @@ export class Session {
   close(): boolean {
     this.closed = true;
     this.clearIdle();
+    if (this.outboxTimer) clearTimeout(this.outboxTimer);
     if (this.streamTimer) clearTimeout(this.streamTimer);
     const proc = this.proc;
     this.proc = null; // its exit is no failure
@@ -774,6 +899,7 @@ export class Session {
   stop(): void {
     this.closed = true;
     this.clearIdle();
+    if (this.outboxTimer) clearTimeout(this.outboxTimer);
     if (this.streamTimer) clearTimeout(this.streamTimer);
     this.bang?.kill();
     const proc = this.proc;
@@ -787,6 +913,15 @@ export class Session {
 }
 
 type Msg = { type: string; subtype?: string; [k: string]: unknown };
+
+// Whether a prompt item is a queued message: written no earlier than it was sent (2 s of clock
+// slack), with its text (the transcript cuts a long one) or, for images alone, no text.
+function landsAs(q: Outbox, it: Item): boolean {
+  const ts = it.ts ? Date.parse(it.ts) : NaN;
+  if (ts < q.at - 2000) return false;
+  const text = (it.text ?? '').replace(/\n\n\[cut: message continues\]$/, '').trim(), sent = q.text.trim();
+  return text ? sent === text || (sent.startsWith(text) && it.text !== text) : q.images > 0 && !sent && Boolean(it.images);
+}
 
 // The streaming preview (plan section 7): text deltas of the main conversation, per message id
 // and block index, until that block's record lands in the JSONL.

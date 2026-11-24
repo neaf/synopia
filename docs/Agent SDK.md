@@ -128,7 +128,7 @@ Source: capture by `spike/dump_menu.mjs` (tag `rearch-base`; `prototype/menu.js`
 | `system/task_updated` | a task's status changed | |
 | `system/task_notification` | a task ended: `status`, `tool_use_id`, `summary`, `output_file`, `usage` | `session.ts` `onMessage` |
 | `system/background_tasks_changed` | the list of background tasks | `session.ts` `onMessage` |
-| `tool_progress` | elapsed seconds of a running tool, no output | `views.ts` 566-570 |
+| `tool_progress` | elapsed seconds of a running tool, no output | `publisher.ts` `toolProgress` |
 | `stream_event` | partial text; `message_start` id equals the assistant `message.id` | `session.ts` `StreamPreview` |
 | `result` | turn end: `subtype`, `terminal_reason`, `permission_denials`, `user_message_uuids` | `status.ts` |
 

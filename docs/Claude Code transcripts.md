@@ -16,7 +16,7 @@ Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Co
 - `<folder>` is the realpath of the session's cwd with every non-alphanumeric character replaced by `-` (`/tmp/x` gives `-private-tmp-x`). Synopia never builds it: it globs `projects/*/<sid>.jsonl` and takes the first match in name order. Code: `transcript.ts` `findTranscript` (also used by `cli-terminals.ts` `end`). Source: SDK spike row 1 (`spike/FINDINGS.md` at tag `rearch-base`).
 - `CLAUDE_CONFIG_DIR` moves the whole tree; the backend's `--claude-dir` follows it.
 - Records are single lines, usually under 60 KB; one record can be many MB (images, long tool results). The largest session seen is 55 MB in 4,200 lines (96.9 MB in a later scan). Test: `tail.test.ts` 139-170 parses 50 MB in under 2 s.
-- The JSONL appears about 1 s after the SDK's `system/init` for a new session. Code: `views.ts` looks again each second for a file that doesn't exist yet. Source: live run S1-6.
+- The JSONL appears about 1 s after the SDK's `system/init` for a new session. Code: `transcripts.ts` `poll` looks again each second for a file that doesn't exist yet. Source: live run S1-6.
 
 ### Quirk: subagent meta lags or is half-written
 
@@ -107,7 +107,7 @@ Code: `claude-jsonl.ts` `bodyOf`, `userOf`. Test: `claude-jsonl.test.ts`. Source
 - Other fields seen: `delivery_id`, `humanTurn`, `imagePasteIds`, `isMeta`, `origin`, `runId`, `source_uuid`, `usage`, `toolsUsedDelta`.
 - A `shouldQuery: false` message (bash mode) is written as a `queue-operation` record, then a plain `user` record with string content and `queueTranscriptOnly`, `promptId`, `promptSource`, `turnAttributionKey`, `permissionMode`.
 
-Code: `claude-jsonl.ts` `classify` (attachment), `views.ts` `settleOutbox`. Source: live runs S3 and `bang`.
+Code: `claude-jsonl.ts` `classify` (attachment), `session.ts` `settleOutbox`. Source: live runs S3 and `bang`.
 
 ## Turn ends
 
@@ -133,15 +133,15 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 
 - Symptom: a session another process drives through the SDK reads working after its turn failed or was interrupted.
 - Cause: such turns write no turn-end record.
-- Workaround: a turn running by the transcript alone ends after `QUIET_MS` (30 min) without a change; Views flushes every session each 60 s to notice.
-- Code: `status.ts` `QUIET_MS` (60), `views.ts` 107-110.
+- Workaround: a turn running by the transcript alone ends after `QUIET_MS` (30 min) without a change; the publisher flushes every session each 60 s to notice.
+- Code: `status.ts` `QUIET_MS`, `publisher.ts` `RECHECK_MS`.
 
 ## Interrupts
 
 - An Esc interrupt during tools writes an error `tool_result` for each cut-short tool, then the user record `[Request interrupted by user` (or `… for tool use]`).
 - `[Request interrupted by user for tool use]` means a tool was turned down; Claude carries on after it.
 - Synopia reads the first marker as a stop (item `interrupted`) and the second as a turned-down tool (item `turnedDown`). Either closes the turn until Claude writes again; the error results just before the marker read as stopped. A turned-down marker isn't a prompt: the turn's time still counts from yours.
-- Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "seams#B3", `views.test.ts` "turns".
+- Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "seams#B3", `transcripts.test.ts` "turns".
 
 ## Background work
 

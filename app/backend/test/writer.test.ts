@@ -10,7 +10,8 @@ import type { Turn, WriterSource } from '../src/writer.ts';
 import { writerOptions } from '../src/sdk.ts';
 import { emit, fakeQuery, result } from './support/fake-query.ts';
 import { openStore } from '../src/store.ts';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import type { Client } from '../src/server.ts';
 
@@ -277,7 +278,7 @@ test('stop aborts the running call, and nothing is written from it (L8)', async 
   store.close();
 });
 
-// Views: the written text reaches `session`, with the plan's title precedence.
+// The publisher: the written text reaches `session`, with the plan's title precedence.
 test('precedence: your rename, then Claude\'s title, then the ai-title; stored and restored', () => {
   const id = 'bbbbbbbb-0000-4000-8000-00000000000b';
   const claude = tmp('synopia-writer-claude-');
@@ -290,30 +291,32 @@ test('precedence: your rename, then Claude\'s title, then the ai-title; stored a
   const got: { t: string; [k: string]: unknown }[] = [];
   const c: Client = { send: (m) => got.push(JSON.parse(JSON.stringify(m))), close: () => {} } as Client;
   const clients = new Set<Client>([c]);
-  const views = new Views({ claudeDir: claude, clients: () => clients, home: '/Users/fixture', pollMs: 0, watch: false, written: (sid) => store.state.written[sid] });
-  views.open(id);
-  views.check();
-  assert.equal(views.meta(id)?.title, 'CLI title');
-  assert.equal(views.meta(id)?.now, '');
+  const transcripts = new Transcripts({ claudeDir: claude, home: '/Users/fixture', pollMs: 0, watch: false, written: (sid) => store.state.written[sid] });
+  const publisher = new Publisher({ transcripts, clients: () => clients, home: '/Users/fixture', recheckMs: 0, written: (sid) => store.state.written[sid] });
+  transcripts.open(id);
+  transcripts.poll();
+  assert.equal(publisher.meta(id)?.title, 'CLI title');
+  assert.equal(publisher.meta(id)?.now, '');
   store.state.written[id] = { title: 'Claude title', now: 'Claude is on it', at: 1 };
   store.changed();
-  views.refresh(id);
+  publisher.changed(id);
   const last = got.filter((m) => m.t === 'session').pop();
   assert.equal(last?.title, 'Claude title');
   assert.equal(last?.now, 'Claude is on it');
   fs.appendFileSync(file, line({ type: 'custom-title', customTitle: 'My name', sessionId: id }));
-  views.check();
-  assert.equal(views.meta(id)?.title, 'My name');
-  assert.equal(views.meta(id)?.now, 'Claude is on it');
-  views.stop();
+  transcripts.poll();
+  assert.equal(publisher.meta(id)?.title, 'My name');
+  assert.equal(publisher.meta(id)?.now, 'Claude is on it');
+  transcripts.stop(); publisher.stop();
   store.close();
   // a restart shows the stored text at once
   const again = openStore(stateDir);
   assert.deepEqual(again.state.written[id], { title: 'Claude title', now: 'Claude is on it', at: 1 });
-  const v2 = new Views({ claudeDir: claude, clients: () => new Set(), home: '/Users/fixture', pollMs: 0, watch: false, written: (sid) => again.state.written[sid] });
-  v2.open(id);
-  assert.equal(v2.meta(id)?.now, 'Claude is on it');
-  v2.stop();
+  const t2 = new Transcripts({ claudeDir: claude, home: '/Users/fixture', pollMs: 0, watch: false, written: (sid) => again.state.written[sid] });
+  const p2 = new Publisher({ transcripts: t2, clients: () => new Set(), home: '/Users/fixture', recheckMs: 0, written: (sid) => again.state.written[sid] });
+  t2.open(id);
+  assert.equal(p2.meta(id)?.now, 'Claude is on it');
+  t2.stop();
   again.close();
 });
 
@@ -324,11 +327,12 @@ test('triggers: a result calls onTurnEnded, a start calls onOpened', async () =>
   const cwd = tmp('synopia-writer-cwd-');
   const id = 'cccccccc-0000-4000-8000-00000000000c';
   store.state.open.push({ id, cwd, openedAt: 0, closedAt: null });
-  const views = new Views({ claudeDir: tmp('synopia-writer-claude-'), clients: () => new Set(), pollMs: 0, watch: false });
+  const transcripts = new Transcripts({ claudeDir: tmp('synopia-writer-claude-'), pollMs: 0, watch: false });
+  const publisher = new Publisher({ transcripts, clients: () => new Set(), recheckMs: 0 });
   const ended: string[] = [];
   const opened: string[] = [];
   const q = fakeQuery();
-  const sessions = new Sessions({ store, views, sdk: q.sdk, onTurnEnded: (s) => ended.push(s), onOpened: (s) => opened.push(s) });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, onTurnEnded: (s) => ended.push(s), onOpened: (s) => opened.push(s) });
   sessions.start();
   assert.deepEqual(opened, [id]);
   sessions.send(id, 'hello');
@@ -338,6 +342,6 @@ test('triggers: a result calls onTurnEnded, a start calls onOpened', async () =>
   await wait(5);
   assert.deepEqual(ended, [id]);
   sessions.stop();
-  views.stop();
+  transcripts.stop(); publisher.stop();
   store.close();
 });

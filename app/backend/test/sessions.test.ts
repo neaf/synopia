@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
 import { Sessions, renameInLayout } from '../src/sessions.ts';
 import { StreamPreview } from '../src/session.ts';
 import { STATE_FLAG } from '../src/sdk.ts';
@@ -35,19 +36,16 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
   store.state.settings.newSessionCwd = cwd;
   store.state.settings.model = 'haiku';
   let sessions: Sessions | null = null;
-  const views = new Views({
-    claudeDir, clients: () => clients, home: root, pollMs: 0, watch: false,
-    onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
-    onRunning: (sid, r) => sessions?.runningChanged(sid, r),
-  });
+  const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
+  const publisher = new Publisher({ transcripts, clients: () => clients, home: root, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r) });
   const q = fakeQuery({ sessions: past });
-  sessions = new Sessions({ store, views, sdk: q.sdk, home: root, ...extra });
+  sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, ...extra });
   const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
-  return { root, claudeDir, cwd, c, store, views, sessions, q, take };
+  return { root, claudeDir, cwd, c, store, transcripts, publisher, sessions, q, take };
 }
 
 test('sessions: a placeholder takes its real id from system/init', async () => {
-  const { sessions, store, q, take, cwd, c, views } = setup();
+  const { sessions, store, q, take, cwd, c, transcripts, publisher } = setup();
   const ph = sessions.newSession();
   assert.match(ph, /^new-/);
   const first = take('session');
@@ -55,7 +53,7 @@ test('sessions: a placeholder takes its real id from system/init', async () => {
   assert.equal(first[0].id, ph);
   assert.equal(first[0].title, 'New session');
   assert.equal(store.state.open.length, 0, 'a placeholder is not stored');
-  views.view(c, ph, null);
+  publisher.view(c, ph, null);
 
   assert.equal(sessions.send(ph, 'hello').ok, true);
   await tick();
@@ -82,7 +80,7 @@ test('sessions: a placeholder takes its real id from system/init', async () => {
   assert.deepEqual(store.state.layout.others, [REAL]);
   assert.equal(store.state.status[REAL].status, 'busy');
   assert.equal(sessions.resolve(ph), REAL);
-  assert.deepEqual(views.ids(), [REAL]);
+  assert.deepEqual(transcripts.ids(), [REAL]);
 });
 
 test('sessions: two sends before init go to one process, in order', async () => {
@@ -119,7 +117,7 @@ test('sessions: images over 5 MB or not PNG/JPEG are refused', () => {
 });
 
 test('sessions: the alias map reaches the session through every id it had', async () => {
-  const { sessions, q, views, c, take } = setup();
+  const { sessions, q, transcripts, publisher, c, take } = setup();
   const ph = sessions.newSession();
   sessions.send(ph, 'hi');
   emit(q.calls[0], init(REAL));
@@ -130,7 +128,7 @@ test('sessions: the alias map reaches the session through every id it had', asyn
   assert.equal(sessions.resolve(REAL), RESET);
   assert.equal(sessions.resolve('unknown'), 'unknown');
   take();
-  views.view(c, sessions.resolve(ph), null);
+  publisher.view(c, sessions.resolve(ph), null);
   const items = take('items');
   assert.equal(items[0].sid, RESET);
   assert.equal(items[0].reset, true);
@@ -205,7 +203,7 @@ test('sessions: the open list is stored, and the session resumes on the first me
   const b = setup(a.root);
   b.store.state.models[REAL] = { model: 'sonnet' };
   b.sessions.start();
-  assert.deepEqual(b.views.ids(), [REAL]);
+  assert.deepEqual(b.transcripts.ids(), [REAL]);
   assert.equal(b.q.calls.length, 0, 'no process until a message');
   b.sessions.send(REAL, 'four');
   await tick();
@@ -224,7 +222,7 @@ test('sessions: a session whose last permission mode is plan resumes in plan mod
   fs.writeFileSync(path.join(dir, `${REAL}.jsonl`), JSON.stringify({ type: 'permission-mode', permissionMode: 'plan', sessionId: REAL }) + '\n');
   a.store.state.open.push({ id: REAL, cwd: a.cwd, openedAt: 0, closedAt: null });
   a.sessions.start();
-  a.views.check();
+  a.transcripts.poll();
   a.sessions.send(REAL, 'go');
   await tick();
   assert.equal(a.q.calls[0].options.permissionMode, 'plan');
@@ -268,7 +266,7 @@ test('needs you: canUseTool parks requests in arrival order, the status is needs
   assert.equal((pend[1].request as Record<string, unknown>).agentId, 'agent-7');
   assert.equal(got.filter((m) => m.t === 'session').at(-1)?.state.status, 'waiting', 'needs you wins over running');
   // A reload gets them again in hello, oldest first.
-  assert.deepEqual(t.views.pending().map((p) => p.request.id), ['rq-1', 'rq-2']);
+  assert.deepEqual(t.publisher.pending().map((p) => p.request.id), ['rq-1', 'rq-2']);
 
   assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'once' }).ok, true);
   await tick();
@@ -279,7 +277,7 @@ test('needs you: canUseTool parks requests in arrival order, the status is needs
   assert.deepEqual(after.filter((m) => m.t === 'pending').map((m) => m.cleared), ['rq-1']);
   const left = after.filter((m) => m.t === 'session').map((m) => m.state as { status: string; needsYou: string });
   assert.deepEqual(left.map((st) => [st.status, st.needsYou]), [['waiting', 'question']], 'still needs you: one request left, a question now');
-  assert.deepEqual(t.views.pending().map((p) => p.request.id), ['rq-2']);
+  assert.deepEqual(t.publisher.pending().map((p) => p.request.id), ['rq-2']);
 
   assert.equal(t.sessions.answer(REAL, 'rq-2', { questions: [{ picks: ['B'], note: 'because' }] }).ok, true);
   await tick();
@@ -301,18 +299,18 @@ test('needs you: a card appearing or answered tells the writer, and the work lin
   void canUseTool('Bash', { command: 'npm test', description: 'Run the tests' }, a.o);
   await tick();
   assert.deepEqual(waits, [REAL]);
-  assert.deepEqual(t.views.work(REAL), ['card waiting for you: allow Bash “Run the tests”']);
+  assert.deepEqual(t.publisher.work(REAL), ['card waiting for you: allow Bash “Run the tests”']);
   void canUseTool('AskUserQuestion', { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }, { question: 'And?', header: 'B', options: [{ label: 'C' }], multiSelect: false }] }, b.o);
   await tick();
   assert.equal(waits.length, 2);
-  assert.deepEqual(t.views.work(REAL), ['card waiting for you: allow Bash “Run the tests”', 'card waiting for you: question “Which?” and 1 more']);
+  assert.deepEqual(t.publisher.work(REAL), ['card waiting for you: allow Bash “Run the tests”', 'card waiting for you: question “Which?” and 1 more']);
   t.sessions.answer(REAL, 'rq-1', { choice: 'once' });
   await tick();
   assert.equal(waits.length, 3, 'answered');
   b.ctl.abort();
   await tick();
   assert.equal(waits.length, 4, 'dropped by its signal');
-  assert.deepEqual(t.views.work(REAL), []);
+  assert.deepEqual(t.publisher.work(REAL), []);
   // A question another process asks (R6.8): once when it appears, not again while it stays, once when it ends.
   const ran = (ask: string | null) => ({ agents: 0, turn: false, lastAt: 0, ask: ask ? { kind: 'question' as const, toolUseId: ask, agentId: null, since: 1 } : null });
   t.sessions.runningChanged(REAL, ran('toolu_x'));
@@ -331,7 +329,7 @@ test('needs you: a request ends when its signal aborts, on interrupt and when th
   a.ctl.abort();
   await tick();
   assert.equal((ra as { behavior: string }).behavior, 'deny');
-  assert.equal(t.views.pending().length, 0);
+  assert.equal(t.publisher.pending().length, 0);
   assert.equal(t.take('pending').at(-1)?.cleared, 'rq-1');
 
   // An interrupt ends what is left and sends back the messages held behind the card.
@@ -343,7 +341,7 @@ test('needs you: a request ends when its signal aborts, on interrupt and when th
   assert.deepEqual(t.take('session').at(-1)?.held, ['wait, one more thing']);
   await t.sessions.interrupt(REAL);
   assert.equal((rb as { behavior: string }).behavior, 'deny');
-  assert.equal(t.views.pending().length, 0);
+  assert.equal(t.publisher.pending().length, 0);
   const got = t.take();
   assert.deepEqual(got.filter((m) => m.t === 'restore').map((m) => m.texts), [['wait, one more thing']]);
   assert.equal(t.call.inputs.length, 1, 'the held message was never pushed');
@@ -352,10 +350,10 @@ test('needs you: a request ends when its signal aborts, on interrupt and when th
   const c = askOpts('3');
   void t.canUseTool('AskUserQuestion', { questions: [] }, c.o);
   await tick();
-  assert.equal(t.views.pending().length, 1);
+  assert.equal(t.publisher.pending().length, 1);
   t.call.out.end();
   await tick();
-  assert.equal(t.views.pending().length, 0);
+  assert.equal(t.publisher.pending().length, 0);
   assert.notEqual(t.take('session').at(-1)?.state.status, 'waiting');
 });
 
@@ -368,7 +366,7 @@ test('needs you: a message sent while a card waits is held, and pushed once the 
   t.sessions.send(REAL, 'second');
   await tick();
   assert.equal(t.call.inputs.length, 1);
-  assert.deepEqual(t.views.sessions().find((s) => (s as { id: string }).id === REAL)?.['held' as never], ['first', 'second']);
+  assert.deepEqual(t.publisher.sessions().find((s) => (s as { id: string }).id === REAL)?.['held' as never], ['first', 'second']);
   t.take();
   t.sessions.answer(REAL, 'rq-1', { choice: 'deny', text: 'not now' });
   await tick();
@@ -414,7 +412,7 @@ test('needs you: suppressAlwaysAllowRule hides Always allow and refuses it', asy
   await tick();
   assert.equal((t.take('pending')[0].request as Record<string, unknown>).always, null);
   assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'always' }).ok, false);
-  assert.equal(t.views.pending().length, 1, 'still waiting');
+  assert.equal(t.publisher.pending().length, 1, 'still waiting');
 });
 
 test('sessions: statuses go working, then your turn; a failed process is failed and toasts', async () => {
@@ -479,10 +477,12 @@ test('sessions: a missing folder fails without starting a process', () => {
 });
 
 test('sessions: the stream preview builds from deltas and clears when the block lands and on result', async () => {
-  const { sessions, q, take, claudeDir, views } = setup();
+  const { sessions, q, take, claudeDir, transcripts, publisher, c } = setup();
   const ph = sessions.newSession();
   sessions.send(ph, 'hi');
   emit(q.calls[0], init(REAL));
+  await tick();
+  publisher.view(c, REAL, null); // the text goes to the pages viewing it
   const ev = (event: object, parent: string | null = null) => emit(q.calls[0], { type: 'stream_event', event, parent_tool_use_id: parent, uuid: 'u', session_id: REAL });
   ev({ type: 'message_start', message: { id: 'msg_1' } });
   ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
@@ -500,7 +500,7 @@ test('sessions: the stream preview builds from deltas and clears when the block 
   fs.writeFileSync(path.join(dir, `${REAL}.jsonl`), JSON.stringify({
     type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:00.000Z', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'text', text: 'Hello' }] },
   }) + '\n');
-  views.check();
+  transcripts.poll();
   await tick();
   assert.equal(take('stream').at(-1)?.clear, true);
 
@@ -581,7 +581,7 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const cwd = path.join(root, 'scratch');
   const file = writePast(path.join(root, 'claude'), cwd);
-  const { sessions, store, q, take, views, c } = setup(root, [info(PAST, { cwd, lastModified: Date.parse('2026-11-20T10:00:05.000Z') })]);
+  const { sessions, store, q, take, transcripts, publisher, c } = setup(root, [info(PAST, { cwd, lastModified: Date.parse('2026-11-20T10:00:05.000Z') })]);
   assert.equal((await sessions.listRecent()).length, 1);
   take();
   const r = await sessions.openSession(PAST);
@@ -591,7 +591,7 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   const meta = take('session');
   assert.equal(meta[0].id, PAST);
   assert.equal(meta[0].title, 'Count the fixture lines');
-  views.view(c, PAST, null);
+  publisher.view(c, PAST, null);
   const items = take('items');
   assert.equal(items[0].reset, true);
   assert.ok((items[0].upsert as unknown[]).length >= 2, 'the history shows at once');
@@ -605,7 +605,7 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   assert.equal(q.calls[0].options.model, 'claude-haiku-test', 'the resume keeps the model the session used');
   emit(q.calls[0], init(PAST));
   await tick();
-  assert.deepEqual(views.ids(), [PAST], 'the same id, no swap');
+  assert.deepEqual(transcripts.ids(), [PAST], 'the same id, no swap');
   assert.ok(fs.existsSync(file));
   assert.equal((await sessions.openSession('not-an-id')).ok, false);
 });
@@ -698,12 +698,12 @@ test('close: ends the process, sends removed, hides it in its group; reopening p
   // after a restart it stays closed
   const t2 = setup(root, past);
   t2.sessions.start();
-  assert.deepEqual(t2.views.ids(), []);
+  assert.deepEqual(t2.transcripts.ids(), []);
   assert.equal(t2.sessions.send(PAST, 'x').ok, false);
 
   // reopening it: back in its group, the same open[] entry
   await t2.sessions.openSession(PAST);
-  assert.deepEqual(t2.views.ids(), [PAST]);
+  assert.deepEqual(t2.transcripts.ids(), [PAST]);
   assert.equal(t2.store.state.open.length, 1);
   assert.equal(t2.store.state.open[0].closedAt, null);
   assert.deepEqual(t2.store.state.layout.groups[0].ids, ['x', PAST]);
@@ -765,8 +765,8 @@ test("stop task: the SDK's task_notification ends the task between turns", async
   fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
   const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
   await t.sessions.openSession(BG);
-  t.views.check();
-  const bg = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string }[] }[]).find((s) => s.id === BG)!.background;
+  t.transcripts.poll();
+  const bg = () => (t.publisher.sessions() as { id: string; background: { toolUseId: string; status: string }[] }[]).find((s) => s.id === BG)!.background;
   const run = bg().find((b) => b.status === 'running')!;
   t.sessions.send(BG, 'go');
   await tick();
@@ -777,7 +777,7 @@ test("stop task: the SDK's task_notification ends the task between turns", async
   assert.equal(bg().find((b) => b.toolUseId === run.toolUseId)!.status, 'stopped');
   assert.deepEqual(t.sessions.quitCheck().background, []);
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 // b, b (R9): a session whose turn runs a foreground Bash and a foreground Agent (made up)
@@ -799,8 +799,8 @@ test("tool_progress: a driven session's running step gets its start from the ela
   const t = backgroundSetup();
   const { BGS } = t;
   await t.sessions.openSession(BGS);
-  t.views.check();
-  t.views.view(t.c, BGS, null);
+  t.transcripts.poll();
+  t.publisher.view(t.c, BGS, null);
   t.sessions.send(BGS, 'go');
   await tick();
   const call = t.q.calls[0];
@@ -814,16 +814,16 @@ test("tool_progress: a driven session's running step gets its start from the ela
   const since = Date.parse(ups.find((i) => i.id === 'toolu_sl')?.since ?? '');
   assert.ok(since >= before - 12_000 && since <= Date.now() - 12_000, 'now minus 12 s');
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 test('background: b, b calls backgroundTasks; background_tasks_changed shows the steps as background work at once, once', async () => {
   const t = backgroundSetup();
   const { BGS } = t;
   await t.sessions.openSession(BGS);
-  t.views.check();
-  const sess = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string; taskId: string | null }[] }[]).find((s) => s.id === BGS)!;
-  const item = (id: string) => (t.views.dump(BGS) as { items: { id: string; fg?: boolean; state?: string }[] }).items.find((i) => i.id === id)!;
+  t.transcripts.poll();
+  const sess = () => (t.publisher.sessions() as { id: string; background: { toolUseId: string; status: string; taskId: string | null }[] }[]).find((s) => s.id === BGS)!;
+  const item = (id: string) => t.transcripts.get(BGS)!.get(id)!;
   assert.equal(item('toolu_sl').fg, undefined, 'not before its task_started');
   assert.equal((await t.sessions.background(BGS)).ok, false, 'no process: nothing to move');
   t.sessions.send(BGS, 'go');
@@ -852,7 +852,7 @@ test('background: b, b calls backgroundTasks; background_tasks_changed shows the
   // the transcript's own record of the move adds nothing
   fs.appendFileSync(t.file, t.rec({ type: 'user', uuid: 'b-r1', timestamp: '2026-11-24T10:00:05.000Z', toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bsl1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sl', content: 'Command was moved to the background with ID: bsl1.' }] } })
     + t.rec({ type: 'user', uuid: 'b-r2', timestamp: '2026-11-24T10:00:05.000Z', toolUseResult: { status: 'async_launched', agentId: 'aag1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ag', content: 'Moved to the background.' }] } }));
-  t.views.check();
+  t.transcripts.poll();
   await tick();
   assert.deepEqual(sess().background.map((b) => [b.toolUseId, b.status]), [['toolu_sl', 'running']], 'one shell, not two');
   assert.equal(item('toolu_ag').state, 'running');
@@ -866,7 +866,7 @@ test('background: b, b calls backgroundTasks; background_tasks_changed shows the
   assert.equal(sess().background[0].status, 'failed', 'the notification wins');
   assert.equal(sess().background.length, 1);
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 test('background: a toast when nothing could go, or background tasks are turned off', async () => {
@@ -884,7 +884,7 @@ test('background: a toast when nothing could go, or background tasks are turned 
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /turned off.*CLAUDE_CODE_DISABLE_BACKGROUND_TASKS/);
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 test('process end: background work of a failed or quit process reads as stopped, also after a restart', async () => {
@@ -895,8 +895,8 @@ test('process end: background work of a failed or quit process reads as stopped,
   fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
   const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
   await t.sessions.openSession(BG);
-  t.views.check();
-  const running = () => (t.views.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background.filter((b) => b.status === 'running').length;
+  t.transcripts.poll();
+  const running = () => (t.publisher.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background.filter((b) => b.status === 'running').length;
   assert.equal(running(), 1, 'the fixture monitor runs');
   t.sessions.send(BG, 'go');
   await tick();
@@ -911,14 +911,14 @@ test('process end: background work of a failed or quit process reads as stopped,
   assert.equal(typeof t.store.state.ended[BG], 'number', 'stored');
   assert.equal(t.store.state.endedFailed[BG], true, 'stored as a failure');
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
   // a restart: the transcript still says running, the stored end says stopped
   const t2 = setup(root);
   t2.store.state.open.push({ id: BG, cwd: path.join(root, 'scratch'), openedAt: 0, closedAt: null });
   t2.store.state.ended[BG] = t.store.state.ended[BG];
   t2.sessions.start();
-  t2.views.check();
-  const bg2 = (t2.views.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background;
+  t2.transcripts.poll();
+  const bg2 = (t2.publisher.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background;
   assert.ok(bg2.some((b) => b.status === 'stopped') && !bg2.some((b) => b.status === 'running'));
 });
 
@@ -966,8 +966,8 @@ test('model: a running process gets setModel and applyFlagSettings; an effort ch
   t.take();
   await t.sessions.setModel(REAL, 'sonnet', 'high');
   assert.deepEqual(t.q.calls[0].controls, [['setModel', 'sonnet'], ['applyFlagSettings', { effortLevel: 'high' }]]);
-  assert.equal((t.views.meta(REAL) as { model: unknown }).model, 'sonnet', 'the meta shows the choice');
-  assert.equal((t.views.meta(REAL) as { effort: unknown }).effort, 'high');
+  assert.equal((t.publisher.meta(REAL) as { model: unknown }).model, 'sonnet', 'the meta shows the choice');
+  assert.equal((t.publisher.meta(REAL) as { effort: unknown }).effort, 'high');
   t.q.calls[0].controls.length = 0;
   await t.sessions.setModel(REAL, 'sonnet', 'low');
   assert.deepEqual(t.q.calls[0].controls, [['applyFlagSettings', { effortLevel: 'low' }]]);
@@ -1022,7 +1022,7 @@ test('open list: after a reset the earlier conversation is listed and opens as i
   assert.equal(t.sessions.resolve(PAST), RESET);
   assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), [PAST], 'the pre-clear conversation is a past session');
   assert.deepEqual(await t.sessions.openSession(PAST), { ok: true, sid: PAST });
-  assert.deepEqual(t.views.ids().sort(), [PAST, RESET].sort());
+  assert.deepEqual(t.transcripts.ids().sort(), [PAST, RESET].sort());
   assert.equal(t.sessions.resolve(PAST), PAST, 'page messages with its id reach it, not the new conversation');
   assert.deepEqual(t.store.state.open.map((e) => e.id).sort(), [PAST, RESET].sort());
   assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), []);
@@ -1103,12 +1103,12 @@ test('sessions: a session whose turn runs in another process reads working, unti
   const add = (r: object) => fs.appendFileSync(file, JSON.stringify({ ...base, ...r }) + '\n');
   add({ type: 'user', uuid: 'p-3', timestamp: '2026-11-20T10:01:00.000Z', message: { role: 'user', content: 'Now run the tests' } });
   add({ type: 'assistant', uuid: 'p-4', timestamp: '2026-11-20T10:01:05.000Z', message: { id: 'm-2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ext', name: 'Bash', input: { command: 'npm test' } }] } });
-  const { sessions, views, take } = setup(root, [info(PAST, { cwd })]);
+  const { sessions, transcripts, publisher, take } = setup(root, [info(PAST, { cwd })]);
   await sessions.openSession(PAST);
-  views.check();
+  transcripts.poll();
   assert.equal(take('session').at(-1)?.state.status, 'busy', 'its tool waits for a result in the other process');
   add({ type: 'user', uuid: 'p-5', timestamp: '2026-11-20T10:02:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ext', content: 'ok' }] } });
   add({ type: 'system', subtype: 'turn_duration', durationMs: 60000, timestamp: '2026-11-20T10:02:01.000Z' });
-  views.check();
+  transcripts.poll();
   assert.equal(take('session').at(-1)?.state.status, 'idle');
 });

@@ -1,6 +1,6 @@
 // Builds the prototype's data files from the backend fixture tree, for compare.sh:
 // transcripts.js (window.TRANSCRIPTS, the shape prototype/app.html reads) and menu.js (window.MENU).
-// It runs the fixtures through the same Views, Sessions and scripted SDK the port gets under
+// It runs the fixtures through the same Transcripts, Publisher, Sessions and scripted SDK the port gets under
 // `dev.sh --script` (on a temp copy and a temp state folder), and turns the pending requests into ask
 // items with the page's own card.js, so both sides show the same state.
 // Usage: node --experimental-strip-types build-proto-fixture.ts <claude-dir> <out-dir>
@@ -8,12 +8,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
-import { Views } from '../../backend/src/views.ts';
+import { Transcripts } from '../../backend/src/transcripts.ts';
+import { Publisher } from '../../backend/src/publisher.ts';
 import { Sessions } from '../../backend/src/sessions.ts';
 import { openStore } from '../../backend/src/store.ts';
 import { toCommands, toModels } from '../../backend/src/sdk.ts';
 import { openScripted, SCRIPT_FILE } from '../../backend/dev/scripted-sdk.ts';
 import type { SessionState } from '../../backend/src/status.ts';
+import type { Client } from '../../backend/src/server.ts';
 
 const [src, outDir] = process.argv.slice(2);
 if (!src || !outDir) {
@@ -32,26 +34,39 @@ const claudeDir = path.join(tmp, 'claude'), stateDir = path.join(tmp, 'state');
 fs.cpSync(src, claudeDir, { recursive: true });
 const scripted = openScripted({ file: path.join(claudeDir, SCRIPT_FILE), claudeDir, stateDir });
 const store = openStore(stateDir);
-const views = new Views({
-  claudeDir, clients: () => new Set(), home: scripted.home, pollMs: 0, watch: false,
+const transcripts = new Transcripts({
+  claudeDir, home: scripted.home, pollMs: 0, watch: false,
   written: (sid) => store.state.written[sid], answerOf: (id) => store.state.answers[id], planOf: (id) => store.state.plans[id],
 });
-const sessions = new Sessions({ store, views, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer });
+// One page that views each conversation in turn: its `items` resets are what the prototype shows.
+const got: { t: string; [k: string]: unknown }[] = [];
+const viewer: Client = { send: (m) => got.push(m as { t: string }), close: () => {} };
+const publisher = new Publisher({ transcripts, clients: () => new Set([viewer]), home: scripted.home, recheckMs: 0, written: (sid) => store.state.written[sid] });
+const sessions = new Sessions({ store, transcripts, publisher, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer });
 sessions.start();
 scripted.attach(sessions);
 await scripted.whenPlayed(); // every step at load: the cards wait, the stream preview is whole
-views.check();
+transcripts.poll();
 
-type Dump = { items: object[]; pending: object[]; stream: string | null; state: SessionState; [k: string]: unknown };
-const sessionsOut = views.ids().map((id) => {
-  const { items, pending, stream, state, ...rest } = views.dump(id) as Dump;
+// The last WINDOW items of a conversation, as a page that views it gets them.
+const viewed = (sid: string, agent: string | null): { upsert: object[]; total: number } => {
+  got.length = 0;
+  publisher.view(viewer, sid, agent);
+  return got.find((m) => m.t === 'items') as unknown as { upsert: object[]; total: number };
+};
+type Hello = { id: string; agents: { id: string }[]; stream: string | null; held: unknown; state: SessionState; [k: string]: unknown };
+const sessionsOut = (publisher.sessions() as Hello[]).map(({ stream, held: _held, state, agents, ...meta }) => {
+  const { upsert: items, total } = viewed(meta.id, null);
+  const pending = publisher.pending().filter((p) => p.sid === meta.id).map((p) => p.request);
+  const rest = { ...meta, total, agents: agents.map((a) => ({ ...a, items: viewed(meta.id, a.id).upsert })) };
   const all = withPending(items, pending);
   if (stream) all.push({ id: 'stream', k: 'claude', ts: new Date().toISOString(), text: stream });
   // the prototype reads the status and its age as fields of their own
   return { ...rest, status: state.status, statusAt: state.since, name: '', items: all };
 });
 sessions.stop();
-views.stop();
+publisher.stop();
+transcripts.stop();
 store.close();
 fs.rmSync(tmp, { recursive: true, force: true });
 

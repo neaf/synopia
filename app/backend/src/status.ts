@@ -50,7 +50,7 @@ export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?
 // queued: messages waiting for the running turn. retry: the attempt, its cap and when it goes (ms).
 export type Takeover = 'waiting' | 'taking';
 // external: the status is another process's, read from the transcript (its main turn, or its question
-// or plan), not Synopia's own process's: views.ts sends the session as not `driven`.
+// or plan), not Synopia's own process's: publisher.ts sends the session as not `driven`.
 export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover; external?: true };
 export type StatusEntry = { status: Status; at: number; detail?: StatusDetail };
 
