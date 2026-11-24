@@ -16,12 +16,14 @@
 #   app/web/dev/cdp/run.sh motion  running marks always move (R8.1), the sub-line tween, reduced motion (R8.5), square marks, marks on the box and gutter (R8.6)
 #   app/web/dev/cdp/run.sh extcard a question and a plan asked in another process: needs you, the read-only card, then answered (R6.8), with shots
 #   app/web/dev/cdp/run.sh restore the exact UI state after a page reload and two backend restarts on the same state folder (R3.9)
+#   app/web/dev/cdp/run.sh dark    dark mode (section 11): follows the system live, the switch stored and kept over a reload, no light background left, with shots
+# SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore dark)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -81,7 +83,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shot: $state/steps.png" ;;
-  extcard|preview|images|rail) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|dark) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

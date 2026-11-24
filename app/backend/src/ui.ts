@@ -35,6 +35,7 @@ export type UiState = {
   openList?: { filter: string } | null;
   preview?: { path: string; scroll: number; find: string } | null;
   viewer?: { srcs: string[]; i: number } | null;
+  theme?: 'light' | 'dark' | null; // the page's theme choice; null follows the system
   sessions: Record<string, UiSession>;
 };
 
@@ -105,6 +106,7 @@ function cleanTop(v: Record<string, unknown>, out: UiState): void {
   if ('current' in v) out.current = str(v.current, 256) ? v.current : null;
   if ('view' in v) out.view = str(v.view, 256) ? v.view : null;
   if (v.mode === 'normal' || v.mode === 'insert') out.mode = v.mode;
+  if ('theme' in v) out.theme = v.theme === 'light' || v.theme === 'dark' ? v.theme : null;
   if ('openBg' in v) out.openBg = str(v.openBg, 256) ? v.openBg : null;
   if ('openList' in v) out.openList = isObj(v.openList) && str(v.openList.filter, 1024) ? { filter: v.openList.filter } : null;
   if ('preview' in v) {

@@ -18,7 +18,7 @@ import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
-import { loadBat, previewFile } from './preview.ts';
+import { loadBat, previewFile, themeOf } from './preview.ts';
 import { displayPath } from './paths.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
@@ -223,7 +223,7 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   } else if (msg.t === 'preview') { // a text file's read-only preview; anything else opens as `open` does
     const toast = (text: string) => client.send({ t: 'toast', text });
     void bat.then((b) => previewFile(msg.path, {
-      bat: b, log, display: (p) => displayPath(p, script?.home ?? homedir()), reply: (r) => client.send(r), toast,
+      bat: b, theme: themeOf(msg.theme), log, display: (p) => displayPath(p, script?.home ?? homedir()), reply: (r) => client.send(r), toast,
       open: (p) => openTarget({ path: p }, { dryRun: flags['dry-open'], log, onError: toast }),
     }));
   } else if (msg.t === 'ui') { // the page's UI state (R3.9): stored, returned in hello, never broadcast

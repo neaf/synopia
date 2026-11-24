@@ -1,0 +1,115 @@
+/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js sets <html data-theme>:
+   the system's appearance until the switch in the sidebar footer picks one. The layout reads as in the light
+   theme: the sidebar (#22272E, unchanged) stays the darkest surface, the canvas a step lighter, the panels a
+   step lighter again; lines stay 1px; text keeps 4.5:1 or more; the marks take the bright set the dark
+   sidebar already uses (R8.4); red stays for needs you. Every rule is prefixed with :root[data-theme="dark"],
+   which outranks the light rule it replaces. No transition: the switch is instant. */
+
+/* ---------- the switch: a shaded moon in light mode, a sun in dark mode; no border, no fill, a faint hover tint ---------- */
+.theme-btn { all: unset; box-sizing: border-box; flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: -5px;
+  border-radius: 5.5px; color: #9198A1; cursor: pointer; }
+.theme-btn:hover { background: #2D333B; color: #E6EDF3; }
+.theme-btn:focus-visible { outline: 2px solid #58A6FF; outline-offset: 1px; }
+.theme-btn svg { width: 14px; height: 14px; display: block; overflow: visible; }
+.theme-btn .sun, :root[data-theme="dark"] .theme-btn .moon { display: none; }
+:root[data-theme="dark"] .theme-btn .sun { display: block; }
+
+/* ---------- the palette ---------- */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #2A3038; --side: #22272E; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+  --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #8F9AA6;
+  --red: #FF7B72; --amber: #E3B341; --green: #56D364; --link: #6CB6FF;
+  --dot-red: #FF7B72; --dot-amber: #E3B341; --dot-green: #3FB950; --dot-off: #66707C;
+  --add-bg: #2A4234; --del-bg: #482D31; --sel: #1F3B5C; --guide: #606B78; --fork: #C69CFF;
+  --k-sub: #3FB950; --k-fork: #BC8CFF; --k-shell: #39C5CF; --k-mon: #58A6FF;
+  /* the marks' dark set, as in the sidebar */
+  --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
+  --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66;
+  /* tints used below */
+  --blue-bg: #1F3B5C; --blue-line: #4493F8; --red-bg: #4A2A2D; --red-line: #7A3B3E; --green-bg: #243F2E; --green-line: #2F6B3F;
+  --shadow: 0 7px 21.5px rgba(0, 0, 0, .45);
+}
+/* the marks' own colours everywhere, as .side .ind sets them */
+:root[data-theme="dark"] .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+
+:root[data-theme="dark"] ::selection { background: #264F78; }
+:root[data-theme="dark"] .btn.primary { background: #238636; border-color: #2EA043; color: #FFFFFF; }
+:root[data-theme="dark"] .btn.primary:hover { background: #2EA043; }
+
+/* ---------- sidebar: the open row runs into the dark canvas, so it keeps the dark set too ---------- */
+:root[data-theme="dark"] .side .row[aria-current="true"] { --k-sub: #3FB950; --k-shell: #39C5CF; --k-mon: #58A6FF; --k-fork: #BC8CFF;
+  --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
+  --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
+:root[data-theme="dark"] .side .row[aria-current="true"] .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+:root[data-theme="dark"] .side .row[aria-current="true"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
+:root[data-theme="dark"] .side .row[aria-current="true"] .r-side { border-color: #6E7781; }
+:root[data-theme="dark"] .side .tree .row[aria-current="true"] .tg::before, :root[data-theme="dark"] .side .tree .row[aria-current="true"] .tg::after { border-color: #6E7781; }
+:root[data-theme="dark"] .drop-into { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
+
+/* ---------- transcript ---------- */
+:root[data-theme="dark"] .prompt { background: #2C3644; }
+:root[data-theme="dark"] .atype.fork { color: var(--fork); }
+:root[data-theme="dark"] .md pre { background: var(--sub); }
+
+/* files changed and diffs: tinted rows, a stronger tint in the number gutter */
+:root[data-theme="dark"] .frow .fc[aria-expanded="true"] { background: var(--blue-bg); box-shadow: inset 0 0 0 1px var(--blue-line); }
+:root[data-theme="dark"] .dl.a .no { background: #335240; color: var(--ink-3); }
+:root[data-theme="dark"] .dl.d .no { background: #5A363B; color: var(--ink-3); }
+:root[data-theme="dark"] .dl.d .sg { color: #FF7B72; }
+
+/* ---------- the message panel ---------- */
+:root[data-theme="dark"] .status[data-state="red"] { background: var(--red-bg); border-bottom-color: var(--red-line); }
+:root[data-theme="dark"] body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px var(--blue-line); }
+:root[data-theme="dark"] .slash { box-shadow: var(--shadow); }
+:root[data-theme="dark"] .slash .it[aria-selected="true"], :root[data-theme="dark"] .ol-it[aria-selected="true"] { background: var(--blue-bg); }
+:root[data-theme="dark"] .thumb-wrap .unattach { color: var(--panel); }
+
+/* needs you: the question card, its options, the own-answer field */
+:root[data-theme="dark"] .nd-head { background: var(--red-bg); border-bottom-color: var(--red-line); }
+:root[data-theme="dark"] .qq .qh { background: var(--red-bg); border-color: var(--red-line); }
+:root[data-theme="dark"] .qo[aria-pressed="true"] { background: var(--blue-bg); }
+:root[data-theme="dark"] .o.focus { box-shadow: inset 0 0 0 1px var(--blue-line); }
+:root[data-theme="dark"] .o.on > .box::after { border-color: var(--panel); }
+:root[data-theme="dark"] .qa-own { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }
+
+/* ---------- the image viewer and the toast ---------- */
+:root[data-theme="dark"] .viewer { background: rgba(42, 48, 56, .94); }
+:root[data-theme="dark"] .viewer img { box-shadow: var(--shadow); }
+:root[data-theme="dark"] .toast { background: #444C58; color: var(--ink); box-shadow: inset 0 0 0 1px #5B6573; }
+:root[data-theme="dark"] .ghost { box-shadow: 0 3px 10px rgba(0, 0, 0, .4); }
+
+/* ---------- the background panel ---------- */
+:root[data-theme="dark"] .main-row[data-state="green"] { background: var(--green-bg); border-color: var(--green-line); }
+:root[data-theme="dark"] .main-row[data-state="red"] { background: var(--red-bg); border-color: var(--red-line); }
+:root[data-theme="dark"] .main-row[aria-current="true"][data-state="red"] { box-shadow: 0 0 0 2px var(--red); }
+:root[data-theme="dark"] .main-row:hover { filter: brightness(1.12); }
+:root[data-theme="dark"] .rv { border-color: #2F5A88; background: #22344A; }
+
+/* ---------- marks and kind tags: the dark tracks under the turning parts ---------- */
+:root[data-theme="dark"] .spinner { border-color: #1F4D2C; border-top-color: #3FB950; border-right-color: #3FB950; }
+:root[data-theme="dark"] .ind .arc { border-color: #1F4D2C; border-top-color: var(--green); border-right-color: var(--green); }
+:root[data-theme="dark"] .ind .arc.dual { border-color: #1F4D2C; border-top-color: var(--green); border-bottom-color: var(--green); }
+:root[data-theme="dark"] .ind .arc.fork { border-color: #3E2F66; border-top-color: var(--k-fork); border-right-color: var(--k-fork); }
+:root[data-theme="dark"] .ind .arc.k2 { border-color: #3E2F66; border-top-color: var(--k-fork); border-bottom-color: var(--k-fork); }
+:root[data-theme="dark"] .ind .arc.grey, :root[data-theme="dark"] .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
+:root[data-theme="dark"] .ind .sat { border-color: #545D68; }
+:root[data-theme="dark"] .ind .v-escal .bars i { background: linear-gradient(180deg, var(--red) 0 .19em, #8E3A36 .19em .3em); background-size: 100% .3em; }
+:root[data-theme="dark"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme="dark"] .spinner { border-color: #3FB950; }
+  :root[data-theme="dark"] .ind .arc:not(.frozen):not(.grey) { border-color: var(--green); }
+  :root[data-theme="dark"] .ind .arc.fork, :root[data-theme="dark"] .ind .arc.k2 { border-color: var(--k-fork); }
+  :root[data-theme="dark"] .ind .radar .sweep { background: none; }
+}
+:root[data-theme="dark"] .kind { --kc: #ADBAC7; --kb: #3A424D; }
+:root[data-theme="dark"] .kd-sub { --kc: #56D364; --kb: #1F3A28; }
+:root[data-theme="dark"] .kd-fork { --kc: #D2A8FF; --kb: #382B54; }
+:root[data-theme="dark"] .kd-shell { --kc: #56D4DD; --kb: #183B3F; }
+:root[data-theme="dark"] .kd-mon { --kc: #79C0FF; --kb: #1C3352; }
+
+/* ---------- the file preview: bat's dark theme comes from the backend; the find marks and change bars here ---------- */
+:root[data-theme="dark"] ::highlight(pv-find) { background-color: #5C4A16; }
+:root[data-theme="dark"] ::highlight(pv-cur) { background-color: #E3B341; color: #1F2328; }
+:root[data-theme="dark"] .pl.chg .no { box-shadow: inset 2px 0 0 #3FB950; }
+:root[data-theme="dark"] .pl.cut .no { background-image: linear-gradient(#FF7B72, #FF7B72); }

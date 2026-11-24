@@ -13,7 +13,7 @@ const uiDrafts = new Map(); // sid -> { text, cursor, atts } for the sessions no
 const uiStored = new Set(); // pasted image ids the backend has as files
 let uiSentTop = {}, uiSentSess = {}; // what the backend has, as JSON per field
 let uiLoaded = false, uiTimer = null, uiFirstChange = 0, uiRestoring = null, uiTyping = null, uiAfterFirst = null;
-const UI_TOP = ["current", "view", "mode", "openBg", "openList", "preview", "viewer"];
+const UI_TOP = ["current", "view", "mode", "openBg", "openList", "preview", "viewer", "theme"];
 const uiSess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set(), rail: undefined });
 const uiNewId = () => [...crypto.getRandomValues(new Uint8Array(12))].map(b => b.toString(16).padStart(2, "0")).join("");
 const uiView = () => view || "";
@@ -26,6 +26,7 @@ function uiSetRail(sid, v) { uiSess(sid).rail = v; uiChanged(); }
 function uiApplyHello(u) {
   const first = !uiLoaded; uiLoaded = true;
   if (!first) { uiSentTop = {}; uiSentSess = {}; uiChanged(); return; } // a reconnect: this page's state is the newer, send all of it
+  themeSet(u && typeof u === "object" ? u.theme : null, true); // the stored theme, or the system's (theme.js)
   if (!u || typeof u !== "object") return;
   const has = sid => typeof sid === "string" && store.sessions.has(sid);
   if (!location.hash && has(u.current)) {
@@ -72,7 +73,7 @@ function uiAfterRender() {
   }
   if (u.preview && u.preview.path) {
     pv.want = { path: u.preview.path, back: null, added: new Set(), cut: new Set(), first: 0, restore: { scroll: +u.preview.scroll || 0, find: String(u.preview.find || "") } };
-    send({ t: "preview", path: u.preview.path });
+    send({ t: "preview", path: u.preview.path, theme: themeNow() });
   }
   if (u.viewer && Array.isArray(u.viewer.srcs) && u.viewer.srcs.length)
     showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0);
@@ -198,7 +199,7 @@ function uiChanged() {
 function uiTop() {
   const code = document.getElementById("pv-code"), find = document.getElementById("pv-find");
   return {
-    current, view: view || null, mode, openBg: openBg || null,
+    current, view: view || null, mode, openBg: openBg || null, theme: themePref,
     openList: openListShown() ? { filter: openList.filter } : null,
     preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
     viewer: viewer ? (srcs => srcs.length ? { srcs, i: Math.max(0, srcs.indexOf(viewer.srcs[viewer.i])) } : null)(viewer.srcs.filter(s => s.startsWith("/api/image?")).map(s => s.replace(/([?&])token=[^&]*&?/, "$1"))) : null,
