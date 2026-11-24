@@ -408,11 +408,8 @@ conv.addEventListener("click", e => {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
     e.preventDefault(); e.stopPropagation();
-    /* a running subagent's card opens its transcript and expands, like a shell's, to show its Stop row */
-    if (t.matches(".rail .card")) openBg = view === t.dataset.agent && openBg === t.dataset.agent ? null : t.dataset.agent;
     view = t.dataset.agent; renderConv();
   }
-  else if (t.dataset.stop) { stopping.add(t.dataset.stop); send({ t: "stopTask", sid: current, taskId: t.dataset.stop }); renderRail(); }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }

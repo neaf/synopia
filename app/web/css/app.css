@@ -294,10 +294,6 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .bw-detail { margin: 0 12.5px 7px; font-size: 11px; color: var(--ink-2); }
 .bw-detail code { display: block; font-family: var(--mono); font-size: 10.5px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 3.5px; padding: 3.5px 5.5px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3.5px; }
 /* the Stop row of an expanded Running card: quiet, with the still grey square it leaves behind */
-.bw-stop { display: flex; align-items: center; gap: 5.5px; margin: 4.5px 0 0 -6px; padding: 2.5px 6px; font-size: 10.5px; }
-.bw-stop .ind { font-size: 10px; }
-.bw-stop:focus-visible { outline: 1px solid var(--link); outline-offset: 0; }
-.bw-detail .bw-stop:first-child { margin-top: 0; }
 /* the main conversation is a card like the running ones; what runs in the background hangs under it as a tree,
    drawn like the sidebar's groups (R4.3): a 1px guide down from the main card's mark, a tick into each child, a corner on the last */
 .main-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;

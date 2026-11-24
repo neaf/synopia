@@ -9,15 +9,8 @@ function bgState(b) {
 }
 const bgMs = b => (b.end ? new Date(b.end) : (bgState(b) === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : NOWISH)) - new Date(b.start);
 let openBg = null;
-/* the Stop row: stopTask takes the task id (a subagent's is its agent id); shown only while it runs */
-const stopping = new Set();
-const taskOf = x => x.agent ? x.agent.id : x.bg.taskId;
-function stopRow(x) {
-  const id = taskOf(x); if (!id) return "";
-  const what = { sub: "subagent", fork: "fork", shell: "shell", mon: "monitor" }[kindKey(x)];
-  return stopping.has(id) ? `<button class="btn quiet bw-stop" disabled>${ind("stopped")}Stopping</button>`
-    : `<button class="btn quiet bw-stop" data-stop="${esc(id)}">${ind("stopped")}Stop this ${what}</button>`;
-}
+/* No Stop row (author, 2026-11-24): it moved the panel when switching subagents. A key comes when it's
+   needed; until then a runaway background task ends with its session. */
 function railHTML(s, A) {
   if (!hasBackground(s)) return "";
   graceScan();
@@ -27,7 +20,6 @@ function railHTML(s, A) {
     ...bgOf(s).map(b => { const st = bgState(b); return { key: b.toolUseId, bg: b, name: b.description || b.command, kind: b.kind, start: b.start,
       end: st === "running" ? null : (b.end || new Date(new Date(b.start).getTime() + (b.timeout || 0)).toISOString()), running: st === "running", failed: st === "failed", st, ms: bgMs(b) }; })
   ];
-  for (const x of all) if (!x.running && stopping.has(taskOf(x))) stopping.delete(taskOf(x));
   for (const x of all) x.shown = x.running || inGrace(s.id, x.key); // one that just finished stays in the tree for its grace
   const past = all.filter(x => !x.shown).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
@@ -36,11 +28,11 @@ function railHTML(s, A) {
   const parentOf = x => x.bg && x.bg.agentId && running.some(y => y.agent && y.agent.id === x.bg.agentId) ? x.bg.agentId : null;
   const now = running.filter(x => !parentOf(x)), kidsOf = x => x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
   const nameOfAgent = id => agentsOf(s).find(a => a.id === id)?.description || "a subagent";
-  const attrs = x => x.agent ? `data-agent="${esc(x.agent.id)}" aria-current="${!!(A && A.id === x.agent.id)}"${x.running ? ` aria-expanded="${openBg === x.key}"` : ""}` : `data-bg="${esc(x.key)}" aria-expanded="${openBg === x.key}"`;
+  const attrs = x => x.agent ? `data-agent="${esc(x.agent.id)}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${esc(x.key)}" aria-expanded="${openBg === x.key}"`;
   const detail = x => {
     if (openBg !== x.key) return "";
-    if (x.agent) return x.running ? `<div class="bw-detail">${stopRow(x)}</div>` : "";
-    return `<div class="bw-detail">${x.bg.summary ? esc(x.bg.summary) : x.running ? "No report yet." : esc(x.st)}<code>${esc(x.bg.command)}</code>${x.running ? stopRow(x) : ""}</div>`;
+    if (x.agent) return ""; // a subagent's card opens its transcript, nothing expands
+    return `<div class="bw-detail">${x.bg.summary ? esc(x.bg.summary) : x.running ? "No report yet." : esc(x.st)}<code>${esc(x.bg.command)}</code></div>`;
   };
   const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
