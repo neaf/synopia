@@ -1,10 +1,12 @@
-// The Synopia backend. Started by the shell (stdin is its lifetime) or by
-// app/dev.sh with --no-parent. Prints {"port":…,"token":…} as its first stdout line, then a
-// {"badge":N} line each time the Dock badge's count changes.
+// The Synopia backend, a daemon the app starts detached (plan section 2): it owns every session's
+// process and all state, and outlives the app. Once it listens it writes <state-dir>/daemon.json
+// (daemon.ts), where the app finds it. It ends on POST /api/stop ("Stop All Work"), on SIGTERM or
+// SIGINT, or after 30 min with no page connected and nothing running. app/dev.sh runs it with
+// --no-parent: {"port":…,"token":…} as the first stdout line, and no idle exit.
 import { parseArgs } from 'node:util';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { acquireLock, LockedError } from './lock.ts';
@@ -19,7 +21,8 @@ import { loadBat, previewFile } from './preview.ts';
 import { displayPath } from './paths.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
-import { Badge } from './badge.ts';
+import { Badge, badgeCount } from './badge.ts';
+import { DAEMON_LOG, IDLE_EXIT_MS, IdleExit, procStart, removeDaemonInfo, rotateLog, writeDaemonInfo } from './daemon.ts';
 import type { Image } from './sessions.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
@@ -37,6 +40,7 @@ const { values: flags } = parseArgs({
     'no-parent': { type: 'boolean', default: false },
     fake: { type: 'boolean', default: false },
     'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
+    'exit-idle-ms': { type: 'string' }, // test-only: a shorter daemon idle exit than 30 min
     'dry-open': { type: 'boolean', default: false }, // `open` logs its branch and runs nothing (checks)
   },
   strict: true,
@@ -54,7 +58,8 @@ if (flags.fake && flags['claude-dir'] === undefined) {
   process.stderr.write('Synopia backend: --fake needs --claude-dir (a fixture tree)\n');
   process.exit(2);
 }
-mkdirSync(stateDir, { recursive: true });
+mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+chmodSync(stateDir, 0o700); // daemon.json holds the token
 
 const log = openLog(
   flags['state-dir'] !== undefined ? join(stateDir, 'backend.log') : join(homedir(), 'Library/Logs/Synopia/backend.log'),
@@ -72,10 +77,12 @@ try {
   throw e;
 }
 
-log('backend.start', { pid: process.pid, fake: flags.fake, parent: !flags['no-parent'] });
+log('backend.start', { pid: process.pid, fake: flags.fake, daemon: !flags['no-parent'] });
+removeDaemonInfo(stateDir); // the lock is ours, so a daemon.json left there is stale
 const store = openStore(stateDir, { log });
 const token = randomBytes(32).toString('hex');
 
+const VERSION = String(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
 let server: Server | undefined;
 const noClients = new Set<Client>();
 const script = flags.fake ? loadScript(claudeDir) : null;
@@ -126,6 +133,15 @@ if (!fake) {
 function openEntries(): OpenEntry[] {
   if (!fake) return sessions ? sessions.layoutEntries() : store.state.open;
   return views.ids().map((id) => ({ id, cwd: views.meta(id)?.cwd ?? '', openedAt: 0, closedAt: null }));
+}
+
+const badgeSource = { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed };
+
+// Something runs that the idle exit must not end: a turn, a subagent, a background shell or
+// monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer.
+function busy(): boolean {
+  const q = sessions?.quitCheck();
+  return (q ? q.running.length + q.background.length : 0) > 0 || views.pending().length > 0;
 }
 
 function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
@@ -213,6 +229,8 @@ try {
       pending: views.pending(),
     }),
     quitCheck: () => sessions?.quitCheck() ?? { running: [], background: [] },
+    badge: () => badgeCount(badgeSource),
+    onStop: () => void shutdown('stopAll'),
     image: (sid, agent, ref) => views.image(sessions ? sessions.resolve(sid) : sid, agent, ref),
     onMessage,
   });
@@ -224,10 +242,14 @@ try {
 }
 
 let stopping = false;
+let idleTimer: NodeJS.Timeout | null = null;
 async function shutdown(reason: string) {
   if (stopping) return;
   stopping = true;
   log('backend.stop', { reason });
+  process.stderr.write(`${new Date().toISOString()} Synopia backend: stop (${reason})\n`);
+  if (idleTimer) clearInterval(idleTimer);
+  removeDaemonInfo(stateDir, process.pid);
   fake?.stop();
   badge?.stop();
   writer?.stop();
@@ -240,6 +262,11 @@ async function shutdown(reason: string) {
   process.exit(0);
 }
 
+// Any other end (an uncaught error, whose trace goes to daemon.log): logged, and daemon.json goes.
+process.on('exit', (code) => {
+  if (!stopping) log('backend.exit', { code });
+  removeDaemonInfo(stateDir, process.pid);
+});
 process.on('SIGINT', () => shutdown('sigint'));
 process.on('SIGTERM', () => shutdown('sigterm'));
 // A memory figure on demand, without --inspect (the perf measurements in .ai-notes/app read it).
@@ -249,20 +276,27 @@ process.on('SIGUSR2', () => {
   const mb = (n: number) => Math.round(n / 1048576);
   log('memory', { rss: mb(m.rss), heapUsed: mb(m.heapUsed), heapTotal: mb(m.heapTotal), external: mb(m.external), arrayBuffers: mb(m.arrayBuffers) });
 });
-if (!flags['no-parent']) {
-  process.stdin.on('end', () => shutdown('stdin'));
-  process.stdin.on('close', () => shutdown('stdin'));
-  process.stdin.resume();
-}
-
-// The ready line first: the shell loads the page while the open sessions' transcripts are read
-// (a large one in slices, tail.ts), so the window isn't blank until every file is parsed.
-process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
+// Ready first: the app loads the page while the open sessions' transcripts are read (a large one
+// in slices, tail.ts), so the window isn't blank until every file is parsed. The daemon's stdout
+// is daemon.log, so the token goes only to daemon.json (0600); dev.sh reads it from stdout.
+if (flags['no-parent']) process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
+writeDaemonInfo(stateDir, { pid: process.pid, procStart: procStart(process.pid), port: (server as Server).port, token, version: VERSION });
+log('daemon.ready', { port: (server as Server).port });
 if (fake) fake.start(claudeDir);
 else sessions?.start();
-// The Dock badge (requirements R2.6): one line per change of the count, after the first line.
-badge = new Badge({
-  source: { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed },
-  emit: (n) => { log('badge', { n }); process.stdout.write(JSON.stringify({ badge: n }) + '\n'); },
-});
+// The Dock badge (requirements R2.6): the shell polls GET /api/badge; each change is logged.
+badge = new Badge({ source: badgeSource, emit: (n) => log('badge', { n }) });
 badge.changed();
+
+// The idle exit: 30 min with no page connected and nothing running (none under dev.sh). The same
+// timer rotates daemon.log at 5 MB, each minute (or a tenth of a shorter test timeout).
+const exitIdleMs = flags['exit-idle-ms'] === undefined ? IDLE_EXIT_MS : Number(flags['exit-idle-ms']);
+const idle = new IdleExit(exitIdleMs, Date.now());
+const daemonLog = join(stateDir, DAEMON_LOG);
+rotateLog(daemonLog);
+if (!flags['no-parent']) {
+  idleTimer = setInterval(() => {
+    rotateLog(daemonLog);
+    if (idle.check({ pages: (server as Server).clients.size, busy: busy() }, Date.now())) void shutdown('idle');
+  }, Math.max(50, Math.min(60_000, Math.floor(exitIdleMs / 10))));
+}

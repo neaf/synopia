@@ -40,9 +40,9 @@ test('the lock appears with its pid in it, never empty, and leaves no temp file 
   assert.deepEqual(readdirSync(dir), []);
 });
 
-test('a second backend on the same state folder exits, the first exits on stdin close', async () => {
+test('a second backend on the same state folder exits, the first ends on SIGTERM', async () => {
   const dir = tmp();
-  const first = spawn(process.execPath, [...NODE_FLAGS, MAIN, '--state-dir', dir], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const first = spawn(process.execPath, [...NODE_FLAGS, MAIN, '--no-parent', '--state-dir', dir], { stdio: ['pipe', 'pipe', 'pipe'] });
   const [line] = (await once(createInterface({ input: first.stdout! }), 'line')) as [string];
   const hello = JSON.parse(line);
   assert.ok(hello.port > 0);
@@ -53,7 +53,10 @@ test('a second backend on the same state folder exits, the first exits on stdin 
   assert.match(second.stderr, /Another Synopia backend/);
   assert.equal(second.stdout, '');
 
-  first.stdin!.end();
+  first.stdin!.end(); // no longer its lifetime
+  await new Promise((ok) => setTimeout(ok, 300));
+  assert.equal(first.exitCode, null);
+  first.kill('SIGTERM');
   const [code] = await once(first, 'exit');
   assert.equal(code, 0);
   assert.equal(existsSync(join(dir, 'backend.lock')), false);

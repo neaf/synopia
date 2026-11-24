@@ -31,6 +31,11 @@ These requirements come from a day of prototyping against the user's real sessio
   - the sidebar's "Synopia" heading sits below the traffic lights.
   - the main area has no strip (decided 2026-11-24): the session header starts at the canvas's 9 px gap from the window top, as in Slack and Linear, and everything in it is a normal click. Dragging by the header isn't needed.
   - in fullscreen there is no strip and no inset. In a browser the page looks as before.
+- R2.8 Running work survives the app (decided 2026-11-24): the app is only UI and may crash or quit at any time.
+  - The sessions run in a background Synopia process (the daemon) that the app starts and finds again on its next launch. No launchd agent.
+  - ⌘Q quits only the app, without asking. "Stop All Work…" (⌥⌘Q) asks first when anything runs ("Stop all work? 2 sessions are working and 1 background shell will stop."), then ends every session's work and quits.
+  - The daemon ends by itself after 30 minutes with no window open and nothing running (no turn, subagent, background shell or monitor, and no pending card).
+  - If it goes away while the app runs, the page shows a quiet "Reconnecting…", and the app starts it again and reloads.
 
 ## 3. Sessions
 

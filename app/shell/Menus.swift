@@ -11,6 +11,9 @@ enum Menus {
     appMenu.addItem(withTitle: "About Synopia",
                     action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
     appMenu.addItem(.separator())
+    // ⌥⌘Q ends the daemon and every session's work (AppDelegate.stopAllWork); ⌘Q only the app.
+    let stopAll = appMenu.addItem(withTitle: "Stop All Work…", action: #selector(AppDelegate.stopAllWork(_:)), keyEquivalent: "q")
+    stopAll.keyEquivalentModifierMask = [.command, .option]
     appMenu.addItem(withTitle: "Quit Synopia", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
     add(appMenu, to: main)
 
