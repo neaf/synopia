@@ -131,6 +131,7 @@ details.step > summary::-webkit-details-marker { display: none; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
+.retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
 .opt-line { color: var(--ink-3); }
 .opt-line.picked { color: var(--ink); font-weight: 700; }
 .md p { margin: 0 0 .85em; }

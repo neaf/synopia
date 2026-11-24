@@ -144,6 +144,7 @@ These requirements come from a day of prototyping against the user's real sessio
     - At 100%, an image larger than the window pans by dragging (the cursor a hand), by trackpad or wheel scroll and by the arrow keys (Shift for a whole window).
     - ← → (at fit) and `j` `k` (in both modes) step through the row the thumbnail is in: a prompt's images, a step's, or a whole run's. It stops at the ends. The footer says "3 of 7", the image's source (the file path for a Read, the step otherwise, "your message" for a prompt) and the keys for the mode it's in.
     - Esc or a click outside the image closes it. While it shows, no other key acts.
+- R5.12c A change of the shown title is a quiet line in place, styled like a day separator: “Retitled “…””, plus “by you” for your rename. Its sources are the CLI's title records and Synopia's written titles (by time); none for the first title, before your first prompt, or for a title equal to the one before (case and spaces aside) (2026-11-24).
 
 ### 5.3 Message box
 - R5.13 At least three lines tall, `❯` on the first line, the field growing for long messages; a click anywhere in the box focuses the field. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".

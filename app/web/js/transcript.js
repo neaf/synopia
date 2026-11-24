@@ -173,6 +173,9 @@ function waveHTML(tools, s) {
    can keep the blocks that didn't change and replace the ones that did. */
 function itemsHTML(items, sessionBusy, s) {
   const out = []; let run = []; let turnStart = null; let turnKey = null; let turnMs = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
+  /* title changes (R5.x) wait for the next block: one between turns goes after the turn's "Worked for" line */
+  let titles = [];
+  const putTitles = () => { out.push(...titles); titles = []; };
   const flush = () => {
     if (!run.length) return;
     const agents = run.filter(t => t.name === "Agent" || t.name === "Task"), other = run.filter(t => !(t.name === "Agent" || t.name === "Task"));
@@ -183,7 +186,7 @@ function itemsHTML(items, sessionBusy, s) {
   const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   const prompt = (html, ts, key) => {
-    flush(); endTurn();
+    flush(); endTurn(); putTitles();
     if (ts && day(ts) !== lastDay) { out.push([`day:${key}`, `<div class="done">${day(ts)}</div>`]); lastDay = day(ts); }
     out.push([`you:${key}`, `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`]); turnStart = ts; turnKey = key; turnMs = null;
   };
@@ -194,6 +197,9 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images && !it.imgs?.length ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}${thumbsHTML(it.imgs, current, view, "your message")}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
+    /* the shown title changed (R5.x): a quiet line in place, like a day separator */
+    if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }
+    if (titles.length && it.k !== "you" && !(it.k === "tool" && it.answer)) { flush(); putTitles(); }
     flush();
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
@@ -218,6 +224,7 @@ function itemsHTML(items, sessionBusy, s) {
   }
   flush();
   if (waiting) flushFiles(); else if (!sessionBusy) endTurn(); else flushFiles();
+  putTitles();
   return out;
 }
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;

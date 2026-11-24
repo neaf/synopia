@@ -53,7 +53,7 @@ export type ViewsOptions = {
   // Each assistant record of a main conversation as it lands: its message id and block types.
   onAssistant?: (sid: string, messageId: string, blockTypes: string[]) => void;
   // Slice 6: the title and Now line Claude wrote for a session (state.json `written`).
-  written?: (sid: string) => { title?: string; now?: string } | undefined;
+  written?: (sid: string) => { title?: string; now?: string; history?: { title: string; at: number }[] } | undefined;
   // Slice 3: the card answer stored for a tool use, shown as your turn in the transcript.
   answerOf?: (toolUseId: string) => string | undefined;
   // The plan text an answered plan card showed (state.json `plans`).
@@ -105,7 +105,7 @@ export class Views {
     if (this.live.has(id)) return;
     const file = init.path ?? findTranscript(this.opts.claudeDir, id);
     const s: Live = {
-      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf }),
+      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf, titlesOf: () => this.opts.written?.(id)?.history }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
       sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null, working: new Set(), ran: '',

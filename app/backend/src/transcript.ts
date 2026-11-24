@@ -22,7 +22,8 @@ export type Output = { text: string; lines: number; cut: boolean; interrupted?: 
 export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
 export type Question = { q: string; header: unknown; multi: boolean; opts: [string, string][] };
 export type Item = {
-  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask'; ts: string | null;
+  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title'; ts: string | null;
+  title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
   text?: string; images?: number; interrupted?: boolean; workedMs?: number; // you
   imgs?: ImageRef[]; // you, tool: the images the prompt sent or the result holds (R5.13)
   agent?: string | null; // report
@@ -47,6 +48,8 @@ export type Agent = {
 // the latest assistant record with no tool_result yet (Transcript.pendingAsk). `agentId`: the
 // subagent that asked (null: the main conversation). `since`: the tool_use's time (ms, 0 unknown).
 export type PendingAsk = { kind: 'question' | 'plan'; toolUseId: string; agentId: string | null; since: number; qs?: Question[]; plan?: string };
+// A title Synopia's writer gave the session, and when (ms): state.json `written[sid].history`.
+export type WrittenTitle = { title: string; at: number };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
 
 const MAX_TEXT = 6000;
@@ -54,6 +57,7 @@ const MAX_DIFF_LINES = 400;
 const REPORT_PREFIX = 'Another Claude session sent a message';
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const titleKey = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase();
 const obj = (v: unknown): JsonRecord => (v && typeof v === 'object' && !Array.isArray(v) ? (v as JsonRecord) : {});
 
 export function clip(s: string, n = MAX_TEXT): string {
@@ -377,16 +381,26 @@ export class Transcript {
   private endedFailed = false; // that end was a process failure (else close, idle end or quit)
   private interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
   private lastErrors: string[] = []; // the error results of the record just read, if it held results
+  // Title items (R5.x): the shown title's sources as read so far, in record and time order (a
+  // custom-title, else the writer's, else the ai-title, as the header picks), the last shown one's
+  // key, whether a prompt came yet, and the writer's history entries already placed (by `at`).
+  private titles: { you: string; written: string; ai: string } = { you: '', written: '', ai: '' };
+  private shownTitle: string | null = null;
+  private prompted = false;
+  private writtenAt = -Infinity;
+  private titlesOf: () => WrittenTitle[] | undefined;
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
   // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
   // `planOf`: the plan text an answered plan card showed; the JSONL's ExitPlanMode input can be an
   // older revision (the CLI reads the plan file when it asks).
-  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined; planOf?: (toolUseId: string) => string | undefined } = {}) {
+  // `titlesOf`: the writer's title history, placed among the records by time (title items).
+  constructor(opts: { sidechain?: boolean; home?: string; answerOf?: (toolUseId: string) => string | undefined; planOf?: (toolUseId: string) => string | undefined; titlesOf?: () => WrittenTitle[] | undefined } = {}) {
     this.sidechain = opts.sidechain ?? false;
     this.home = opts.home ?? os.homedir();
     this.answerOf = opts.answerOf ?? (() => undefined);
     this.planOf = opts.planOf ?? (() => undefined);
+    this.titlesOf = opts.titlesOf ?? (() => undefined);
   }
   private planOf: (toolUseId: string) => string | undefined;
 
@@ -414,7 +428,7 @@ export class Transcript {
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
     const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed, sdkTasks = this.sdkTasks, live = this.live, gone = this.gone;
-    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf });
+    const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf, titlesOf: this.titlesOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
     this.sdkTasks = sdkTasks;
@@ -427,6 +441,7 @@ export class Transcript {
   }
 
   takeChanges(): Changes {
+    this.placeWritten(Infinity); // the writer's newest titles come after every record read so far
     // Subagents' shells and monitors: their own changes, and all of a changed subagent's (they end with it).
     const bg = new Set(this.changedBg);
     for (const [aid, a] of this.agentMeta) {
@@ -469,13 +484,17 @@ export class Transcript {
     if (ts) {
       this.firstTs ??= ts;
       this.lastTs = ts;
+      const ms = Date.parse(ts);
+      if (Number.isFinite(ms)) this.placeWritten(ms);
     }
     if (t === 'ai-title') {
       this.aiTitle = str(d.aiTitle) || null;
       this.metaChanged = true;
+      this.retitle('ai', this.aiTitle ?? '', str(d.uuid) || `title@${this.seq}`, ts);
     } else if (t === 'custom-title') {
       this.customTitle = str(d.customTitle) || this.customTitle;
       this.metaChanged = true;
+      this.retitle('you', this.customTitle ?? '', str(d.uuid) || `title@${this.seq}`, ts);
     } else if (t === 'pr-link') {
       if (d.prNumber != null && !this.allPrs.includes(d.prNumber)) {
         this.allPrs.push(d.prNumber);
@@ -816,7 +835,32 @@ export class Transcript {
     this.changedBg.add(tid);
   }
 
+  // The writer's titles up to `ms` (inclusive) not placed yet, oldest first, as title items here.
+  private placeWritten(ms: number): void {
+    if (this.sidechain) return;
+    const due = (this.titlesOf() ?? []).filter((h) => h.at > this.writtenAt && h.at <= ms).sort((a, b) => a.at - b.at);
+    for (const h of due) {
+      this.writtenAt = h.at;
+      this.retitle('written', h.title, `title:${h.at}`, new Date(h.at).toISOString());
+    }
+  }
+
+  // One source of the title changed. A title item when the title the header shows (custom, else
+  // written, else ai) changes to one that differs in more than case and spaces; none for the first
+  // title (it names the session, nothing was retitled) nor before your first prompt.
+  private retitle(source: 'you' | 'written' | 'ai', title: string, id: string, ts: string | null): void {
+    if (this.sidechain || !title.trim()) return;
+    this.titles[source] = title.replace(/\s+/g, ' ').trim();
+    const shown = this.titles.you || this.titles.written || this.titles.ai;
+    const key = titleKey(shown);
+    const prev = this.shownTitle;
+    this.shownTitle = key;
+    if (prev === null || prev === key || !this.prompted) return;
+    this.put({ id, k: 'title', ts, title: shown, by: this.titles.you ? 'you' : 'claude' });
+  }
+
   private put(item: Item): Item {
+    if (item.k === 'you') this.prompted = true;
     const old = this.byId.get(item.id);
     if (old) {
       for (const key of Object.keys(old)) delete (old as Record<string, unknown>)[key];

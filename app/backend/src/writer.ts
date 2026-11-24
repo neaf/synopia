@@ -17,6 +17,7 @@ export const TURNS = 3;
 export const MAX_PROMPT_TEXT = 12_000;
 export const MAX_TITLE = 60;
 export const MAX_NOW = 90;
+export const MAX_HISTORY = 50; // written titles kept per session (state.json written[sid].history)
 
 export type Turn = { you: string; claude: string };
 export type Written = { title: string; now: string };
@@ -105,6 +106,15 @@ export function parseReply(text: string): Written | null {
   const now = typeof o.now === 'string' ? limit(o.now, MAX_NOW) : '';
   if (!title || !now) return null;
   return { title, now };
+}
+
+// The written titles kept for the transcript's title items: a new one only when it differs from
+// the last (case and spaces aside), the newest MAX_HISTORY kept.
+export function withTitle(history: { title: string; at: number }[], title: string, at: number): { title: string; at: number }[] {
+  const key = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
+  const last = history[history.length - 1];
+  if (last && key(last.title) === key(title)) return history;
+  return [...history, { title, at }].slice(-MAX_HISTORY);
 }
 
 export function limit(s: string, n: number): string {
@@ -250,7 +260,9 @@ export class Writer {
     if (!w) return;
     const cur = this.src.resolve(sid); // the session may have moved to a new id meanwhile
     if (this.src.title(cur) === undefined) return;
-    this.store.state.written[cur] = { title: w.title, now: w.now, at: this.now() };
+    const at = this.now();
+    const history = withTitle(this.store.state.written[cur]?.history ?? [], w.title, at);
+    this.store.state.written[cur] = { title: w.title, now: w.now, at, history };
     this.store.changed();
     this.src.changed(cur);
   }
