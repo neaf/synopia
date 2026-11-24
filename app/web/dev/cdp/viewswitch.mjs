@@ -15,7 +15,7 @@ for (const n of [320, 480]) {
   await ev(`document.querySelector('#log .earlier button').click()`);
   await until(`__synopia.cur().items.length === ${n}`);
 }
-check('two earlier pages loaded, from m120', (await ev(`__synopia.cur().items[0].id`)) === 'm120' && (await ev(`uiFrom(__synopia.current(), null)`)) === 'm120', await ev(`__synopia.cur().items[0].id`));
+check('two earlier pages loaded, from m120', (await ev(`__synopia.cur().items[0].id`)) === 'm120' && (await ev(`__synopia.from(__synopia.current(), null)`)) === 'm120', await ev(`__synopia.cur().items[0].id`));
 await ev(`document.querySelector('#conv [data-agent="${AID}"]').click()`);
 check('subagent view', await until(`!__synopia.restoring() && __synopia.cur().agents.find(a => a.id === '${AID}')?.items?.length === 160`));
 

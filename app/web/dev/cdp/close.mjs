@@ -88,7 +88,7 @@ check('the prompt there again, not carried over: one x asks', (await asking())?.
 await K.esc();
 check('Esc under it: "Interrupt?" replaces it', /^Interrupt\?/.test(await asking() || ''));
 await K.x();
-check('x under "Interrupt?": the close prompt replaces it', (await asking())?.startsWith(ASK) && (await ev('interruptAsk === null')));
+check('x under "Interrupt?": the close prompt replaces it', (await asking())?.startsWith(ASK) && (await ev('__synopia.prompt()')) === 'close');
 await K.b();
 check('b with nothing to send to the background cancels it', (await asking()) === null && (await closes()).length === 0);
 

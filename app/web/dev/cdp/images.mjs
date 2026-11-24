@@ -169,7 +169,7 @@ await key('J', { shift: true, vk: 74 });
 await key('i', { vk: 73 });
 check('keys stay in the viewer: no session switch, no mode change', (await ev(`__synopia.current()`)) === sessionBefore && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`!!document.querySelector('.viewer')`)));
 await key('Escape', { code: 'Escape', vk: 27 });
-check('Esc closes it, the mode as before', (await ev(`!document.querySelector('.viewer')`)) && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`interruptAsk === null`)));
+check('Esc closes it, the mode as before', (await ev(`!document.querySelector('.viewer')`)) && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`__synopia.prompt() !== 'interrupt'`)));
 await click(await centre('.ln.tool > .thumbs .thumb', 2));
 check('a tool\'s viewer has its own images: 2 of 2', (await ev(VN)) === '2 of 2');
 await click([20, 400]);
@@ -270,7 +270,7 @@ const dock = await ev(`(() => { const r = document.querySelector('.dock').getBou
 await shot('composer', dock);
 const firstUrl = await ev(`document.querySelector('.composer .attach img').src`);
 await click(await centre('.composer .unattach', 0));
-check('the ✕ removes that image', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 1 && attachments.length === 1 && document.querySelector('.composer .attach img').src !== ${JSON.stringify(firstUrl)}`));
+check('the ✕ removes that image', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 1 && __synopia.attachments().length === 1 && document.querySelector('.composer .attach img').src !== ${JSON.stringify(firstUrl)}`));
 check('and its tag, with one space; the other tag keeps its number', (await ev(MSG)) === 'left right [Image #4]', await ev(MSG));
 check('its object URL is freed', (await ev(`new Promise(r => { const i = new Image(); i.onload = () => r('loaded'); i.onerror = () => r('freed'); i.src = ${JSON.stringify(firstUrl)}; })`)) === 'freed');
 check('focus stayed in the message box', await ev(`document.activeElement.id === 'msg'`));
@@ -288,13 +288,13 @@ const untagged = `[...document.querySelectorAll('.composer .attach .thumb-wrap')
 check('deleting a tag\'s text dims its thumbnail, with a dashed line; it stays in the row', (await ev(untagged)) === '4+,5+,6-' && await ev(`getComputedStyle(document.querySelector('.composer .thumb-wrap.untagged .thumb img')).borderTopStyle === 'dashed'`), await ev(untagged));
 await shot('composer-tags', dock);
 // the draft, its tags and its images survive a reload (R3.9)
-await until(`attachments.every(a => a.data)`);
-await ev(`uiFlush()`); await sleep(500);
+await until(`__synopia.attachments().every(a => a.data)`);
+await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(500); // the UI state goes now (ui.js flushes on pagehide)
 await ev(`window.__before = 1`);
 await c.load(url, `__synopia.current() === '${SID}' && typeof __before === 'undefined'`); // no hash: a real reload, the restored state picks the session
 check('after a reload: the text with its tags, the three images with their numbers, #6 still dimmed',
-  await until(`document.getElementById('msg')?.value === '[Image #5] left right [Image #4]' && attachments.length === 3 && attachments.every(a => a.data) && (${untagged}) === '4+,5+,6-'`, 8000),
-  JSON.stringify(await ev(`({ text: document.getElementById('msg')?.value, n: attachments.map(a => a.n), marks: ${untagged} })`)));
+  await until(`document.getElementById('msg')?.value === '[Image #5] left right [Image #4]' && __synopia.attachments().length === 3 && __synopia.attachments().every(a => a.data) && (${untagged}) === '4+,5+,6-'`, 8000),
+  JSON.stringify(await ev(`({ text: document.getElementById('msg')?.value, n: __synopia.attachments().map(a => a.n), marks: ${untagged} })`)));
 await ev(SPY);
 await ev(`document.getElementById('msg').focus()`);
 await key('Enter', { code: 'Enter', vk: 13 });
@@ -313,7 +313,7 @@ const blocks = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-
 { input: JSON.stringify(sent[0] || { text: '', images: [] }) }).toString());
 const shape = Array.isArray(blocks) ? blocks.map((b) => b.type === 'text' ? `text:${b.text}` : `image:${which(b.source.data)}`) : [blocks];
 check('the send\'s blocks: the text with its tags, then #5\'s image, then #4\'s', JSON.stringify(shape) === JSON.stringify(['text:[Image #5] left right [Image #4]', 'image:c', 'image:b']), JSON.stringify(shape));
-check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && attachments.length === 0`));
+check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && __synopia.attachments().length === 0`));
 check('no CSP violation', (await ev(`__csp.length`)) === 0, JSON.stringify(await ev(`__csp`)));
 await c.cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier });
 c.print();

@@ -1,0 +1,22 @@
+{
+  "t": "agents",
+  "sid": "44444444-0000-4000-8000-000000000004",
+  "upsert": [
+    {
+      "id": "aaaa0005",
+      "type": "subagent",
+      "fork": false,
+      "description": "",
+      "toolUseId": null,
+      "model": null,
+      "depth": 1,
+      "finished": false,
+      "running": true,
+      "review": false,
+      "stopped": false,
+      "start": "2026-11-20T13:00:10.000Z",
+      "end": "2026-11-20T13:01:00.000Z",
+      "total": 3
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "t": "pending",
+  "sid": "11111111-0000-4000-8000-000000000001",
+  "request": {
+    "id": "req-golden-1",
+    "kind": "permission",
+    "toolName": "Bash",
+    "toolUseId": "toolu_golden1",
+    "agentId": null,
+    "input": {
+      "command": "ls",
+      "description": "List the folder."
+    },
+    "since": "<time>",
+    "always": null
+  }
+}

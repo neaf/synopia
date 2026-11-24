@@ -8,7 +8,7 @@ const { ev, check, key } = c;
 await c.load(url);
 await ev('__synopia.spy()');
 const K = keyTable(key);
-const cur = () => ev('__synopia.current()?.[0]');
+const shownId = () => ev('__synopia.current()?.[0]');
 const mode = () => ev('document.body.dataset.mode');
 const order = await ev(`[...document.querySelectorAll('#groups .row')].map(r => r.dataset.id[0]).join('')`);
 const go = async (p) => { await ev(`document.querySelector('.row[data-id^="${p}"]').click()`); await ev('document.activeElement.blur()'); await sleep(300); };
@@ -28,7 +28,7 @@ check('Esc: back to normal', (await mode()) === 'normal' && (await ev('document.
 await K.a();
 check('a: insert', (await mode()) === 'insert');
 await K.J();
-check('J in insert mode types', (await cur()) === order[0] && (await ev('document.getElementById("msg").value')) === 'xJ');
+check('J in insert mode types', (await shownId()) === order[0] && (await ev('document.getElementById("msg").value')) === 'xJ');
 await K.esc();
 // `/` with a draft keeps it; with an empty box it opens the command menu
 await K.slash();
@@ -43,13 +43,13 @@ check('second Esc: normal', (await mode()) === 'normal');
 await ev('document.getElementById("msg").value = ""');
 
 // J/K and Cmd+Shift+[ ] in sidebar order, wrapping
-await K.J(); check('J: next in sidebar order', (await cur()) === order[1], await cur());
-await K.K(); check('K: previous', (await cur()) === order[0]);
-await K.K(); check('K wraps to the last', (await cur()) === order[order.length - 1]);
-await K.J(); check('J wraps to the first', (await cur()) === order[0]);
-await K.next(); check('Cmd+Shift+]: next', (await cur()) === order[1], await cur());
-await K.prev(); check('Cmd+Shift+[: previous', (await cur()) === order[0]);
-await K.i(); await K.next(); check('Cmd+Shift+] works in insert mode too', (await cur()) === order[1]); await K.esc();
+await K.J(); check('J: next in sidebar order', (await shownId()) === order[1], await shownId());
+await K.K(); check('K: previous', (await shownId()) === order[0]);
+await K.K(); check('K wraps to the last', (await shownId()) === order[order.length - 1]);
+await K.J(); check('J wraps to the first', (await shownId()) === order[0]);
+await K.next(); check('Cmd+Shift+]: next', (await shownId()) === order[1], await shownId());
+await K.prev(); check('Cmd+Shift+[: previous', (await shownId()) === order[0]);
+await K.i(); await K.next(); check('Cmd+Shift+] works in insert mode too', (await shownId()) === order[1]); await K.esc();
 await K.prev();
 
 // j/k/g/G scroll the transcript when no card waits
@@ -72,7 +72,7 @@ check('g: top', (await ev(`document.getElementById('log').scrollTop`)) === 0);
 // a question card: j/k move the card cursor, not the log; i types in the card; Esc leaves it
 const q = await ev(`__synopia.data().find(s => __synopia.pending(s.id)[0]?.kind === 'question')?.id[0]`);
 await go(q);
-const st = () => ev(`(() => { const s = __synopia.cur(), a = pendingAsk(s), x = qs(s, a); return x.qi + ':' + x.oi; })()`);
+const st = () => ev(`(() => { const x = __synopia.card(); return x.qi + ':' + x.oi; })()`);
 const s0 = await st(), top0 = await ev(`document.getElementById('log').scrollTop`);
 await K.j();
 check('card: j moves the cursor', (await st()) !== s0 && (await ev(`document.getElementById('log').scrollTop`)) === top0, await st());
@@ -84,7 +84,7 @@ await K.esc();
 check('card: Esc closes the field, back to normal', (await ev('document.activeElement.id')) !== 'qa-own' && (await mode()) === 'normal');
 check('card: that Esc did not ask to interrupt', !(await ev('!!document.querySelector(".composer.asking")')));
 await K.J();
-check('card: J still switches sessions', (await cur()) !== q);
+check('card: J still switches sessions', (await shownId()) !== q);
 
 // the interrupt prompt: any other key dismisses it, J included (no switch); Esc, Esc interrupts
 const busy = await ev(`__synopia.data().find(s => s.status === 'busy' && !__synopia.pending(s.id).length)?.id[0]`);
@@ -92,15 +92,15 @@ await go(busy);
 await K.esc();
 check('busy: Esc asks to interrupt', await ev('!!document.querySelector(".composer.asking")'));
 await K.J();
-check('J under the prompt dismisses it, no switch', (await cur()) === busy && !(await ev('!!document.querySelector(".composer.asking")')));
+check('J under the prompt dismisses it, no switch', (await shownId()) === busy && !(await ev('!!document.querySelector(".composer.asking")')));
 await K.esc(); await K.esc();
 check('Esc, Esc sends interrupt', await ev(`__synopia.sent('interrupt').length > 0`));
 
 // the Open list: its keys come first; J, Cmd+Shift+] and j don't reach the sessions
 await ev(`document.getElementById('open').click()`); await sleep(400);
-const before = await cur();
+const before = await shownId();
 await K.J(); await K.next(); await K.j();
-check('Open list: J, Cmd+Shift+] and j leave the session', (await cur()) === before && (await ev('document.getElementById("open-list")?.hidden === false')));
+check('Open list: J, Cmd+Shift+] and j leave the session', (await shownId()) === before && (await ev('document.getElementById("open-list")?.hidden === false')));
 check('Open list: J and j typed into the filter', (await ev('document.getElementById("ol-filter").value')) === 'Jj');
 await K.esc();
 check('Open list: Esc closes it', !(await ev('document.getElementById("open-list")?.hidden === false')));
@@ -111,7 +111,7 @@ const hide = order[1];
 await go(order[0]);
 await ev(`__synopia.inject({ t: 'removed', id: __synopia.data().find(s => s.id[0] === '${hide}').id })`);
 await K.J();
-check('J skips a session no longer shown', (await cur()) === order[2], await cur());
+check('J skips a session no longer shown', (await shownId()) === order[2], await shownId());
 
 // Ctrl+J / Ctrl+K: through Main conversation and the session's subagents, wrapping; normal mode only
 const withAgents = await ev(`__synopia.data().find(s => (s.agents || []).length >= 2)?.id`);

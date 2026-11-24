@@ -65,7 +65,7 @@ await ev('__synopia.spy()');
 await key('j', { code: 'KeyJ', vk: 74 }); await key('k', { code: 'KeyK', vk: 75 }); await key(' ', { code: 'Space', vk: 32 }); await key('Enter', { code: 'Enter', vk: 13 });
 await sleep(300);
 check('keys: j k Space Enter leave the card as it was', (await ev(`document.querySelector('.qa-card.ro').outerHTML`)) === card0);
-check('keys: no card state, nothing sent', (await ev(`Object.keys(qstate).length === 0 && __synopia.sent('answer').length === 0`)), JSON.stringify(await ev('__synopia.sent()')));
+check('keys: no card state, nothing sent', (await ev(`Object.keys(__synopia.cards()).length === 0 && __synopia.sent('answer').length === 0`)), JSON.stringify(await ev('__synopia.sent()')));
 await key('i', { code: 'KeyI', vk: 73 }); await sleep(200);
 check('keys: i focuses the message box', (await ev(`document.activeElement?.id`)) === 'msg', JSON.stringify(await ev(`document.activeElement?.id`)));
 await key('x', { code: 'KeyX', vk: 88 }); await sleep(100);

@@ -46,12 +46,12 @@ const { bin, html } = extra(claudeDir);
 const c = await connect();
 const { ev, check, key, until } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
-await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
+await c.load(url + `#${SID.slice(0, 8)}`, `__synopia.current() === '${SID}'`);
 await ev('__synopia.spy()');
 const logText = () => fs.readFileSync(path.join(stateDir, 'backend.log'), 'utf8');
 const K = keyTable(key);
 const type = async (s) => { for (const ch of s) await c.cdp('Input.insertText', { text: ch }); };
-const shown = () => ev(`previewShown()`);
+const shown = () => ev(`__synopia.preview().shown`);
 const row = (p) => `[...document.querySelectorAll('.frow .fp')].find(a => a.dataset.path === ${JSON.stringify(p)})`;
 const clickAt = async (sel, opts = {}) => {
   const r = await ev(`(() => { const e = ${sel}; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.left + Math.min(20, b.width / 2), y: b.top + b.height / 2 }; })()`);
@@ -62,7 +62,7 @@ const clickAt = async (sel, opts = {}) => {
 
 check('the session shows its files changed', await until(`document.querySelectorAll('.frow .fp').length === 3`), await ev(`document.querySelectorAll('.frow .fp').length`));
 await clickAt(row(SRC));
-check('a source file opens the preview', await until(`previewShown()`));
+check('a source file opens the preview', await until(`__synopia.preview().shown`));
 check('it asked for a preview, not open', await ev(`__synopia.sent().some(m => m.t === 'preview') && !__synopia.sent().some(m => m.t === 'open')`));
 const meta = await ev(`document.getElementById('pv-meta').textContent`);
 check('header: path, language and line count', (await ev(`document.getElementById('pv-path').textContent`)).endsWith('app/backend/src/open.ts') && /^TypeScript, \d+ lines, read-only$/.test(meta), meta);
@@ -89,9 +89,9 @@ check('k: one line up', (await top()) === 0);
 await K.G(); await sleep(50);
 check('G: bottom', await ev(`(() => { const c = document.getElementById('pv-code'); return c.scrollHeight - c.clientHeight - c.scrollTop < 2; })()`));
 check('keys stay in the preview: mode normal, same session', (await ev('document.body.dataset.mode')) === 'normal');
-const before = await ev('current');
+const before = await ev('__synopia.current()');
 await K.J(); await sleep(100);
-check('J does not switch sessions under it', (await ev('current')) === before && (await shown()));
+check('J does not switch sessions under it', (await ev('__synopia.current()')) === before && (await shown()));
 
 await K.g(); await K.slash();
 check('/ opens the find box', await ev(`!document.getElementById('pv-find').hidden && document.activeElement.id === 'pv-q'`));
@@ -111,28 +111,28 @@ check('Cmd+F opens the find box', await ev(`!document.getElementById('pv-find').
 await shot(c, path.join(stateDir, 'preview-find.png'));
 await K.esc(); await K.esc();
 check('Esc closes the preview', !(await shown()));
-check('Esc did not reach the composer or other keys', (await ev('document.body.dataset.mode')) === 'normal' && (await ev('current')) === before);
+check('Esc did not reach the composer or other keys', (await ev('document.body.dataset.mode')) === 'normal' && (await ev('__synopia.current()')) === before);
 await K.i();
 check('keys work again after it: i enters insert', (await ev('document.body.dataset.mode')) === 'insert');
 await K.esc();
 
 // a click outside closes it; Open in app sends `open`
-await clickAt(row(SRC)); await until(`previewShown()`);
-await ev(`__synopia.sent().length = 0`);
+await clickAt(row(SRC)); await until(`__synopia.preview().shown`);
+await ev(`__synopia.spy()`); // what is sent from here on
 await ev(`document.getElementById('pv-open').click()`);
 check('Open in app sends open', await ev(`__synopia.sent().some(m => m.t === 'open' && m.path === ${JSON.stringify(SRC)})`));
 await c.mouse('mousePressed', 140, 400); await c.mouse('mouseReleased', 140, 400);
 check('a click outside closes it', !(await shown()));
 
 // a binary falls back to `open` (revealed, with the dry run); HTML opens in the browser, Alt-click shows its source
-await ev(`__synopia.sent().length = 0`);
+await ev(`__synopia.spy()`); // what is sent from here on
 const logLen = logText().length;
 await clickAt(row(bin)); await sleep(600);
 check('a binary: no preview, the backend opens it', !(await shown()) && / preview\.open/.test(logText().slice(logLen)) && / open how=reveal dry=true/.test(logText().slice(logLen)));
 await clickAt(row(html)); await sleep(400);
 check('HTML: sent as open, no preview', !(await shown()) && (await ev(`__synopia.sent().some(m => m.t === 'open' && m.path === ${JSON.stringify(html)})`)) && !(await ev(`__synopia.sent().some(m => m.t === 'preview' && m.path === ${JSON.stringify(html)})`)));
 await clickAt(row(html), { alt: true });
-check('HTML with Alt: its source in the preview', await until(`previewShown() && /^HTML, 2 lines/.test(document.getElementById('pv-meta').textContent)`));
+check('HTML with Alt: its source in the preview', await until(`__synopia.preview().shown && /^HTML, 2 lines/.test(document.getElementById('pv-meta').textContent)`));
 check('HTML source is shown as text', (await ev(`document.querySelector('#pv-lines .pl:nth-child(2) .tx').textContent`)) === '<p class="x">Report &amp; notes</p>');
 await K.esc();
 c.print();

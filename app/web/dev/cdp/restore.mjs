@@ -8,12 +8,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { connect, sleep } from './cdp.mjs';
+import { keyTable, serverSend } from './helpers.mjs';
 
 const [url0, stateDir, claudeDir] = process.argv.slice(2);
 const here = path.dirname(new URL(import.meta.url).pathname);
 const repo = path.resolve(here, '../../../..');
 const c = await connect();
 const { ev, check, key } = c;
+const K = keyTable(key);
 const wait = (expr, ms = 6000) => c.until(expr, ms);
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S4 = '44444444-0000-4000-8000-000000000004';
 const AGENT = 'aaaa0001';
@@ -22,10 +24,11 @@ const PREVIEW = path.join(repo, 'app/backend/src/open.ts');
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 480, deviceScaleFactor: 1, mobile: false });
 let url = url0;
 const load = () => c.load(url);
-const goTo = async (sid) => { await ev(`document.querySelector('.side .row[data-id="${sid}"]').click()`); return wait(`current === '${sid}' && mounted === '${sid}|' && !uiRestoring && cur().items.length > 0`); };
-const anchor = () => ev(`JSON.stringify(uiAnchor(document.getElementById('log')))`);
+const goTo = async (sid) => { await ev(`document.querySelector('.side .row[data-id="${sid}"]').click()`); return wait(`__synopia.current() === '${sid}' && __synopia.mounted() === '${sid}|' && !__synopia.restoring() && __synopia.cur().items.length > 0`); };
+const anchor = () => ev(`JSON.stringify(__synopia.anchor())`);
 const near = (a, b) => { const x = JSON.parse(a), y = JSON.parse(b); return !x.bottom && x.id === y.id && Math.abs(x.off - y.off) <= 2; };
-const flush = async () => { await ev('uiFlush()'); await sleep(300); };
+// the UI state goes to the backend now (ui.js flushes on pagehide), not after its debounce
+const flush = async () => { await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(300); };
 async function restart() {
   await flush();
   const pid = +fs.readFileSync(path.join(stateDir, 'pid'), 'utf8');
@@ -41,7 +44,7 @@ const paste = () => ev(`(() => { const b = Uint8Array.from(atob('${png}'), c => 
 const stepOpen = (name) => ev(`(() => { const d = [...document.querySelectorAll('#log details.step')].find(d => d.querySelector('summary').textContent.includes(${JSON.stringify(name)})); return !!d && d.open; })()`);
 const diffOpen = () => ev(`(() => { const d = document.querySelector('#log .diff'); return !!d && !d.hidden && document.querySelector('#log .frow .fc').getAttribute('aria-expanded') === 'true'; })()`);
 const foldOpen = () => ev(`!!document.querySelector('#log details.fold') && document.querySelector('#log details.fold').open`);
-const card = () => ev(`JSON.stringify((({ typing, ...x }) => x)(qstate['${S2}:req-question-1'] || {}))`);
+const card = () => ev(`JSON.stringify((({ typing, ...x }) => x)(__synopia.cards()['${S2}:req-question-1'] || {}))`);
 
 // ---------- set up ----------
 check('the page loads', await load());
@@ -58,17 +61,20 @@ check('session 1 is scrolled mid-way', !JSON.parse(mid).bottom && await ev(`docu
 await ev(`(() => { const t = document.getElementById('msg'); t.value = 'a draft to keep'; t.dispatchEvent(new Event('input')); t.setSelectionRange(15, 15); })()`);
 await paste(); // its [Image #1] tag at the caret (R5.13)
 await ev(`document.getElementById('msg').setSelectionRange(2, 7)`);
-check('the pasted image is read', await wait(`attachments.length === 1 && !!attachments[0].data`));
+check('the pasted image is read', await wait(`__synopia.attachments().length === 1 && !!__synopia.attachments()[0].data`));
 check('session 2 shows its card', await goTo(S2) && await wait(`!!document.querySelector('.qa-card')`));
 for (const k of ['j', ' ', 'Enter', 'j', ' ']) await key(k);
 const card0 = await card();
 check('the card is half answered', /"picks":\{"0":\["No"\],"1":\["Docs"\]\}/.test(card0) && /"qi":1/.test(card0), card0);
 check('session 4 shows', await goTo(S4));
 await ev(`document.querySelector('[data-agent="${AGENT}"]').click()`);
-check('its subagent view opens', await wait(`view === '${AGENT}' && mounted === '${S4}|${AGENT}'`));
-await ev(`(() => { pv.want = { path: ${JSON.stringify(PREVIEW)}, back: null, added: new Set(), cut: new Set(), first: 0 }; send({ t: 'preview', path: ${JSON.stringify(PREVIEW)} }); })()`);
-check('the preview opens', await wait(`previewShown()`));
-await ev(`(() => { pvOpenFind(); const q = document.getElementById('pv-q'); q.value = 'export'; pvFind('export'); document.getElementById('pv-code').scrollTop = 300; })()`);
+check('its subagent view opens', await wait(`__synopia.view() === '${AGENT}' && __synopia.mounted() === '${S4}|${AGENT}'`));
+// a link to the file, clicked: any a[data-path] asks for the preview (transcript.js, preview.js)
+await ev(`(() => { const a = document.createElement('a'); a.href = '#'; a.dataset.path = ${JSON.stringify(PREVIEW)}; document.body.append(a); a.click(); a.remove(); })()`);
+check('the preview opens', await wait(`__synopia.preview().shown`));
+await K.slash(); // its find box
+for (const ch of 'export') await c.cdp('Input.insertText', { text: ch });
+await ev(`document.getElementById('pv-code').scrollTop = 300`);
 await sleep(150);
 const pvScroll = await ev(`document.getElementById('pv-code').scrollTop`);
 await flush();
@@ -76,11 +82,11 @@ await flush();
 // ---------- 1. reload the page ----------
 async function checkSession1(tag, firstLoad) {
   if (!firstLoad) check(`${tag}: session 1 shows`, await goTo(S1));
-  else check(`${tag}: session 1 is the one shown`, await wait(`current === '${S1}' && mounted === '${S1}|' && !uiRestoring`));
+  else check(`${tag}: session 1 is the one shown`, await wait(`__synopia.current() === '${S1}' && __synopia.mounted() === '${S1}|' && !__synopia.restoring()`));
   check(`${tag}: the scroll lands on the same item within 2 px`, near(await anchor(), mid), `${await anchor()} vs ${mid}`);
   check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep [Image #1]' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
-  check(`${tag}: the pasted image is back`, await wait(`attachments.length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
-  check(`${tag}: its bytes are back for sending`, await wait(`/^data:image\\/png;base64,/.test(attachments[0].data || '')`));
+  check(`${tag}: the pasted image is back`, await wait(`__synopia.attachments().length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
+  check(`${tag}: its bytes are back for sending`, await wait(`/^data:image\\/png;base64,/.test(__synopia.attachments()[0].data || '')`));
   check(`${tag}: the step is open`, await stepOpen('List the demo folder'));
   check(`${tag}: the tool group is unfolded`, await foldOpen());
   check(`${tag}: the diff is open`, await diffOpen());
@@ -91,10 +97,11 @@ async function checkCard(tag) {
   check(`${tag}: the card shows them`, await ev(`document.querySelector('.qa-card .acc[data-qi="0"] .ans')?.textContent === 'No' && !!document.querySelector('.qa-card .o.on[data-oi="1"]')`));
 }
 check('1: reloaded', await load());
-check('1: the subagent view is back, with no default view first', await ev(`current === '${S4}' && view === '${AGENT}' && mounted === '${S4}|${AGENT}'`));
-check('1: the preview is back, scrolled, with its find query', await wait(`previewShown() && pv.path === ${JSON.stringify(PREVIEW)}`)
+check('1: the subagent view is back, with no default view first', await ev(`__synopia.current() === '${S4}' && __synopia.view() === '${AGENT}' && __synopia.mounted() === '${S4}|${AGENT}'`));
+check('1: the preview is back, scrolled, with its find query', await wait(`__synopia.preview().shown && __synopia.preview().path === ${JSON.stringify(PREVIEW)}`)
   && await ev(`document.getElementById('pv-q').value === 'export' && !document.getElementById('pv-find').hidden && Math.abs(document.getElementById('pv-code').scrollTop - ${pvScroll}) <= 1`), await ev(`document.getElementById('pv-code').scrollTop`));
-await ev('hidePreview()');
+await K.esc(); if (await ev(`__synopia.preview().shown`)) await K.esc(); // the find box first, if it has the focus
+check('1: Esc closes the preview', (await ev(`__synopia.preview().shown`)) === false);
 await checkSession1('1', false);
 await checkCard('1');
 
@@ -105,7 +112,7 @@ for (const ch of 'half') await key(ch);
 const card1 = await card();
 await restart();
 check('2: reloaded on the restarted backend', await load());
-check('2: session 2 and insert mode are back', await wait(`current === '${S2}' && document.body.dataset.mode === 'insert'`));
+check('2: session 2 and insert mode are back', await wait(`__synopia.current() === '${S2}' && document.body.dataset.mode === 'insert'`));
 check('2: the typed answer is back in its field', await wait(`document.getElementById('qa-own')?.value === 'half' && document.activeElement?.id === 'qa-own'`), await ev(`document.getElementById('qa-own')?.value`));
 check('2: the card state is back', (await card()) === card1, `${await card()} vs ${card1}`);
 await ev(`document.getElementById('qa-own').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
@@ -123,18 +130,20 @@ const drafts = path.join(stateDir, 'drafts', S1);
 check('3: the draft image is a file', fs.existsSync(drafts) && fs.readdirSync(drafts).length === 1);
 await key('Enter', { vk: 13 });
 await sleep(400);
-check('3: a send clears the draft and removes its file', await ev(`document.getElementById('msg').value === '' && attachments.length === 0`) && !fs.existsSync(drafts),
-  `${await ev(`JSON.stringify([document.getElementById('msg').value, attachments.length])`)} ${fs.existsSync(drafts)}`);
+check('3: a send clears the draft and removes its file', await ev(`document.getElementById('msg').value === '' && __synopia.attachments().length === 0`) && !fs.existsSync(drafts),
+  `${await ev(`JSON.stringify([document.getElementById('msg').value, __synopia.attachments().length])`)} ${fs.existsSync(drafts)}`);
 const st = JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'), 'utf8'));
 check('state.json has the ui field, no image bytes', st.ui && st.ui.current === S1 && !JSON.stringify(st).includes(png.slice(0, 40)));
 // an anchor whose item is gone (a rewritten file) lands at the bottom
-await goTo(S2);
-await ev(`uiS['${S1}'].scroll[''] = { id: 'gone:item', off: 30 }`);
+// stored by another page (the last writer wins), then a reload
+await goTo(S2); await flush();
+await serverSend(url, { t: 'ui', patch: { sessions: { [S1]: { scroll: { '': { id: 'gone:item', off: 30 } } } } } });
+check('a reload after the anchor changed', await load());
 check('a stale anchor falls back to the bottom', await goTo(S1) && (await anchor()) === '{"bottom":true}', await anchor());
 // the Open list, with its filter
-await ev(`(() => { showOpenList(); const i = document.getElementById('ol-filter'); i.value = 'demo'; i.dispatchEvent(new Event('input')); })()`);
+await ev(`(() => { document.getElementById('open').click(); const i = document.getElementById('ol-filter'); i.value = 'demo'; i.dispatchEvent(new Event('input')); })()`);
 await flush();
-check('the Open list comes back with its filter', await load() && await wait(`openListShown() && document.getElementById('ol-filter').value === 'demo' && openList.filter === 'demo'`));
+check('the Open list comes back with its filter', await load() && await wait(`__synopia.openList().shown && document.getElementById('ol-filter').value === 'demo' && __synopia.openList().filter === 'demo'`));
 await c.cdp('Emulation.clearDeviceMetricsOverride');
 c.print();
 c.close();

@@ -9,14 +9,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { records } from './helpers.mjs';
 
 const S = 'd1d1d1d1-0000-4000-8000-0000000000d1';
-const line = (o) => JSON.stringify(o) + '\n';
 const t0 = Date.now() - 30 * 60_000;
 const ts = (s) => new Date(t0 + s * 1000).toISOString();
-const rec = (o) => line({ cwd: '/tmp/synopia-titles', sessionId: S, ...o });
-const you = (uuid, s, text) => rec({ type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const said = (uuid, s, text) => rec({ type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const R = records('/tmp/synopia-titles', ts);
+const rec = (o) => R.rec(S, o), you = (uuid, s, text) => R.you(S, uuid, s, text), said = (uuid, s, text) => R.said(S, uuid, s, text);
 const done = (s) => rec({ type: 'system', subtype: 'turn_duration', timestamp: ts(s), durationMs: 4000 });
 
 if (process.argv[2] === 'make') {
@@ -45,7 +44,7 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const c = await connect();
 const { ev, check } = c;
 let url = url0;
-const load = () => c.load(`${url}#${S.slice(0, 8)}`, `current === '${S}' && cur().items.length > 0 && !!document.querySelector('#log .retitle')`);
+const load = () => c.load(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && __synopia.cur().items.length > 0 && !!document.querySelector('#log .retitle')`);
 async function restart() {
   const pid = +fs.readFileSync(path.join(stateDir, 'pid'), 'utf8');
   process.kill(pid, 'SIGTERM');

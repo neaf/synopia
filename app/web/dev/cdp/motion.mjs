@@ -22,22 +22,24 @@ check('app.css animations have no ease, alternate, pulse or blink', !badWord.tes
 const frames = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})*)\s*\}/g)];
 check('app.css keyframes found', frames.length > 5, String(frames.length));
 check('no keyframe animates opacity, visibility or a colour', frames.every((f) => !/opacity|visibility|color|background-color|fill:|stroke:/.test(f[2])), frames.filter((f) => /opacity|visibility|color|fill:|stroke:/.test(f[2])).map((f) => f[1]).join(' '));
-const tweenOf = (kind) => `(async () => { const s = data.find(s => KEYS.includes(s.id) && !bgOf(s).some(b => bgState(b) === 'running')); s.background = [...(s.background || []), { toolUseId: 'mt-bg', kind: 'shell', status: 'running', start: new Date().toISOString() }]; renderSide();
+// a running shell comes to a row that has no background line, then goes (as a server message would put it)
+const tweenOf = () => `(async () => { const row = [...document.querySelectorAll('#groups .row')].find(r => !r.querySelector('[data-line="bg"]')), s = __synopia.data().find(s => s.id === row.dataset.id);
+  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'mt-bg', kind: 'shell', status: 'running', start: new Date().toISOString() }] });
   const a = document.getAnimations().find(a => a.id === 'side-line'); const r = a && { duration: a.effect.getComputedTiming().duration, iterations: a.effect.getComputedTiming().iterations, kf: a.effect.getKeyframes().map(k => ({ o: k.computedOffset, e: k.easing, op: +k.opacity, h: k.height })) };
-  s.background = s.background.filter(b => b.toolUseId !== 'mt-bg'); renderSide(); await new Promise(r => setTimeout(r, 400)); return r || null; })()`;
+  __synopia.inject({ t: 'session', id: s.id, background: s.background || [] }); await new Promise(r => setTimeout(r, 400)); return r || null; })()`;
 
 await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
-await c.load(url + '#44444444', `current?.startsWith('44444444')`);
+await c.load(url + '#44444444', `__synopia.current()?.startsWith('44444444')`);
 // the one layout tween, a sidebar sub-line (R8.1): finite, height (eased) then opacity (linear), 150 ms each; tween.mjs checks it frame by frame
 const tw = await ev(tweenOf());
 check('sub-line tween: one run of 300 ms, height first (eased), then opacity (linear)', !!tw && tw.duration === 300 && tw.iterations === 1 && tw.kf.length === 3
   && tw.kf[0].op === 0 && tw.kf[1].op === 0 && tw.kf[2].op === 1 && tw.kf[0].h === '0px' && tw.kf[1].h === tw.kf[2].h && tw.kf[1].o === 0.5 && tw.kf[1].e === 'linear', JSON.stringify(tw));
 const SIZES = [9, 10, 11, 12, 16, 32, 64];
 await ev(`(() => {
-  const keys = Object.keys(P), sizes = ${JSON.stringify(SIZES)};
+  const keys = __synopia.marks(), sizes = ${JSON.stringify(SIZES)};
   const sets = [['light', '<div class="panel">', '</div>'], ['dark', '<div class="side">', '</div>'], ['open', '<div class="side"><div class="row" aria-current="true" style="display:block">', '</div></div>']];
-  const cells = keys.map(k => '<div data-k="' + k + '">' + sizes.map(s => ind(k, s)).join('') + '</div>').join('');
+  const cells = keys.map(k => '<div data-k="' + k + '">' + sizes.map(s => __synopia.mark(k, s)).join('') + '</div>').join('');
   document.body.insertAdjacentHTML('beforeend', '<div id="mt" style="position:fixed;inset:0;z-index:99;overflow:auto;background:var(--canvas);display:flex;gap:8px;align-items:start">'
     + sets.map(([n, a, b]) => a.replace('>', ' data-set="' + n + '" style="padding:6px">') + cells + b).join('') + '</div>');
 })()`);
@@ -89,7 +91,7 @@ const off = await ev(`[...document.querySelectorAll('#groups .r-side')].map(b =>
   return Math.max(Math.abs(i.left + i.width / 2 - r.left - r.width / 2), Math.abs(i.top + i.height / 2 - r.top - r.height / 2)); })`);
 check('sidebar marks centred in their box', off.length > 0 && off.every((d) => d < .3), JSON.stringify(off));
 const gut = await ev(`(() => { const log = document.querySelector('.log-inner');
-  log.insertAdjacentHTML('afterbegin', '<div class="ln claude" id="mt-dot"><span class="g">●</span><span>a</span></div><div class="ln claude" id="mt-mark"><span class="g">' + ind('stopped') + '</span><span>a</span></div>');
+  log.insertAdjacentHTML('afterbegin', '<div class="ln claude" id="mt-dot"><span class="g">●</span><span>a</span></div><div class="ln claude" id="mt-mark"><span class="g">' + __synopia.mark('stopped') + '</span><span>a</span></div>');
   const g = document.querySelector('#mt-dot .g'), rg = document.createRange(); rg.selectNodeContents(g);
   const d = rg.getBoundingClientRect(), gd = g.getBoundingClientRect(), m = document.querySelector('#mt-mark .ind').getBoundingClientRect(), gm = document.querySelector('#mt-mark .g').getBoundingClientRect();
   const lh = parseFloat(getComputedStyle(g).lineHeight);
@@ -102,7 +104,7 @@ console.log('reduced-motion shot: ' + stateDir + '/motion-reduced.png');
 // a re-render keeps each running mark's phase (syncMarks pins startTime to the timeline origin)
 const phase = () => ev(`(() => { const a = document.getAnimations().find(a => a.effect?.target?.closest?.('.side .ind')); return a ? { t: a.startTime, cur: a.currentTime } : null; })()`);
 await sleep(200); const p1 = await phase();
-await ev('renderSide()'); await sleep(120);
+await ev('__synopia.render("side")'); await sleep(120);
 const p2 = await phase();
 check('a rebuilt mark keeps its phase (startTime pinned to 0)', !!p1 && !!p2 && p1.t === 0 && p2.t === 0, JSON.stringify([p1, p2]));
 c.print(); c.close();

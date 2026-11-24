@@ -1,0 +1,22 @@
+{
+  "t": "items",
+  "sid": "44444444-0000-4000-8000-000000000004",
+  "agent": "aaaa0001",
+  "upsert": [
+    {
+      "id": "aaaa0001-u1",
+      "k": "you",
+      "ts": "2026-11-20T13:00:06.000Z",
+      "text": "Find the demo config.",
+      "images": 0
+    },
+    {
+      "id": "aaaa0001-a1:0",
+      "k": "claude",
+      "ts": "2026-11-20T13:01:50.000Z",
+      "text": "It is in demo.toml."
+    }
+  ],
+  "total": 2,
+  "reset": true
+}

@@ -19,15 +19,15 @@ const head = await fetch(url).then((r) => r.headers.get('content-security-policy
 check('the page is served with a CSP header', /script-src 'self'(;|$)/.test(head || ''), String(head));
 await c.load(url);
 check('the sidebar has its sessions', (await ev(`document.querySelectorAll('#groups .row').length`)) > 0);
-check('a session view is mounted', await ev(`!!document.querySelector('#conv .c-title') && !!document.getElementById('msg')`));
-check('the socket is authenticated', await ev(`store.ui.connected === true`));
+check('a session view is shown', await ev(`!!document.querySelector('#conv .c-title') && !!document.getElementById('msg')`));
+check('the socket is authenticated', await ev(`__synopia.readiness().connected === true`));
 check('style attributes still apply (marks spin)', await ev(`(() => { const r = document.querySelector('[style*="--d"]'); return !r || getComputedStyle(r).getPropertyValue('--d').trim() !== ''; })()`));
 check('no CSP violation while loading', (await ev(`__csp.length`)) === 0, JSON.stringify(await ev(`__csp`)));
 check('no CSP or script error in the console', !logs.some((l) => /Content Security Policy|Refused to|Uncaught/i.test(l)), JSON.stringify(logs));
 
 // the reviewer's payload in a Claude message, through the real renderer into the log
 const payload = 'See https://x.example/"/onmouseover=alert(document.location)// and [docs](https://x.example/"/onmouseover=alert(1)//)';
-await ev(`(() => { const s = cur(); s.items.push({ id: 'csp-1', k: 'claude', ts: new Date().toISOString(), text: ${JSON.stringify(payload)} }); renderLog(); })()`);
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 1, upsert: [{ id: 'csp-1', k: 'claude', ts: new Date().toISOString(), text: ${JSON.stringify(payload)} }] }); })()`);
 await sleep(200);
 const links = await ev(`[...document.querySelectorAll('[data-key="csp-1"] a')].map(a => ({ attrs: a.getAttributeNames(), href: a.getAttribute('href') }))`);
 check('the payload renders as two links', Array.isArray(links) && links.length === 2, JSON.stringify(links));

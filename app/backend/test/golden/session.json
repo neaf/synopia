@@ -1,0 +1,18 @@
+{
+  "t": "session",
+  "id": "22222222-0000-4000-8000-000000000002",
+  "title": "Pick a colour for the demo banner.",
+  "name": "",
+  "now": "",
+  "cwd": "",
+  "prs": [],
+  "status": "busy",
+  "statusAt": "<time>",
+  "statusDetail": {},
+  "driven": true,
+  "ask": null,
+  "model": null,
+  "effort": null,
+  "outbox": [],
+  "bang": null
+}

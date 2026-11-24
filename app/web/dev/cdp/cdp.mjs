@@ -8,7 +8,7 @@ export { sleep };
 // in the constructor runs before the onmessage the page sets later); not subject to the page's CSP
 const SEEN = `window.__synSeen = {}; (() => { const W = window.WebSocket;
   window.WebSocket = class extends W { constructor(...a) { super(...a); this.addEventListener('message', (e) => { try { const t = JSON.parse(e.data).t; __synSeen[t] = (__synSeen[t] || 0) + 1; } catch {} }); } }; })();`;
-// ready: the first hello applied, the sidebar rendered, the current view mounted with its first items, no
+// ready: the first hello applied, the sidebar rendered, the current view on screen with its first items, no
 // ui restore in flight (the page's half is __synopia.ready(), js/test-api.js), and the window visible and focused
 const READY = `typeof __synSeen === 'object' && __synSeen.hello >= 1 && typeof __synopia === 'object' && __synopia.ready()
   && (!__synopia.current() || __synSeen.items >= 1) && document.visibilityState === 'visible' && document.hasFocus()`;

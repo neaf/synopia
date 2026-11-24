@@ -25,7 +25,10 @@ async function drag(fromP, toSel, f, during) {
   await sleep(150);
   return seen;
 }
-const L = () => ev(`JSON.stringify({ groups: layout.groups.map(g => ({ name: g.name, ids: shown(g.ids).map(x => x.slice(0, 1)) })), others: shown(layout.others).map(x => x.slice(0, 1)) })`);
+// the sidebar layout, the open sessions only, by first digit
+const L = () => ev(`(() => { const l = __synopia.layout(), open = new Set(__synopia.data().map(s => s.id)), shown = ids => ids.filter(id => open.has(id)).map(x => x.slice(0, 1));
+  return JSON.stringify({ groups: l.groups.map(g => ({ name: g.name, ids: shown(g.ids) })), others: shown(l.others) }); })()`);
+const ORDER = `[...document.querySelectorAll('#groups .row')].map(r => r.dataset.id[0]).join('')`; // the sidebar rows, top to bottom
 const stored = () => { const s = JSON.parse(readFileSync(stateDir + '/state.json', 'utf8')).layout; return JSON.stringify({ groups: s.groups.map(g => ({ name: g.name, ids: g.ids.map(x => x.slice(0, 1)) })), others: s.others.map(x => x.slice(0, 1)) }); };
 
 if (phase === 'after-restart') {
@@ -89,7 +92,7 @@ await mouse('mousePressed', r1.x, r1.y + r1.h / 2); await mouse('mouseMoved', r1
 await c.key('Escape', { vk: 27 });
 await mouse('mouseReleased', r2.x, r2.y + r2.h * 0.12);
 check('Esc cancels a drag', (await L()) === before, await L());
-check('no automatic sorting: rows in your order', (await ev(`KEYS.map(x => x[0]).join('')`)) === '21543', await ev(`KEYS.map(x => x[0]).join('')`));
+check('no automatic sorting: rows in your order', (await ev(ORDER)) === '21543', await ev(ORDER));
 await sleep(1500);
 check('backend stored the layout', stored() === await L(), stored());
 (await import('node:fs')).writeFileSync(stateDir + '/expected.txt', await L());

@@ -106,7 +106,7 @@ check('a click on its own line closes both', await c.until(`!${LIVE}.open && !${
 await ev(`${OWN}.querySelector('summary').click()`);
 check('and opens both', await c.until(`${LIVE}.open && ${OWN}.open`, 2000));
 // a redraw replaces every block
-await ev(`(() => { window.__old = [${LIVE}, ${OWN}]; document.querySelectorAll('#log .log-inner > *').forEach(e => e._sig = ''); renderLog(); })()`);
+await ev(`(() => { window.__old = [${LIVE}, ${OWN}]; __synopia.redraw(); })()`);
 check('both stay open through a redraw', await ev(`${LIVE} !== __old[0] && ${OWN} !== __old[1] && ${LIVE}.open && ${OWN}.open`));
 await sleep(600); // the UI state goes to the server
 await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);

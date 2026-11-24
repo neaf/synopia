@@ -104,15 +104,33 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `sent(...types)` | frames the page sent since `spy()`, of those types (all with none) |
 | `received(...types)` | frames from the server since `spy()`, before the page applied them |
 | `inject(msg)` | hands `msg` to the page's message handler, as if the server sent it |
+| `anchor()` | the log's scroll anchor: `{id, off}` (an item block's key and the pixels into it) or `{bottom: true}` |
+| `from(sid, agent)` | the oldest item id that view had loaded (sent with `view`), or null |
+| `attachments()` | the message box's pasted images: `{id, n, mediaType, url, data}`, `data` null until read |
+| `prompt()` | the prompt above the box: `"interrupt"` (Esc), `"background"` (b), `"close"` (x) or null |
+| `card(sid)` | the cursor and picks of that session's card (`{qi, oi, picks, own, notes, target, …}`; the shown session without `sid`), or null |
+| `cards()` | every card's state, keyed `"<sid>:<request id>"` |
+| `preview()` | the file preview: `{shown, path}` |
+| `openList()` | the Open list: `{shown, filter}` |
+| `marks()` | every mark kind in the marks table |
+| `mark(kind, size)` | a mark's markup, `size` in px |
+| `render(...parts)` | re-renders `"side"`, `"conv"`, `"header"`, `"log"`, `"card"` or `"rail"`, as a server message does |
+| `redraw()` | re-renders the transcript with every block replaced |
+| `resetTweens()` | the sidebar forgets its sub-line tweens, so the next render is a fresh one |
 
 - Nothing is recorded until `spy()`; in use the API costs a null check per frame. `bridge.js` calls `testSent` in `send` and `testGot` before `onMessage`.
-- Switch views the way a user does: click `#conv [data-agent="<id>"]` for a subagent and `#conv [data-back]` for the main conversation.
-- Suites that still read page globals: `csp`, `dnd`, `extcard`, `files`, `motion`, `preview`, `rail`, `restore`, `states`, `titles`, `tween`. A few reads in the moved suites stay on page helpers that have no state getter: `pendingAsk`/`qs` (keys), `attachments` (images), `interruptAsk` (close, images), `uiFrom` (viewswitch); and some actions call page functions (`renderLog` in steps; `showOpenList`, `toast`, `showViewer`, `previewClick`, `themeSet` in dark).
+- No suite reads a page global. State goes in by `inject` (a server message) or `serverSend` (stored before a load), actions by the DOM: a click, a key, a `pagehide` event (`ui.js` flushes the UI state on it).
+- Switch views the way a user does: click `#conv [data-agent="<id>"]` for a subagent, `#conv [data-back]` for the main conversation, a `#groups .row` for a session.
+- Open things as a user does: `#open` for the Open list, `#theme` for the theme (Alt-click follows the system), a clicked `a[data-path]` for the file preview and a clicked `.thumb[data-full-src]` for the image viewer. Both are document-level click handlers (`transcript.js`, `images.js`), so a link or thumbnail the check adds works too.
+- The protocol has no message that drops a background entry or a subagent. `tween` and `motion` inject a `session` message with the shorter list; `applySession` copies every field it gets (`store.js`).
 
 ## Backend tests
 
 - `node --test test/` fails on a directory in Node 22.13; pass a glob: `node --experimental-strip-types --disable-warning=ExperimentalWarning --test test/*.test.ts`. Code: `check.sh` 16-17, `backend/package.json` 8.
 - `daemon.test.ts` spawns the real `main.ts` with `--experimental-strip-types`. The restart test leaves a detached successor that the test must kill (232-268).
+- The contract tests run a real daemon through `test/daemon-harness.ts` (`startDaemon`, `connectPage`, `api`, `fixtureCopy`): `protocol-golden.test.ts` (the server's frames on the fixture tree against `test/golden/*.json`; `SYNOPIA_GOLDEN=update` rewrites them, then read the diff), `router.test.ts` (page frames and what they change), `shell-contract.test.ts` (what `Backend.swift` and `AppDelegate.swift` decode) and `handover.test.ts`.
+- `handover.test.ts` runs on a copy of `app/backend` whose `main.ts` each case replaces, and takes about 35 s: the 20 s successor timeout and two 10 s code-hash reads (`daemon.ts` `startSuccessor`, `UPDATE_READ_MS`) are fixed in the code. Its three cases run concurrently.
+- Under `--fake` an `answer` frame for any request id sets that session working for 3 s (`fake-driver.ts` `onMessage`); the handover test uses it to make work start on cue.
 
 ## Date-relative fixtures
 

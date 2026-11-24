@@ -10,7 +10,7 @@ import { connect, sleep } from './cdp.mjs';
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, until } = c;
-await c.load(url + '#11111111', `current?.startsWith('11111111')`);
+await c.load(url + '#11111111', `__synopia.current()?.startsWith('11111111')`);
 check('the files block shows', await until(`!!document.querySelector('.ln.files')`));
 const rows = await ev(`[...document.querySelectorAll('.ln.files .frow')].map(r => [r.querySelector('.fp').textContent, r.querySelector('.fc')?.textContent.replace(/\\s+/g, ' ').trim() || ''])`);
 const row = (f) => (rows.find((r) => r[0] === f) || [])[1];
