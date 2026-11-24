@@ -28,6 +28,9 @@ function md(src) {
       .replace(/\[([^\]\u0001]+)\]\((https?:[^)\s\u0001]+)\)/g, (m, t, url) => put(link(url, bold(esc(t)))));
     return bare(bold(esc(raw))).replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);
   };
+  /* a paragraph's or quote's lines: a single newline is a line break, as in the Claude Code CLI (a blank
+     line makes a new paragraph). No URL or attribute holds a newline, so each one left is text. */
+  const lines2 = buf => inline(buf.join("\n")).replace(/\n/g, "<br>");
   while (i < lines.length) {
     const l = lines[i];
     if (/^```/.test(l)) { const buf = []; i++; while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]); i++; out.push(`<pre><code>${esc(buf.join("\n"))}</code></pre>`); continue; }
@@ -49,10 +52,10 @@ function md(src) {
       }
       out.push(`<${ordered ? "ol" : "ul"}>${items.map(x => `<li>${inline(x).replace(/&lt;br&gt;/g, "<br>")}</li>`).join("")}</${ordered ? "ol" : "ul"}>`); continue;
     }
-    if (/^>\s?/.test(l)) { const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, "")); out.push(`<blockquote>${inline(buf.join(" "))}</blockquote>`); continue; }
+    if (/^>\s?/.test(l)) { const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, "")); out.push(`<blockquote>${lines2(buf)}</blockquote>`); continue; }
     if (!l.trim()) { i++; continue; }
     const buf = []; while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*([-*]|\d+\.)\s|>|\s*\|)/.test(lines[i])) buf.push(lines[i++]);
-    out.push(`<p>${inline(buf.join(" "))}</p>`);
+    out.push(`<p>${lines2(buf)}</p>`);
   }
   return out.join("");
 }

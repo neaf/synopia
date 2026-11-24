@@ -47,6 +47,20 @@ test('markdown still renders links, code and bold', () => {
   assert.equal(md('`https://example.com/in-code`'), '<p><code><a href="https://example.com/in-code" target="_blank" rel="noreferrer">https://example.com/in-code</a></code></p>');
 });
 
+test('markdown: a single newline is a line break, a blank line a paragraph, as in the CLI', () => {
+  const { md } = page();
+  assert.equal(md('Roses are red,\nviolets are blue.\n\nThe end.'), '<p>Roses are red,<br>violets are blue.</p><p>The end.</p>');
+  assert.equal(md('> one\n> two'), '<blockquote>one<br>two</blockquote>');
+  assert.equal(md('**bold\nacross** a break'), '<p><b>bold<br>across</b> a break</p>');
+  // still escaped, line by line; a URL ends at the break
+  assert.equal(md('a <b>\nhttps://example.com/x\n`c<d`'),
+    '<p>a &lt;b&gt;<br><a href="https://example.com/x" target="_blank" rel="noreferrer">https://example.com/x</a><br><code>c&lt;d</code></p>');
+  clean(md(`${BAD}\n${BAD}\n[x](https://x.example/"/onmouseover=alert(1)//)\n${BAD}`), 'line breaks');
+  // code blocks and tables keep their own lines
+  assert.equal(md('```\na\nb\n```'), '<pre><code>a\nb</code></pre>');
+  assert.ok(!md('| a |\n|---|\n| b |').includes('<br>'));
+});
+
 test('sidebar rows, the rail, files changed, waves and cards escape their data', () => {
   const P = page();
   const agent = { id: `a"1`, description: BAD, toolUseId: `t"1`, start: '2026-11-20T10:00:00.000Z', finished: false, items: [] };
