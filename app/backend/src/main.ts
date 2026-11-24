@@ -212,8 +212,11 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     const images = Array.isArray(msg.images)
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
       : [];
-    const r = sessions.send(msg.sid, typeof msg.text === 'string' ? msg.text : '', images, typeof msg.uuid === 'string' ? msg.uuid : undefined);
+    const text = typeof msg.text === 'string' ? msg.text : '', uuid = typeof msg.uuid === 'string' ? msg.uuid : undefined;
+    const queues = views.queues(sessions.resolve(msg.sid)); // sent during a turn: shown pending until it lands (R5.5)
+    const r = sessions.send(msg.sid, text, images, uuid);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
+    else if (queues && uuid) views.sent(r.sid, uuid, text, images.length);
   } else if (sessions && msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });

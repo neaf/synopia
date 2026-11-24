@@ -130,6 +130,11 @@ details.step > summary::-webkit-details-marker { display: none; }
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
+/* a message you sent while the turn runs (R5.5): the same band, open and dashed at the edge until
+   Claude takes it in, the text dimmed, a quiet label with the moving queued mark */
+.prompt.queued { background: none; border-left-style: dashed; }
+.prompt.queued > .g, .prompt.queued .md { color: var(--ink-3); }
+.prompt.queued .qlabel { display: flex; align-items: center; gap: .6ch; margin: -.5em 0 0; color: var(--ink-3); }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
 .opt-line { color: var(--ink-3); }
 .opt-line.picked { color: var(--ink); font-weight: 700; }
