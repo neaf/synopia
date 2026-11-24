@@ -1,5 +1,5 @@
 #!/bin/bash
-# Runs every check: the backend unit tests, a type check of the shell, and a
+# Runs every check: the backend unit tests, a type check of the shell and its DaemonFilesTest, and a
 # check of the page scripts (classic and modules). Prints one pass or fail line per part, plus
 # the names of failing tests, and exits nonzero if any part fails.
 #   app/check.sh          the fast parts, no Chrome
@@ -27,12 +27,25 @@ shopt -s nullglob
 swift=("$app"/shell/*.swift)
 if [ ${#swift[@]} -eq 0 ]; then
   echo "shell: skip (no app/shell yet)"
-elif swiftc -typecheck "${swift[@]}" >"$out" 2>&1; then
-  echo "shell: pass"
-else
+elif ! swiftc -typecheck "${swift[@]}" >"$out" 2>&1; then
   failed=1
-  echo "shell: fail"
+  echo "shell: fail (typecheck)"
   grep -E 'error:' "$out" | head -20
+else
+  # DaemonFilesTest: DaemonFiles.swift on the goldens, as a plain binary (no window)
+  bin="$(mktemp -d "${TMPDIR:-/tmp}/synopia-shelltest.XXXXXX")"
+  if ! swiftc "$app"/shell/DaemonFiles.swift "$app"/shell/test/DaemonFilesTest.swift -o "$bin/t" >"$out" 2>&1; then
+    failed=1
+    echo "shell: fail (DaemonFilesTest build)"
+    grep -E 'error:' "$out" | head -20
+  elif "$bin/t" "$app/shell/test/golden" >"$out" 2>&1; then
+    echo "shell: pass (typecheck, $(sed -n 's/.*pass (\(.*\))/\1/p' "$out") in DaemonFilesTest)"
+  else
+    failed=1
+    echo "shell: fail (DaemonFilesTest)"
+    sed '1d' "$out" | head -20
+  fi
+  rm -rf "$bin"
 fi
 
 # Page scripts: each parses as index.html loads it (classic or module), and module imports resolve

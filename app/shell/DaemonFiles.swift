@@ -1,6 +1,8 @@
-// The shell's reader of the daemon's files in the state folder (docs/Daemon files.md): daemon.json,
-// with its `handover` while a daemon hands over to a new one, and daemon.log's last line for the
-// error view. The daemon's daemon-files.ts writes them.
+// The shell's reader of what the daemon writes (docs/Daemon files.md): daemon.json in the state
+// folder, with its `handover` while a daemon hands over to a new one, daemon.log's last line for the
+// error view, and the JSON of the HTTP replies the shell reads. The daemon's daemon-files.ts writes the
+// files. app/shell/test/DaemonFilesTest.swift decodes the goldens in app/shell/test/golden, which
+// shell-contract.test.ts checks against a real daemon.
 import Foundation
 
 struct DaemonFiles {
@@ -14,12 +16,24 @@ struct DaemonFiles {
     let handover: Handover?
   }
 
+  /// GET /api/ping: the daemon's pid, compared with daemon.json's.
+  struct Ping: Decodable { let pid: Int32 }
+  /// GET /api/badge: the Dock badge's count.
+  struct Badge: Decodable { let badge: Int }
+  /// GET /api/quit-check: `summary` is the confirm's sentence after its question, empty when nothing
+  /// runs. The daemon names the work; the shell shows the sentence as it is.
+  struct QuitCheck: Decodable { let summary: String }
+
+  /// A reply or file as `type`, or nil when it is missing or malformed.
+  static func decode<T: Decodable>(_ type: T.Type, _ data: Data?) -> T? {
+    data.flatMap { try? JSONDecoder().decode(type, from: $0) }
+  }
+
   let stateDir: URL
 
   /// daemon.json, or nil when it is missing or malformed.
   func info() -> Info? {
-    guard let data = try? Data(contentsOf: stateDir.appendingPathComponent("daemon.json")) else { return nil }
-    return try? JSONDecoder().decode(Info.self, from: data)
+    DaemonFiles.decode(Info.self, try? Data(contentsOf: stateDir.appendingPathComponent("daemon.json")))
   }
 
   /// Whether the daemon `pid`, now gone, handed over (an update or a restart) rather than crashed or

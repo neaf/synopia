@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter } from '../src/status.ts';
+import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary } from '../src/status.ts';
 import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
@@ -489,4 +489,18 @@ test('badge: a question or plan another process asks counts, with its ask for th
   assert.equal(badge.count, 1);
   transcripts.stop(); publisher.stop();
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('quitSummary: counts per kind and the alert sentence, a kind it has no words for too', () => {
+  assert.deepEqual(quitSummary({ running: [], background: [] }), { running: [], background: {}, summary: '' });
+  const bg = (...kinds: string[]) => kinds.map((kind) => ({ sid: 's', kind }));
+  assert.deepEqual(quitSummary({ running: ['a', 'b'], background: bg('shell') }),
+    { running: ['a', 'b'], background: { shell: 1 }, summary: '2 sessions are working and 1 background shell will stop.' });
+  assert.equal(quitSummary({ running: ['a'], background: [] }).summary, '1 session is working and will stop.');
+  assert.equal(quitSummary({ running: [], background: bg('monitor', 'subagent', 'subagent', 'shell', 'shell') }).summary,
+    '2 subagents, 2 background shells and 1 monitor will stop.');
+  // a new kind: counted and named, so the confirm still shows (seams#A7)
+  const q = quitSummary({ running: [], background: bg('task') });
+  assert.deepEqual(q.background, { task: 1 });
+  assert.equal(q.summary, '1 background task will stop.');
 });

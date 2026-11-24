@@ -38,7 +38,7 @@ The files the Node daemon and the Swift shell share, and the rules each side fol
 - At a stop or a crash the daemon removes the file, only while it still names its pid. At a handover it rewrites it with `handover` instead and leaves it.
 - A missing or malformed file means no daemon. A file whose pid is gone means: a handover when it has `handover`, else a stale file.
 - The shell decodes `pid`, `procStart`, `port`, `token`, `version` and `handover`; it ignores the rest.
-- Code: `daemon-files.ts` `parseDaemonInfo`, `writeDaemonInfo`, `removeDaemonInfo`, `clearStaleDaemonInfo`, `markHandover`, `isLive` (async); `DaemonFiles.swift` `info`, `handedOver`; `Backend.swift` `live`. Test: `daemon-files.test.ts`, `shell-contract.test.ts`.
+- Code: `daemon-files.ts` `parseDaemonInfo`, `writeDaemonInfo`, `removeDaemonInfo`, `clearStaleDaemonInfo`, `markHandover`, `isLive` (async); `DaemonFiles.swift` `info`, `handedOver`; `Backend.swift` `probe`. Test: `daemon-files.test.ts`, `shell-contract.test.ts`, `app/shell/test/DaemonFilesTest.swift` (the goldens in `app/shell/test/golden`).
 
 ### Quirk: process start strings
 
@@ -81,7 +81,16 @@ Code: `daemon-files.ts` `EXIT`; `daemon.ts` `startDaemon` (3, 1), `cannotListen`
 - Flags `POSIX_SPAWN_SETSID` (its own session, so the app's end never reaches it), `POSIX_SPAWN_CLOEXEC_DEFAULT` (none of the app's descriptors), `POSIX_SPAWN_SETSIGDEF` with every signal but SIGKILL and SIGSTOP, and `POSIX_SPAWN_SETSIGMASK` with an empty mask. The app ignores SIGTERM (it quits through a dispatch source), and ignored signals are inherited, so SETSIGDEF is required for the daemon to honour SIGTERM.
 - While the app runs it reaps the child on a thread, so a zombie never passes for alive.
 - The shell waits up to 20 s for a live daemon.json; a child that exits other than 3 ends the wait 1 s later.
-- Code: `Backend.swift` `spawnDaemon`, `findOrStart`; `AppDelegate.swift`.
+- A daemon.json whose process runs with the recorded `procStart` but whose ping gets no answer within 2 s is a slow daemon, not a missing one: the shell keeps asking for up to 20 s and starts none (a second daemon would only exit 3). Still silent after that, the error view says it runs but doesn't answer.
+- All HTTP from the shell is async with a timeout (2 s for ping, badge and quit-check, 3 s for stop and restart); one badge poll at a time. A badge poll with no answer from a process that still has the recorded `procStart` is a slow daemon; one whose pid is gone or has another start time is a lost one.
+- Code: `Backend.swift` `spawnDaemon`, `findOrStart`, `probe`, `poll`; `AppDelegate.swift`.
+
+## Stop All Work and Restart Backend Now
+
+- Both ask `GET /api/quit-check` first. Its `summary` is the confirm's sentence after the question (`Stop all work?`, `Restart the backend?`), empty when nothing runs; `background` counts the work per kind. The backend names the kinds (`status.ts` `quitSummary`); the shell shows `summary` as it is.
+- An empty `summary` acts at once. A check with no answer, or a reply without `summary` (an older daemon), asks with "Synopia could not tell what is running." One check or sheet at a time.
+- Stop: `POST /api/stop`, then the shell waits 15 s for the pid to go, checking each second that the pid still has the recorded `procStart`. Only the same process gets SIGTERM, then 3 s more; a reused pid counts as gone.
+- Code: `AppDelegate.swift` `confirmIfRunning`; `Backend.swift` `stopDaemon`, `waitGone`, `same`; `status.ts` `quitSummary`. Test: `status.test.ts` "quitSummary…", `shell-contract.test.ts`, `DaemonFilesTest.swift`.
 
 ## daemon.log
 

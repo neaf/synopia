@@ -9,7 +9,7 @@ How the Swift shell hosts the page, and what WebKit and AppKit do that the page 
 - The shell measures the height at launch and passes it to the page as `--titlebar`; until then it uses 28 pt. In Chrome `--titlebar` is 0.
 - A page overlay that covers the window (fixed, top 0) must start at `top: var(--titlebar)`, or its top part sits under the drag strip and can't be clicked.
 - The page gets `html.in-app`, `html.fullscreen` and `--titlebar` from a `WKUserScript` at document start, re-applied on change.
-- Code: `TitleBar.swift` `WindowFrame` (11-20), `AppDelegate.swift` 31-43, `WebView.swift` `syncChrome` (29-42).
+- Code: `TitleBar.swift` `WindowFrame` (11-20), `AppDelegate.swift` `applicationDidFinishLaunching`, `WebView.swift` `syncChrome`.
 
 ### Quirk: the sidebar width lives in two places
 
@@ -26,21 +26,21 @@ How the Swift shell hosts the page, and what WebKit and AppKit do that the page 
 - Symptom: ⌘⇧[ shows the previous window tab instead of switching sessions.
 - Cause: AppKit's automatic window tabbing adds "Show Previous Tab" (⌘⇧[) and "Show Next Tab" to the Window menu.
 - Workaround: `NSWindow.allowsAutomaticWindowTabbing = false` before the menus are built.
-- Code: `AppDelegate.swift` 23-24.
+- Code: `AppDelegate.swift` `applicationDidFinishLaunching`.
 
 ## 24-hour clock
 
 - Symptom: times show 12-hour although macOS is set to 24-hour.
 - Cause: the web view's locale does not see the macOS 24-hour setting (System Settings, Date & Time).
 - Workaround: the shell reads `DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current)` (`H` or `k` means 24-hour) and injects `window.SYNOPIA_CLOCK24`; the page formats every time with it.
-- Code: `WebView.swift` 31-35; `transcript.js` 8-9.
+- Code: `WebView.swift` `syncChrome`; `transcript.js` 8-9.
 
 ## Links and navigation
 
 - Symptom: a `target="_blank"` link or a `file://` link does nothing.
 - Cause: WKWebView opens no new windows without a UI delegate, and has no file access.
 - Workaround: the page intercepts every link and file click and sends `open` to the daemon (`/usr/bin/open`, see [macOS](macOS.md#opening-files-usrbinopen)). The shell allows only navigation to the backend origin and `about:blank`; any other main-frame navigation is cancelled and, for http and https, opened with `NSWorkspace`. `createWebViewWith` does the same and returns nil.
-- Code: `transcript.js` 529; `WebView.swift` `decidePolicyFor`, `createWebViewWith` (66-99).
+- Code: `transcript.js` 529; `WebView.swift` `decidePolicyFor`, `createWebViewWith`.
 
 ## JavaScript panels
 
@@ -48,7 +48,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 ## Snapshots without permission
 
-`WKWebView.takeSnapshot` needs no Screen Recording permission. The debug hook `SYNOPIA_SNAPSHOT=/path.png` writes the first load 1.5 s after it finishes; it captures web content only, not the title bar. Code: `WebView.swift` 80-95. Page checks do not use it: they never launch the app.
+`WKWebView.takeSnapshot` needs no Screen Recording permission. The debug hook `SYNOPIA_SNAPSHOT=/path.png` writes the first load 1.5 s after it finishes; it captures web content only, not the title bar. Code: `WebView.swift` `didFinish`. Page checks do not use it: they never launch the app.
 
 ## Rendering quirks
 

@@ -13,6 +13,7 @@ import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import type { QuitCheck } from './status.ts';
 
 export const MAX_PAYLOAD = 32 * 1024 * 1024;
 export const AUTH_TIMEOUT_MS = 10_000;
@@ -29,7 +30,8 @@ export type ServerOptions = {
   webRoot: string;
   // A page's token was taken: its hello goes out (publisher.ts).
   onAuthed?: (client: Client) => void;
-  quitCheck: () => { running: unknown[]; background: unknown[] };
+  // GET /api/quit-check: what Stop All Work and Restart Backend ask with (status.ts quitSummary).
+  quitCheck: () => QuitCheck;
   // GET /api/badge: the Dock badge's count, polled by the shell (R2.6).
   badge?: () => number;
   // POST /api/stop: "Stop All Work". Called once the 200 has gone out.

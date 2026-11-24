@@ -123,7 +123,7 @@ prototype/          unchanged, stays the look reference
   - In fullscreen (`windowWillEnterFullScreen`, `windowWillExitFullScreen` and the two failure callbacks) the strip is hidden and the page gets `fullscreen`.
 - **Menus:** an App menu (About, Stop All Work… ⌥⌘Q, Restart Backend Now…, Quit ⌘Q), an Edit menu (Undo, Redo, Cut, Copy, Paste, Select All, so ⌘V and ⌘C reach the web view) and a Window menu. No menu item takes ⌘⇧[ or ⌘⇧], so they reach the page.
 - **Links and files:** the page never navigates. Every link and file click goes to the backend as `open`, the same in Chrome. As a safety net the shell's `WKNavigationDelegate` cancels any navigation away from the backend origin, and `createWebViewWith` returns nil. Both hand only `http` and `https` URLs to `NSWorkspace.open`.
-- **Quit:** ⌘Q quits only the app, with no confirm: the work goes on in the daemon. **Stop All Work…** (⌥⌘Q) calls `GET /api/quit-check` with the token, which returns the running turns and running background work. If anything is running, an NSAlert says "Stop all work? 2 sessions are working and 1 background shell will stop." Then the shell sends `POST /api/stop?token=`, waits for the daemon's pid to go (SIGTERM after 15 s), and quits. The daemon ends its `query()` processes on the way out.
+- **Quit:** ⌘Q quits only the app, with no confirm: the work goes on in the daemon. **Stop All Work…** (⌥⌘Q) calls `GET /api/quit-check` with the token, which returns the running turns, the running background work per kind and the alert's sentence (`summary`). If anything is running, or the check gets no answer, an NSAlert says "Stop all work? 2 sessions are working and 1 background shell will stop." Then the shell sends `POST /api/stop?token=`, waits for the daemon's pid to go (SIGTERM after 15 s, only while the pid still has daemon.json's `procStart`), and quits. The daemon ends its `query()` processes on the way out.
 - **Dock badge:** the shell polls `GET /api/badge?token=` every 2 s (simpler and sturdier than a native WebSocket client: no auth frame, no Origin, and the poll doubles as the liveness check).
 
 ## 3. The backend
@@ -234,7 +234,7 @@ HTTP, on the same origin, every request with `?token=` (403 without it):
 
 | Endpoint | Query | Reply |
 |---|---|---|
-| `GET /api/quit-check` | `token` | JSON `{running[], background[]}` for the Stop All Work alert |
+| `GET /api/quit-check` | `token` | JSON `{running[], background: {<kind>: n}, summary}` for the Stop All Work alert (`summary` is its sentence, empty when nothing runs) |
 | `GET /api/ping` | `token` | `{ok: true, pid, code}`: the shell's check that `daemon.json` names a live daemon |
 | `GET /api/badge` | `token` | `{badge: N}`, the Dock badge's count, polled every 2 s |
 | `POST /api/stop` | `token` | `{ok: true}`, then the daemon stops (Stop All Work) |

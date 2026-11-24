@@ -30,7 +30,7 @@ before(async () => {
     token: TOKEN,
     webRoot,
     onAuthed: (c) => c.send({ t: 'hello', sessions: [] }),
-    quitCheck: () => ({ running: [], background: [] }),
+    quitCheck: () => ({ running: [], background: {}, summary: '' }),
     onMessage: (c, m) => { if (m.t === 'throw') throw new Error('boom'); c.send({ t: 'echo', of: m.t }); },
     log: (event, fields) => lines.push(`${event} ${JSON.stringify(fields ?? {})}`),
     sendSoft: SOFT,
@@ -161,7 +161,7 @@ test('quit-check needs the token', async () => {
   assert.equal((await get('/api/quit-check?token=wrong')).status, 403);
   const res = await get(`/api/quit-check?token=${TOKEN}`);
   assert.equal(res.status, 200);
-  assert.deepEqual(JSON.parse(res.body), { running: [], background: [] });
+  assert.deepEqual(JSON.parse(res.body), { running: [], background: {}, summary: '' });
 });
 
 test('the upgrade checks Host and Origin', async () => {
@@ -284,7 +284,7 @@ test('an oversized frame before auth closes the socket', async () => {
 test('close: a page gets what was sent to it, then a close frame; a frame after it reaches nothing (seams#B5)', async () => {
   const seen: string[] = [];
   const s2 = await startServer({
-    port: 0, token: TOKEN, webRoot, quitCheck: () => ({ running: [], background: [] }),
+    port: 0, token: TOKEN, webRoot, quitCheck: () => ({ running: [], background: {}, summary: '' }),
     onAuthed: (c) => c.send({ t: 'hello' }),
     onMessage: (_c, m) => { seen.push(m.t); },
   });

@@ -21,7 +21,7 @@ import { Router } from './router.ts';
 import { loadLoginEnv } from './login-env.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
-import { BadgeCounter } from './status.ts';
+import { BadgeCounter, quitSummary } from './status.ts';
 import { startDaemon } from './daemon.ts';
 import { EXIT } from './daemon-files.ts';
 import { draftImage } from './ui-state.ts';
@@ -169,7 +169,7 @@ try {
     webRoot: fileURLToPath(new URL('../../web/', import.meta.url)),
     log,
     onAuthed: (client) => publisher.hello(client, { code: CODE, layout: store.state.layout, menu: menus.all(), ui: store.state.ui, update: daemon.updatePending }),
-    quitCheck: () => sessions.quitCheck(),
+    quitCheck: () => quitSummary(sessions.quitCheck()),
     badge: () => badge.count,
     ping: () => ({ code: CODE, v: PROTOCOL }),
     onStop: () => void daemon.stop('stopAll'),

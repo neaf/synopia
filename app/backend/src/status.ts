@@ -426,3 +426,31 @@ export class BadgeCounter {
     this.set(sid, 0);
   }
 }
+
+// GET /api/quit-check, what "Stop All Work…" and "Restart Backend Now…" ask with (FR-PLAT-06): the
+// running turns, the background work counted per kind, and `summary`, the alert's sentence after its
+// question ("2 sessions are working and 1 background shell will stop."), empty when nothing runs. The
+// shell shows `summary` as it is and knows no kind: a new kind is counted and named here.
+export type QuitCheck = { running: string[]; background: Record<string, number>; summary: string };
+
+const KIND_WORDS: Record<string, [string, string]> = {
+  subagent: ['subagent', 'subagents'],
+  shell: ['background shell', 'background shells'],
+  monitor: ['monitor', 'monitors'],
+};
+
+export function quitSummary(q: { running: string[]; background: { kind: string }[] }): QuitCheck {
+  const background: Record<string, number> = {};
+  for (const { kind } of q.background) background[kind] = (background[kind] ?? 0) + 1;
+  const kinds = [...Object.keys(KIND_WORDS).filter((k) => background[k]), ...Object.keys(background).filter((k) => !KIND_WORDS[k]).sort()];
+  const work = kinds.map((k) => {
+    const n = background[k];
+    const [one, many] = KIND_WORDS[k] ?? [`background ${k}`, `background ${k}s`];
+    return `${n} ${n === 1 ? one : many}`;
+  });
+  const n = q.running.length;
+  const turns = n === 0 ? '' : n === 1 ? '1 session is working' : `${n} sessions are working`;
+  const list = work.length > 1 ? `${work.slice(0, -1).join(', ')} and ${work.at(-1)}` : (work[0] ?? '');
+  const summary = turns && list ? `${turns} and ${list} will stop.` : turns ? `${turns} and will stop.` : list ? `${list} will stop.` : '';
+  return { running: q.running, background, summary };
+}

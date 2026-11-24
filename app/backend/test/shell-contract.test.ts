@@ -1,17 +1,42 @@
-// What the Swift shell reads from a daemon: daemon.json across a handover, and on a --no-parent daemon (app/dev.sh's) the first stdout line,
-// daemon.json (DaemonFiles.swift Info), GET /api/ping (its pid against daemon.json's), GET /api/badge
-// (an Int), GET /api/quit-check (AppDelegate.swift QuitCheck: running [String], background [{kind}]),
-// POST /api/stop (daemon.json gone, no handover). A 200 is the only answer
-// the shell reads; anything else counts as no answer.
+// What the Swift shell reads from a daemon: daemon.json across a handover, and on a --no-parent daemon
+// (app/dev.sh's) the first stdout line, daemon.json, GET /api/ping (its pid against daemon.json's),
+// GET /api/badge, GET /api/quit-check (`summary`, the confirm's sentence) and POST /api/stop
+// (daemon.json gone, no handover). A 200 is the only answer the shell reads; anything else counts as
+// no answer. Each reply and daemon.json has the shape of its golden in app/shell/test/golden, which
+// app/shell/test/DaemonFilesTest.swift decodes through DaemonFiles.swift.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { once } from 'node:events';
 import { startDaemon, api, scripted, shellDaemon, tmp, waitFor, watchDaemonJson } from './daemon-harness.ts';
 import { readDaemonInfo } from '../src/daemon-files.ts';
 
 const isInt = (v: unknown) => typeof v === 'number' && Number.isInteger(v);
+
+const GOLDEN = fileURLToPath(new URL('../../shell/test/golden/', import.meta.url));
+const golden = (name: string) => JSON.parse(readFileSync(join(GOLDEN, name), 'utf8'));
+const kind = (v: unknown) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
+
+// `live` has the golden's shape: the same keys, the same JSON types, arrays' items like the golden's
+// first, and at a `records` key (a map such as quit-check's `background`) every value like the golden's.
+function sameShape(live: unknown, gold: unknown, at = '$', records: string[] = []): void {
+  assert.equal(kind(live), kind(gold), `${at}: ${kind(live)}, golden ${kind(gold)}`);
+  if (Array.isArray(live) && Array.isArray(gold)) {
+    if (gold.length) live.forEach((x, i) => sameShape(x, gold[0], `${at}[${i}]`, records));
+  } else if (kind(live) === 'object') {
+    const l = live as Record<string, unknown>, g = gold as Record<string, unknown>;
+    const key = at.split('.').at(-1) as string;
+    if (records.includes(key)) {
+      const first = Object.values(g)[0];
+      for (const [k, v] of Object.entries(l)) sameShape(v, first, `${at}.${k}`, records);
+      return;
+    }
+    assert.deepEqual(Object.keys(l).sort(), Object.keys(g).sort(), `${at}: keys`);
+    for (const k of Object.keys(g)) sameShape(l[k], g[k], `${at}.${k}`, records);
+  }
+}
 
 // The fields DaemonFiles.swift's Info decodes (pid Int32, procStart, port, token, version), present in
 // every daemon.json, a handover's too.
@@ -36,6 +61,7 @@ test('shell contract: a handover leaves daemon.json with `handover` {reason, suc
   const marked = (await seen).find((x) => x.handover);
   assert.ok(marked, 'the old daemon, gone, left daemon.json with a handover');
   shellFields(marked as unknown as Record<string, unknown>);
+  sameShape(marked, golden('daemon-handover.json'));
   assert.equal(marked.pid, d.info.pid, 'it still names the old daemon, whose pid the shell polled');
   assert.deepEqual(marked.handover, { reason: 'restart', successor: n.pid });
   assert.equal(d.child.exitCode, 0);
@@ -58,6 +84,7 @@ test('shell contract: discovery, ping, badge, quit-check and stop on a --no-pare
   // daemon.json: every field DaemonFiles.swift's Info decodes, 0600, and no handover while it runs
   const raw = JSON.parse(readFileSync(join(d.stateDir, 'daemon.json'), 'utf8'));
   shellFields(raw);
+  sameShape(raw, golden('daemon.json'));
   assert.equal(raw.handover, undefined);
   assert.equal(statSync(join(d.stateDir, 'daemon.json')).mode & 0o777, 0o600);
 
@@ -68,22 +95,24 @@ test('shell contract: discovery, ping, badge, quit-check and stop on a --no-pare
   assert.equal(p.pid, raw.pid);
   assert.equal(p.ok, true);
   assert.equal(typeof p.code, 'string');
+  sameShape(p, golden('ping.json'));
 
   // badge: {badge: Int}
   const badge = await api(i, 'badge');
   assert.equal(badge.status, 200);
   const b = await badge.json() as Record<string, unknown>;
   assert.ok(isInt(b.badge) && (b.badge as number) >= 0, JSON.stringify(b));
+  sameShape(b, golden('badge.json'));
 
-  // quit-check: running [String], background [{kind: String}]: the script runs four turns (three wait on cards), a
-  // monitor in 33333333 and two subagents in 44444444
+  // quit-check: the script runs four turns (three wait on cards), a monitor in 33333333 and two
+  // subagents in 44444444; per-kind counts, and the sentence the shell shows after its question
   const qc = await api(i, 'quit-check');
   assert.equal(qc.status, 200);
-  const q = await qc.json() as { running: unknown[]; background: { kind: unknown }[] };
-  assert.ok(Array.isArray(q.running) && q.running.every((x) => typeof x === 'string'));
-  assert.ok(Array.isArray(q.background) && q.background.every((x) => typeof x.kind === 'string'));
+  const q = await qc.json() as { running: string[]; background: Record<string, number>; summary: string };
+  sameShape(q, golden('quit-check.json'), '$', ['background']);
   assert.deepEqual(q.running, ['22222222-0000-4000-8000-000000000002', '33333333-0000-4000-8000-000000000003', '44444444-0000-4000-8000-000000000004', '55555555-0000-4000-8000-000000000005']);
-  assert.deepEqual(q.background.map((x) => x.kind), ['monitor', 'subagent', 'subagent']);
+  assert.deepEqual(q.background, { monitor: 1, subagent: 2 });
+  assert.equal(q.summary, '4 sessions are working and 2 subagents and 1 monitor will stop.');
 
   // what the shell gets as "no answer": a wrong token, GET on stop, restart under --no-parent
   assert.equal((await fetch(`http://127.0.0.1:${i.port}/api/ping?token=${'0'.repeat(64)}`)).status, 403);

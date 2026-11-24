@@ -34,9 +34,11 @@ fi
 node --experimental-strip-types --disable-warning=ExperimentalWarning \
   "$app/backend/src/main.ts" --no-parent --port "$port" --state-dir "$state" ${args[@]+"${args[@]}"} |
   while IFS= read -r line; do
+    # the first line is {"port":…,"token":…}: the port it listens on, a --port passed on included
     token="$(printf '%s' "$line" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
-    if [ -n "$token" ]; then
-      echo "Open in Chrome: http://127.0.0.1:$port/?token=$token"
+    listening="$(printf '%s' "$line" | sed -n 's/.*"port":\([0-9]*\).*/\1/p')"
+    if [ -n "$token" ] && [ -n "$listening" ]; then
+      echo "Open in Chrome: http://127.0.0.1:$listening/?token=$token"
     else
       printf '%s\n' "$line"
     fi
