@@ -103,6 +103,7 @@ type Active = {
   interrupting: boolean; // an interrupt is on its way: held messages go back to the box, not to Claude
   afterExit: { content: Content; uuid: string; text: string }[]; // sent while the process was ending (idle end)
   ownEnd: number; // when a process of ours last ended (0: none yet), for feedRunning
+  askId: string; // the tool use id of the question or plan another process asks (R6.8), '' for none
 };
 
 // Slice 5: the model and effort you chose for a session (state.json `models`). `default` is the
@@ -121,6 +122,8 @@ export type SessionsOptions = {
   // Slice 6 (the writer): a session's turn ended, and a stored session was opened.
   onTurnEnded?: (sid: string) => void;
   onOpened?: (sid: string) => void;
+  // A card waiting on you appeared or ended (ours, or one another process asks): the Now line follows.
+  onWaiting?: (sid: string) => void;
   // Slice 5: a running process pushed a new command list (commands_changed).
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
 };
@@ -457,7 +460,10 @@ export class Sessions {
   // make a session working, and so does a main turn another process runs.
   runningChanged(sid: string, r: Running): void {
     const a = this.live.get(sid);
-    if (a) this.feedRunning(a, r);
+    if (!a) return;
+    this.feedRunning(a, r);
+    const ask = r.ask?.toolUseId ?? '';
+    if (ask !== a.askId) { a.askId = ask; this.opts.onWaiting?.(a.id); }
   }
 
   // The transcript's main turn counts only with no process of ours, and only for records written
@@ -474,11 +480,11 @@ export class Sessions {
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Active {
     const a: Active = {
-      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], ownEnd: 0,
+      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], ownEnd: 0, askId: '',
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
       needs: new NeedsYou({
-        show: (r) => this.views.setPending(a.id, r),
-        clear: (rid) => this.views.clearPending(a.id, rid),
+        show: (r) => { this.views.setPending(a.id, r); this.opts.onWaiting?.(a.id); },
+        clear: (rid) => { this.views.clearPending(a.id, rid); this.opts.onWaiting?.(a.id); },
         count: (n) => a.status.setPending(n),
         held: (texts) => this.views.setHeld(a.id, texts),
         drained: () => this.releaseHeld(a, false),
@@ -490,6 +496,7 @@ export class Sessions {
     this.views.open(id, { cwd });
     this.views.setStatus(id, a.status.status, a.status.at, a.status.detail);
     this.feedRunning(a); // working while its subagents or forks, or a turn of another process, run
+    a.askId = this.views.running(id).ask?.toolUseId ?? ''; // an ask already there at open is no change
     const ended = this.store.state.ended[id];
     if (ended) this.views.processEnded(id, ended, this.store.state.endedFailed[id] === true);
     if (!placeholder) this.opts.onOpened?.(id);

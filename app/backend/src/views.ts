@@ -1,7 +1,7 @@
 // The transcripts service: one tailer and one reducer per open session and per subagent,
 // and the protocol messages that come from them (plan sections 5 and 7). It sends `session`
 // meta, `agents` and `background` to every page, and `items` only to the pages viewing that
-// conversation: a reset with the last WINDOW items on `view`, then upserts of changed ids, and
+// conversation: a reset with the last WINDOW items (or from the page's `from`) on `view`, then upserts of changed ids, and
 // the WINDOW items before the oldest shown on `earlier`.
 // It also holds the status, the pending requests and the stream preview a driver sets.
 // A session opened before its file exists (a new one) looks for it again every second.
@@ -341,7 +341,7 @@ export class Views {
   }
 
   // For the writer: the background work that runs now, and what ended since your last message,
-  // one line each ("shell “npm test”: running"). Empty without any.
+  // one line each ("shell “npm test”: running"), then the cards waiting on you. Empty without any.
   work(id: string): string[] | undefined {
     const s = this.live.get(id);
     if (!s) return undefined;
@@ -356,6 +356,20 @@ export class Views {
     for (const a of s.t.agents()) {
       if (!a.running && !recent(a.end)) continue;
       out.push(`${a.fork ? 'fork' : 'subagent'} “${a.description.slice(0, 80)}”: ${a.running ? 'running' : a.stopped ? 'stopped' : 'finished'}`);
+    }
+    // the cards waiting on you, ours or the one another process asks (R6.8), so the Now line says so
+    const cut = (v: unknown) => String(v ?? '').split('\n')[0].slice(0, 80);
+    for (const r of s.pending) {
+      const input = (r.input && typeof r.input === 'object' ? r.input : {}) as Record<string, unknown>;
+      const qs = Array.isArray(input.questions) ? input.questions as { question?: unknown }[] : [];
+      out.push(r.kind === 'question' ? `card waiting for you: question “${cut(qs[0]?.question)}”${qs.length > 1 ? ` and ${qs.length - 1} more` : ''}`
+        : r.kind === 'plan' ? 'card waiting for you: approve the plan or ask for changes'
+          : `card waiting for you: allow ${cut(r.toolName)} “${cut(input.description || input.command || input.file_path || r.title)}”`);
+    }
+    const ask = s.pending.length ? null : this.metaOf(s).ask;
+    if (ask) {
+      out.push(ask.kind === 'plan' ? 'card waiting for you: approve the plan or ask for changes'
+        : `card waiting for you: question “${cut(ask.qs?.[0]?.q)}”${(ask.qs?.length ?? 0) > 1 ? ` and ${ask.qs!.length - 1} more` : ''}`);
     }
     return out;
   }
@@ -389,11 +403,14 @@ export class Views {
     };
   }
 
-  // `view` from a page: it now watches this conversation, and gets it from the start.
-  view(client: Client, sid: string, agent: string | null): void {
+  // `view` from a page: it now watches this conversation, and gets it from the start. `from` is the
+  // oldest item the page had loaded for it (its earlier items, ui.js): one reset from that item to
+  // the end, so the page renders once. Without it, or when it is gone or within the last WINDOW,
+  // the last WINDOW items.
+  view(client: Client, sid: string, agent: string | null, from?: string | null): void {
     const sub: Sub = { sid, agent: agent || null, from: 0 };
     this.subs.set(client, sub);
-    this.sendReset(client, sub);
+    this.sendReset(client, sub, from);
   }
 
   // `earlier` from a page: the WINDOW items before `before` (the oldest item it shows), sent with
@@ -515,9 +532,11 @@ export class Views {
     return agent ? s.children.get(agent)?.t ?? null : s.t;
   }
 
-  private sendReset(client: Client, sub: Sub): void {
+  private sendReset(client: Client, sub: Sub, from?: string | null): void {
     const t = this.transcriptOf(sub.sid, sub.agent);
-    const v = t ? t.view(WINDOW) : { items: [], total: 0 };
+    const at = t && from ? t.items.findIndex((i) => i.id === from) : -1;
+    const v = !t ? { items: [], total: 0 }
+      : at >= 0 && at < t.items.length - WINDOW ? { items: t.items.slice(at), total: t.items.length } : t.view(WINDOW);
     sub.from = v.total - v.items.length;
     client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert: v.items, total: v.total, reset: true });
   }

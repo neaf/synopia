@@ -123,6 +123,7 @@ if (!fake) {
     store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined,
     onTurnEnded: (sid) => writer?.turnEnded(sid),
     onOpened: (sid) => writer?.opened(sid),
+    onWaiting: (sid) => writer?.waitingChanged(sid),
     onCommands: (sid, commands) => {
       const folder = views.meta(sid)?.cwd;
       if (folder) menus?.commandsChanged(folder, commands);
@@ -148,7 +149,7 @@ function busy(): boolean {
 function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   if (msg.t === 'view' && typeof msg.sid === 'string') {
     const sid = sessions ? sessions.resolve(msg.sid) : msg.sid;
-    views.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null);
+    views.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null, typeof msg.from === 'string' ? msg.from : null);
     const folder = views.meta(sid)?.cwd, abs = sessions?.cwdOf(sid);
     if (menus && sessions && folder && abs) void menus.viewed(client, folder, abs, sessions.menuSource(sid));
   } else if (msg.t === 'earlier' && typeof msg.sid === 'string' && typeof msg.before === 'string') {
