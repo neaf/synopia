@@ -33,14 +33,14 @@ How the Swift shell hosts the page, and what WebKit and AppKit do that the page 
 - Symptom: times show 12-hour although macOS is set to 24-hour.
 - Cause: the web view's locale does not see the macOS 24-hour setting (System Settings, Date & Time).
 - Workaround: the shell reads `DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: .current)` (`H` or `k` means 24-hour) and injects `window.SYNOPIA_CLOCK24`; the page formats every time with it.
-- Code: `WebView.swift` `syncChrome`; `transcript.js` 8-9.
+- Code: `WebView.swift` `syncChrome`; `format.js` `hhmm`.
 
 ## Links and navigation
 
 - Symptom: a `target="_blank"` link or a `file://` link does nothing.
 - Cause: WKWebView opens no new windows without a UI delegate, and has no file access.
 - Workaround: the page intercepts every link and file click and sends `open` to the daemon (`/usr/bin/open`, see [macOS](macOS.md#opening-files-usrbinopen)). The shell allows only navigation to the backend origin and `about:blank`; any other main-frame navigation is cancelled and, for http and https, opened with `NSWorkspace`. `createWebViewWith` does the same and returns nil.
-- Code: `transcript.js` 529; `WebView.swift` `decidePolicyFor`, `createWebViewWith`.
+- Code: `transcript.js` (the document click handler at its end); `WebView.swift` `decidePolicyFor`, `createWebViewWith`.
 
 ## JavaScript panels
 
@@ -56,7 +56,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 - Symptom: running marks jump back to phase 0 every few seconds.
 - Cause: an `innerHTML` render makes new elements, and a new element's CSS animation starts at 0.
-- Workaround: pin every mark animation (`.ind`, `.spinner`) to the document timeline's origin, `CSSAnimation.startTime = 0`, from a document-wide `MutationObserver` (once per frame) and an `animationstart` listener. Layout tweens keep their own timing.
+- Workaround: pin every mark animation (inside `.ind`) to the document timeline's origin, `CSSAnimation.startTime = 0`, from a document-wide `MutationObserver` (once per frame) and an `animationstart` listener. Layout tweens keep their own timing.
 - Code: `marks.js` `syncMarks`.
 - Related: `getAnimations()` on a detached node is empty, so a tween is cancelled after reinserting the node; `currentTime` on a new animation waits a frame, `startTime` doesn't. Code: `tween.js` `lineTweens`.
 
@@ -65,7 +65,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 - Symptom: open `<details>` and expanded diffs close on every update.
 - Cause: keyed blocks are rebuilt from HTML strings; the new elements have default state.
 - Workaround: `carryState` copies open state by position and id; open steps are kept in a set keyed `sid|view|itemId`.
-- Code: `transcript.js` 487-494, `ui-state.js` `afterLog`.
+- Code: `transcript.js` `carryState`, `ui-state.js` `openSteps` and `afterLog`.
 
 ### Quirk: native drag on buttons
 
@@ -78,7 +78,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 - Pasted images: an object URL for the thumbnail, a `FileReader` data URL for sending; PNG and JPEG only, 5 MB each. Code: `composer.js` 274-304.
 - `crypto.randomUUID` exists only in secure contexts; `http://127.0.0.1` is one, other hosts may not be, so a fallback is present. Code: `composer.js` 4.
-- `<img>` requests can't carry headers, so image URLs carry the token in the query (`/api/image?token=`). The stored viewer state strips it and adds it back on restore. Code: `images.js` 9, `ui-state.js` `afterRender` and `top`.
+- `<img>` requests can't carry headers, so image URLs carry the token in the query (`/api/image?token=`). The stored viewer state strips it and adds it back on restore. Code: `images.js` `imageUrl`, `ui-state.js` `afterRender` and `top`.
 
 ## Content Security Policy
 

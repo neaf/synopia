@@ -16,6 +16,7 @@ import { toCommands, toModels } from '../../backend/src/sdk.ts';
 import { openScripted, SCRIPT_FILE } from '../../backend/dev/scripted-sdk.ts';
 import type { SessionState } from '../../backend/src/status.ts';
 import type { Client } from '../../backend/src/server.ts';
+import { esc } from '../js/format.js';
 
 const [src, outDir] = process.argv.slice(2);
 if (!src || !outDir) {
@@ -24,8 +25,9 @@ if (!src || !outDir) {
 }
 
 const js = path.join(import.meta.dirname, '..', 'js');
-const page = vm.createContext({});
-for (const f of ['md.js', 'card.js']) vm.runInContext(fs.readFileSync(path.join(js, f), 'utf8'), page, { filename: f });
+// card.js is a classic script (until Phase 19); the one module export it needs here is esc (format.js)
+const page = vm.createContext({ esc });
+vm.runInContext(fs.readFileSync(path.join(js, 'card.js'), 'utf8'), page, { filename: 'card.js' });
 const withPending = vm.runInContext('withPending', page) as (items: object[], requests: object[]) => object[];
 
 // the script writes to its transcripts as a CLI would: a copy

@@ -8,10 +8,13 @@
    draft (text, cursor, pasted images, stored by the backend as files), the half-answered card per
    request, and the rail's expansion state. Nothing is shared live between pages: the last one to
    write wins. */
-import { store, current, view, cur, requestsOf, select } from "./state.js";
+import { store, current, view, cur, requestsOf, select, mounted, agentById } from "./state.js";
 import { send, TOKEN } from "./connection.js";
 import { classic as C } from "./legacy.js";
 import { openBg, setOpenBg } from "./rail.js";
+/* preview.js before images.js: both take keys on window in the capture phase, the preview first */
+import { pv, previewShown, restorePreview } from "./preview.js";
+import { viewer, showViewer, imageUrl } from "./images.js";
 
 const uiS = {}; // sid -> { scroll: {view: anchor}, earlier: {view: oldest item id}, diffs: Set, folds: Set, rail }
 const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not on screen
@@ -21,6 +24,11 @@ let uiLoaded = false, timer = null, firstChange = 0, restoring = null, typing = 
 const TOP = ["current", "view", "mode", "openBg", "openList", "preview", "viewer", "theme"];
 const sess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set(), rail: undefined });
 const viewKey = () => view || "";
+/* the steps opened by a click, "<sid>|<view>|<item id>" (transcript.js): a redraw and a reload keep them */
+export const openSteps = new Set();
+/* the log's render and its earlier-items request (transcript.js; main.js passes them, so no module cycle) */
+let logFns = { render() {}, earlier() {} };
+export function useLog(render, earlier) { logFns = { render, earlier }; }
 /* a pasted image's id, the name of its file in the backend's drafts (composer.js) */
 export const newId = () => [...crypto.getRandomValues(new Uint8Array(12))].map(b => b.toString(16).padStart(2, "0")).join("");
 
@@ -44,7 +52,7 @@ export function applyHello(u) {
     sentSess[sid] = Object.fromEntries(Object.keys(x).map(k => [k, "?"])); // the backend has these: the next patch sets or clears them
     s.scroll = { ...(x.scroll || {}) }; s.earlier = { ...(x.earlier || {}) };
     s.diffs = new Set(x.diffs || []); s.folds = new Set(x.folds || []); s.rail = x.rail;
-    for (const k of x.steps || []) C.openSteps.add(`${sid}|${k}`);
+    for (const k of x.steps || []) openSteps.add(`${sid}|${k}`);
     const ids = new Set(requestsOf({ id: sid }).map(r => r.id));
     for (const [rid, st] of Object.entries(x.cards || {})) {
       if (!ids.has(rid) || !st || typeof st !== "object") continue; // the request is gone: so is its card
@@ -55,7 +63,7 @@ export function applyHello(u) {
     if (x.draft) {
       const atts = (x.draft.images || []).map(im => {
         stored.add(im.id);
-        const a = { id: im.id, n: im.n || 0, mediaType: im.mediaType, url: C.imageUrl(sid, null, `draft:${im.id}`), data: null };
+        const a = { id: im.id, n: im.n || 0, mediaType: im.mediaType, url: imageUrl(sid, null, `draft:${im.id}`), data: null };
         fetch(a.url).then(r => r.ok ? r.blob() : null).then(b => { if (!b) return; const fr = new FileReader(); fr.onload = () => { a.data = fr.result; }; fr.readAsDataURL(b); }).catch(() => {});
         return a;
       });
@@ -73,24 +81,16 @@ export function afterRender() {
     const inp = document.getElementById("ol-filter");
     if (u.openList.filter) { inp.value = C.openList.filter = u.openList.filter; C.askRecent(); }
   }
-  if (u.preview && u.preview.path) {
-    C.pv.want = { path: u.preview.path, back: null, added: new Set(), cut: new Set(), first: 0, restore: { scroll: +u.preview.scroll || 0, find: String(u.preview.find || "") } };
-    send({ t: "preview", path: u.preview.path, theme: C.themeNow() });
-  }
+  if (u.preview && u.preview.path) restorePreview(u.preview);
   if (u.viewer && Array.isArray(u.viewer.srcs) && u.viewer.srcs.length)
-    C.showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0, Array.isArray(u.viewer.froms) ? u.viewer.froms.map(String) : []);
-}
-/* preview.js, once the asked file is shown: its find query, then its scroll */
-export function previewRestored(r) {
-  if (r.find) { C.pvOpenFind(); const q = document.getElementById("pv-q"); q.value = r.find; C.pvFind(r.find); }
-  document.getElementById("pv-code").scrollTop = r.scroll;
+    showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0, Array.isArray(u.viewer.froms) ? u.viewer.froms.map(String) : []);
 }
 /* card.js: the text a field of the card held, put back once into its input */
 export function takeTyping(key) { if (!typing || typing.key !== key) return null; const t = typing.text; typing = null; return t; }
 
 /* ---------- a view leaving and coming on screen (renderConv, mountComposer) ---------- */
 export function leave() {
-  const mounted = C.mounted; if (!mounted) return;
+  if (!mounted) return;
   const sid = mounted.slice(0, mounted.indexOf("|")), ta = document.getElementById("msg");
   if (ta) drafts.set(sid, { text: C.boxValue(ta), cursor: [ta.selectionStart, ta.selectionEnd], atts: C.attachments.slice() });
 }
@@ -117,15 +117,15 @@ export function requestView(sid, agent) {
 /* the view on screen asked the server for its items: its scroll waits for them, and its log for their reset */
 export function expectReset() {
   clearTimeout(restoring?.timer);
-  const key = C.mounted;
-  restoring = { key, tries: 0, got: !store.ui.connected, timer: setTimeout(() => { if (restoring?.key === key) { restoring = null; C.renderLog(); } }, 5000) };
+  const key = mounted;
+  restoring = { key, tries: 0, got: !store.ui.connected, timer: setTimeout(() => { if (restoring?.key === key) { restoring = null; logFns.render(); } }, 5000) };
 }
 /* the oldest item a view had loaded */
 export const from = (sid, agent) => uiS[sid]?.earlier[agent || ""] || null;
 /* a view just mounted shows nothing until its reset: no stale items, no short window first; a view
    that stays on screen over a reconnect keeps what it shows until then */
-export const holding = () => !!restoring && restoring.key === C.mounted && !restoring.got;
-export function resetIn(m) { if (m.reset && restoring && restoring.key === C.mounted) restoring.got = true; }
+export const holding = () => !!restoring && restoring.key === mounted && !restoring.got;
+export function resetIn(m) { if (m.reset && restoring && restoring.key === mounted) restoring.got = true; }
 
 /* ---------- the log: the anchor, the earlier items, open diffs and folds (main.js, transcript.js) ---------- */
 const NOT_ANCHOR = /^(earlier|day:|live|stream|held:)/;
@@ -143,9 +143,9 @@ function scrollTo(a) {
 }
 /* items for the viewed conversation, rendered: finish a restore, or note the earlier items loaded */
 export function items(m) {
-  const s = cur(); if (!s || !C.mounted) return;
-  const A = view && C.agentById(s, view), t = A || s, list = t.items || [], u = sess(s.id);
-  if (!restoring || restoring.key !== C.mounted) {
+  const s = cur(); if (!s || !mounted) return;
+  const A = view && agentById(s, view), t = A || s, list = t.items || [], u = sess(s.id);
+  if (!restoring || restoring.key !== mounted) {
     if (m.prepend && list.length) u.earlier[viewKey()] = list[0].id;
     else if (m.reset) delete u.earlier[viewKey()];
     return;
@@ -154,7 +154,7 @@ export function items(m) {
   if (m.reset && restoring.reset) delete u.earlier[viewKey()]; // a second reset: the file was rewritten, the range loaded is gone
   if (m.reset) restoring.reset = true;
   const want = u.earlier[viewKey()];
-  if (want && list.length && !list.some(i => i.id === want) && (t.total || 0) > list.length && restoring.tries++ < 20) { C.loadEarlier(); return; }
+  if (want && list.length && !list.some(i => i.id === want) && (t.total || 0) > list.length && restoring.tries++ < 20) { logFns.earlier(); return; }
   clearTimeout(restoring.timer); restoring = null;
   scrollTo(u.scroll[viewKey()]);
 }
@@ -178,7 +178,7 @@ export function afterLog() {
   }
 }
 document.addEventListener("scroll", e => {
-  if (e.target.id === "log" && C.mounted && !restoring && current) { sess(current).scroll[viewKey()] = anchor(e.target); changed(); }
+  if (e.target.id === "log" && mounted && !restoring && current) { sess(current).scroll[viewKey()] = anchor(e.target); changed(); }
   else if (e.target.id === "pv-code") changed();
 }, true);
 document.addEventListener("toggle", e => {
@@ -207,21 +207,21 @@ export function changed() {
   timer = setTimeout(flush, now - firstChange > 2000 ? 0 : 300);
 }
 function top() {
-  const code = document.getElementById("pv-code"), find = document.getElementById("pv-find"), pv = C.pv, viewer = C.viewer;
+  const code = document.getElementById("pv-code"), find = document.getElementById("pv-find");
   return {
     current, view: view || null, mode: C.mode, openBg: openBg || null, theme: C.themePref,
     openList: C.openListShown() ? { filter: C.openList.filter } : null,
-    preview: C.previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
+    preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
     viewer: viewer ? (keep => keep.length ? { srcs: keep.map(k => viewer.srcs[k].replace(/([?&])token=[^&]*&?/, "$1")), froms: keep.map(k => viewer.froms[k] || ""), i: Math.max(0, keep.indexOf(viewer.i)) } : null)(viewer.srcs.map((s, k) => k).filter(k => viewer.srcs[k].startsWith("/api/image?"))) : null,
   };
 }
 /* one session's fields; `fresh` collects the pasted images to send with their bytes */
 function sessionNow(sid, fresh) {
-  const u = uiS[sid], mounted = C.mounted, live = mounted && mounted.startsWith(sid + "|") && document.getElementById("msg");
+  const u = uiS[sid], live = mounted && mounted.startsWith(sid + "|") && document.getElementById("msg");
   const d = live ? { text: C.boxValue(live), cursor: [live.selectionStart, live.selectionEnd], atts: C.attachments } : drafts.get(sid);
   const images = d ? d.atts.filter(a => a.id && (stored.has(a.id) || a.data)).map(a => ({ id: a.id, mediaType: a.mediaType, n: a.n })) : [];
   if (d) for (const a of d.atts) if (a.id && !stored.has(a.id) && a.data) fresh.push(a);
-  const steps = [...C.openSteps].filter(k => k.startsWith(sid + "|")).map(k => k.slice(sid.length + 1));
+  const steps = [...openSteps].filter(k => k.startsWith(sid + "|")).map(k => k.slice(sid.length + 1));
   const ids = new Set(requestsOf({ id: sid }).map(r => r.id)), cards = {}, qstate = C.qstate;
   for (const k of Object.keys(qstate)) {
     if (!k.startsWith(sid + ":")) continue;
@@ -245,7 +245,7 @@ export function flush() {
   if (!uiLoaded || !store.ui.connected) return;
   const patch = {}, now = top();
   for (const k of TOP) { const j = JSON.stringify(now[k] ?? null); if (sentTop[k] !== j) { patch[k] = now[k] ?? null; sentTop[k] = j; } }
-  const openSteps = C.openSteps, qstate = C.qstate;
+  const qstate = C.qstate;
   const sids = new Set([...Object.keys(uiS), ...drafts.keys(), ...Object.keys(sentSess), ...[...openSteps].map(k => k.slice(0, k.indexOf("|"))), ...Object.keys(qstate).map(k => k.slice(0, k.indexOf(":"))), ...(current ? [current] : [])]);
   const sessions = {}, fresh = [];
   for (const sid of sids) {
@@ -268,7 +268,6 @@ export function rekey(from, to) {
   if (uiS[from]) { uiS[to] = uiS[from]; delete uiS[from]; }
   if (sentSess[from]) { sentSess[to] = sentSess[from]; delete sentSess[from]; }
   if (drafts.has(from)) { drafts.set(to, drafts.get(from)); drafts.delete(from); }
-  const openSteps = C.openSteps;
   for (const k of [...openSteps]) if (k.startsWith(from + "|")) { openSteps.delete(k); openSteps.add(to + k.slice(from.length)); }
 }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flush(); });

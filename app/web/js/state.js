@@ -3,7 +3,8 @@
    only the viewed conversation. `state` is the backend's (status.ts sessionState): status, since, detail,
    light, tone, word, mark, stopped, needsYou, review, driven. The page decides no status itself.
    This module is the only writer of `current` (the session shown) and `view` (the subagent shown in it,
-   null for the main conversation): everything else calls select() or selectView(). */
+   null for the main conversation): everything else calls select() or selectView(). `mounted` is the
+   view on screen, which transcript.js renderConv sets once it has built that view's frame. */
 /* `layout`: the sidebar's groups, the backend's (layout.ts), replaced whole by `hello`, `layout` and a `session` with `replaces` */
 export const store = { sessions: new Map(), layout: { groups: [], others: [] }, menu: {}, pending: new Map(), ui: { connected: false } };
 /* every session in the server's order, the same objects as in store.sessions */
@@ -11,8 +12,20 @@ export let data = [];
 export let current = null;
 export let view = null;
 
+/* "<sid>|<agent id>" of the view on screen, null for none */
+export let mounted = null;
+export function setMounted(key) { mounted = key || null; }
+/* the 1 s ticker's time (main.js), so every live time in one render agrees */
+export let nowish = Date.now();
+export function tick(now) { nowish = now; }
+
 const syncData = () => { data = [...store.sessions.values()]; };
 const agentIn = (s, id) => (s?.agents || []).find(a => a.id === id);
+/* a session's subagents and forks */
+export const agentsOf = s => s.agents || [];
+export const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
+/* how long a subagent ran, or runs (to the ticker's time) */
+export const agentMs = a => a.start ? (a.finished ? new Date(a.end) : nowish) - new Date(a.start) : 0;
 
 export const cur = () => store.sessions.get(current);
 export const isCurrent = sid => sid === current;

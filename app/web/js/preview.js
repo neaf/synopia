@@ -5,16 +5,29 @@
    top and bottom, / or Cmd+F find, Enter or n the next match (Shift or N the previous). A click outside
    closes it. It always opens at the top. Lines the turn changed get quiet gutter marks (a green bar for added, a red
    mark where lines were removed); the diff is where the change itself shows. */
-const pv = { el: null, want: null, path: null, line: 0, back: null, hits: [], at: -1 };
+import { send } from "./connection.js";
+import { esc } from "./format.js";
+import { classic as C } from "./legacy.js";
+
+export const pv = { el: null, want: null, path: null, line: 0, back: null, hits: [], at: -1 };
 const PV_HTML = /\.html?$/i;
 
 /* the click handler's branch (transcript.js): true when the preview took the click */
-function previewClick(a, e) {
+export function previewClick(a, e) {
   const p = a.dataset.path;
   if (!p || (PV_HTML.test(p) && !e.altKey)) return false;
   pv.want = { path: p, back: a, ...pvChanges(a) };
-  send({ t: "preview", path: p, theme: themeNow() });
+  send({ t: "preview", path: p, theme: C.themeNow() });
   return true;
+}
+/* the file the stored UI state had open (ui-state.js, after a reload): asked again, its find and scroll put back once shown */
+export function restorePreview({ path, scroll, find }) {
+  pv.want = { path, back: null, added: new Set(), cut: new Set(), first: 0, restore: { scroll: +scroll || 0, find: String(find || "") } };
+  send({ t: "preview", path, theme: C.themeNow() });
+}
+function restored(r) {
+  if (r.find) { pvOpenFind(); const q = document.getElementById("pv-q"); q.value = r.find; pvFind(r.find); }
+  document.getElementById("pv-code").scrollTop = r.scroll;
 }
 /* the lines the row's diff changed, in the new file: added lines, and for a deletion the line after it.
    The preview marks them quietly in the gutter, like an editor's change bars; it doesn't scroll to them. */
@@ -49,10 +62,10 @@ function pvBuild() {
   const q = document.getElementById("pv-q");
   q.addEventListener("input", () => pvFind(q.value));
 }
-const previewShown = () => Boolean(pv.el && !pv.el.hidden);
+export const previewShown = () => Boolean(pv.el && !pv.el.hidden);
 
 /* the backend's reply (main.js); one for a file asked before the last is dropped */
-function showPreview(m) {
+export function showPreview(m) {
   if (!pv.want || m.path !== pv.want.path) return;
   if (m.opened) { pv.want = null; return; } // not text: the backend opened it in its app
   if (!pv.el) pvBuild();
@@ -69,12 +82,12 @@ function showPreview(m) {
   const added = want.added || new Set(), cut = want.cut || new Set();
   box.innerHTML = rows.map((h, i) => `<div class="pl${added.has(i + 1) ? " chg" : ""}${cut.has(i + 1) ? " cut" : ""}"><span class="no">${i + 1}</span><span class="tx">${h || " "}</span></div>`).join("");
   pvCloseFind(); pv.el.hidden = false;
-  setMode("normal");
+  C.setMode("normal");
   const code = document.getElementById("pv-code");
   code.scrollLeft = 0;
   code.scrollTop = 0; // just the file, from the top: the diff is where changes show
   pv.el.querySelector(".pv-panel").focus({ preventScroll: true });
-  if (want.restore) uiPreviewRestored(want.restore); // reopened after a reload: its find and scroll (ui-state.js)
+  if (want.restore) restored(want.restore); // reopened after a reload: its find and scroll (restorePreview)
 }
 const pvSize = b => b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 function hidePreview() {
@@ -85,13 +98,13 @@ function hidePreview() {
   if (back && back.isConnected) back.focus({ preventScroll: true });
 }
 /* the theme changed (theme.js): the file shown is asked again in bat's other theme, keeping its marks, scroll and find */
-function previewRetheme() {
+export function previewRetheme() {
   if (!previewShown() || !pv.path) return;
   const rows = [...document.querySelectorAll("#pv-lines .pl")], at = cls => new Set(rows.flatMap((r, i) => r.classList.contains(cls) ? [i + 1] : []));
   const find = document.getElementById("pv-find");
   pv.want = { path: pv.path, back: pv.back, added: at("chg"), cut: at("cut"), first: 0,
     restore: { scroll: document.getElementById("pv-code").scrollTop, find: find.hidden ? "" : document.getElementById("pv-q").value } };
-  send({ t: "preview", path: pv.path, theme: themeNow() });
+  send({ t: "preview", path: pv.path, theme: C.themeNow() });
 }
 
 /* ---------- find: every match marked with the CSS Custom Highlight API (no markup added), the current one stronger ---------- */
@@ -110,14 +123,26 @@ function pvCloseFind() {
   f.hidden = true; document.getElementById("pv-q").value = ""; document.getElementById("pv-count").textContent = "";
   pvClearHits();
 }
+/* The [from, to) of each match of needle in text, ignoring case, in text's own offsets. Each character is
+   lowercased on its own and remembers where it came from, because lowercasing can change a length
+   ("İ" becomes two code units), so offsets in the lowercased text don't fit the text shown. */
+export function findIn(text, needle) {
+  const q = String(needle).toLowerCase(), out = []; if (!q) return out;
+  let hay = "", pos = 0; const from = [], to = []; // for each code unit of hay: the original character's start and end
+  for (const ch of String(text)) {
+    const lo = ch.toLowerCase();
+    for (let k = 0; k < lo.length; k++) { from.push(pos); to.push(pos + ch.length); }
+    hay += lo; pos += ch.length;
+  }
+  for (let i = hay.indexOf(q); i >= 0; i = hay.indexOf(q, i + q.length)) out.push([from[i], to[i + q.length - 1]]);
+  return out;
+}
 function pvFind(text) {
   pvClearHits();
-  const needle = text.toLowerCase(), count = document.getElementById("pv-count");
-  if (!needle) { count.textContent = ""; return; }
-  for (const tx of document.querySelectorAll("#pv-lines .tx")) {
-    const hay = tx.textContent.toLowerCase();
-    for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) pv.hits.push(pvRange(tx, i, i + needle.length));
-  }
+  const count = document.getElementById("pv-count");
+  if (!text) { count.textContent = ""; return; }
+  for (const tx of document.querySelectorAll("#pv-lines .tx"))
+    for (const [from, to] of findIn(tx.textContent, text)) pv.hits.push(pvRange(tx, from, to));
   if (pvHL) CSS.highlights.set("pv-find", new Highlight(...pv.hits));
   count.textContent = pv.hits.length ? "" : "No match";
   if (pv.hits.length) pvStep(1, true);

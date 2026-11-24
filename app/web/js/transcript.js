@@ -1,14 +1,20 @@
-/* Transcript: tool lines, files changed, subagent waves, the items, the status lines and renderConv (split from prototype/app.html). */
+/* Transcript: the session view (requirements R5): its frame, the header, and the log as keyed blocks, as the
+   Claude Code CLI shows a conversation: prompts, Claude's text, tool steps and runs, subagent waves and
+   reports, files changed, the turn's "Worked for" line, the live line, queued and held messages, `!`
+   commands. renderLog patches the blocks by key, so open steps, diffs and folds stay as they are. */
+import { store, current, view, cur, isViewed, selectView, requestsOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs } from "./state.js";
+import { send, act } from "./connection.js";
+import { classic as C } from "./legacy.js";
+import * as ui from "./ui-state.js";
+import { openSteps } from "./ui-state.js";
+import { esc, took, hhmm, day, live, age, until } from "./format.js";
+import { md, parseAnswers, parseNotes } from "./md.js";
+import { ind, sessionMarkKey } from "./marks.js";
+import { bgOf, bgState, openBg, setOpenBg, renderRail } from "./rail.js";
+import { thumbsHTML } from "./images.js";
+import { previewClick } from "./preview.js";
+
 /* ---------- conversation, rendered like the CLI ---------- */
-function took(ms) {
-  const m = Math.round(ms / 60000);
-  if (m < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
-  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-/* times follow macOS's 12- or 24-hour setting, which the app passes in (the web view's locale can't see it) */
-const hourOpts = () => typeof window.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: window.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {};
-const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...hourOpts() });
-const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 /* a foreground Bash or Agent still running: b, b can send it to the background, and the first b marks it (R9) */
 const isFg = t => !!t.fg && t.state === "running";
@@ -27,8 +33,10 @@ const imgFrom = t => t.name === "Read" && t.obj ? t.obj : `${toolName(t)}${t.obj
 /* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
    The page has the result's first 20 lines (4 KB at most); "Show all" asks the server for the rest
    (`toolOutput`), which reads it again from the transcript file. Open steps are kept by item id. */
-const openSteps = new Set(), fullOut = new Map();
+const fullOut = new Map();
 let stepAsked = null; // the step whose full result was asked for, until the reply (or a toast)
+/* a toast came instead of the reply (a failed toolOutput, main.js): "Show all" may ask again */
+export function clearStepAsked() { stepAsked = null; }
 const stepKey = id => `${current}|${view || ""}|${id}`;
 const hasStep = t => !!(t.input || t.out);
 const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
@@ -78,7 +86,7 @@ function showAll(id) {
   if (stepAsked === key) return;
   stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
 }
-function applyToolOutput(m) {
+export function applyToolOutput(m) {
   const key = `${m.sid}|${m.agent || ""}|${m.toolUseId}`;
   if (stepAsked === key) stepAsked = null;
   fullOut.set(key, String(m.text ?? ""));
@@ -138,14 +146,13 @@ function diffHTML(p) {
   if (p.cut) out.push(`<div class="dgap">⋯ diff cut at 400 lines</div>`);
   return out.join("");
 }
-/* files a browser can show get an "open" link; the live app would open any file with its default app */
-const OPENABLE = /\.(html?|svg|png|jpe?g|gif|webp|pdf)$/i;
+/* every file is a link: a click sends its path to the preview or to `open` (the click handler at the end),
+   so the href is only for the status bar and copying */
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
-const openable = f => absOf(f).startsWith("/");
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
 /* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
    shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
-function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
+export function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
   let fileSeq = 0;
   more = Math.max(0, +more || 0);
   if (!patches.length && !more) return "";
@@ -173,19 +180,7 @@ function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open
 }
 
 /* ---------- subagents ---------- */
-const LOADED = Date.now();
-const BASE = window.EXPORTED_AT || LOADED;
-let NOWISH = Date.now();
-const liveNow = () => Date.now();
-function tookLive(ms) {
-  const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
-  return h ? `${h}h ${m}m` : m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
-}
-const live = (startIso, ms) => `<span data-live="${esc(startIso)}">${tookLive(ms)}</span>`;
-const agentsOf = s => s.agents || [];
-const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
 const agentByTool = (s, tid) => agentsOf(s).find(a => a.toolUseId === tid);
-const agentMs = a => a.start ? (a.finished ? new Date(a.end) : NOWISH) - new Date(a.start) : 0;
 const agentType = a => a.fork ? "fork" : (a.type || "agent");
 function waveHTML(tools, s) {
   const rows = tools.map(t => ({ t, a: agentByTool(s, t.toolUseId) }));
@@ -195,7 +190,7 @@ function waveHTML(tools, s) {
   const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : a.review ? "review" : (a.fork ? "s_fork" : "s_sub");
   // in a wave the name carries the b, b mark (R9); a single line carries it on the whole line
   const nameOf = (t, a, mark = fgMark(t)) => a ? `<button class="alink"${mark} data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span${mark}>${esc(t.obj)}</span>`;
-  const time = a => a ? (busy(a) ? live(a.start, a.finished ? NOWISH - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
+  const time = a => a ? (busy(a) ? live(a.start, a.finished ? nowish - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
     return `<div class="ln agent one"${fgMark(t)}><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a, "")} <span class="adur">${time(a)}</span></div></div>`;
@@ -213,7 +208,7 @@ function waveHTML(tools, s) {
 
 /* The log as keyed blocks: [key, html], one root element each. Keys come from item ids, so renderLog
    can keep the blocks that didn't change and replace the ones that did. */
-function itemsHTML(items, sessionBusy, s) {
+export function itemsHTML(items, sessionBusy, s) {
   const out = []; let run = []; let turnStart = null; let turnKey = null; let turnMs = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
   /* title changes (R5.x) wait for the next block: one between turns goes after the turn's "Worked for" line */
   let titles = [];
@@ -257,12 +252,13 @@ function itemsHTML(items, sessionBusy, s) {
       out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
-      const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
+      /* the transcript's question (a card's ask is always pending with its request, above) */
+      const picked = parseAnswers(it.answer);
       out.push([it.id, `<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`]);
       if (it.state === "pending") { out.push([`na:${it.id}`, notAnswered()]); continue; }
       if (it.state === "answered") {
-        const notes = it.kind ? [] : parseNotes(it.answer); // your note on an answer stays visible (R6.4)
+        const notes = parseNotes(it.answer); // your note on an answer stays visible (R6.4)
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}${notes[i] ? `<span class="dim">, note: ${esc(notes[i])}</span>` : ""}</p>`).join("") : md(it.answer);
         lastTs = it.ts; prompt(txt, it.ts, `ans:${it.id}`); continue;
       }
@@ -299,7 +295,7 @@ const bangLiveOf = s => { const b = s.bang; return b && !s.items.some(i => i.id 
 const bangLiveHTML = s => { const b = bangLiveOf(s); return b ? [[`bang:${b.id}`, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b)]] : []; };
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
-const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
+export const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
 /* messages you sent while the turn runs, oldest first: your prompt's band, dimmed, with the moving
    queued mark, below the live line (what's working began before it), as the CLI shows queued input. Once its prompt item is in, that shows instead. */
 const waitingOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
@@ -335,47 +331,33 @@ function phaseText(s) {
   if (st === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";
 }
-/* an age that the 1 s timer keeps current */
-const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
-/* a countdown to a time (the rate-limit retry) that the same timer keeps current: "in 38s", then "now" */
-const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
-const until = at => `<span data-until="${esc(at)}">${esc(left(at))}</span>`;
 const queuedText = n => `${n === 1 ? "Your message is" : `${esc(n)} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
-/* background work still running, for "Claude finished …, background work still running" */
-const bgRunning = s => agentsOf(s).some(a => !a.finished) || bgOf(s).some(b => bgState(b) === "running");
-function statusLine(s) {
+/* The dock's line when Claude needs you without a card (card.js renderCard): signed out, or a red state
+   whose request isn't here. Working and your turn have no status line (R5.5). */
+export function statusLine(s) {
   const st = s.state.light;
-  const last = [...s.items].reverse();
-  if (st === "green") {
-    const t = last.find(x => x.k === "tool");
-    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${objOf(t)}` : ""}</span></div>`;
-  }
   if (s.state.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
-  if (st === "red") {
-    const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[s.state.needsYou] || "Claude is waiting for a permission";
-    return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
-  }
-  const w = s.state.word, at = s.state.since, why = s.state.status === "failed" ? `The last turn failed ${age(at)} ago. Send a message to try again` : s.state.stopped ? "You interrupted it" : `Claude finished ${age(at)} ago`;
-  return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${w}</b><span>${why}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
+  if (st !== "red") return "";
+  const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[s.state.needsYou] || "Claude is waiting for a permission";
+  return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
 }
 
 /* ---------- the session view, rendered per panel: header, log, card (in the dock), rail ---------- */
-const conv = document.getElementById("conv");
-let mounted = null; // "<sid>|<agent id>" of the view on screen
+export const conv = document.getElementById("conv");
 /* Builds the view's frame when the session or the subagent changed (the composer is made here, once
    per view, so data never resets typing, focus or attachments), then renders every panel. */
-function renderConv() {
+export function renderConv() {
   const s = cur();
   if (!s) {
-    mounted = null;
+    setMounted(null);
     conv.innerHTML = `<div class="missing"><p>${store.ui.connected ? "No open sessions." : "Connecting to the Synopia backend…"}</p></div>`;
     return;
   }
   if (view && !agentById(s, view)) selectView(null);
   const key = `${s.id}|${view || ""}`;
   if (mounted !== key) {
-    uiLeave(); // the draft of the view going away is kept (ui-state.js)
-    mounted = key;
+    ui.leave(); // the draft of the view going away is kept (ui-state.js)
+    setMounted(key);
     conv.innerHTML = `
     <header class="c-head panel"></header>
     <div class="log panel" id="log"><div class="log-inner"></div></div>
@@ -385,32 +367,32 @@ function renderConv() {
         <span class="g">❯</span><textarea id="msg" rows="1" aria-label="Message"></textarea>
       </div>
     </div></div>`;
-    lastCard = null;
-    mountComposer(s);
-    requestView(s.id, view);
-    uiExpectReset(); // its stored scroll goes on once the items are in
+    C.resetCard(); // the new dock has no card yet (card.js)
+    C.mountComposer(s);
+    ui.requestView(s.id, view);
+    ui.expectReset(); // its stored scroll goes on once the items are in
   }
-  renderHeader(); renderLog(); renderCard(); renderRail();
+  renderHeader(); renderLog(); C.renderCard(); renderRail();
 }
-function renderHeader() {
+export function renderHeader() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
   conv.querySelector(".c-head").innerHTML = A
     ? `<h2 class="c-title" title="${esc(A.description)}">${esc(A.description)}</h2>
         <p class="c-now">${A.finished ? `${A.stopped ? "Stopped" : "Finished"}, ${took(agentMs(A))}` : `Running, ${live(A.start, agentMs(A))}`}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
         <p class="c-meta">Subagent of <button class="link" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button>. Its report goes back to that session.</p>
-      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
+      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(C.modelName())}</button></div>`
     : `<h2 class="c-title" title="${esc(s.title)}">${esc(s.title)}</h2>
         <p class="c-now"${s.now ? ` title="${esc(s.now)}"` : ""}>${isEmpty(s) || !s.now ? "&nbsp;" : `Now: ${esc(s.now)}`}</p>
         <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
-      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`;
+      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(C.modelName())}</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
-  paintBash(s); // the placeholder: the message's, or bash mode's (composer.js)
+  C.paintBash(s); // the placeholder: the message's, or bash mode's (composer.js)
 }
 /* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
 const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
 function logEntries(s, A) {
-  const items = A ? (A.items || []) : withPending(s.items, requestsOf(s), extAsk(s));
+  const items = A ? (A.items || []) : C.withPending(s.items, requestsOf(s), C.extAsk(s));
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
@@ -428,7 +410,7 @@ function logEntries(s, A) {
 const EARLIER = 160;
 let earlierAsked = null; // "<sid>|<agent>|<before>" until its reply, so a second click sends nothing
 const earlierHTML = hidden => `<p class="earlier"><button data-earlier>Show ${Math.min(EARLIER, +hidden)} earlier</button>${hidden > EARLIER ? ` (${+hidden} more)` : ""}</p>`;
-function loadEarlier() {
+export function loadEarlier() {
   const s = cur(); if (!s || !mounted) return false;
   const A = view && agentById(s, view), t = A || s, items = t.items || [];
   if (!items.length || (t.total || 0) <= items.length) return false;
@@ -437,7 +419,7 @@ function loadEarlier() {
   return true;
 }
 /* Renders the log after a prepend so the block you were reading stays where it was on screen. */
-function renderLogKeepingPlace() {
+export function renderLogKeepingPlace() {
   earlierAsked = null;
   const log = document.getElementById("log"); if (!log) return renderLog();
   const inner = log.querySelector(".log-inner"), top = log.getBoundingClientRect().top;
@@ -451,16 +433,17 @@ function renderLogKeepingPlace() {
   else log.scrollTop = was + log.scrollHeight - height; // the block was regrouped: keep the distance from the end
 }
 /* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
-function renderLog() {
-  const s = cur(); if (!s || !mounted || uiHolding()) return; // a view just mounted waits for its reset (ui-state.js)
+export function renderLog() {
+  const s = cur(); if (!s || !mounted || ui.holding()) return; // a view just mounted waits for its reset (ui-state.js)
   const log = document.getElementById("log");
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   patchChildren(log.querySelector(".log-inner"), logEntries(s, view && agentById(s, view)));
-  uiAfterLog(); // open diffs and folds stay open (ui-state.js)
+  ui.afterLog(); // open diffs and folds stay open (ui-state.js)
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
-/* live times tick in place, so they don't count as a change */
-const still = html => html.replace(/(<span data-(?:live|age)="[^"]*">)[^<]*/g, "$1");
+/* A block's signature: live times, ages and countdowns tick in place (format.js live, age, until; the
+   ticker in main.js), so their text doesn't count as a change and the block isn't replaced each second. */
+export const still = html => html.replace(/(<span data-(?:live|age|until)="[^"]*">)[^<]*/g, "$1");
 function patchChildren(parent, entries) {
   const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
   const seen = new Set(); let prev = null;
@@ -506,8 +489,8 @@ conv.addEventListener("click", e => {
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) setOpenBg(null); selectView(null); renderConv(); } // leaving a subagent folds its card
   else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { setOpenBg(openBg === t.dataset.bg ? null : t.dataset.bg); renderRail(); }
-  else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
-  else if (t.id === "model-label") openModelPicker();
+  else if (t.dataset.unattach) C.unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
+  else if (t.id === "model-label") C.openModelPicker();
 });
 /* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */
 conv.addEventListener("toggle", e => {

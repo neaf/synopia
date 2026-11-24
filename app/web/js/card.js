@@ -90,7 +90,6 @@ function qaHTML(s, a) {
     const editing = st.target === qi && st.noteRow == null;
     const noting = st.target === qi && st.noteRow != null ? st.noteRow : -1, note = (st.notes || {})[qi] || "";
     const otherL = q.otherLabel || "Something else", otherH = q.otherHint || "Press i to type your own answer";
-    const noteHint = q.kind === "permission" ? "" : "";
     const rows = [...q.opts.map(([l, d], oi) => ({ l, d, oi, on: picked.includes(l), noting: noting === oi, note: picked.includes(l) && !q.multi ? note : "" })), { l: otherL, d: own ? `“${own}”` : otherH, oi: q.opts.length, on: !!own || (st.otherPicked || {})[qi], other: true, editing }];
     return `<div class="acc open">${n > 1 ? `<div class="acc-h">${mark}<span class="hd">${hd}</span></div>` : ""}<div class="acc-b">
       ${q.pre || ""}${q.q ? `<p class="qt md">${md(q.q)}</p>` : ""}<div class="opts">${rows.map(r => {
@@ -128,7 +127,6 @@ function qaPick(s, a) {
   if (q.multi) st.picks[st.qi] = cur.includes(l) ? cur.filter(x => x !== l) : [...cur, l];
   else st.picks[st.qi] = [l];
 }
-const answerText = a => a.plainAnswer || "";
 /* The answer goes to the server, which turns it into the canUseTool result (cards.ts): one shape per card. */
 function cardAnswer(st, a) {
   const pick = (st.picks[0] || [])[0], own = st.own[0] || "", after = p => own.startsWith(p + ": ") ? own.slice(p.length + 2) : "";

@@ -8,6 +8,8 @@ import { tap, acting } from "./connection.js";
 import { MARKS, ind } from "./marks.js";
 import { tweens } from "./sidebar.js";
 import * as ui from "./ui-state.js";
+import { renderLog } from "./transcript.js";
+import { pv, previewShown } from "./preview.js";
 import { classic as C } from "./legacy.js";
 
 const copy = x => x === undefined || x === null ? null : structuredClone(x);
@@ -19,7 +21,7 @@ let spied = null; // { sent, got } since spy()
 const readiness = () => ({
   connected: state.store.ui.connected, uiLoaded: ui.loaded(), restoring: ui.isRestoring(),
   rows: document.querySelectorAll("#groups .row").length, box: !!document.getElementById("msg"),
-  current: state.current, mounted: C.mounted,
+  current: state.current, mounted: state.mounted,
 });
 
 export function installTestApi({ inject, render }) {
@@ -29,7 +31,7 @@ export function installTestApi({ inject, render }) {
     current: () => state.current, // the shown session's id
     view: () => state.view, // the subagent shown, null for the main conversation
     mode: () => C.mode, // "normal" | "insert"
-    mounted: () => C.mounted, // "<sid>|<agent>" of the view on screen
+    mounted: () => state.mounted, // "<sid>|<agent>" of the view on screen
     restoring: () => ui.isRestoring(), // a restored view still waits for its items
     cur: () => copy(state.cur()),
     data: () => copy(state.data), // every session, in the server's order
@@ -50,13 +52,13 @@ export function installTestApi({ inject, render }) {
     prompt: () => C.interruptAsk ? "interrupt" : C.bgAsk ? "background" : C.closeAsk ? "close" : null, // the Esc, b or x prompt shown
     card: sid => { const s = state.store.sessions.get(sid ?? state.current), a = s && C.pendingAsk(s); return a ? copy(C.qstate[C.askKey(s, a)]) : null; },
     cards: () => copy(C.qstate), // every card's state, by "<sid>:<request id>"
-    preview: () => ({ shown: C.previewShown(), path: C.pv.path }),
+    preview: () => ({ shown: previewShown(), path: pv.path }),
     openList: () => ({ shown: C.openListShown(), filter: C.openList.filter }),
     marks: () => Object.keys(MARKS), // every mark kind
     mark: (kind, size) => ind(kind, size), // a mark's markup
     /* renders on demand, as a server message would: for checks that a render keeps something */
     render: (...parts) => { render(...parts); }, // "side", "conv", "header", "log", "card", "rail"
-    redraw: () => { document.querySelectorAll("#log .log-inner > *").forEach(e => { e._sig = ""; }); C.renderLog(); }, // every log block replaced
+    redraw: () => { document.querySelectorAll("#log .log-inner > *").forEach(e => { e._sig = ""; }); renderLog(); }, // every log block replaced
     resetTweens: () => { tweens.clear(); }, // the sidebar forgets its sub-line tweens
   });
 }

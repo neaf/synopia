@@ -111,7 +111,7 @@ Code: `cards.ts`. Test: `cards.test.ts` (partly). Source: live run S3-1, spike r
 - One name can appear twice; the `builtin` row wins, as `/name` runs that one.
 - Description suffixes: skills end with `(user)`, plugin skills start with `(<plugin-name>)`, workflows end with `(dynamic workflow)`, a removed built-in reads `(removed)`.
 - Models: effort lists differ per model (one has none, some lack `xhigh`). `default` carries its own description naming the current default. Two models have `(Default)` in the display name. `resolvedModel` lets a transcript's full model id match an alias row.
-- Model ids are Bedrock inference-profile ids: a region prefix (`eu.anthropic.`), an optional date and an optional `-v1:0`. `modelLabel` in `md.js` 13-27 strips them.
+- Model ids are Bedrock inference-profile ids: a region prefix (`eu.anthropic.`), an optional date and an optional `-v1:0`. `modelLabel` in `format.js` strips them (tested in `app/web/test/format.test.js`).
 
 Source: capture by `spike/dump_menu.mjs` (tag `rearch-base`; `prototype/menu.js` keeps its shape with invented user skills), live run S5-3.
 

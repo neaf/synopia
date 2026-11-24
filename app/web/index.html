@@ -25,17 +25,13 @@
 
 <!-- Classic scripts sharing one global scope, in this order: later files use earlier ones at load time.
      Then the module entry, main.js, which runs after them: the store, the socket to the backend (/ws,
-     authenticated with ?token=), the UI-state restore, the marks, the sidebar and its drag and drop, and the
-     background panel are ES modules, reached from the classic files
-     through window accessors (js/legacy.js). The CSP comes as a header from server.ts. -->
-<script src="js/md.js"></script>
-<script src="js/images.js"></script>
-<script src="js/transcript.js"></script>
+     authenticated with ?token=), the UI-state restore, the marks, the sidebar and its drag and drop, the
+     background panel, the transcript with its markdown, images and file preview are ES modules, reached
+     from the classic files through window accessors (js/legacy.js). The CSP comes as a header from server.ts. -->
 <script src="js/card.js"></script>
 <script src="js/composer.js"></script>
 <script src="js/keys.js"></script>
 <script src="js/open-list.js"></script>
-<script src="js/preview.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -2,21 +2,19 @@
    (backend layout.ts): the page draws the one it got (state.js store.layout) and sends intents, as acked
    actions: `moveSession` and `newGroup` from a drop (dnd.js), `renameGroup` from the name field. Nothing
    here changes the layout itself, so a refused or unsent intent leaves the sidebar as the backend has it. */
-import { store, data, current, select } from "./state.js";
+import { store, data, current, select, agentsOf, agentMs } from "./state.js";
+import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { classic as C } from "./legacy.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
 import { lineTweens, inGrace } from "./tween.js";
 import { bgOf, bgState, scanGrace, setOpenBg } from "./rail.js";
 
-const esc = s => C.esc(s);
-const agentsOf = s => s.agents || [];
 /* the sessions in sidebar order (J/K, keys.js) */
 export let KEYS = [];
 
 /* one session row (exported for the escape test) */
 export function rowHTML(s) {
-  const { took, live, agentMs } = C;
   return `<button class="row" data-id="${esc(s.id)}" data-state="${s.state.tone}" aria-current="${s.id === current}">
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
@@ -46,7 +44,7 @@ function bgLine(s) {
 }
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
 function rowWord(s) {
-  const { age, until } = C, st = s.state, d = st.detail, n = d.queued;
+  const st = s.state, d = st.detail, n = d.queued;
   if (st.light === "red") return `${esc(st.word)}, ${age(st.since)}`;
   if (st.status === "busy") return n ? `Working, ${esc(n)} message${n > 1 ? "s" : ""} queued` : esc(st.word);
   if (st.status === "compacting") return "Compacting context";

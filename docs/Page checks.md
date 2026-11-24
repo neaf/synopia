@@ -6,7 +6,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 
 | Command | Runs |
 |---|---|
-| `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script; one pass or fail line each |
+| `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script and the page unit tests (`node --test app/web/test/*.test.js`); one pass or fail line each |
 | `app/check.sh --page` | the above, then `run.sh all` (22 suites); four pass lines |
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
 | `app/web/dev/cdp/run.sh all` | every suite one after the other, a table of suite and result, failures under it; each suite's full output stays in the folder it prints |
@@ -147,6 +147,12 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 - Switch views the way a user does: click `#conv [data-agent="<id>"]` for a subagent, `#conv [data-back]` for the main conversation, a `#groups .row` for a session.
 - Open things as a user does: `#open` for the Open list, `#theme` for the theme (Alt-click follows the system), a clicked `a[data-path]` for the file preview and a clicked `.thumb[data-full-src]` for the image viewer. Both are document-level click handlers (`transcript.js`, `images.js`), so a link or thumbnail the check adds works too.
 - The protocol has no message that drops a background entry or a subagent. `tween` and `motion` inject a `session` message with the shorter list: `inject` skips the schema check, and `applySession` copies every field it gets (`state.js`).
+
+## Page unit tests
+
+`app/web/test/*.test.js` run the page modules' pure parts in Node: `format.test.js` (escaping, durations, clocks, the model label), `md.test.js` (markdown, answer text), `escape.test.js` (every HTML builder with hostile text), `preview.test.js` (find offsets), `transcript.test.js` (block signatures, how a turn ends). `app/check.sh` runs them in its `web` line.
+- `format.js` and `md.js` touch no browser global and import directly. A module that adds listeners or reads `#conv` when it loads needs `import "./stub-dom.js"` first: inert stand-ins of `document`, `window`, `location` (`?token=t`) and the rest. Static imports run in order, so the stub comes before the modules.
+- `card.js` is still a classic script: `escape.test.js` runs it in a `vm` context holding the module exports it reads (`esc`, `md`, `ind`, `age`, the store). `build-proto-fixture.ts` does the same with `esc`.
 
 ## Backend tests
 

@@ -59,11 +59,11 @@ export function bgMarkKey(x) {
 /* Every running mark keeps its phase when the page rebuilds it (docs/WKWebView and AppKit.md). A rebuilt
    element's CSS animation starts from zero, so each mark animation's startTime is pinned to the document
    timeline's origin: its phase depends only on the clock, a rebuilt mark continues where it was, and all
-   marks turn in step. Only mark animations (.ind and the spinner) are touched; layout tweens keep their own timing. */
+   marks turn in step. Only mark animations (inside .ind) are touched; layout tweens keep their own timing. */
 function syncMarks() {
   for (const a of document.getAnimations()) {
     const t = a.effect && a.effect.target;
-    if (!(a instanceof CSSAnimation) || !t || !t.closest || !t.closest(".ind, .spinner")) continue;
+    if (!(a instanceof CSSAnimation) || !t || !t.closest || !t.closest(".ind")) continue;
     if (a.startTime !== 0) a.startTime = 0;
   }
 }

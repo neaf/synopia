@@ -48,14 +48,21 @@ else
   rm -rf "$bin"
 fi
 
-# Page scripts: each parses as index.html loads it (classic or module), and module imports resolve
-if node "$app"/web/dev/check-web.mjs >"$out" 2>&1; then
-  read -r n c m < <(tail -1 "$out")
-  echo "web: pass ($n files: $c classic, $m modules)"
-else
+# Page scripts: each parses as index.html loads it (classic or module), and module imports resolve; then
+# the page's unit tests (app/web/test: the pure parts of the modules, in Node)
+if ! node "$app"/web/dev/check-web.mjs >"$out" 2>&1; then
   failed=1
   echo "web: fail"
   sed '$d' "$out" | sed 's/^/  /' | head -20
+else
+  read -r n c m < <(tail -1 "$out")
+  if node --test --test-reporter=tap "$app"/web/test/*.test.js >"$out" 2>&1; then
+    echo "web: pass ($n files: $c classic, $m modules; $(sed -n 's/^# pass //p' "$out" | tail -1) tests)"
+  else
+    failed=1
+    echo "web: fail ($(sed -n 's/^# fail //p' "$out" | tail -1) failing tests)"
+    grep -E '^ *not ok ' "$out" | sed -E 's/^( *)not ok [0-9]+ - /\1  /'
+  fi
 fi
 
 # Page checks: headless Chrome against the scripted SDK, each in its own Chrome and backend

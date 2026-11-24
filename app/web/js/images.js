@@ -4,11 +4,14 @@
    images load from GET /api/image (the backend reads the record line again); pasted ones are object URLs.
    The size comes from the item (the backend reads the image header); when it doesn't, the image takes its
    own shape while it loads (app.css), and its size is set as soon as the browser has read the header. */
+import { TOKEN } from "./connection.js";
+import { esc } from "./format.js";
+
 const imageSizes = new Map(); // src -> [w, h], once known, so a redrawn block keeps the shape
 const failedImages = new Set(); // src that gave a 404 (file gone or rewritten): a quiet tile instead
-const imageUrl = (sid, agent, ref) => `/api/image?token=${encodeURIComponent(TOKEN)}&sid=${encodeURIComponent(sid)}${agent ? `&agent=${encodeURIComponent(agent)}` : ""}&ref=${encodeURIComponent(ref)}`;
+export const imageUrl = (sid, agent, ref) => `/api/image?token=${encodeURIComponent(TOKEN)}&sid=${encodeURIComponent(sid)}${agent ? `&agent=${encodeURIComponent(agent)}` : ""}&ref=${encodeURIComponent(ref)}`;
 /* from: where the image came from, named in the viewer (a Read's file path, a tool, "your message") */
-function thumbHTML(src, w, h, label, from = "") {
+export function thumbHTML(src, w, h, label, from = "") {
   const [iw, ih] = imageSizes.get(src) || [w, h];
   const sized = iw > 0 && ih > 0, size = sized ? ` style="--iw:${+iw};--ih:${+ih}"` : "";
   if (failedImages.has(src)) return `<span class="thumb gone${sized ? " sized" : ""}"${size} title="The image is no longer in the transcript file">Image gone</span>`;
@@ -16,7 +19,7 @@ function thumbHTML(src, w, h, label, from = "") {
 }
 /* one row of thumbnails (a prompt's, a step's or a whole run's): the viewer steps through that row.
    imgs: [{ ref, w, h, from? }]; from names the source of the images that don't carry their own */
-function thumbsHTML(imgs, sid, agent, from = "") {
+export function thumbsHTML(imgs, sid, agent, from = "") {
   if (!imgs || !imgs.length) return "";
   return `<div class="thumbs">${imgs.map((m, i) => thumbHTML(imageUrl(sid, agent, m.ref), m.w, m.h, `Image ${i + 1} of ${imgs.length}`, m.from || from)).join("")}</div>`;
 }
@@ -30,7 +33,11 @@ function sizeThumb(b, im) {
 let sizing = 0;
 function sizeWaiting() {
   sizing = 0;
-  const waiting = [...document.querySelectorAll("button.thumb:not(.sized) > img")].filter(im => !sizeThumb(im.parentElement, im));
+  // an image that failed while off the document never reached the error listener below: it ends complete with no pixels
+  const waiting = [...document.querySelectorAll("button.thumb:not(.sized) > img")].filter(im => {
+    if (im.complete && !im.naturalWidth) { failThumb(im.parentElement); return false; }
+    return !sizeThumb(im.parentElement, im);
+  });
   if (waiting.length) sizing = requestAnimationFrame(sizeWaiting);
 }
 new MutationObserver(() => { if (!sizing && document.querySelector("button.thumb:not(.sized)")) sizing = requestAnimationFrame(sizeWaiting); })
@@ -43,10 +50,13 @@ document.addEventListener("load", e => {
 document.addEventListener("error", e => {
   const im = e.target, b = im.parentElement;
   if (im.tagName !== "IMG" || !b || !b.classList.contains("thumb")) return;
+  failThumb(b);
+}, true);
+function failThumb(b) {
   failedImages.add(b.dataset.fullSrc);
   const tpl = document.createElement("template"); tpl.innerHTML = thumbHTML(b.dataset.fullSrc, 0, 0, "");
   const tile = tpl.content.firstElementChild; tile.style.cssText = b.style.cssText; if (b.classList.contains("sized")) tile.classList.add("sized"); b.replaceWith(tile);
-}, true);
+}
 
 /* ---------- the viewer ----------
    Opens fit to the window, never scaled up. A click on the image, z or 0 switch between fit and 100%
@@ -54,14 +64,13 @@ document.addEventListener("error", e => {
    stays under the pointer. At 100% a larger image pans by dragging, scrolling and the arrow keys.
    ← → (at fit) and j k (always) step through the row the thumbnail is in, stopping at its ends.
    Esc or a click outside the image closes it. */
-let viewer = null; // { srcs, froms, i, el, full, back }
-const viewerShown = () => !!viewer;
+export let viewer = null; // { srcs, froms, i, el, full, back }
 function openViewer(thumb) {
   const row = [...thumb.closest(".thumbs").querySelectorAll(".thumb[data-full-src]")];
   showViewer(row.map(b => b.dataset.fullSrc), row.indexOf(thumb), row.map(b => b.dataset.from || ""));
 }
 /* the viewer on these images at i (also how a reload puts it back, ui-state.js) */
-function showViewer(srcs, i, froms = []) {
+export function showViewer(srcs, i, froms = []) {
   closeViewer();
   const el = document.createElement("div");
   el.className = "viewer"; el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.tabIndex = -1;
@@ -147,9 +156,11 @@ document.addEventListener("click", e => {
   if (!t) return;
   e.preventDefault(); e.stopPropagation(); openViewer(t);
 }, true);
-/* while it shows, the viewer has every key: nothing reaches the modes, the cards or the session keys */
+/* while it shows, the viewer has every key: nothing reaches the modes, the cards or the session keys. On
+   window in the capture phase, so it comes before the classic scripts' document listeners (the Open list's),
+   which were added before this module ran; the preview's comes first (ui-state.js imports it first). */
 const PAN = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-document.addEventListener("keydown", e => {
+window.addEventListener("keydown", e => {
   if (!viewer) return;
   if (e.metaKey && !(e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight"))) return; // ⌘C, ⌘Q stay the app's
   e.preventDefault(); e.stopImmediatePropagation();

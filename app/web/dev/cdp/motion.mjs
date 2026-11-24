@@ -1,6 +1,6 @@
 // Motion and mark geometry (R8.1, R8.2, R8.5, R8.6), on the scripted SDK.
 // Draws every mark in marks.js's table in the three colour sets (light panel, dark sidebar, open row), then:
-// every running mark (CSS animations, anything in a mark, the running bar, the spinner) is linear, infinite, never alternates and never animates opacity; it moves only
+// every running mark (CSS animations, anything in a mark) is linear, infinite, never alternates and never animates opacity; it moves only
 // shapes; the sidebar sub-line tween (R8.1) is one run, height then a linear fade, and none with reduced motion; with prefers-reduced-motion: reduce (CDP emulation) nothing
 // plays and every mark keeps its painted size; squares stay square at 9 to 64 px; marks centre in the sidebar
 // box and on the transcript's ● gutter. Also reads app.css for words the rules forbid.
@@ -20,7 +20,7 @@ const decls = (css.match(/\banimation(-timing-function|-direction)?\s*:[^;}]*/g)
 const badWord = /\bease(-in|-out|-in-out)?\b|\balternate\b|\bpulse\b|\bblink\b/i;
 check('app.css animations have no ease, alternate, pulse or blink', !badWord.test(decls) && !/@keyframes\s+[\w-]*(pulse|blink)/i.test(css), String(decls.match(badWord)));
 const frames = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})*)\s*\}/g)];
-check('app.css keyframes found', frames.length > 5, String(frames.length));
+check('app.css keyframes found, every one parsed', frames.length > 0 && frames.length === (css.match(/@keyframes\b/g) || []).length, String(frames.length));
 check('no keyframe animates opacity, visibility or a colour', frames.every((f) => !/opacity|visibility|color|background-color|fill:|stroke:/.test(f[2])), frames.filter((f) => /opacity|visibility|color|fill:|stroke:/.test(f[2])).map((f) => f[1]).join(' '));
 // a running shell comes to a row that has no background line, then goes (as a server message would put it)
 const tweenOf = () => `(async () => { const row = [...document.querySelectorAll('#groups .row')].find(r => !r.querySelector('[data-line="bg"]')), s = __synopia.data().find(s => s.id === row.dataset.id);
@@ -46,10 +46,10 @@ await ev(`(() => {
 await sleep(400);
 
 // what moves, and how
-// running things: every CSS animation, and anything moving in a mark, the running bar or the spinner
-const anims = await ev(`document.getAnimations().filter(a => a.playState === 'running' && (a.animationName || a.effect.target.closest('.ind, .bar.st-running, .spinner'))).map(a => {
+// running things: every CSS animation, and anything moving in a mark (the page draws every running thing as a mark)
+const anims = await ev(`document.getAnimations().filter(a => a.playState === 'running' && (a.animationName || a.effect.target.closest('.ind'))).map(a => {
   const t = a.effect.getComputedTiming(), el = a.effect.target, kf = a.effect.getKeyframes();
-  return { name: a.animationName, el: el.tagName.toLowerCase() + '.' + (el.getAttribute('class') || ''), inMark: !!el.closest('.ind'), bar: !!el.closest('.bar.st-running'), spinner: el.classList.contains('spinner'),
+  return { name: a.animationName, el: el.tagName.toLowerCase() + '.' + (el.getAttribute('class') || ''), inMark: !!el.closest('.ind'),
     easing: [...new Set([t.easing, ...kf.map(k => k.easing)])], iterations: t.iterations, direction: t.direction, props: [...new Set(kf.flatMap(k => Object.keys(k)))].filter(p => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)) };
 })`);
 check('marks are animated (some animations run)', anims.length > 20, String(anims.length));
@@ -58,7 +58,7 @@ check('every animation is linear', anims.every((a) => a.easing.every((e) => e ==
 check('every animation is infinite', anims.every((a) => a.iterations === null || a.iterations === Infinity), bad((a) => !(a.iterations === null || a.iterations === Infinity)));
 check('no animation alternates', anims.every((a) => !/alternate/.test(a.direction)), bad((a) => /alternate/.test(a.direction)));
 check('animations move shapes only (transform, offsets, positions)', anims.every((a) => a.props.every((p) => /^(transform|strokeDashoffset|backgroundPosition|backgroundPositionX|backgroundPositionY)$/.test(p))), bad((a) => a.props.some((p) => !/^(transform|strokeDashoffset|backgroundPosition)/.test(p))));
-check('CSS animations are on running things (marks, the running bar, the spinner)', anims.every((a) => a.inMark || a.bar || a.spinner), bad((a) => !(a.inMark || a.bar || a.spinner)));
+check('CSS animations are on running things (marks)', anims.every((a) => a.inMark), bad((a) => !a.inMark));
 
 // painted size of every mark at 64 px, in each set, before and after reduced motion; and the squares
 const paint = `(() => { const out = {};

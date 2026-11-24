@@ -33,7 +33,7 @@ Written 2026-11-23 at the end of the prototyping session.
 - A take-over that completes while you're on another session leaves its text in that session's draft (the page empties the box only while it is on screen).
 
 - The Now line follows 20 s (the writer's debounce) after a turn, background work or a waiting card changes, not at once.
-- Until a folder's menu first arrives (1 to 5 s, once per folder: `menu-cache.json` keeps it after) the header names the model from its id (`modelLabel` in `md.js`), which can differ from the menu's own name.
+- Until a folder's menu first arrives (1 to 5 s, once per folder: `menu-cache.json` keeps it after) the header names the model from its id (`modelLabel` in `format.js`), which can differ from the menu's own name.
 - Not restored after a reload or relaunch: the preview's change marks, the slash menu, a viewer on pasted (blob) images. A SIGKILL of the daemon loses at most the last second of UI state.
 - Backend updates: a message sent in the few milliseconds the idle handover takes is dropped (the old daemon handles nothing once stopping). A new daemon whose code loads but fails later (after `loaded`, say reading state) is a lost daemon: the shell starts one after 20 s, and the error view shows if that fails too. Session processes are ended by the handover (they were idle) and resume on the next message, as after Stop All Work.
 - Paths map only the real path of `/tmp` and of home back (`paths.ts`); other links (a project folder reached through a symlink) show their real path.
