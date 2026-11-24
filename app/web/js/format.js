@@ -25,10 +25,13 @@ export function dur(ms) {
 export const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
 
 /* The same three as spans the 1 s ticker keeps current (main.js), and a block's signature leaves out
-   (transcript.js `still`): data-live holds the start (ISO), data-age the time (ms), data-until the end (ms). */
+   (`still`): data-live holds the start (ISO), data-age the time (ms), data-until the end (ms). */
 export const live = (startIso, ms) => `<span data-live="${esc(startIso)}">${tookLive(ms)}</span>`;
 export const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
 export const until = at => `<span data-until="${esc(at)}">${esc(left(at))}</span>`;
+/* A block's signature (transcript.js, card.js): the ticking spans' text doesn't count as a change, so a
+   block or card isn't replaced each second. */
+export const still = html => html.replace(/(<span data-(?:live|age|until)="[^"]*">)[^<]*/g, "$1");
 
 /* ---------- clocks ---------- */
 /* times follow macOS's 12- or 24-hour setting, which the app passes in as window.SYNOPIA_CLOCK24 (the web

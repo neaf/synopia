@@ -106,7 +106,7 @@ Code: `cards.ts`. Test: `cards.test.ts` (partly). Source: live run S3-1, spike r
 
 ### Command and model list shapes
 
-- Names starting `__` are internal (`__remote-workflow`); both the backend and the page drop them. Code: `sdk.ts` `toCommands`, `composer.js` 8.
+- Names starting `__` are internal (`__remote-workflow`); the backend drops them, so the page's menu never has them. Code: `sdk.ts` `toCommands`.
 - `workflow-launch-exec` appears in the list but runs server-side only, so it does nothing in a session Synopia drives; `sdk.ts` `toCommands` drops it. Whether the live list still carries it is `unverified` (seen in the capture).
 - One name can appear twice; the `builtin` row wins, as `/name` runs that one.
 - Description suffixes: skills end with `(user)`, plugin skills start with `(<plugin-name>)`, workflows end with `(dynamic workflow)`, a removed built-in reads `(removed)`.

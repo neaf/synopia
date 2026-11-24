@@ -106,6 +106,17 @@ await K.esc();
 check('Open list: Esc closes it', !(await ev('document.getElementById("open-list")?.hidden === false')));
 check('Esc that closed the Open list asked nothing', !(await ev('!!document.querySelector(".composer.asking")')));
 
+// web-ui#B3: an open the backend refuses clears what the page waits for, so a later frame of that id doesn't switch the view
+const GONE = 'c0ffee00-0000-4000-8000-00000000b3b3';
+await ev(`document.getElementById('open').click()`); await sleep(400);
+const was = await ev('__synopia.current()');
+await ev(`__synopia.inject({ t: 'recent', filter: '', sessions: [{ id: '${GONE}', title: 'Gone since', cwd: '/tmp', lastModified: Date.now() }] })`);
+await K.enter();
+check('Open list: a session the backend can\'t open says why', await c.until(`__synopia.acting() === 0 && /no longer in the Open list/.test(document.getElementById('toast').textContent)`), await ev(`document.getElementById('toast').textContent`));
+await ev(`__synopia.inject({ t: 'session', id: '${GONE}', title: 'Gone since', cwd: '/tmp' })`); await sleep(100);
+check('a frame of that id later does not switch the view', (await ev('__synopia.current()')) === was);
+await ev(`__synopia.inject({ t: 'removed', id: '${GONE}' })`);
+
 // hidden sessions are skipped: drop one from the store as a close would
 const hide = order[1];
 await go(order[0]);

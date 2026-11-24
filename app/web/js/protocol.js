@@ -38,6 +38,13 @@ export const PAGE = {
   renameGroup: { id: "str?", group: "str", name: "str" },
 };
 
+/* a send's images (FR-SES-14): PNG or JPEG, 5 MB each and 20 MB together, decoded. Base64 makes 20 MB about
+   27 MB, so the frame stays under the socket's 32 MB cap (server.ts MAX_PAYLOAD), which closes the socket
+   instead of answering. The page checks before it sends (composer.js), the backend again (sdk.ts imageError). */
+export const IMAGE_TYPES = ["image/png", "image/jpeg"];
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
+
 /* the page's frames that are actions: the router acks each one that has an id */
 export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "close", "newSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup"]);
 

@@ -2,8 +2,8 @@
 import "./stub-dom.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { still, itemsHTML, filesHTML } from "../js/transcript.js";
-import { live, age, until } from "../js/format.js";
+import { itemsHTML, filesHTML } from "../js/transcript.js";
+import { live, age, until, still } from "../js/format.js";
 
 test("web-ui#B6: the ticking spans don't change a block's signature, other text does", () => {
   const at = Date.now() + 38_000;

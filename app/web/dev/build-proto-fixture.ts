@@ -7,7 +7,6 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import vm from 'node:vm';
 import { Transcripts } from '../../backend/src/transcripts.ts';
 import { Publisher } from '../../backend/src/publisher.ts';
 import { Sessions } from '../../backend/src/sessions.ts';
@@ -16,19 +15,17 @@ import { toCommands, toModels } from '../../backend/src/sdk.ts';
 import { openScripted, SCRIPT_FILE } from '../../backend/dev/scripted-sdk.ts';
 import type { SessionState } from '../../backend/src/status.ts';
 import type { Client } from '../../backend/src/server.ts';
-import { esc } from '../js/format.js';
+
+// card.js is a page module: the stand-ins of the browser globals it and its imports touch on load first,
+// after the backend's modules have loaded without them
+await import('../test/stub-dom.js');
+const { withPending } = await import('../js/card.js') as { withPending: (items: object[], requests: object[]) => object[] };
 
 const [src, outDir] = process.argv.slice(2);
 if (!src || !outDir) {
   process.stderr.write('usage: build-proto-fixture.ts <claude-dir> <out-dir>\n');
   process.exit(2);
 }
-
-const js = path.join(import.meta.dirname, '..', 'js');
-// card.js is a classic script (until Phase 19); the one module export it needs here is esc (format.js)
-const page = vm.createContext({ esc });
-vm.runInContext(fs.readFileSync(path.join(js, 'card.js'), 'utf8'), page, { filename: 'card.js' });
-const withPending = vm.runInContext('withPending', page) as (items: object[], requests: object[]) => object[];
 
 // the script writes to its transcripts as a CLI would: a copy
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-proto-'));

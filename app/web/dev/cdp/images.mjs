@@ -7,7 +7,7 @@
 // the composer: a synthetic paste, the ✕ on hover, remove, send. Writes images-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { shot as shotTo } from './helpers.mjs';
+import { shot as shotTo, writeScript } from './helpers.mjs';
 import { deflateSync, crc32 } from 'node:zlib';
 
 const SID = 'c0c0c0c0-0000-4000-8000-0000000000c0';
@@ -79,6 +79,8 @@ if (process.argv[2] === 'make') {
     + line({ ...base, type: 'user', uuid: 'u4', timestamp: ts(55), imagePasteIds: [1, 2], message: { role: 'user', content: [{ type: 'text', text: '[Image #1] is the old screen, [Image #2] the new one. Which reads better?' }, img('image/png', png(400, 100)), img('image/png', png(240, 160))] } })
     + line({ ...base, type: 'assistant', uuid: 'a10', timestamp: ts(56), message: { role: 'assistant', content: [{ type: 'text', text: 'The new one.' }] } })
     + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: ts(57) }));
+  // the session's folder is one that exists (the backend refuses a send to a folder that's gone)
+  writeScript(process.argv[3], 'images: the composer sends to a folder that exists', { [SID]: { state: { cwd: process.argv[3] } } });
   process.exit(0);
 }
 
@@ -111,7 +113,7 @@ check('a single step shows its two screenshot images under it, closed', await ev
 check('the thumbnails sit in the text column', await ev(`(() => { const t = document.querySelector('.ln.tool > .thumbs'), g = t.parentElement.querySelector('.g'); return t.getBoundingClientRect().left >= g.getBoundingClientRect().right - 0.5; })()`));
 check('a 415 type is a quiet tile', await until(`!!document.querySelector('.prompt .thumbs .thumb.gone') && document.querySelector('.prompt .thumbs .thumb.gone').textContent === 'Image gone'`));
 await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-missing', k: 'you', ts: '2026-11-20T10:01:00.000Z', text: 'An image whose file was rewritten', images: 1, imgs: [{ ref: 'nope:0', mediaType: 'image/png', w: 400, h: 100 }] }], total: s.total + 1 }); })()`);
-check('a 404 is the same tile, the image\'s shape', await until(`(() => { const t = document.querySelector('[data-key="you:u-missing"] .thumb.gone'); return !!t && Math.abs(t.getBoundingClientRect().width - ${4 * H + 2}) < 1; })()`));
+check('a 404 is the same tile, "Image gone", the image\'s shape', await until(`(() => { const t = document.querySelector('[data-key="you:u-missing"] .thumb.gone'); return !!t && t.textContent === 'Image gone' && Math.abs(t.getBoundingClientRect().width - ${4 * H + 2}) < 1; })()`));
 
 // the collapsed run: all seven images in one wrapping row under the run's line, the shapes as soon as known
 const RUN_ROW = `[...document.querySelectorAll('.ln.tool')].find(l => l.querySelector('details.fold') && l.textContent.includes('read 5 files'))`;
@@ -318,7 +320,31 @@ const blocks = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-
 fs.rmSync(path.dirname(msgFile), { recursive: true, force: true });
 const shape = Array.isArray(blocks) ? blocks.map((b) => b.type === 'text' ? `text:${b.text}` : `image:${which(b.source.data)}`) : [blocks];
 check('the send\'s blocks: the text with its tags, then #5\'s image, then #4\'s', JSON.stringify(shape) === JSON.stringify(['text:[Image #5] left right [Image #4]', 'image:c', 'image:b']), JSON.stringify(shape));
-check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && __synopia.attachments().length === 0`));
+check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && __synopia.attachments().length === 0`), await ev(`document.getElementById('toast').textContent`));
+
+// a send the backend refuses (an empty image: sdk.ts imageError) comes back to the box with its image (requirements Q9)
+const TOAST = `document.getElementById('toast').textContent`;
+await until(`__synopia.acting() === 0`);
+await ev(SPY);
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'refused '; t.dispatchEvent(new Event('input')); t.focus(); const n = t.value.length; t.setSelectionRange(n, n);
+  const dt = new DataTransfer(); dt.items.add(new File([], 'empty.png', { type: 'image/png' })); t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
+await until(`__synopia.attachments().length === 1 && __synopia.attachments()[0].data !== null`);
+const refusedText = await ev(MSG);
+await key('Enter', { code: 'Enter', vk: 13 });
+check('a refused send: the backend said why', await until(`__synopia.sent('send').length === 1 && __synopia.acting() === 0 && /empty or damaged/.test(${TOAST})`), await ev(TOAST));
+check('and its text and image are back in the box', (await ev(MSG)) === refusedText && await ev(`__synopia.attachments().length === 1 && document.querySelectorAll('.composer .attach .thumb-wrap').length === 1`), JSON.stringify(await ev(`({ text: ${MSG}, atts: __synopia.attachments().length })`)));
+await click(await centre('.composer .unattach', 0));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
+
+// over 20 MB of images together: the page says so and sends nothing, so the frame never passes the socket's cap (seams#B2)
+await ev(SPY);
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'big'; t.dispatchEvent(new Event('input')); t.focus(); t.setSelectionRange(3, 3);
+  const dt = new DataTransfer(); for (let i = 0; i < 5; i++) dt.items.add(new File([new Uint8Array(4.5 * 1048576)], 'big' + i + '.png', { type: 'image/png' }));
+  t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
+await until(`__synopia.attachments().length === 5 && __synopia.attachments().every(a => a.data)`, 10000);
+await key('Enter', { code: 'Enter', vk: 13 });
+check('five 4.5 MB images: refused in the page, nothing sent, all kept', /23 MB together, over 20 MB/.test(await ev(TOAST)) && (await ev(`__synopia.sent('send').length`)) === 0 && await ev(`__synopia.attachments().length === 5`), await ev(TOAST));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
 check('no CSP violation', (await ev(`__csp.length`)) === 0, JSON.stringify(await ev(`__csp`)));
 await c.cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier });
 c.print();

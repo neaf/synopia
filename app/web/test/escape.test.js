@@ -1,24 +1,15 @@
 // The page's HTML builders with hostile text: nothing in a transcript, a path, a title or an id may become
-// markup or an attribute. The modules load on stand-ins of the browser globals (stub-dom.js); card.js is
-// still a classic script (until Phase 19), so it runs as one in a vm with the module exports it reads.
+// markup or an attribute. The modules load on stand-ins of the browser globals (stub-dom.js).
 import "./stub-dom.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import vm from "node:vm";
 import * as state from "../js/state.js";
-import { esc, age } from "../js/format.js";
 import { md } from "../js/md.js";
-import { ind } from "../js/marks.js";
 import { rowHTML } from "../js/sidebar.js";
 import { railHTML } from "../js/rail.js";
 import { thumbsHTML } from "../js/images.js";
 import { filesHTML, itemsHTML, heldHTML } from "../js/transcript.js";
-
-const card = vm.createContext({ esc, md, ind, age, store: state.store, current: null, agentById: state.agentById, requestsOf: state.requestsOf });
-vm.runInContext(readFileSync(join(import.meta.dirname, "..", "js", "card.js"), "utf8") + "\n;globalThis.P = { qaHTML, askOf };", card, { filename: "card.js" });
-const { qaHTML, askOf } = card.P;
+import { qaHTML, askOf } from "../js/card.js";
 
 // The reviewer's payload (H1), plus an element and a single quote.
 const BAD = `https://x.example/"/onmouseover=alert(document.location)//<img src=x onerror=alert(2)>'`;

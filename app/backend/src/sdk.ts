@@ -13,6 +13,7 @@ import type {
   CanUseTool, EffortLevel, ListSessionsOptions, ModelInfo, Options, PermissionUpdate, SDKControlInterruptResponse,
   SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
+import { MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES, IMAGE_TYPES } from '../../web/js/protocol.js';
 
 // The part of the SDK's Query that Synopia uses. `interrupt` takes `{cancelQueued}`, which the
 // typings don't list (docs/Agent SDK.md, "Quirk: interrupt() takes no argument in the typings").
@@ -380,11 +381,8 @@ export async function oneShot(query: QueryFn, text: string, options: Options): P
 
 export type Image = { mediaType: string; data: string; n?: number };
 
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-// All images of one message together: base64 makes 20 MB about 27 MB, so the frame stays under the
-// socket's 32 MB cap (server.ts MAX_PAYLOAD), which closes the socket instead of answering.
-export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
-export const IMAGE_TYPES = ['image/png', 'image/jpeg'];
+// the caps (each image, and all of one message together) are the page's too (protocol.js)
+export { MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES, IMAGE_TYPES };
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 // Why these images can't be sent, or null. The page sends base64 from a data URL: empty or broken

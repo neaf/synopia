@@ -1,11 +1,23 @@
 /* Open list: past sessions from the backend's listSessions(), over the main area (plan section 4).
    Newest first, with the title, folder and age. ↑↓ move (j/k too while the filter is empty, after that
    they type), Enter opens, Esc closes, typing filters. Opening adds the session to the sidebar and shows
-   it; it resumes on your first message. */
-let wantOpen = null; // the id asked for; main.js shows it when its session message arrives
-const openList = { el: null, rows: [], sel: 0, filter: "", loading: false, failed: false, timer: null };
+   it; it resumes on your first message. New session (the footer's other button) is here too: both ask the
+   backend for a session and show it when its `session` frame arrives (main.js, `want`). */
+import { send, act } from "./connection.js";
+import { esc } from "./format.js";
+import { setMode } from "./mode.js";
 
-function showOpenList() {
+/* the session asked for, until it arrives: a new one (any `new-` id) or the id opened. A refused or
+   failed ack clears it, so a later frame doesn't switch the view (web-ui#B3). */
+export const want = { new: false, open: null };
+export const openList = { el: null, rows: [], sel: 0, filter: "", loading: false, failed: false, timer: null };
+
+document.getElementById("new").onclick = () => {
+  if (act({ t: "newSession" }, { done: ok => { if (!ok) want.new = false; } })) want.new = true;
+};
+document.getElementById("open").onclick = () => showOpenList();
+
+export function showOpenList() {
   if (!openList.el) {
     document.querySelector(".app").insertAdjacentHTML("beforeend", `
       <div class="open-list" id="open-list" role="dialog" aria-label="Open session">
@@ -35,7 +47,12 @@ function showOpenList() {
   askRecent();
   setMode("normal"); inp.focus();
 }
-const openListShown = () => Boolean(openList.el && !openList.el.hidden);
+/* the list a reload had open (ui-state.js), with its filter */
+export function restoreOpenList(filter) {
+  showOpenList();
+  if (filter) { document.getElementById("ol-filter").value = openList.filter = filter; askRecent(); }
+}
+export const openListShown = () => Boolean(openList.el && !openList.el.hidden);
 function hideOpenList() {
   if (!openListShown()) return;
   openList.el.hidden = true; clearTimeout(openList.timer);
@@ -44,7 +61,7 @@ function hideOpenList() {
 function askRecent() { openList.loading = true; openList.failed = false; drawOpenList(); send({ t: "listRecent", filter: openList.filter }); }
 
 /* the backend's reply; a reply for an older filter is dropped */
-function applyRecent(m) {
+export function applyRecent(m) {
   if (!openListShown() || (m.filter || "") !== openList.filter) return;
   openList.rows = m.sessions || []; openList.loading = false; openList.failed = Boolean(m.error);
   openList.sel = Math.min(openList.sel, Math.max(0, openList.rows.length - 1));
@@ -70,12 +87,12 @@ function olAgo(ms) {
 }
 function pickRecent(i) {
   const r = openList.rows[i]; if (!r) return;
-  if (!act({ t: "openSession", sid: r.id }, { done: ok => { if (!ok && wantOpen === r.id) wantOpen = null; } })) return; // the list stays, to try again
-  wantOpen = r.id; hideOpenList();
+  if (!act({ t: "openSession", sid: r.id }, { done: ok => { if (!ok && want.open === r.id) want.open = null; } })) return; // the list stays, to try again
+  want.open = r.id; hideOpenList();
 }
-/* its keys come first while it is shown; the rest type into the filter */
-document.addEventListener("keydown", e => {
-  if (!openListShown() || e.metaKey || e.ctrlKey || e.altKey) return;
+/* its keys while it is shown (keys.js: the layer over the session keys); the rest type into the filter */
+export function openListKey(e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) { if (e.metaKey && e.shiftKey && /^Bracket(Left|Right)$/.test(e.code)) e.preventDefault(); return; } // the session behind it stays
   const n = openList.rows.length, empty = !openList.filter;
   const move = step => { if (n) { openList.sel = (openList.sel + step + n) % n; drawOpenList(); } };
   if (e.key === "Escape") hideOpenList();
@@ -83,7 +100,7 @@ document.addEventListener("keydown", e => {
   else if (e.key === "ArrowDown" || (e.key === "j" && empty)) move(1);
   else if (e.key === "ArrowUp" || (e.key === "k" && empty)) move(-1);
   else return;
-  e.preventDefault(); e.stopImmediatePropagation();
-}, true);
+  e.preventDefault(); e.stopPropagation();
+}
 /* a click outside the list closes it */
 document.addEventListener("mousedown", e => { if (openListShown() && !e.target.closest(".ol-panel") && !e.target.closest("#open")) hideOpenList(); }, true);

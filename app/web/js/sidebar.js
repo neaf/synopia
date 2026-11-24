@@ -5,7 +5,6 @@
 import { store, data, current, select, agentsOf, agentMs } from "./state.js";
 import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
-import { classic as C } from "./legacy.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
 import { lineTweens, inGrace } from "./tween.js";
 import { bgOf, bgState, scanGrace, setOpenBg } from "./rail.js";
@@ -60,6 +59,9 @@ export const inOthers = id => layout().others.includes(id);
 let renaming = null; // the group whose name field is open
 /* opens the name field of a group, now or once the backend's layout has it (a new group, dnd.js) */
 export function startRename(group) { renaming = group; }
+let picked = () => {};
+/* called after a row's click selected its session (main.js: the whole page renders) */
+export function onPick(fn) { picked = fn; }
 const rendered = [];
 /* called after every render with the sidebar's element (dnd.js keeps a dragged row dimmed) */
 export function onRendered(fn) { rendered.push(fn); }
@@ -88,7 +90,7 @@ export function renderSide() {
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
   rendered.forEach(f => f(el));
-  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); setOpenBg(null); C.renderAll(); }; });
+  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); setOpenBg(null); picked(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
   if (inp) {
@@ -129,5 +131,3 @@ export function closeStops(s) {
 export function closeSession(s) {
   if (s) act({ t: "close", sid: s.id });
 }
-/* the footer's Open line: the list of past sessions (open-list.js) */
-document.getElementById("open").onclick = () => C.showOpenList();

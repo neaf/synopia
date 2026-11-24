@@ -72,5 +72,6 @@ function endDrag(e, cancel) {
 }
 window.addEventListener("pointerup", e => endDrag(e, false));
 window.addEventListener("pointercancel", e => endDrag(e, true));
-window.addEventListener("keydown", e => { if (e.key === "Escape" && drag?.started) endDrag(e, true); });
+/* a drag under way has the keys (keys.js: the layer over the session keys): Esc puts the row back */
+export function dragKey(e) { if (e.key === "Escape") endDrag(e, true); }
 sideEl.addEventListener("click", e => { if (suppressClick) { e.stopPropagation(); e.preventDefault(); } }, true);

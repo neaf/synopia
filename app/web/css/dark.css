@@ -1,4 +1,4 @@
-/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js sets <html data-theme>:
+/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js and theme-switch.js set <html data-theme>:
    the system's appearance until the switch in the sidebar footer picks one. The layout reads as in the light
    theme: the sidebar (#22272E, unchanged) stays the darkest surface, the canvas a step lighter, the panels a
    step lighter again; lines stay 1px; text keeps 4.5:1 or more; the marks take the bright set the dark
@@ -70,8 +70,6 @@
 
 /* needs you: the question card, its options, the own-answer field */
 :root[data-theme="dark"] .nd-head { background: var(--red-bg); border-bottom-color: var(--red-line); }
-:root[data-theme="dark"] .qq .qh { background: var(--red-bg); border-color: var(--red-line); }
-:root[data-theme="dark"] .qo[aria-pressed="true"] { background: var(--blue-bg); }
 :root[data-theme="dark"] .o.focus { box-shadow: inset 0 0 0 1px var(--blue-line); }
 :root[data-theme="dark"] .o.on > .box::after { border-color: var(--panel); }
 :root[data-theme="dark"] .qa-own { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }

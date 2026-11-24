@@ -7,7 +7,8 @@
    mark where lines were removed); the diff is where the change itself shows. */
 import { send } from "./connection.js";
 import { esc } from "./format.js";
-import { classic as C } from "./legacy.js";
+import { setMode } from "./mode.js";
+import { themeNow } from "./theme-switch.js";
 
 export const pv = { el: null, want: null, path: null, line: 0, back: null, hits: [], at: -1 };
 const PV_HTML = /\.html?$/i;
@@ -17,13 +18,13 @@ export function previewClick(a, e) {
   const p = a.dataset.path;
   if (!p || (PV_HTML.test(p) && !e.altKey)) return false;
   pv.want = { path: p, back: a, ...pvChanges(a) };
-  send({ t: "preview", path: p, theme: C.themeNow() });
+  send({ t: "preview", path: p, theme: themeNow() });
   return true;
 }
 /* the file the stored UI state had open (ui-state.js, after a reload): asked again, its find and scroll put back once shown */
 export function restorePreview({ path, scroll, find }) {
   pv.want = { path, back: null, added: new Set(), cut: new Set(), first: 0, restore: { scroll: +scroll || 0, find: String(find || "") } };
-  send({ t: "preview", path, theme: C.themeNow() });
+  send({ t: "preview", path, theme: themeNow() });
 }
 function restored(r) {
   if (r.find) { pvOpenFind(); const q = document.getElementById("pv-q"); q.value = r.find; pvFind(r.find); }
@@ -82,7 +83,7 @@ export function showPreview(m) {
   const added = want.added || new Set(), cut = want.cut || new Set();
   box.innerHTML = rows.map((h, i) => `<div class="pl${added.has(i + 1) ? " chg" : ""}${cut.has(i + 1) ? " cut" : ""}"><span class="no">${i + 1}</span><span class="tx">${h || " "}</span></div>`).join("");
   pvCloseFind(); pv.el.hidden = false;
-  C.setMode("normal");
+  setMode("normal");
   const code = document.getElementById("pv-code");
   code.scrollLeft = 0;
   code.scrollTop = 0; // just the file, from the top: the diff is where changes show
@@ -97,14 +98,14 @@ function hidePreview() {
   const back = pv.back; pv.back = null;
   if (back && back.isConnected) back.focus({ preventScroll: true });
 }
-/* the theme changed (theme.js): the file shown is asked again in bat's other theme, keeping its marks, scroll and find */
+/* the theme changed (theme-switch.js, through main.js): the file shown is asked again in bat's other theme, keeping its marks, scroll and find */
 export function previewRetheme() {
   if (!previewShown() || !pv.path) return;
   const rows = [...document.querySelectorAll("#pv-lines .pl")], at = cls => new Set(rows.flatMap((r, i) => r.classList.contains(cls) ? [i + 1] : []));
   const find = document.getElementById("pv-find");
   pv.want = { path: pv.path, back: pv.back, added: at("chg"), cut: at("cut"), first: 0,
     restore: { scroll: document.getElementById("pv-code").scrollTop, find: find.hidden ? "" : document.getElementById("pv-q").value } };
-  send({ t: "preview", path: pv.path, theme: C.themeNow() });
+  send({ t: "preview", path: pv.path, theme: themeNow() });
 }
 
 /* ---------- find: every match marked with the CSS Custom Highlight API (no markup added), the current one stronger ---------- */
@@ -179,10 +180,9 @@ function pvFirstBelow() {
   return i < 0 ? 0 : i;
 }
 
-/* its keys come before every other handler while it is shown (window, capture), and nothing else gets them */
-window.addEventListener("keydown", e => {
-  if (!previewShown()) return;
-  e.stopImmediatePropagation();
+/* its keys while it is shown (keys.js: the top layer); nothing under it gets them */
+export function previewKey(e) {
+  e.stopPropagation();
   const code = document.getElementById("pv-code"), inFind = e.target.id === "pv-q";
   const row = () => code.querySelector(".pl")?.offsetHeight || 17;
   let done = true;
@@ -199,6 +199,6 @@ window.addEventListener("keydown", e => {
   else if (e.key === "N") pvStep(-1);
   else done = false;
   if (done) e.preventDefault();
-}, true);
+}
 /* a click outside the panel closes it */
 document.addEventListener("mousedown", e => { if (previewShown() && !e.target.closest(".pv-panel")) hidePreview(); }, true);

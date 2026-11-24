@@ -10,11 +10,12 @@
    write wins. */
 import { store, current, view, cur, requestsOf, select, mounted, agentById } from "./state.js";
 import { send, TOKEN } from "./connection.js";
-import { classic as C } from "./legacy.js";
 import { openBg, setOpenBg } from "./rail.js";
-/* preview.js before images.js: both take keys on window in the capture phase, the preview first */
 import { pv, previewShown, restorePreview } from "./preview.js";
 import { viewer, showViewer, imageUrl } from "./images.js";
+import { mode, setMode } from "./mode.js";
+import { themePref, themeSet } from "./theme-switch.js";
+import { openList, openListShown, restoreOpenList } from "./open-list.js";
 
 const uiS = {}; // sid -> { scroll: {view: anchor}, earlier: {view: oldest item id}, diffs: Set, folds: Set, rail }
 const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not on screen
@@ -29,6 +30,11 @@ export const openSteps = new Set();
 /* the log's render and its earlier-items request (transcript.js; main.js passes them, so no module cycle) */
 let logFns = { render() {}, earlier() {} };
 export function useLog(render, earlier) { logFns = { render, earlier }; }
+/* the message box's text and pasted images, and the cards' picks (composer.js and card.js hand them over when
+   they load, so neither imports the other way) */
+let box = { attachments: [], value: ta => ta.value, render() {} }, cards = {};
+export function useBox(b) { box = b; }
+export function useCards(q) { cards = q; }
 /* a pasted image's id, the name of its file in the backend's drafts (composer.js) */
 export const newId = () => [...crypto.getRandomValues(new Uint8Array(12))].map(b => b.toString(16).padStart(2, "0")).join("");
 
@@ -40,11 +46,11 @@ export const isRestoring = () => !!restoring;
 export function applyHello(u) {
   const first = !uiLoaded; uiLoaded = true;
   if (!first) { sentTop = {}; sentSess = {}; changed(); return; } // a reconnect: this page's state is the newer, send all of it
-  C.themeSet(u && typeof u === "object" ? u.theme : null, true); // the stored theme, or the system's (theme.js)
+  themeSet(u && typeof u === "object" ? u.theme : null); // the stored theme, or the system's (theme-switch.js)
   if (!u || typeof u !== "object") return;
   const has = sid => typeof sid === "string" && store.sessions.has(sid);
   if (!location.hash && has(u.current)) select(u.current, u.view);
-  if (u.mode === "insert" || u.mode === "normal") C.mode = u.mode;
+  if (u.mode === "insert" || u.mode === "normal") setMode(u.mode, false);
   if (typeof u.openBg === "string") setOpenBg(u.openBg);
   for (const [sid, x] of Object.entries(u.sessions || {})) {
     if (!has(sid) || !x) continue;
@@ -57,7 +63,7 @@ export function applyHello(u) {
     for (const [rid, st] of Object.entries(x.cards || {})) {
       if (!ids.has(rid) || !st || typeof st !== "object") continue; // the request is gone: so is its card
       const { typing: text, ...rest } = st;
-      C.qstate[`${sid}:${rid}`] = { qi: 0, oi: 0, picks: {}, own: {}, notes: {}, target: null, noteRow: null, ...rest };
+      cards[`${sid}:${rid}`] = { qi: 0, oi: 0, picks: {}, own: {}, notes: {}, target: null, noteRow: null, ...rest };
       if (typeof text === "string" && rest.target != null) typing = { key: `${sid}:${rid}`, text };
     }
     if (x.draft) {
@@ -76,11 +82,7 @@ export function applyHello(u) {
 /* the overlays come back once the view is on screen: the Open list, the file preview, the image viewer */
 export function afterRender() {
   const u = afterFirst; afterFirst = null; if (!u) return;
-  if (u.openList && typeof u.openList.filter === "string") {
-    C.showOpenList();
-    const inp = document.getElementById("ol-filter");
-    if (u.openList.filter) { inp.value = C.openList.filter = u.openList.filter; C.askRecent(); }
-  }
+  if (u.openList && typeof u.openList.filter === "string") restoreOpenList(u.openList.filter);
   if (u.preview && u.preview.path) restorePreview(u.preview);
   if (u.viewer && Array.isArray(u.viewer.srcs) && u.viewer.srcs.length)
     showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0, Array.isArray(u.viewer.froms) ? u.viewer.froms.map(String) : []);
@@ -92,11 +94,11 @@ export function takeTyping(key) { if (!typing || typing.key !== key) return null
 export function leave() {
   if (!mounted) return;
   const sid = mounted.slice(0, mounted.indexOf("|")), ta = document.getElementById("msg");
-  if (ta) drafts.set(sid, { text: C.boxValue(ta), cursor: [ta.selectionStart, ta.selectionEnd], atts: C.attachments.slice() });
+  if (ta) drafts.set(sid, { text: box.value(ta), cursor: [ta.selectionStart, ta.selectionEnd], atts: box.attachments.slice() });
 }
 export function enterComposer(s, ta) {
   const d = drafts.get(s.id); drafts.delete(s.id); // on screen, the box itself is the draft
-  const attachments = C.attachments;
+  const attachments = box.attachments;
   attachments.length = 0;
   if (d) {
     attachments.push(...d.atts);
@@ -104,7 +106,7 @@ export function enterComposer(s, ta) {
     const c = Array.isArray(d.cursor) ? d.cursor : [ta.value.length, ta.value.length];
     ta.setSelectionRange(Math.min(+c[0] || 0, ta.value.length), Math.min(+c[1] || 0, ta.value.length));
   }
-  C.renderAttachments();
+  box.render();
 }
 /* an object URL a draft not on screen still shows: not freed (composer.js) */
 export const held = url => [...drafts.values()].some(d => d.atts.some(a => a.url === url));
@@ -209,8 +211,8 @@ export function changed() {
 function top() {
   const code = document.getElementById("pv-code"), find = document.getElementById("pv-find");
   return {
-    current, view: view || null, mode: C.mode, openBg: openBg || null, theme: C.themePref,
-    openList: C.openListShown() ? { filter: C.openList.filter } : null,
+    current, view: view || null, mode, openBg: openBg || null, theme: themePref(),
+    openList: openListShown() ? { filter: openList.filter } : null,
     preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
     viewer: viewer ? (keep => keep.length ? { srcs: keep.map(k => viewer.srcs[k].replace(/([?&])token=[^&]*&?/, "$1")), froms: keep.map(k => viewer.froms[k] || ""), i: Math.max(0, keep.indexOf(viewer.i)) } : null)(viewer.srcs.map((s, k) => k).filter(k => viewer.srcs[k].startsWith("/api/image?"))) : null,
   };
@@ -218,18 +220,18 @@ function top() {
 /* one session's fields; `fresh` collects the pasted images to send with their bytes */
 function sessionNow(sid, fresh) {
   const u = uiS[sid], live = mounted && mounted.startsWith(sid + "|") && document.getElementById("msg");
-  const d = live ? { text: C.boxValue(live), cursor: [live.selectionStart, live.selectionEnd], atts: C.attachments } : drafts.get(sid);
+  const d = live ? { text: box.value(live), cursor: [live.selectionStart, live.selectionEnd], atts: box.attachments } : drafts.get(sid);
   const images = d ? d.atts.filter(a => a.id && (stored.has(a.id) || a.data)).map(a => ({ id: a.id, mediaType: a.mediaType, n: a.n })) : [];
   if (d) for (const a of d.atts) if (a.id && !stored.has(a.id) && a.data) fresh.push(a);
   const steps = [...openSteps].filter(k => k.startsWith(sid + "|")).map(k => k.slice(sid.length + 1));
-  const ids = new Set(requestsOf({ id: sid }).map(r => r.id)), cards = {}, qstate = C.qstate;
-  for (const k of Object.keys(qstate)) {
+  const ids = new Set(requestsOf({ id: sid }).map(r => r.id)), mine = {};
+  for (const k of Object.keys(cards)) {
     if (!k.startsWith(sid + ":")) continue;
     const rid = k.slice(sid.length + 1);
-    if (!ids.has(rid)) { delete qstate[k]; continue; } // the request is gone
-    const st = { ...qstate[k] }, own = document.getElementById("qa-own");
+    if (!ids.has(rid)) { delete cards[k]; continue; } // the request is gone
+    const st = { ...cards[k] }, own = document.getElementById("qa-own");
     if (st.target != null && own && current === sid) st.typing = own.value;
-    cards[rid] = st;
+    mine[rid] = st;
   }
   const or = (v, empty) => empty ? null : v;
   return {
@@ -237,7 +239,7 @@ function sessionNow(sid, fresh) {
     earlier: or(u?.earlier, !u || !Object.keys(u.earlier).length),
     steps: or(steps, !steps.length), diffs: or(u && [...u.diffs], !u?.diffs.size), folds: or(u && [...u.folds], !u?.folds.size),
     draft: d && (d.text || images.length) ? { text: d.text, cursor: d.cursor, images } : null,
-    cards: or(cards, !Object.keys(cards).length), rail: u?.rail ?? null,
+    cards: or(mine, !Object.keys(mine).length), rail: u?.rail ?? null,
   };
 }
 export function flush() {
@@ -245,8 +247,7 @@ export function flush() {
   if (!uiLoaded || !store.ui.connected) return;
   const patch = {}, now = top();
   for (const k of TOP) { const j = JSON.stringify(now[k] ?? null); if (sentTop[k] !== j) { patch[k] = now[k] ?? null; sentTop[k] = j; } }
-  const qstate = C.qstate;
-  const sids = new Set([...Object.keys(uiS), ...drafts.keys(), ...Object.keys(sentSess), ...[...openSteps].map(k => k.slice(0, k.indexOf("|"))), ...Object.keys(qstate).map(k => k.slice(0, k.indexOf(":"))), ...(current ? [current] : [])]);
+  const sids = new Set([...Object.keys(uiS), ...drafts.keys(), ...Object.keys(sentSess), ...[...openSteps].map(k => k.slice(0, k.indexOf("|"))), ...Object.keys(cards).map(k => k.slice(0, k.indexOf(":"))), ...(current ? [current] : [])]);
   const sessions = {}, fresh = [];
   for (const sid of sids) {
     if (!store.sessions.has(sid)) { delete uiS[sid]; delete sentSess[sid]; drafts.delete(sid); continue; } // closed: the backend pruned it

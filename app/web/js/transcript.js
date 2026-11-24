@@ -4,15 +4,16 @@
    commands. renderLog patches the blocks by key, so open steps, diffs and folds stay as they are. */
 import { store, current, view, cur, isViewed, selectView, requestsOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs } from "./state.js";
 import { send, act } from "./connection.js";
-import { classic as C } from "./legacy.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
-import { esc, took, hhmm, day, live, age, until } from "./format.js";
+import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes } from "./md.js";
 import { ind, sessionMarkKey } from "./marks.js";
 import { bgOf, bgState, openBg, setOpenBg, renderRail } from "./rail.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
+import { renderCard, resetCard, withPending, extAsk } from "./card.js";
+import { mountComposer, modelName, paintBash, unattach, openModelPicker } from "./composer.js";
 
 /* ---------- conversation, rendered like the CLI ---------- */
 
@@ -327,21 +328,10 @@ function phaseText(s) {
   if (st === "compacting") return "Summing up the conversation to free space";
   if (st === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
   if (st === "stale") return `Nothing for ${age(s.state.since)}; the session may be gone`;
-  if (st === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
   if (st === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";
 }
 const queuedText = n => `${n === 1 ? "Your message is" : `${esc(n)} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
-/* The dock's line when Claude needs you without a card (card.js renderCard): signed out, or a red state
-   whose request isn't here. Working and your turn have no status line (R5.5). */
-export function statusLine(s) {
-  const st = s.state.light;
-  if (s.state.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
-  if (st !== "red") return "";
-  const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[s.state.needsYou] || "Claude is waiting for a permission";
-  return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
-}
-
 /* ---------- the session view, rendered per panel: header, log, card (in the dock), rail ---------- */
 export const conv = document.getElementById("conv");
 /* Builds the view's frame when the session or the subagent changed (the composer is made here, once
@@ -367,12 +357,12 @@ export function renderConv() {
         <span class="g">❯</span><textarea id="msg" rows="1" aria-label="Message"></textarea>
       </div>
     </div></div>`;
-    C.resetCard(); // the new dock has no card yet (card.js)
-    C.mountComposer(s);
+    resetCard(); // the new dock has no card yet (card.js)
+    mountComposer(s);
     ui.requestView(s.id, view);
     ui.expectReset(); // its stored scroll goes on once the items are in
   }
-  renderHeader(); renderLog(); C.renderCard(); renderRail();
+  renderHeader(); renderLog(); renderCard(); renderRail();
 }
 export function renderHeader() {
   const s = cur(); if (!s || !mounted) return;
@@ -381,18 +371,18 @@ export function renderHeader() {
     ? `<h2 class="c-title" title="${esc(A.description)}">${esc(A.description)}</h2>
         <p class="c-now">${A.finished ? `${A.stopped ? "Stopped" : "Finished"}, ${took(agentMs(A))}` : `Running, ${live(A.start, agentMs(A))}`}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
         <p class="c-meta">Subagent of <button class="link" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button>. Its report goes back to that session.</p>
-      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(C.modelName())}</button></div>`
+      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title" title="${esc(s.title)}">${esc(s.title)}</h2>
         <p class="c-now"${s.now ? ` title="${esc(s.now)}"` : ""}>${isEmpty(s) || !s.now ? "&nbsp;" : `Now: ${esc(s.now)}`}</p>
         <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
-      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(C.modelName())}</button></div>`;
+      <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
-  C.paintBash(s); // the placeholder: the message's, or bash mode's (composer.js)
+  paintBash(s); // the placeholder: the message's, or bash mode's (composer.js)
 }
 /* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
 const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
 function logEntries(s, A) {
-  const items = A ? (A.items || []) : C.withPending(s.items, requestsOf(s), C.extAsk(s));
+  const items = A ? (A.items || []) : withPending(s.items, requestsOf(s), extAsk(s));
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
@@ -441,9 +431,6 @@ export function renderLog() {
   ui.afterLog(); // open diffs and folds stay open (ui-state.js)
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
-/* A block's signature: live times, ages and countdowns tick in place (format.js live, age, until; the
-   ticker in main.js), so their text doesn't count as a change and the block isn't replaced each second. */
-export const still = html => html.replace(/(<span data-(?:live|age|until)="[^"]*">)[^<]*/g, "$1");
 function patchChildren(parent, entries) {
   const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
   const seen = new Set(); let prev = null;
@@ -489,8 +476,8 @@ conv.addEventListener("click", e => {
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) setOpenBg(null); selectView(null); renderConv(); } // leaving a subagent folds its card
   else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { setOpenBg(openBg === t.dataset.bg ? null : t.dataset.bg); renderRail(); }
-  else if (t.dataset.unattach) C.unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
-  else if (t.id === "model-label") C.openModelPicker();
+  else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
+  else if (t.id === "model-label") openModelPicker();
 });
 /* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */
 conv.addEventListener("toggle", e => {

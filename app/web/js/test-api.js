@@ -1,8 +1,8 @@
 /* Test API: window.__synopia, the one surface the page checks read besides the DOM (docs/Page checks.md).
    Getters return copies, so a check cannot change the page through them; inject() hands a message to the
    page as if the server sent it, and render(), redraw() and resetTweens() re-render on demand. Nothing is
-   recorded until a check calls spy(), so in use it costs nothing. The only module that writes `window`
-   besides legacy.js's accessors; main.js installs it with the message handler and the panel render. */
+   recorded until a check calls spy(), so in use it costs nothing. The only module that writes `window`;
+   main.js installs it with the message handler and the panel render. */
 import * as state from "./state.js";
 import { tap, acting } from "./connection.js";
 import { MARKS, ind } from "./marks.js";
@@ -10,7 +10,10 @@ import { tweens } from "./sidebar.js";
 import * as ui from "./ui-state.js";
 import { renderLog } from "./transcript.js";
 import { pv, previewShown } from "./preview.js";
-import { classic as C } from "./legacy.js";
+import { mode } from "./mode.js";
+import { attachments, prompt } from "./composer.js";
+import { qstate, pendingAsk, askKey } from "./card.js";
+import { openList, openListShown } from "./open-list.js";
 
 const copy = x => x === undefined || x === null ? null : structuredClone(x);
 const of = (list, types) => copy(types.length ? list.filter(m => types.includes(m.t)) : list);
@@ -30,7 +33,7 @@ export function installTestApi({ inject, render }) {
     readiness,
     current: () => state.current, // the shown session's id
     view: () => state.view, // the subagent shown, null for the main conversation
-    mode: () => C.mode, // "normal" | "insert"
+    mode: () => mode, // "normal" | "insert"
     mounted: () => state.mounted, // "<sid>|<agent>" of the view on screen
     restoring: () => ui.isRestoring(), // a restored view still waits for its items
     cur: () => copy(state.cur()),
@@ -48,12 +51,12 @@ export function installTestApi({ inject, render }) {
     /* the UI around the transcript */
     anchor: () => copy(ui.anchor(document.getElementById("log"))), // the log's scroll anchor: {id, off} or {bottom: true}
     from: (sid, agent) => ui.from(sid, agent), // the oldest item id that view had loaded, or null
-    attachments: () => C.attachments.map(a => ({ id: a.id, n: a.n, mediaType: a.mediaType, url: a.url, data: a.data })), // pasted images
-    prompt: () => C.interruptAsk ? "interrupt" : C.bgAsk ? "background" : C.closeAsk ? "close" : null, // the Esc, b or x prompt shown
-    card: sid => { const s = state.store.sessions.get(sid ?? state.current), a = s && C.pendingAsk(s); return a ? copy(C.qstate[C.askKey(s, a)]) : null; },
-    cards: () => copy(C.qstate), // every card's state, by "<sid>:<request id>"
+    attachments: () => attachments.map(a => ({ id: a.id, n: a.n, mediaType: a.mediaType, url: a.url, data: a.data })), // pasted images
+    prompt: () => prompt(), // the Esc, b or x prompt shown: "interrupt" | "background" | "close" | null
+    card: sid => { const s = state.store.sessions.get(sid ?? state.current), a = s && pendingAsk(s); return a ? copy(qstate[askKey(s, a)]) : null; },
+    cards: () => copy(qstate), // every card's state, by "<sid>:<request id>"
     preview: () => ({ shown: previewShown(), path: pv.path }),
-    openList: () => ({ shown: C.openListShown(), filter: C.openList.filter }),
+    openList: () => ({ shown: openListShown(), filter: openList.filter }),
     marks: () => Object.keys(MARKS), // every mark kind
     mark: (kind, size) => ind(kind, size), // a mark's markup
     /* renders on demand, as a server message would: for checks that a render keeps something */

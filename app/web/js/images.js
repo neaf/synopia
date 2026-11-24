@@ -156,14 +156,12 @@ document.addEventListener("click", e => {
   if (!t) return;
   e.preventDefault(); e.stopPropagation(); openViewer(t);
 }, true);
-/* while it shows, the viewer has every key: nothing reaches the modes, the cards or the session keys. On
-   window in the capture phase, so it comes before the classic scripts' document listeners (the Open list's),
-   which were added before this module ran; the preview's comes first (ui-state.js imports it first). */
+/* while it shows, the viewer has every key (keys.js: the layer under the preview): nothing reaches the modes,
+   the cards, the message box or the session keys */
 const PAN = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-window.addEventListener("keydown", e => {
-  if (!viewer) return;
+export function viewerKey(e) {
   if (e.metaKey && !(e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight"))) return; // ⌘C, ⌘Q stay the app's
-  e.preventDefault(); e.stopImmediatePropagation();
+  e.preventDefault(); e.stopPropagation();
   if (e.key === "Escape") closeViewer();
   else if (viewer.full && PAN[e.key]) { // a tenth of the window, a whole one with shift
     const st = vStage(), [dx, dy] = PAN[e.key], f = e.shiftKey ? 0.9 : 0.1;
@@ -175,4 +173,4 @@ window.addEventListener("keydown", e => {
     const at = viewer.at, r = vImg() && vImg().getBoundingClientRect(); // under the pointer if it's on the image
     at && r && at[0] >= r.left && at[0] <= r.right && at[1] >= r.top && at[1] <= r.bottom ? zoomViewer(at[0], at[1]) : zoomViewer();
   }
-}, true);
+}

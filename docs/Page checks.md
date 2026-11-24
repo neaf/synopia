@@ -152,7 +152,8 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 
 `app/web/test/*.test.js` run the page modules' pure parts in Node: `format.test.js` (escaping, durations, clocks, the model label), `md.test.js` (markdown, answer text), `escape.test.js` (every HTML builder with hostile text), `preview.test.js` (find offsets), `transcript.test.js` (block signatures, how a turn ends). `app/check.sh` runs them in its `web` line.
 - `format.js` and `md.js` touch no browser global and import directly. A module that adds listeners or reads `#conv` when it loads needs `import "./stub-dom.js"` first: inert stand-ins of `document`, `window`, `location` (`?token=t`) and the rest. Static imports run in order, so the stub comes before the modules.
-- `card.js` is still a classic script: `escape.test.js` runs it in a `vm` context holding the module exports it reads (`esc`, `md`, `ind`, `age`, the store). `build-proto-fixture.ts` does the same with `esc`.
+- `stub-dom.js` also stands in for `matchMedia` and `localStorage` (`theme-switch.js` reads both on load). `build-proto-fixture.ts` imports `card.js` the same way, with dynamic imports after the backend's modules have loaded, so those see no `window`.
+- `dev/check-web.mjs` (the `web` line) also fails on an import cycle between page modules and on a module other than `test-api.js` that writes `window`. A module that would need one the other way gets a hook that `main.js` wires (`ui-state.js` `useLog`, `useBox`, `useCards`; `sidebar.js` `onPick`; `theme-switch.js` `onThemeChange`; `tween.js` `onGraceEnd`).
 
 ## Backend tests
 

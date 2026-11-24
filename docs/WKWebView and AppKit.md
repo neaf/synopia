@@ -76,8 +76,8 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 ## Page platform facts
 
-- Pasted images: an object URL for the thumbnail, a `FileReader` data URL for sending; PNG and JPEG only, 5 MB each. Code: `composer.js` 274-304.
-- `crypto.randomUUID` exists only in secure contexts; `http://127.0.0.1` is one, other hosts may not be, so a fallback is present. Code: `composer.js` 4.
+- Pasted images: an object URL for the thumbnail, a `FileReader` data URL for sending; PNG and JPEG only, 5 MB each and 20 MB together (`protocol.js`, checked by the page and again by the backend). Code: `composer.js` `imagesOf` and the box's `paste` handler.
+- `crypto.randomUUID` exists only in secure contexts; `http://127.0.0.1` is one, other hosts may not be, so a fallback is present. Code: `composer.js` `newUuid`.
 - `<img>` requests can't carry headers, so image URLs carry the token in the query (`/api/image?token=`). The stored viewer state strips it and adds it back on restore. Code: `images.js` `imageUrl`, `ui-state.js` `afterRender` and `top`.
 
 ## Content Security Policy
@@ -86,7 +86,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 - `script-src 'self'`: no inline script, no eval. `style-src-attr 'unsafe-inline'` is needed: the markup sets positions and mark sizes in style attributes (`--iw`, `--dn`), which can't run script.
 - `style-src 'self'` and `font-src 'self'`: the fonts are bundled (decision Q8) in `app/web/fonts`, Atkinson Hyperlegible Next as woff2 and JetBrains Mono NL as TrueType (its release has no NL web font), each with its `OFL.txt`. Offline or behind a proxy the transcript's `ch`-based grids keep their width. See [Page checks](Page%20checks.md#web-font-swap) for a weight first used late.
 - `img-src 'self' data: blob:` for `/api/image` and pasted images.
-- Scripts: the classic files plus one module entry, `<script type="module" src="js/main.js">`. A module needs only `script-src 'self'` and the `text/javascript` type `server.ts` sends for `.js`. Module scripts are deferred, so every classic script has run when a module runs and its globals exist (`js/legacy.js` relies on it).
+- Scripts: two. `js/theme.js`, a classic script in `<head>`, sets the theme before the first paint; then one module entry, `<script type="module" src="js/main.js">`, which imports the rest. A module needs only `script-src 'self'` and the `text/javascript` type `server.ts` sends for `.js`. Module scripts are deferred: `main.js` runs once the body is parsed, so the modules find `#conv`, `#groups` and the footer buttons when they load.
 - Code: `server.ts` `contentSecurityPolicy` (58-73), `app.css` `@font-face` (2-11), `csp.mjs`.
 
 ## WebKit features used
