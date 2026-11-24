@@ -5,6 +5,11 @@
 // on its next message. Statuses come from status.ts and are stored with their age.
 // The Open list comes from the SDK's listSessions(); opening a past session adds it to the open
 // list, and it resumes on its first message.
+// A terminal (R3.2, 2026-11-24, registry.ts): one writer per session. When a terminal's Claude Code
+// takes a session Synopia holds, Synopia yields (interrupts its turn, ends its process) and the session
+// is read-only until that CLI exits. A message you send meanwhile takes it back: at once when the CLI
+// is idle (re-checked right before), else once it is; any edit or Esc cancels. No process starts while
+// a live terminal holds the session.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,7 +19,9 @@ import type { ListSessionsOptions, SDKSessionInfo, SlashCommand } from '@anthrop
 import { SessionProcess } from './driver.ts';
 import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
-import type { Running, StatusEntry } from './status.ts';
+import type { Running, StatusEntry, Takeover } from './status.ts';
+import type { Terminal } from './registry.ts';
+import { takeoverNote } from './registry.ts';
 import { NeedsYou } from './pending.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
@@ -28,11 +35,12 @@ export const IDLE_MS = 30 * 60 * 1000;
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const IMAGE_TYPES = ['image/png', 'image/jpeg'];
 const STREAM_MS = 50; // at most one stream preview per this many ms and session
+const YIELD_INTERRUPT_MS = 3000; // a yield waits this long for the interrupt before it ends the process
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const RECENT = 50;
 export type ListFn = (opts?: ListSessionsOptions) => Promise<SDKSessionInfo[]>;
-export type Recent = { id: string; title: string; cwd: string; lastModified: number };
+export type Recent = { id: string; title: string; cwd: string; lastModified: number; terminal?: number };
 export type Image = { mediaType: string; data: string };
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
@@ -104,6 +112,16 @@ type Active = {
   afterExit: { content: Content; uuid: string; text: string }[]; // sent while the process was ending (idle end)
   ownEnd: number; // when a process of ours last ended (0: none yet), for feedRunning
   askId: string; // the tool use id of the question or plan another process asks (R6.8), '' for none
+  terminal: Terminal | null; // the terminal's CLI that holds it (R3.2): read-only while set
+  takeover: { content: Content; uuid: string; text: string; state: Takeover } | null; // your message that takes it back
+};
+
+// What Sessions needs from registry.ts (tests pass a fake).
+export type TerminalSource = {
+  holder(sid: string): Terminal | null;
+  recheck(sid: string): Terminal | null; // fresh, right before acting
+  onChange(fn: () => void): void;
+  end(t: Terminal, note: string, sid: string): Promise<boolean>; // the CLI ended and its transcript settled
 };
 
 // Slice 5: the model and effort you chose for a session (state.json `models`). `default` is the
@@ -126,6 +144,8 @@ export type SessionsOptions = {
   onWaiting?: (sid: string) => void;
   // Slice 5: a running process pushed a new command list (commands_changed).
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
+  // The terminals that hold sessions (registry.ts); none without it.
+  registry?: TerminalSource;
 };
 
 export class Sessions {
@@ -150,6 +170,7 @@ export class Sessions {
 
   // Opens every session of the open list that isn't closed. None has a process yet.
   start(): void {
+    this.opts.registry?.onChange(() => this.terminalsChanged());
     for (const e of this.store.state.open) {
       if (e.closedAt !== null || this.live.has(e.id)) continue;
       this.add(e.id, e.cwd, false, restored(this.store.state.status[e.id]));
@@ -204,7 +225,8 @@ export class Sessions {
       const written = this.store.state.written[s.sessionId]?.title;
       const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
       if (q && !title.toLowerCase().includes(q) && !this.tilde(s.cwd).toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
-      out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
+      const term = this.opts.registry?.holder(s.sessionId);
+      out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified, ...(term ? { terminal: term.pid } : {}) });
       if (out.length === RECENT) break;
     }
     for (const r of out) this.recent.set(r.id, r);
@@ -250,8 +272,6 @@ export class Sessions {
       if (Buffer.byteLength(im.data, 'base64') > MAX_IMAGE_BYTES) return { ok: false, error: 'An image is over 5 MB. Send a smaller one.' };
     }
     if (!text.trim() && !images.length) return { ok: false, error: 'Nothing to send.' };
-    const ending = Boolean(a.proc?.ending);
-    if (!a.proc && !this.startProcess(a)) return { ok: false, error: `Folder ${this.tilde(a.cwd)} no longer exists` };
     const content: Content = images.length
       ? [
         ...images.map((im) => ({ type: 'image' as const, source: { type: 'base64' as const, media_type: im.mediaType as 'image/png', data: im.data } })),
@@ -259,6 +279,24 @@ export class Sessions {
       ]
       : text;
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
+    if (a.terminal) return this.queueTakeover(a, content, id, text);
+    return this.deliver(a, content, id, text, false);
+  }
+
+  // The message goes to Claude: into the running process, behind a card, or a new process.
+  // `inBox`: the page still holds it (a take-over), so a refusal leaves it there.
+  private deliver(a: Active, content: Content, id: string, text: string, inBox: boolean): SendResult {
+    const images = typeof content === 'string' ? [] : content.filter((b) => b.type === 'image');
+    const ending = Boolean(a.proc?.ending);
+    if (!a.proc) {
+      const why = this.startProcess(a);
+      if (why === 'terminal' && inBox) return this.queueTakeover(a, content, id, text); // another CLI at the last check: wait for it
+      if (why === 'terminal') { // one writer: the page had cleared the box, so the text goes back to it
+        if (text.trim()) this.views.restore(a.id, [text]);
+        return { ok: false, error: `A terminal holds this session (pid ${a.terminal?.pid ?? '?'}). Send again to bring it back.` };
+      }
+      if (why) return { ok: false, error: why };
+    }
     if (a.needs.size) { // queued behind the card (plan section 6), pushed once it is answered
       a.needs.hold({ content, uuid: id, text });
       this.log('sessions.held', { sid: a.id, images: images.length });
@@ -276,6 +314,140 @@ export class Sessions {
     a.status.turnStarted();
     this.log('sessions.send', { sid: a.id, images: images.length });
     return { ok: true, sid: a.id };
+  }
+
+  // ---------- a terminal holds the session (R3.2) ----------
+
+  // Your message stays in the box (the page keeps it) until the take-over is done. A newer one
+  // replaces it while it waits.
+  private queueTakeover(a: Active, content: Content, uuid: string, text: string): SendResult {
+    if (a.takeover?.state === 'taking') return { ok: false, error: 'Synopia is already taking it back from the terminal.' };
+    a.takeover = { content, uuid, text, state: 'waiting' };
+    a.status.setTakeover('waiting');
+    this.log('takeover.queued', { sid: a.id, pid: a.terminal?.pid ?? null });
+    this.tryTakeover(a);
+    return { ok: true, sid: a.id };
+  }
+
+  // Esc or an edit in the box: the message no longer waits for the terminal.
+  cancelTakeover(sid: string): SendResult {
+    const a = this.live.get(this.resolve(sid));
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    if (a.takeover?.state !== 'waiting') return { ok: true, sid: a.id };
+    a.takeover = null;
+    a.status.setTakeover(null);
+    this.log('takeover.cancelled', { sid: a.id });
+    return { ok: true, sid: a.id };
+  }
+
+  // The CLI runs nothing: idle by its pid file, and no turn, card, subagent or background work in the transcript.
+  private terminalIdle(a: Active, t: Terminal): boolean {
+    const r = this.views.running(a.id);
+    return t.status === 'idle' && !r.turn && !r.ask && r.agents === 0 && !this.views.facts(a.id)?.working;
+  }
+
+  private tryTakeover(a: Active): void {
+    if (a.takeover?.state !== 'waiting') return;
+    const t = a.terminal;
+    if (!t) { this.finishTakeover(a); return; } // it exited by itself
+    if (!this.terminalIdle(a, t)) return; // waits for it
+    a.takeover.state = 'taking';
+    a.status.setTakeover('taking');
+    void this.runTakeover(a, t);
+  }
+
+  private async runTakeover(a: Active, seen: Terminal): Promise<void> {
+    const reg = this.opts.registry;
+    const fresh = reg ? reg.recheck(a.id) : null;
+    if (fresh && (fresh.pid !== seen.pid || !this.terminalIdle(a, fresh))) {
+      // the race: it became busy (or another CLI took it) at the last check
+      a.terminal = fresh;
+      a.status.setTerminal(fresh.pid);
+      if (a.takeover) a.takeover.state = 'waiting';
+      a.status.setTakeover('waiting');
+      this.log('takeover.raced', { sid: a.id, pid: fresh.pid });
+      return;
+    }
+    if (fresh && reg) {
+      this.log('takeover.end', { sid: a.id, pid: fresh.pid });
+      const ok = await reg.end(fresh, takeoverNote(a.id, new Date(this.now())), a.id);
+      if (this.live.get(a.id) !== a) return; // closed meanwhile
+      if (!ok) {
+        a.takeover = null;
+        a.status.setTakeover(null);
+        this.log('takeover.noExit', { sid: a.id, pid: fresh.pid });
+        this.views.toast(`The terminal's Claude Code (pid ${fresh.pid}) didn't exit, so Synopia left it running. Your message is still in the box.`);
+        return;
+      }
+    }
+    a.terminal = null;
+    a.status.setTerminal(0);
+    this.finishTakeover(a);
+  }
+
+  // The terminal is gone: the message goes, as any other. The take-over mark clears after the send,
+  // so the page sees the turn start and the mark go together (and then clears the box).
+  private finishTakeover(a: Active): void {
+    const m = a.takeover;
+    if (!m) return;
+    a.takeover = null;
+    const r = this.deliver(a, m.content, m.uuid, m.text, true);
+    if (a.takeover) return; // back to waiting: another terminal took it at the last check
+    a.status.setTakeover(null);
+    this.log('takeover.done', { sid: a.id, ok: r.ok });
+    if (!r.ok) this.views.toast(r.error);
+  }
+
+  // The registry changed: a terminal appeared on a session of ours (yield), its status changed (a
+  // waiting take-over may go now), or it exited (Synopia's again, quietly).
+  private terminalsChanged(): void {
+    const reg = this.opts.registry;
+    if (!reg) return;
+    for (const a of [...this.live.values()]) {
+      if (a.placeholder || a.takeover?.state === 'taking') continue;
+      const t = reg.holder(a.id);
+      if (t && !a.terminal) this.yieldTo(a, t);
+      else if (t && a.terminal) {
+        a.terminal = t;
+        a.status.setTerminal(t.pid);
+        this.tryTakeover(a);
+      } else if (!t && a.terminal) {
+        a.terminal = null;
+        a.status.setTerminal(0);
+        this.log('terminal.gone', { sid: a.id });
+        this.feedRunning(a);
+        this.tryTakeover(a);
+      }
+    }
+  }
+
+  // A terminal took the session: its turn (if one runs) is interrupted, then its process ends.
+  // Messages held behind a card or waiting for the process go back to the box.
+  private yieldTo(a: Active, t: Terminal): void {
+    a.terminal = t;
+    a.status.setTerminal(t.pid);
+    this.log('terminal.took', { sid: a.id, pid: t.pid, running: Boolean(a.proc) });
+    const proc = a.proc;
+    if (!proc) return;
+    const working = a.status.working;
+    a.proc = null; // its exit is no failure
+    a.ownEnd = this.now();
+    this.clearIdle(a);
+    this.setStreamClear(a);
+    const after = a.afterExit.splice(0).map((m) => m.text).filter((x) => x.trim());
+    if (after.length) this.views.restore(a.id, after);
+    this.endNeeds(a);
+    this.ended(a);
+    a.status.processEnded(false);
+    this.feedRunning(a);
+    void (async () => {
+      if (working && !proc.done) {
+        try {
+          await Promise.race([proc.interrupt(), new Promise((r) => setTimeout(r, YIELD_INTERRUPT_MS))]);
+        } catch { /* it ends below either way */ }
+      }
+      proc.close();
+    })();
   }
 
   // Close (R3.6): marks it closed and ends its process now, background work included (the page
@@ -482,6 +654,7 @@ export class Sessions {
     this.feedRunning(a, r);
     const ask = r.ask?.toolUseId ?? '';
     if (ask !== a.askId) { a.askId = ask; this.opts.onWaiting?.(a.id); }
+    this.tryTakeover(a); // the terminal's turn may have ended in its transcript
   }
 
   // The transcript's main turn counts only with no process of ours, and only for records written
@@ -499,6 +672,7 @@ export class Sessions {
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Active {
     const a: Active = {
       id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], ownEnd: 0, askId: '',
+      terminal: placeholder ? null : this.opts.registry?.holder(id) ?? null, takeover: null,
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
       needs: new NeedsYou({
         show: (r) => { this.views.setPending(a.id, r); this.opts.onWaiting?.(a.id); },
@@ -512,6 +686,7 @@ export class Sessions {
     };
     this.live.set(id, a);
     this.views.open(id, { cwd });
+    if (a.terminal) a.status.setTerminal(a.terminal.pid); // read-only from the start (R3.2)
     this.views.setStatus(id, a.status.status, a.status.at, a.status.detail);
     this.feedRunning(a); // working while its subagents or forks, or a turn of another process, run
     a.askId = this.views.running(id).ask?.toolUseId ?? ''; // an ask already there at open is no change
@@ -562,11 +737,19 @@ export class Sessions {
     };
   }
 
-  private startProcess(a: Active): boolean {
+  // Starts the session's process, or says why not: '' started, 'terminal' a live terminal holds it
+  // (one writer: the caller keeps the message), else the error for the toast.
+  private startProcess(a: Active): string {
     if (!isDir(a.cwd)) {
       a.status.failed();
       this.log('driver.noFolder', { sid: a.id });
-      return false;
+      return `Folder ${this.tilde(a.cwd)} no longer exists`;
+    }
+    const held = a.placeholder ? null : this.opts.registry?.recheck(a.id) ?? null;
+    if (held) {
+      if (a.terminal) { a.terminal = held; a.status.setTerminal(held.pid); } else this.yieldTo(a, held);
+      this.log('driver.refused', { sid: a.id, pid: held.pid });
+      return 'terminal';
     }
     const start = this.startOptions(a);
     const proc: SessionProcess = new SessionProcess(start, {
@@ -585,7 +768,7 @@ export class Sessions {
     a.proc = proc;
     this.feedRunning(a); // our process drives it now: the transcript's open turn is ours
     this.log('driver.start', { sid: a.id, resume: Boolean(start.resume), model: start.model ?? null, plan: Boolean(start.plan) });
-    return true;
+    return '';
   }
 
   private onExit(a: Active, proc: SessionProcess, error: Error | null, ended: boolean): void {
@@ -607,7 +790,7 @@ export class Sessions {
     // Messages sent while it was ending start the next process (resumed), in order.
     const next = a.afterExit.splice(0);
     if (!next.length || this.live.get(a.id) !== a) return;
-    if (!this.startProcess(a)) {
+    if (this.startProcess(a)) {
       this.views.restore(a.id, next.map((m) => m.text).filter((t) => t.trim()));
       return;
     }
