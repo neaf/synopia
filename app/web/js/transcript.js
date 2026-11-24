@@ -149,9 +149,11 @@ function waveHTML(tools, s) {
     const { t, a } = rows[0];
     return `<div class="ln agent one"><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
   }
-  const ms = rows.map(r => r.a ? agentMs(r.a) : 0);
+  // The timeline bar shows only for finished rows: how long each took against the others. A running
+  // one has no end yet, so a bar would read as progress toward one; it shows its live time only.
+  const ms = rows.map(r => r.a ? agentMs(r.a) : 0), ended = (r) => r.a?.start && r.a.finished;
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));
-  const tEnd = Math.max(...rows.map((r, i) => r.a?.start ? +new Date(r.a.start) + ms[i] : 0));
+  const tEnd = Math.max(...rows.map((r, i) => ended(r) ? +new Date(r.a.start) + ms[i] : 0));
   const span = Math.max(1, tEnd - t0);
   const forks = rows.every(r => r.a?.fork);
   const parallel = rows.every(r => r.a) && Math.max(...rows.map(r => +new Date(r.a.start))) - t0 < 120000;
@@ -159,7 +161,8 @@ function waveHTML(tools, s) {
     <div class="wgrid">${rows.map(({ t, a }, i) => {
       const st = !a ? "unknown" : a.finished ? "done" : "running";
       const left = a?.start ? (new Date(a.start) - t0) / span * 100 : 0, width = Math.max(2, ms[i] / span * 100);
-      return `${ind(markOf(a))}${nameOf(t, a)}<span class="bar st-${st}"><i style="left:${left}%;width:${width}%"></i></span><span class="adur">${time(a)}</span>`;
+      const bar = st === "done" ? `<span class="bar st-done"><i style="left:${left}%;width:${width}%"></i></span>` : `<span class="bar"></span>`;
+      return `${ind(markOf(a))}${nameOf(t, a)}${bar}<span class="adur">${time(a)}</span>`;
     }).join("")}</div></div></div>`;
 }
 

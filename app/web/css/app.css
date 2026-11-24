@@ -154,6 +154,7 @@ details.step > summary::-webkit-details-marker { display: none; }
 .atype { color: var(--ink-3); }
 .atype.fork { color: #8250DF; }
 .bar { height: .55em; background: var(--line-2); border-radius: 2px; position: relative; }
+.bar:empty { background: none; } /* a running row: no track, no bar, only its live time */
 .bar > i { position: absolute; top: 0; bottom: 0; background: var(--faint); border-radius: 2px; }
 .bar.st-running > i { background: var(--dot-green); }
 .bar.st-failed > i { background: var(--red); }

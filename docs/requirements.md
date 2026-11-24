@@ -114,7 +114,7 @@ These requirements come from a day of prototyping against the user's real sessio
 - R5.6 Tool runs collapse to one line ("3 Bash commands, read 2 files"); click to expand. A step reads as in the Claude Code CLI: the tool's name and its description or target, such as `Bash(Merge master into the M1 backend stack)` or `Read(~/dev/demo/notes.md)`; a single step shows inline. A click on a step, inline or inside an expanded run, expands it to its command (or its input) and its result under the drawn guide, truncated to the first 20 lines with "Show all N lines" for the full result; a second click closes it. For an edit, the diff in Files changed stays the way to see the change.
 - R5.7 Subagents:
   - A single launch is one line: kind mark, name (click opens its transcript) and live time.
-  - Several launched together get one heading, "3 subagents in parallel", with a row each: mark, name, duration bar on a shared timeline, and time.
+  - Several launched together get one heading, "3 subagents in parallel", with a row each: mark, name, duration bar on a shared timeline, and time. A running row shows only its moving mark and its live time, with no bar: nobody knows when it ends, so a bar would read as progress.
   - No duplicate labels, tags or "running" words.
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
