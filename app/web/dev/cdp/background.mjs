@@ -64,7 +64,8 @@ check('first b: the prompt in the message box', (await asking()) === PROMPT, awa
 const m = await marked();
 check('first b: the Bash line and the foreground subagent are highlighted', m.length === 2 && /Bash/.test(m[0]) && /Look around/.test(m[1]), JSON.stringify(m));
 const look = await ev(`(() => { const el = document.querySelector('#log .ln.tool[data-fg]'), cs = getComputedStyle(el); return { bg: cs.backgroundColor, sh: cs.boxShadow, anim: el.getAnimations().length, h: el.getBoundingClientRect().height }; })()`);
-check('the highlight: selection tint and a 1px blue ring, no animation of its own', look.bg === 'rgb(221, 244, 255)' && /rgb\(84, 174, 255\) 0px 0px 0px 4px/.test(look.sh) && look.anim === 0, JSON.stringify(look));
+const dark = process.env.SYNOPIA_CDP_THEME === 'dark'; // the tint and ring of the theme the check runs in
+check('the highlight: selection tint and a 1px blue ring, no animation of its own', look.bg === (dark ? 'rgb(31, 59, 92)' : 'rgb(221, 244, 255)') && (dark ? /rgb\(68, 147, 248\) 0px 0px 0px 4px/ : /rgb\(84, 174, 255\) 0px 0px 0px 4px/).test(look.sh) && look.anim === 0, JSON.stringify(look));
 check('the background Agent is not highlighted', !(await ev(`[...document.querySelectorAll('#log .wgrid [data-fg]')].some(el => /Draft the notes/.test(el.textContent))`)));
 await c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, 'background-asking.png'), Buffer.from(r.result.data, 'base64')));
 const before = await ev(`document.querySelector('#log .ln.tool[data-fg]').getBoundingClientRect().top`);

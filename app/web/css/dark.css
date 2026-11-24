@@ -50,6 +50,9 @@
 /* ---------- transcript ---------- */
 :root[data-theme="dark"] .prompt { background: #2C3644; }
 :root[data-theme="dark"] .atype.fork { color: var(--fork); }
+/* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
+:root[data-theme="dark"] .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+:root[data-theme="dark"] .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px var(--blue-bg), 0 0 0 3px var(--blue-line); }
 :root[data-theme="dark"] .md pre { background: var(--sub); }
 
 /* files changed and diffs: tinted rows, a stronger tint in the number gutter */
@@ -82,7 +85,8 @@
 /* ---------- the background panel ---------- */
 :root[data-theme="dark"] .main-row[data-state="green"] { background: var(--green-bg); border-color: var(--green-line); }
 :root[data-theme="dark"] .main-row[data-state="red"] { background: var(--red-bg); border-color: var(--red-line); }
-:root[data-theme="dark"] .main-row[aria-current="true"][data-state="red"] { box-shadow: 0 0 0 2px var(--red); }
+/* the item you're viewing keeps its one 1px ink edge (light ink here) over the state tints */
+:root[data-theme="dark"] .main-row[aria-current="true"] { border-color: var(--ink); }
 :root[data-theme="dark"] .main-row:hover { filter: brightness(1.12); }
 :root[data-theme="dark"] .rv { border-color: #2F5A88; background: #22344A; }
 
