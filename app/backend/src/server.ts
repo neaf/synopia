@@ -22,6 +22,10 @@ export type ServerOptions = {
   webRoot: string;
   hello: () => object;
   quitCheck: () => { running: unknown[]; background: unknown[] };
+  // GET /api/badge: the Dock badge's count, polled by the shell (R2.6).
+  badge?: () => number;
+  // POST /api/stop: "Stop All Work". Called once the 200 has gone out.
+  onStop?: () => void;
   onMessage?: (client: Client, msg: { t: string; [k: string]: unknown }) => void;
   // GET /api/image?sid&agent&ref: one image of a transcript, decoded (views.ts); 404 when there is none.
   image?: (sid: string, agent: string | null, ref: string) => { status: number; type?: string; body?: Buffer };
@@ -116,6 +120,22 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
 
     if (url.pathname.startsWith('/api/')) {
       if (!tokenMatches(opts.token, url.searchParams.get('token'))) return deny(res, 403);
+      if (req.method === 'GET' && url.pathname === '/api/ping') { // the app's liveness check of daemon.json
+        res.writeHead(200, { 'Content-Type': TYPES['.json'] });
+        res.end(JSON.stringify({ ok: true, pid: process.pid }));
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/api/badge' && opts.badge) {
+        res.writeHead(200, { 'Content-Type': TYPES['.json'] });
+        res.end(JSON.stringify({ badge: opts.badge() }));
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/api/stop' && opts.onStop) {
+        const stop = opts.onStop;
+        res.writeHead(200, { 'Content-Type': TYPES['.json'] });
+        res.end(JSON.stringify({ ok: true }), () => stop());
+        return;
+      }
       if (req.method === 'GET' && url.pathname === '/api/quit-check') {
         res.writeHead(200, { 'Content-Type': TYPES['.json'] });
         res.end(JSON.stringify(opts.quitCheck()));

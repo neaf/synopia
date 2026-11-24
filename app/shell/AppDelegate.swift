@@ -1,4 +1,5 @@
-// The window, the backend's lifetime and Quit.
+// The window, finding the backend daemon, Quit and Stop All Work. The app is only UI: ⌘Q, a
+// crash or a kill ends the app and never the daemon, so running work goes on (plan section 2).
 import Cocoa
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -6,19 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private let frame = WindowFrame()
   private let page = PageView()
   private let backend = Backend()
-  private var quitting = false
-  private var skipQuitCheck = false // SIGTERM quits without asking
+  private var stoppingAll = false
   private var sigterm: DispatchSourceSignal?
 
   func applicationDidFinishLaunching(_ n: Notification) {
-    // SIGTERM quits like ⌘Q, so the backend's stdin is closed on the way out.
+    // SIGTERM quits the app as ⌘Q does (the window frame is saved); the daemon goes on.
     signal(SIGTERM, SIG_IGN)
     let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-    // Not called straight from the handler: terminate's .terminateLater loop
-    // would run inside a main-queue block, and the main-queue callbacks that
-    // end it could never run. A run-loop perform avoids that.
-    source.setEventHandler { [weak self] in
-      self?.skipQuitCheck = true
+    source.setEventHandler {
       NSApp.perform(#selector(NSApplication.terminate(_:)), with: nil, afterDelay: 0)
     }
     source.resume()
@@ -56,12 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
       self.page.load(port: r.port, token: r.token)
     }
     backend.onExit = { [weak self] line in
-      guard let self, !self.quitting else { return }
-      self.frame.show(BackendDownView(message: line) { [weak self] in self?.restartBackend() })
+      guard let self, !self.stoppingAll else { return }
+      self.frame.show(BackendDownView(message: line) { [weak self] in self?.backend.connect() })
     }
     // The Dock badge: sessions that need you plus deliverables to review (R2.6), none at 0.
     backend.onBadge = { n in NSApp.dockTile.badgeLabel = n > 0 ? String(n) : nil }
-    backend.start()
+    backend.connect()
     NSApp.activate(ignoringOtherApps: true)
   }
 
@@ -79,16 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 
-  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    if quitting { return .terminateLater }
-    confirmQuitIfWorking { [weak self] ok in
-      guard let self else { return }
-      guard ok else { return NSApp.reply(toApplicationShouldTerminate: false) }
-      self.quitting = true
-      self.backend.stop { NSApp.reply(toApplicationShouldTerminate: true) }
-    }
-    return .terminateLater
-  }
+  // ⌘Q quits only the app, without asking: the daemon and its work go on.
 
   private struct QuitCheck: Decodable {
     struct Work: Decodable { let kind: String }
@@ -96,30 +83,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let background: [Work]
   }
 
-  /// When `GET /api/quit-check` lists running turns or background work, an
-  /// NSAlert asks first ("Quit Synopia? 2 sessions are working and 1
-  /// background shell will stop."). A failed check doesn't block the quit, and
-  /// SIGTERM (a script, a logout) never asks.
-  private func confirmQuitIfWorking(_ done: @escaping (Bool) -> Void) {
-    guard !skipQuitCheck, let r = backend.ready,
-          let url = URL(string: "http://127.0.0.1:\(r.port)/api/quit-check?token=\(r.token)") else { return done(true) }
+  /// "Stop All Work…" (⌥⌘Q): when `GET /api/quit-check` lists running turns or background work, an
+  /// NSAlert asks first ("Stop all work? 2 sessions are working and 1 background shell will stop.").
+  /// Then POST /api/stop ends the daemon and its processes, and the app quits once it has exited.
+  /// A failed check doesn't block it.
+  @objc func stopAllWork(_ sender: Any?) {
+    guard !stoppingAll else { return }
+    guard let r = backend.ready,
+          let url = URL(string: "http://127.0.0.1:\(r.port)/api/quit-check?token=\(r.token)") else { return stopAndQuit() }
     var req = URLRequest(url: url)
     req.timeoutInterval = 2
     URLSession.shared.dataTask(with: req) { data, _, _ in
       let check = data.flatMap { try? JSONDecoder().decode(QuitCheck.self, from: $0) }
       DispatchQueue.main.async {
-        guard let check, let text = AppDelegate.quitText(check) else { return done(true) }
+        guard let check, let text = AppDelegate.stopText(check) else { return self.stopAndQuit() }
         let alert = NSAlert()
         alert.messageText = text
-        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Stop All Work")
         alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: self.window) { done($0 == .alertFirstButtonReturn) }
+        alert.beginSheetModal(for: self.window) { if $0 == .alertFirstButtonReturn { self.stopAndQuit() } }
       }
     }.resume()
   }
 
-  /// "Quit Synopia? 2 sessions are working and 1 background shell will stop.", or nil when nothing runs.
-  private static func quitText(_ c: QuitCheck) -> String? {
+  private func stopAndQuit() {
+    stoppingAll = true
+    backend.stopDaemon { NSApp.terminate(nil) }
+  }
+
+  /// "Stop all work? 2 sessions are working and 1 background shell will stop.", or nil when nothing runs.
+  private static func stopText(_ c: QuitCheck) -> String? {
     func count(_ n: Int, _ one: String, _ many: String) -> String? { n == 0 ? nil : "\(n) \(n == 1 ? one : many)" }
     let kinds = c.background.map(\.kind)
     let work = [
@@ -132,15 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let turns = n == 0 ? nil : n == 1 ? "1 session is working" : "\(n) sessions are working"
     let list = work.count > 1 ? work.dropLast().joined(separator: ", ") + " and " + work.last! : work.first
     switch (turns, list) {
-    case let (t?, l?): return "Quit Synopia? \(t) and \(l) will stop."
-    case let (t?, nil): return "Quit Synopia? \(t) and will stop."
-    case let (nil, l?): return "Quit Synopia? \(l) will stop."
+    case let (t?, l?): return "Stop all work? \(t) and \(l) will stop."
+    case let (t?, nil): return "Stop all work? \(t) and will stop."
+    case let (nil, l?): return "Stop all work? \(l) will stop."
     default: return nil
     }
-  }
-
-  private func restartBackend() {
-    backend.stop { [weak self] in self?.backend.start() }
   }
 }
 

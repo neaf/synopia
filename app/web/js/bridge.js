@@ -116,14 +116,20 @@ function runHooks(m) {
   }
 }
 
+/* A lost socket comes back with backoff (0.5 s doubling to 8 s), under a quiet "Reconnecting…" by the
+   heading. When the daemon itself is gone, the shell starts a new one and reloads the page. */
+let retryMs = 500;
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
-  ws.onopen = () => { store.ui.connected = true; ws.send(JSON.stringify({ t: "auth", token: TOKEN })); };
+  ws.onopen = () => { store.ui.connected = true; retryMs = 500; document.getElementById("conn").hidden = true; ws.send(JSON.stringify({ t: "auth", token: TOKEN })); };
   ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch { return; } onMessage(m); };
   ws.onclose = e => {
+    const was = store.ui.connected;
     store.ui.connected = false; viewing = null;
     if (e.code === 4001) { toast("The page's token was refused. Open Synopia again."); return; }
-    setTimeout(connect, 1000);
+    if (was) document.getElementById("conn").hidden = false;
+    setTimeout(connect, retryMs);
+    retryMs = Math.min(retryMs * 2, 8000);
   };
 }
 

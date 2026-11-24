@@ -32,9 +32,9 @@
 - **Today:** the prototype is one HTML page that polls `transcripts.js` every 10 s and rebuilds everything. `export_transcripts.py` writes that file by re-parsing every transcript. Every send, answer, close and new session is a stub. Permission and plan cards exist only through `?demo=`. A native Swift shell spike showed the page in a WKWebView under Jamf.
 - **Goal:** the same page, in its own app window, driving real sessions. You chat, answer and arrange in it, and the terminal is no longer needed.
 - **How:** three parts on one machine:
-  - a native Swift shell, which owns the window, the menus and the backend's lifetime;
+  - a native Swift shell, which owns the window and the menus, and finds or starts the backend;
   - the prototype's page, split into plain script files and fed by one WebSocket;
-  - a Node backend that runs each session through the Agent SDK, tails its transcript, and stores your layout.
+  - a Node backend, a daemon that outlives the app, that runs each session through the Agent SDK, tails its transcript, and stores your layout.
 - **Already decided** (author, 2026-11-23):
   - Synopia knows nothing about the terminal. It shows only the sessions it holds open: new ones, and past ones you open from a list. Running one session in both places is your call.
   - The transcript comes from the session's JSONL file. The SDK stream carries control and live state.
@@ -60,7 +60,7 @@ flowchart LR
   F[("~/.claude/projects/**.jsonl")]
   S[("~/Library/Application Support/Synopia/state.json")]
   Q["claude CLI processes\n(one per active session, via query())"]
-  App -- "spawns, stdin pipe = lifetime" --> B
+  App -- "starts detached (setsid), finds it by daemon.json" --> B
   V -- "http + one WebSocket, 127.0.0.1, token" --> B
   B -- "read, tail" --> F
   B -- "read, write" --> S
@@ -69,7 +69,7 @@ flowchart LR
 ```
 
 The build steps, in order:
-1. **Shell.** It builds with `swiftc` from source, starts the backend, loads the page from it, provides the Edit menu, and quits cleanly.
+1. **Shell.** It builds with `swiftc` from source, finds or starts the backend daemon, loads the page from it, provides the Edit menu, and quits without ending the work.
 2. **Backend core.** It serves the page, opens the WebSocket, keeps the state file and takes the single-instance lock.
 3. **Session driver.** It runs one `query()` per active session, with streaming input, `canUseTool`, interrupt and model changes.
 4. **Transcript reader.** It tails each session's JSONL by offset and turns records into the items the page already draws, with stable ids.
@@ -102,20 +102,22 @@ prototype/          unchanged, stays the look reference
   - It makes `Synopia.icns` from `prototype/icon/icon-1024.png` with `sips` and `iconutil`, which ship with macOS.
   - It writes `Contents/Resources/config.json` with `node`, the absolute path from `asdf which node` (falling back to `command -v node`), and `backend`, the path to `app/backend/src/main.ts` in this checkout. Apps opened from Finder don't get the asdf PATH. After a Node upgrade, rebuild.
   - The app runs the backend from the repo: one user, one machine, no copy of `node_modules`. `*.app/` is already in `.gitignore`.
-- **Backend lifetime:** the shell spawns `node --experimental-strip-types --disable-warning=ExperimentalWarning <backend>` with stdin as a pipe.
-  - The backend prints one line, `{"port":…,"token":…}`, on stdout.
-  - The shell loads `http://127.0.0.1:<port>/?token=<token>`.
-  - The backend exits when its stdin closes, so a crash of the shell never leaves an orphan.
-  - If the backend exits, the shell shows its last stderr line in the window and offers "Restart backend".
+- **The backend is a daemon** (decided 2026-11-24): the app is only UI and may crash or quit at any time; running work survives that. The daemon owns every session's `claude` process and all state.
+  - **Start:** the shell (`Backend.swift`) runs `node --experimental-strip-types --disable-warning=ExperimentalWarning <backend>` through `posix_spawn` with `POSIX_SPAWN_SETSID` (its own session and process group), `POSIX_SPAWN_CLOEXEC_DEFAULT`, default signals and an empty mask, stdin from `/dev/null`, and stdout and stderr appended to `<state-dir>/daemon.log` (0600). The daemon rotates that file at 5 MB (copy to `daemon.log.1`, truncate). ⌘Q, a crash or a killed app never ends it. No launchd LaunchAgent (Jamf may flag one). While the app runs, a thread reaps the child, so a zombie never passes for alive.
+  - **Discovery:** once it listens, the daemon writes `<state-dir>/daemon.json` `{pid, procStart, port, token, version}` atomically (a temp file renamed), mode 0600, in a 0700 state folder. `procStart` is `ps -o lstart=` run by the daemon with `LC_ALL=C TZ=UTC`. On launch the shell reads it, checks that the pid runs, that the same `ps` gives the same start time (a reused pid fails) and that `GET /api/ping?token=` answers with that pid, then loads `http://127.0.0.1:<port>/?token=<token>`. Otherwise it starts a daemon and polls the file every 100 ms for 20 s; a daemon that exits 3 lost the lock to a second launch, so the shell keeps waiting for the winner's file. A failure shows the error view: daemon.log's last line and "Restart backend". The lock (`lock.ts`) stays, so two daemons never share a state folder; the daemon that takes it removes any `daemon.json` left behind (stale), and removes its own on every exit.
+  - **Lifetime:** the daemon ends on "Stop All Work" (`POST /api/stop`), on SIGTERM or SIGINT, or after 30 min with no page connected **and** nothing running (no turn, subagent, background shell or monitor, and no pending card), checked each minute. `--exit-idle-ms` (and `SYNOPIA_EXIT_IDLE_MS` through the app) shortens it for checks. Every exit logs `backend.stop reason=stopAll|idle|sigterm|sigint` (or `backend.exit code=…`) and a line in daemon.log. Idle ends of session processes are unchanged (section 6).
+  - **Reconnects:** the shell polls `GET /api/badge` every 2 s. A failed poll with the daemon's pid gone means it went away: the Dock badge clears, the shell starts a new daemon and reloads the page from it (a second loss within a minute shows the error view instead). Meanwhile the page shows a quiet "Reconnecting…" by the sidebar heading, and its WebSocket retries with backoff (0.5 s doubling to 8 s), which also covers a blip with the daemon still there.
+  - **Dev:** `--no-parent` (`app/dev.sh`) prints `{"port":…,"token":…}` on stdout and has no idle exit. The daemon prints nothing with the token: its stdout is daemon.log.
 - **Window:** one NSWindow, 1280×820, its frame saved with `setFrameAutosaveName`.
 - **Integrated title bar** (R2.7, `TitleBar.swift`):
   - The window uses `.fullSizeContentView`, `titlebarAppearsTransparent` and `titleVisibility = .hidden`, and keeps the title "Synopia". The traffic lights stay where AppKit puts them (no toolbar, no private API): on macOS 26 the title bar is 32 pt and the buttons sit 9 to 23 pt down, 9 to 69 pt across, over the sidebar.
   - The content view is a `WindowFrame`: the web view (or the backend-down view) filling the window, and on top a transparent `DragStrip` over the sidebar column's top only: as wide as the sidebar (`WindowFrame.sidebarWidth`, 270 pt, kept in sync with the first track of `.app`) and as tall as the title bar (measured as the frame height minus `contentLayoutRect`, 28 pt before that), the empty area beside the traffic lights. The main area has no strip over it (decided 2026-11-24: dragging by the header isn't needed), so every click there goes to the page. `SYNOPIA_DEBUG_DRAG=1` logs the strip's frame to stderr. Its `mouseDown` calls `window.performDrag(with:)`. A double-click follows `AppleActionOnDoubleClick` from the global domain: `Minimize`, `None`, or zoom for `Maximize`, `Fill` and unset (falling back to the older `AppleMiniaturizeOnDoubleClick`). Every click outside the strip goes to the web view, so a drag in the sidebar never moves the window.
   - The page learns it through a `WKUserScript` at document start, refreshed and also evaluated on every change: the root classes `in-app` and `fullscreen`, and `--titlebar` set inline to the measured height (0 in fullscreen). `app.css` defaults `--titlebar` to 0, 28px under `html.in-app:not(.fullscreen)`. The sidebar (`.app > .side`) takes it as top padding, so its heading sits below the traffic lights; the main area keeps only its 9 px canvas gap, so the header panel starts 9 px from the window top, as in Slack and Linear.
   - In fullscreen (`windowWillEnterFullScreen`, `windowWillExitFullScreen` and the two failure callbacks) the strip is hidden and the page gets `fullscreen`.
-- **Menus:** an App menu (About, Quit ⌘Q), an Edit menu (Undo, Redo, Cut, Copy, Paste, Select All, so ⌘V and ⌘C reach the web view) and a Window menu. No menu item takes ⌘⇧[ or ⌘⇧], so they reach the page.
+- **Menus:** an App menu (About, Stop All Work… ⌥⌘Q, Quit ⌘Q), an Edit menu (Undo, Redo, Cut, Copy, Paste, Select All, so ⌘V and ⌘C reach the web view) and a Window menu. No menu item takes ⌘⇧[ or ⌘⇧], so they reach the page.
 - **Links and files:** the page never navigates. Every link and file click goes to the backend as `open`, the same in Chrome. As a safety net the shell's `WKNavigationDelegate` cancels any navigation away from the backend origin, and `createWebViewWith` returns nil. Both hand only `http` and `https` URLs to `NSWorkspace.open`.
-- **Quit:** on ⌘Q the shell calls `GET /api/quit-check` with the token, which returns the running turns and running background work. If anything is running, an NSAlert says "Quit Synopia? 2 sessions are working and 1 background shell will stop." Then the shell closes the backend's stdin, and the backend ends its `query()` processes.
+- **Quit:** ⌘Q quits only the app, with no confirm: the work goes on in the daemon. **Stop All Work…** (⌥⌘Q) calls `GET /api/quit-check` with the token, which returns the running turns and running background work. If anything is running, an NSAlert says "Stop all work? 2 sessions are working and 1 background shell will stop." Then the shell sends `POST /api/stop?token=`, waits for the daemon's pid to go (SIGTERM after 15 s), and quits. The daemon ends its `query()` processes on the way out.
+- **Dock badge:** the shell polls `GET /api/badge?token=` every 2 s (simpler and sturdier than a native WebSocket client: no auth frame, no Origin, and the poll doubles as the liveness check).
 
 ## 3. The backend
 
@@ -123,8 +125,9 @@ Node 22.13 with TypeScript run by `--experimental-strip-types`. There's no build
 
 | Module | Job |
 |---|---|
-| `main.ts` | Parses flags: `--claude-dir` (default `~/.claude`), `--state-dir` (default `~/Library/Application Support/Synopia`), `--port` (default random), `--no-parent` (don't exit on stdin close, for `dev.sh`), `--fake` (fake driver). Takes the lock, starts the server, prints the port and token. |
-| `server.ts` | HTTP for `app/web/` and the WebSocket on `/ws`, on 127.0.0.1. Checks the token, Host and Origin. |
+| `main.ts` | Parses flags: `--claude-dir` (default `~/.claude`), `--state-dir` (default `~/Library/Application Support/Synopia`), `--port` (default random), `--no-parent` (for `dev.sh`: the port and token on stdout, no idle exit), `--fake` (fake driver), `--exit-idle-ms` (checks). Takes the lock, starts the server, writes `daemon.json`, runs the idle exit. |
+| `daemon.ts` | `daemon.json`: parse and validate, atomic 0600 write, remove only one's own, `procStart` (`ps -o lstart=`, C locale, UTC), `isLive`; the idle-exit rule (`IdleExit`); daemon.log's copy-and-truncate rotation at 5 MB. |
+| `server.ts` | HTTP for `app/web/` and the WebSocket on `/ws`, on 127.0.0.1. Checks the token, Host and Origin. `/api/ping`, `/api/badge`, `POST /api/stop` for the shell. |
 | `lock.ts` | An exclusive lock file `backend.lock` in the state folder. A second backend on the same state folder exits with a message. |
 | `sessions.ts` | The open list, new sessions, the Open list from `listSessions()`, close. |
 | `driver.ts` | One SDK `query()` per active session: input queue, canUseTool, interrupt, setModel, process lifetime. |
@@ -216,7 +219,10 @@ HTTP, on the same origin, every request with `?token=` (403 without it):
 
 | Endpoint | Query | Reply |
 |---|---|---|
-| `GET /api/quit-check` | `token` | JSON `{running[], background[]}` for the ⌘Q alert |
+| `GET /api/quit-check` | `token` | JSON `{running[], background[]}` for the Stop All Work alert |
+| `GET /api/ping` | `token` | `{ok: true, pid}`: the shell's check that `daemon.json` names a live daemon |
+| `GET /api/badge` | `token` | `{badge: N}`, the Dock badge's count, polled every 2 s |
+| `POST /api/stop` | `token` | `{ok: true}`, then the daemon stops (Stop All Work) |
 | `GET /api/image` | `token`, `sid`, `ref` (an item's `imgs[].ref`), `agent` (a subagent's transcript, else none) | the image block, decoded from the record line read again, with its `Content-Type`, `Cache-Control: private, max-age=3600` and `X-Content-Type-Options: nosniff`. Only `image/png`, `image/jpeg`, `image/gif` and `image/webp`; any other type is a 415. An unknown ref, or a file that is gone or was rewritten, is a 404 (the page shows a quiet tile). |
 
 Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `agents[]`, `background[]`), plus `id`; a tool item also has `patches[]` and `moreFiles` (a Bash command's edits), `input` (the command, or short input fields) and `out` `{text, lines, cut, interrupted?}` (its result's first 20 lines, 4 KB at most). A `you` item and a tool item can have `imgs[]`, `{ref, mediaType, w?, h?}` per image block of the prompt or the result: `ref` is `<record id>:<block index>` (`<i>.<j>` for block `j` inside the record's tool_result `i`), and `w`/`h` come from the PNG, JPEG, GIF or WebP header in the base64 prefix. No image bytes are kept: the backend keeps the record's line `{offset, length}` and reads it again for `GET /api/image`. Item ids are:
@@ -252,7 +258,7 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
   - Otherwise it calls the typed `interrupt()`, and messages it lists as still queued run afterwards, as in the SDK. The toast says so.
   - An in-place field open on a card takes the first Esc for itself, as R6.4 says. Only an Esc with no open field starts the interrupt prompt.
   - The interrupt spares background subagents, shells and monitors. Each one has a Stop row on its expanded Running card, which calls the typed `stopTask(taskId)`.
-- **Process lifetime:** a process ends when its session closes, when Synopia quits, or after 30 min idle with no running subagent or background work. Background shells and monitors live inside the process. The next message resumes it.
+- **Process lifetime:** a process ends when its session closes, on Stop All Work (or when the daemon ends), or after 30 min idle with no running subagent or background work. Background shells and monitors live inside the process. The next message resumes it.
 - **Process failure:** an exit outside these cases, or a resume that fails (for example the folder is gone), sets the status to failed and shows the stderr tail as a toast. The next message tries again.
 - **Close:** `close` sets `closedAt` and ends the process, after a confirm when a turn or background work is running. It then sends `removed`. The layout keeps the closed id in its group, hidden. Reopening it from the Open list puts it back in its place.
 
