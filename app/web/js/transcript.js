@@ -16,7 +16,7 @@ const fgMark = t => isFg(t) ? " data-fg" : "";
 function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
+    : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
   return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
@@ -32,15 +32,45 @@ let stepAsked = null; // the step whose full result was asked for, until the rep
 const stepKey = id => `${current}|${view || ""}|${id}`;
 const hasStep = t => !!(t.input || t.out);
 const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
+/* One run, expanded: a tool step (R5.6, running or finished) and a `!` command share it.
+   runView({ key, input, desc, out, err, truncatedTotal, running, startedAt, note, exit, stopped })
+     key            the id "Show all" asks the server for (`toolOutput`, data-full)
+     input, desc    the command or input on top, and a quiet description over it ("" for none)
+     out, err       the output and stderr so far (null: none yet; "" when finished: "No output")
+     truncatedTotal the full line count when out is the first 20 lines (0: not cut)
+     running        a live "Running, 42s" (from startedAt, ISO or ms; plain "Running" without it)
+     note           a quiet line under the running one, such as "Output shows when it finishes"
+     exit, stopped  "Exit code N" when non-zero, "Stopped" when interrupted
+   The result rows sit under the drawn guide: the first carries the corner, the rest align with it. */
+function runView({ key = "", input = "", desc = "", out = null, err = "", truncatedTotal = 0, running = false, startedAt = null, note = "", exit = null, stopped = false } = {}) {
+  const rows = [], row = (html, cls = "") => rows.push([html, cls]);
+  if (out) row(`<span class="out">${esc(out)}</span>`);
+  if (err) row(`<span class="out err">${esc(err)}</span>`);
+  const more = truncatedTotal ? `<p class="earlier more"><button data-full="${esc(key)}">Show all ${+truncatedTotal} lines</button></p>` : "";
+  const after = [];
+  if (running) {
+    const at = startedAt === null || startedAt === undefined || startedAt === "" ? null : new Date(startedAt);
+    after.push([`<span class="run">Running${at && !isNaN(at) ? `, ${live(at.toISOString(), Date.now() - at)}` : ""}</span>`, "running"]);
+    if (note) after.push([`<span class="note">${esc(note)}</span>`, "note"]);
+  } else {
+    if (out === "" && !err) row(`<span>No output</span>`);
+    if (stopped) after.push([`<span>Stopped</span>`, ""]);
+    else if (exit !== null && exit !== undefined && +exit !== 0) after.push([`<span>Exit code ${esc(exit)}</span>`, "failed"]);
+  }
+  const all = [...rows, ...after];
+  const res = ([html, cls], i) => `<div class="res${cls ? ` ${cls}` : ""}">${i === 0 ? `<span class="lcorner" aria-hidden="true"></span>` : "<span></span>"}${html}</div>`;
+  const head = `${desc ? `<div class="desc">${esc(desc)}</div>` : ""}${input ? `<div class="cmd">${esc(input)}</div>` : ""}`;
+  return `<div class="step-out${running ? " running" : ""}">${head}${rows.map(res).join("")}${more}${after.map((r, i) => res(r, rows.length + i)).join("")}</div>`;
+}
 function stepHTML(t) {
-  const o = t.out, full = fullOut.get(stepKey(t.id));
-  const text = full !== undefined ? full : o ? o.text : "";
-  const cmd = t.input ? `<div class="cmd">${esc(t.input)}</div>` : "";
-  const res = !o ? "" : text ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span class="out">${esc(text)}</span></div>`
-    : `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>No output</span></div>`;
-  const more = o && o.cut && full === undefined ? `<p class="earlier more"><button data-full="${esc(t.id)}">Show all ${+o.lines} lines</button></p>` : "";
-  const stop = o && o.interrupted ? `<div class="res"><span></span><span>Interrupted</span></div>` : "";
-  return `<div class="step-out">${cmd}${res}${more}${stop}</div>`;
+  const o = t.out, full = fullOut.get(stepKey(t.id)), running = t.state === "running" && !o;
+  /* the SDK's tool_progress carries only the elapsed time (sdk.d.ts SDKToolProgressMessage), so a
+     driven session's step says its output comes at the end; a session Synopia doesn't drive has no progress */
+  return runView({
+    key: t.id, input: t.input || "", out: o ? (full !== undefined ? full : o.text || "") : null,
+    truncatedTotal: o && o.cut && full === undefined ? +o.lines : 0,
+    running, startedAt: t.since || null, note: running && cur()?.driven ? "Output shows when it finishes" : "", stopped: !!(o && o.interrupted),
+  });
 }
 function showAll(id) {
   const key = stepKey(id); if (stepAsked === key) return;
@@ -240,9 +270,16 @@ const queuedOf = s => waitingOf(s).filter(q => q.queued !== false);
 const sentHTML = s => waitingOf(s).filter(q => q.queued === false).map(q => [`q:${q.id}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(q.text || "")}${q.images ? `<p class="img dim">[${q.images} image${q.images > 1 ? "s" : ""}]</p>` : ""}</div></div>`]);
 const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt queued"><span class="g">❯</span><div class="md">${q.images ? `<p class="img">[${q.images} pasted image${q.images > 1 ? "s" : ""}]</p>` : ""}${md(q.text)}<p class="qlabel">${ind("queued")}Queued, goes to Claude at its next step</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
-   compacting, rate limited or no updates instead, and say a message you sent is queued. */
+   compacting, rate limited or no updates instead, and say a message you sent is queued. When it names
+   the newest step and that step runs, a click expands it: the same open state as the step's own line
+   (openSteps, by item id), so opening either opens both (R5.6). */
+const liveStep = t => !!t && t.state === "running" && hasStep(t) && !(t.name === "Agent" || t.name === "Task");
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => {
+    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span>`;
+    const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
+    return `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span>${body}</div>`;
+  };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   if (stateOf(s) !== "green") return "";
   const t = [...s.items].reverse().find(x => x.k === "tool");
@@ -443,6 +480,8 @@ conv.addEventListener("click", e => {
 conv.addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset || !d.dataset.step) return;
   if (d.open) openSteps.add(stepKey(d.dataset.step)); else openSteps.delete(stepKey(d.dataset.step));
+  // a running step and the live line naming it are one step: both follow
+  conv.querySelectorAll(`details[data-step="${CSS.escape(d.dataset.step)}"]`).forEach(o => { if (o !== d && o.open !== d.open) o.open = d.open; });
 }, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
    (plan section 2), so the app and Chrome behave the same */
