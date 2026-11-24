@@ -296,7 +296,8 @@ export function readImage(file: string, span: Span, recordId: string, at: number
     if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return null;
     const d = obj(JSON.parse(buf.toString('utf8')));
     if (d.uuid ? d.uuid !== recordId : !recordId.includes('@')) return null; // `user@<n>`: a record with no uuid
-    let b: unknown = obj(d.message).content;
+    // a message queued during a turn keeps its blocks in the attachment's prompt
+    let b: unknown = d.type === 'attachment' ? obj(d.attachment).prompt : obj(d.message).content;
     at.forEach((i, k) => { b = k === 0 ? (Array.isArray(b) ? b[i] : undefined) : (Array.isArray(obj(b).content) ? (obj(b).content as unknown[])[i] : undefined); });
     const src = obj(obj(b).source);
     if (obj(b).type !== 'image' || src.type !== 'base64' || typeof src.data !== 'string') return null;
@@ -344,8 +345,10 @@ export class Transcript {
   private imageSpans = new Map<string, Span>();
   private outImgs = new Map<string, ImageRef[]>();
   private bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
+  private fgBash = new Map<string, Pick<Background, 'description' | 'command' | 'timeout' | 'start'>>(); // foreground Bash uses, in case one moves to the background
   private notes = new Map<string, { status: string; summary: string; end: string | null }>();
   private taskIds = new Map<string, string>(); // tool_use id -> the task id stopTask takes
+  private sdkTasks = new Map<string, string>(); // the same, from the SDK's task_started (kept over a reset)
   private reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
   private bg = new Map<string, Background>();
   private agentMeta = new Map<string, { meta: JsonRecord | null; sub: Transcript | null }>();
@@ -395,10 +398,12 @@ export class Transcript {
 
   // Back to empty, for a file that was rewritten. Subagent links are kept: they come from the folder.
   reset(): void {
-    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed;
+    const keep = this.agentMeta, ended = this.ended, endedFailed = this.endedFailed, sdkTasks = this.sdkTasks;
     const fresh = new Transcript({ sidechain: this.sidechain, home: this.home, answerOf: this.answerOf, planOf: this.planOf });
     Object.assign(this, fresh);
     this.agentMeta = keep;
+    this.sdkTasks = sdkTasks;
+    this.taskIds = new Map(sdkTasks);
     this.ended = ended;
     this.endedFailed = endedFailed;
     this.metaChanged = true;
@@ -477,6 +482,17 @@ export class Transcript {
         this.changed.add(this.lastYou.id);
       }
     }
+    // An SDK-driven CLI (entrypoint sdk-cli, as Synopia's own sessions are) writes stop_hook_summary
+    // but rarely turn_duration (2 of 19 turns seen): the time from your prompt to it stands in, and a
+    // turn_duration after it (the interactive CLI writes one right after) wins.
+    if (t === 'system' && d.subtype === 'stop_hook_summary' && !d.isSidechain && !this.sidechain) {
+      const you = this.lastYou;
+      const ms = you && you.workedMs === undefined && !you.interrupted && you.ts && ts ? Date.parse(ts) - Date.parse(you.ts) : NaN;
+      if (you && Number.isFinite(ms) && ms >= 0) {
+        you.workedMs = ms;
+        this.changed.add(you.id);
+      }
+    }
     if (t === 'attachment' && !(d.isSidechain && !this.sidechain)) this.queuedCommand(d, ts);
     if ((d.isSidechain && !this.sidechain) || (t !== 'user' && t !== 'assistant')) return;
     const uuid = str(d.uuid) || `${t}@${this.seq}`;
@@ -488,15 +504,18 @@ export class Transcript {
   // A task notification or a subagent's hand-back queued during a turn lands as an `attachment`
   // record (`queued_command`, the text in `prompt`), not as a user record. So does a message you
   // sent during a turn (`commandMode: 'prompt'`; slice 3 saw no user record for it), so it shows too.
+  // `prompt` is a string, or (a message with a pasted image) an array of text and image blocks.
   private queuedCommand(d: JsonRecord, ts: string | null): void {
     const a = obj(d.attachment);
-    const prompt = str(a.prompt);
-    if (a.type !== 'queued_command' || !prompt) return;
+    const blocks = Array.isArray(a.prompt) ? a.prompt : null;
+    const prompt = blocks ? textOf(blocks) : str(a.prompt);
+    const images = blocks ? blocks.some((b) => isBlock(b, 'image')) : false;
+    if (a.type !== 'queued_command' || (!prompt && !images)) return;
     this.turnOpen = true; // written when a turn takes it in
     this.afterMarker = false;
-    const typed = a.commandMode === 'prompt' && !prompt.startsWith('<');
+    const typed = a.commandMode === 'prompt' && (!prompt.startsWith('<') || images);
     if (!typed && !prompt.startsWith('<task-notification>') && !prompt.startsWith('<agent-message')) return;
-    this.user({ ...d, type: 'user' }, str(d.uuid) || `attachment@${this.seq}`, ts, prompt);
+    this.user({ ...d, type: 'user' }, str(d.uuid) || `attachment@${this.seq}`, ts, blocks ?? prompt);
   }
 
   private user(d: JsonRecord, uuid: string, ts: string | null, content: unknown): void {
@@ -509,6 +528,14 @@ export class Transcript {
         // An Agent launched in the background returns at once: its launch result isn't the end.
         if (r.status === 'async_launched') this.bgTool.set(tid, true);
         const task = str(r.backgroundTaskId) || str(r.taskId) || (r.status === 'async_launched' ? str(r.agentId) : '');
+        // A foreground Bash moved to the background while it ran (Ctrl+B, a timeout, or a message
+        // sent during it) returns a backgroundTaskId too (17 such results seen): a background shell from then.
+        const fg = this.fgBash.get(tid);
+        if (fg && str(r.backgroundTaskId) && !this.bg.has(tid)) {
+          this.bg.set(tid, { ...fg, toolUseId: tid, taskId: null, kind: 'shell', persistent: false, status: 'running', summary: '', end: null });
+          this.stopIfEnded(tid);
+          this.changedBg.add(tid);
+        }
         if (task) this.setTask(tid, task);
       }
     }
@@ -536,6 +563,7 @@ export class Transcript {
         const r = obj(b);
         const tid = str(r.tool_use_id);
         this.results.set(tid, Boolean(r.is_error));
+        this.fgBash.delete(tid);
         if (r.is_error) errors.push(tid);
         if (r.is_error && /^\[(Request interrupted by user|Tool call interrupted)/.test(textOf(r.content).trim())) this.interrupted.add(tid);
         if (this.asks.has(tid)) this.answers.set(tid, clip(textOf(r.content), 2000));
@@ -652,6 +680,8 @@ export class Transcript {
         });
         this.stopIfEnded(tid);
         this.changedBg.add(tid);
+      } else if (name === 'Bash') {
+        this.fgBash.set(tid, { description: str(inp.description), command: str(inp.command).slice(0, 300), timeout: inp.timeout, start: ts });
       }
       if (name === 'AskUserQuestion') {
         const qs: Question[] = (Array.isArray(inp.questions) ? inp.questions : []).map((q0) => {
@@ -701,6 +731,16 @@ export class Transcript {
     if (this.notes.has(tid)) return;
     this.notes.set(tid, { status, summary, end });
     this.refreshTool(tid);
+  }
+
+  // A task started, as the SDK's task_started says: its task id for stopTask. An SDK-driven CLI
+  // writes no toolUseResult in a subagent's file, so for a subagent's shell this is the only typed
+  // source of it (live check 2026-11-24: stopTask with it stopped a background subagent's `sleep`).
+  taskStarted(tid: string, task: string): void {
+    if (!tid || !task || this.taskIds.has(tid)) return;
+    this.sdkTasks.set(tid, task);
+    this.setTask(tid, task);
+    for (const a of this.agentMeta.values()) if (a.sub?.getBackground(tid)) this.changedBg.add(tid);
   }
 
   private endedBefore(ts: string | null | undefined): boolean {
@@ -863,8 +903,9 @@ export class Transcript {
   // The main thread's turn runs (by the transcript alone): the latest assistant record has a
   // tool_use with no result yet (and the process didn't end after it), or a turn is open and the
   // transcript changed within `quietMs`, so a crashed process doesn't read as working for ever.
+  // A question or plan with no result waits on you, not on work: it is pendingAsk's, and goes stale.
   turnRunning(now: number, quietMs: number): boolean {
-    if (this.lastToolUses.some((u) => !this.results.has(u.id) && !this.endedBefore(u.ts))) return true;
+    if (this.lastToolUses.some((u) => !this.results.has(u.id) && !this.endedBefore(u.ts) && u.name !== 'AskUserQuestion' && u.name !== 'ExitPlanMode')) return true;
     if (!this.turnOpen || this.endedBefore(this.lastTs)) return false;
     const last = this.lastTs ? Date.parse(this.lastTs) : NaN;
     return Number.isFinite(last) && now - last < quietMs;
@@ -872,8 +913,14 @@ export class Transcript {
 
   // A question or plan waiting for its answer (R6.8): the latest assistant record of this thread
   // has an AskUserQuestion or ExitPlanMode with no result (and the process didn't end after it);
-  // else the first running subagent's own. Null when none waits.
-  pendingAsk(): PendingAsk | null {
+  // else the first running subagent's own. Null when none waits. With `now` and `staleMs`, also null
+  // when no record here or in a subagent's file is younger than `staleMs`, nor the file itself
+  // (`changedAt`, its mtime in ms): the process that asked is gone.
+  pendingAsk(now?: number, staleMs?: number, changedAt?: () => number): PendingAsk | null {
+    if (now !== undefined && staleMs !== undefined) {
+      const last = this.lastActivity();
+      if (last && now - last >= staleMs && now - (changedAt?.() ?? 0) >= staleMs) return null;
+    }
     const u = this.lastToolUses.find((x) => (x.name === 'AskUserQuestion' || x.name === 'ExitPlanMode') && !this.results.has(x.id) && !this.endedBefore(x.ts));
     if (u) {
       const since = (u.ts && Date.parse(u.ts)) || 0;
@@ -886,6 +933,13 @@ export class Transcript {
       if (sub && !sub.agentId) return { ...sub, agentId: aid };
     }
     return null;
+  }
+
+  // The latest record time (ms) in this file or a subagent's, 0 when none has one.
+  private lastActivity(): number {
+    let last = (this.lastTs && Date.parse(this.lastTs)) || 0;
+    for (const a of this.agentMeta.values()) last = Math.max(last, (a.sub?.lastTs && Date.parse(a.sub.lastTs)) || 0);
+    return last;
   }
 
   // Running when `finished` isn't true, its Agent tool has no (final) result and no task

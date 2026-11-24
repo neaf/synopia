@@ -610,6 +610,9 @@ export class Sessions {
       // the JSONL only when a turn runs, so between turns this is the only sign that it ended.
       this.log('driver.task', { sid: a.id, status: String(m.status) });
       this.views.taskEnded(a.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
+    } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {
+      // A subagent's shell or monitor: its file has no task id when the SDK drives the CLI (facts, 2026-11-24).
+      this.views.taskStarted(a.id, m.tool_use_id, m.task_id);
     } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
       this.opts.onCommands?.(a.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {

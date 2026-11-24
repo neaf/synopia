@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Tailer, SubagentWatcher } from '../src/tail.ts';
 import type { JsonRecord, Span } from '../src/tail.ts';
 import { Transcript, findTranscript, sessionDirOf, clip, previewOf, readResult } from '../src/transcript.ts';
+import { ASK_STALE_MS, transcriptStatus } from '../src/status.ts';
 import type { Item } from '../src/transcript.ts';
 
 const CLAUDE = path.join(import.meta.dirname, 'fixtures', 'claude');
@@ -696,4 +697,90 @@ test("subagents' shells and monitors: changes reported, and they end when their 
   t.setAgent('bbbb0001', { agentType: 'general-purpose', description: 'Build image thumbnails', toolUseId: 'toolu_r1', finished: true });
   assert.ok(t.takeChanges().background.includes('toolu_bsh1'));
   assert.deepEqual([t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], ['stopped', 'Ended with its subagent']);
+});
+
+// Facts settled 2026-11-24 (.ai-notes/app/README.md), in the shapes real files hold (made-up content).
+const SID = '77777777-0000-4000-8000-000000000007';
+const stopHooks = (uuid: string, ts: string, entrypoint = 'sdk-cli'): JsonRecord => ({
+  type: 'system', subtype: 'stop_hook_summary', uuid, timestamp: ts, isSidechain: false, entrypoint, sessionId: SID, session_id: SID,
+  hookCount: 0, hookInfos: [], hookErrors: [], preventedContinuation: false, stopReason: '', hasOutput: false, level: 'suggestion', hookAdditionalContext: [], toolUseID: 'stop-1',
+});
+const turnDuration = (uuid: string, ts: string, ms: number): JsonRecord => ({
+  type: 'system', subtype: 'turn_duration', uuid, timestamp: ts, isSidechain: false, entrypoint: 'cli', sessionId: SID,
+  durationMs: ms, messageCount: 4, pendingBackgroundAgentCount: 0, isMeta: false,
+});
+
+test('worked for: an SDK-driven turn ends with stop_hook_summary only; a turn_duration after it wins', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('w-u1', 'Go', ago(10)), replied('w-a1', ago(9), [{ type: 'text', text: 'Done.' }]), stopHooks('w-s1', ago(8))]);
+  assert.equal(byId(t, 'w-u1').workedMs, 2 * 60_000, 'prompt to stop hooks');
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  t.pushAll([turnDuration('w-s2', ago(8), 119_000)]);
+  assert.equal(byId(t, 'w-u1').workedMs, 119_000);
+  t.pushAll([typed('w-u2', 'Again', ago(7)), stopHooks('w-s3', ago(6), 'cli'), turnDuration('w-s4', ago(6), 61_000)]);
+  assert.equal(byId(t, 'w-u2').workedMs, 61_000, 'the interactive CLI: turn_duration right after');
+  t.pushAll([typed('w-u3', 'Long one', ago(5)), typed('w-u4', '[Request interrupted by user]', ago(4)), typed('w-u5', 'Next', ago(3))]);
+  assert.equal(byId(t, 'w-u4').workedMs, undefined, 'an interrupt is mostly followed by neither record');
+  assert.equal(byId(t, 'w-u3').workedMs, undefined);
+});
+
+test('a permission-mode record and a queue-operation in their real shapes', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    { type: 'permission-mode', permissionMode: 'plan', sessionId: SID },
+    { type: 'mode', mode: 'normal', sessionId: SID },
+    { type: 'queue-operation', operation: 'enqueue', timestamp: ago(2), sessionId: SID, content: 'and this', commandUuid: 'c1', deliveryId: 'd1', reason: 'busy' },
+  ]);
+  assert.deepEqual([t.permissionMode, t.lastNonPlanMode, t.items.length], ['plan', null, 0]);
+  assert.equal(t.turnRunning(NOW, QUIET), false, 'a queue-operation opens no turn: only the queued_command attachment does');
+});
+
+test('a foreground Bash moved to the background (backgroundTaskId) is a background shell from then', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    replied('f-a1', ago(5), [{ type: 'tool_use', id: 'toolu_fg', name: 'Bash', input: { command: 'npm test', description: 'Run the tests', timeout: 600000 } }]),
+    { ...toolResult('f-r1', ago(4), 'toolu_fg', { content: 'Command was moved to the background with ID: bfg1.' }),
+      toolUseResult: { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: 'bfg1', backgroundedToDeliverMessage: true } },
+    replied('f-a2', ago(3), [{ type: 'tool_use', id: 'toolu_fg2', name: 'Bash', input: { command: 'ls' } }]),
+    { ...toolResult('f-r2', ago(3), 'toolu_fg2'), toolUseResult: { stdout: 'a', stderr: '', interrupted: false, isImage: false, noOutputExpected: false } },
+  ]);
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.taskId, b.kind, b.status, b.description, b.command]), [['toolu_fg', 'bfg1', 'shell', 'running', 'Run the tests', 'npm test']]);
+  assert.equal(byId(t, 'toolu_fg').state, 'done');
+  t.pushAll([{ type: 'user', uuid: 'f-n1', timestamp: ago(1), message: { role: 'user', content: '<task-notification>\n<task-id>bfg1</task-id>\n<tool-use-id>toolu_fg</tool-use-id>\n<status>completed</status>\n<summary>Tests passed</summary>\n</task-notification>' } }]);
+  assert.equal(t.getBackground('toolu_fg')?.status, 'completed');
+});
+
+test("a subagent's shell under an SDK-driven CLI: no toolUseResult in its file, the task id from task_started", () => {
+  const main = new Transcript({ home: HOME });
+  main.pushAll([typed('g-u1', 'Go', ago(10)), replied('g-a1', ago(9), [{ type: 'tool_use', id: 'toolu_ag', name: 'Agent', input: { description: 'Sleep', prompt: 'x', run_in_background: true } }])]);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.pushAll([
+    { ...replied('g-s1', ago(8), [{ type: 'tool_use', id: 'toolu_gsh', name: 'Bash', input: { command: 'sleep 127', run_in_background: true } }]), isSidechain: true, agentId: 'gggg0001' },
+    { ...toolResult('g-s2', ago(8), 'toolu_gsh', { content: 'Command running in background with ID: bg9x.' }), isSidechain: true, agentId: 'gggg0001' },
+  ]);
+  main.setAgent('gggg0001', { agentType: 'general-purpose', description: 'Sleep', toolUseId: 'toolu_ag' }, sub);
+  main.takeChanges();
+  assert.equal(main.getBackground('toolu_gsh')?.taskId, null, 'nothing in the file');
+  main.taskStarted('toolu_gsh', 'bg9x');
+  assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x');
+  assert.ok(main.takeChanges().background.includes('toolu_gsh'), 'pages get it');
+  main.reset(); // a rewritten file keeps what the SDK said
+  main.pushAll([typed('g-u1', 'Go', ago(10))]);
+  assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x');
+});
+
+test('a stale card: a question in a transcript quiet for 12 hours is your turn, not needs you', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('x-u1', 'Go', ago(13 * 60 + 2)), replied('x-a1', ago(13 * 60 + 1), [askUse('toolu_xq')])]);
+  assert.equal(t.pendingAsk()?.toolUseId, 'toolu_xq', 'without a clock it still waits');
+  const run = (now: number) => ({ agents: 0, turn: t.turnRunning(now, QUIET), lastAt: 0, ask: t.pendingAsk(now, ASK_STALE_MS) });
+  assert.equal(transcriptStatus(run(NOW)), 'idle', '13 hours quiet: the asking process is gone');
+  assert.equal(transcriptStatus(run(NOW - 2 * 60 * 60_000)), 'waiting', '11 hours quiet: still needs you');
+  // a subagent's newer records count as the session changing
+  const main = new Transcript({ home: HOME });
+  main.pushAll([typed('y-u1', 'Go', ago(14 * 60)), replied('y-a1', ago(14 * 60), [{ type: 'tool_use', id: 'toolu_yag', name: 'Agent', input: { description: 'Pick', prompt: 'x' } }])]);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.pushAll([{ ...replied('y-s1', ago(60), [askUse('toolu_ysq')]), isSidechain: true }]);
+  main.setAgent('yyyy0001', { agentType: 'general-purpose', description: 'Pick', toolUseId: 'toolu_yag' }, sub);
+  assert.equal(main.pendingAsk(NOW, ASK_STALE_MS)?.toolUseId, 'toolu_ysq');
 });

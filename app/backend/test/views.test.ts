@@ -468,6 +468,24 @@ test('work: a background shell ending between turns tells the writer, and its li
   assert.deepEqual(ended, [id], 'once');
 });
 
+test("work: the SDK's task_started gives a shell its task id when the file has none", () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000d0';
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 90', description: 'Wait a while', run_in_background: true } }] },
+  }));
+  const sent: { t?: string; upsert?: { toolUseId: string; taskId: string | null }[] }[] = [];
+  const client = { send: (m: object) => sent.push(m) } as unknown as Client;
+  const views = new Views({ claudeDir: dir, clients: () => new Set([client]), home: HOME, pollMs: 0, watch: false });
+  views.open(id);
+  views.check();
+  sent.length = 0;
+  views.taskStarted(id, 'toolu_bg', 'b1x2');
+  const up = sent.find((m) => m.t === 'background')?.upsert ?? [];
+  assert.deepEqual(up.map((b) => [b.toolUseId, b.taskId]), [['toolu_bg', 'b1x2']]);
+  views.stop();
+});
+
 test('toolOutput: the full result read again from its line, also after the file grew; a toast when it is gone', () => {
   const id = 'abababab-0000-4000-8000-00000000000b';
   const out = Array.from({ length: 30 }, (_, i) => `out ${i}`).join('\n');

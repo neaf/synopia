@@ -15,6 +15,10 @@ const AGENTS = '44444444-0000-4000-8000-000000000004';
 const REVIEW = 'aaaa0004'; // "For review: Draft the demo release notes", finished in the fixture
 
 function setup() {
+  // A question in a transcript whose file is 12 hours quiet is your turn (status.ts ASK_STALE_MS): the
+  // fixture's records are older, so its file counts as just changed, whenever it was checked out.
+  const now = new Date();
+  fs.utimesSync(path.join(CLAUDE, 'projects', '-tmp-fixture', `${ASKS}.jsonl`), now, now);
   const reviewed: string[] = [];
   let badge: Badge | null = null;
   const views = new Views({ claudeDir: CLAUDE, clients: () => new Set<Client>(), home: '/Users/fixture', pollMs: 0, watch: false, onChange: () => badge?.changed() });
