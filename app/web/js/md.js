@@ -60,13 +60,31 @@ function md(src) {
     }
     const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h4>${inline(h[2])}</h4>`); i++; continue; }
     if (/^\s*([-*]|\d+\.)\s+/.test(l)) {
-      const ordered = /^\s*\d+\./.test(l); const items = [];
-      while (i < lines.length && (/^\s*([-*]|\d+\.)\s+/.test(lines[i]) || (/^\s{2,}\S/.test(lines[i]) && items.length))) {
-        if (/^\s*([-*]|\d+\.)\s+/.test(lines[i]) && !/^\s{4,}/.test(lines[i])) items.push(lines[i].replace(/^\s*([-*]|\d+\.)\s+/, ""));
-        else items[items.length - 1] += "<br>" + lines[i].trim().replace(/^([-*]|\d+\.)\s+/, "– ");
-        i++;
+      /* A list, as CommonMark reads one: an item's own content is every line indented past its marker
+         (a nested list, a second paragraph, code), rendered recursively; blank lines between items keep
+         the list going; an ordered list starts at the number written. */
+      const mk = /^(\s*)([-*]|\d+)(\.)?(\s+)/;
+      const m0 = l.match(mk), base = m0[1].length, ordered = /\d/.test(m0[2]);
+      const isItem = x => { const m = x.match(mk); return m && m[1].length <= base + 1 && /\d/.test(m[2]) === ordered && (ordered ? !!m[3] : !m[3]); };
+      const items = []; let cur = null, pad = 0;
+      while (i < lines.length) {
+        const x = lines[i];
+        if (!x.trim()) { // a blank line: the list goes on if the next text is an item or an item's content
+          let j = i + 1; while (j < lines.length && !lines[j].trim()) j++;
+          if (j < lines.length && (isItem(lines[j]) || (cur && lines[j].search(/\S/) >= pad))) { if (cur) cur.push(""); i++; continue; }
+          break;
+        }
+        if (isItem(x)) { const m = x.match(mk); pad = m[0].length; cur = [x.slice(pad)]; items.push({ n: +m[2], lines: cur }); i++; continue; }
+        const ind = x.search(/\S/);
+        if (cur && (ind >= Math.min(pad, base + 2) || !/^\s*([-*]|\d+\.)\s|^(```|#{1,4}\s|>|\s*\|)/.test(x))) { cur.push(x.slice(Math.min(ind, pad))); i++; continue; }
+        break;
       }
-      out.push(`<${ordered ? "ol" : "ul"}>${items.map(x => `<li>${inline(x).replace(/&lt;br&gt;/g, "<br>")}</li>`).join("")}</${ordered ? "ol" : "ul"}>`); continue;
+      const tag = ordered ? "ol" : "ul", start = ordered && items[0].n !== 1 ? ` start="${items[0].n}"` : "";
+      out.push(`<${tag}${start}>${items.map(it => {
+        const html = md(it.lines.join("\n"));
+        const one = /^<p>([\s\S]*)<\/p>$/.exec(html); // a one-paragraph item stays tight
+        return `<li>${one && !one[1].includes("<p>") ? one[1] : html}</li>`;
+      }).join("")}</${tag}>`); continue;
     }
     if (/^>\s?/.test(l)) { const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, "")); out.push(`<blockquote>${lines2(buf)}</blockquote>`); continue; }
     if (!l.trim()) { i++; continue; }
