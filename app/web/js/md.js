@@ -42,7 +42,8 @@ function md(src) {
     const raw = (s || "").replace(/\u0001/g, "")
       .replace(/`([^`]+)`/g, (m, c) => put(`<code>${bare(esc(c))}</code>`))
       .replace(/\[([^\]\u0001]+)\]\((https?:[^)\s\u0001]+)\)/g, (m, t, url) => put(link(url, bold(esc(t)))));
-    return bare(bold(esc(raw))).replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);
+    /* a pasted image's [Image #N] tag, as the CLI puts it in the prompt (R5.13): a plain dim tag, not in code spans */
+    return bare(bold(esc(raw))).replace(/\[Image #(\d+)\]/g, '<span class="img-tag">[Image #$1]</span>').replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);
   };
   /* a paragraph's or quote's lines: a single newline is a line break, as in the Claude Code CLI (a blank
      line makes a new paragraph). No URL or attribute holds a newline, so each one left is text. */

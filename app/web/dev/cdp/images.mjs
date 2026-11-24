@@ -73,7 +73,11 @@ if (process.argv[2] === 'make') {
     + line({ ...base, type: 'user', uuid: 'u3', timestamp: ts(30), message: { role: 'user', content: [{ type: 'text', text: 'Check every screen of the made-up app.' }] } })
     + RUN.map(([id, name, input, content], k) => tool(`ra${k}`, 31 + 2 * k, id, name, input) + result(`rr${k}`, 32 + 2 * k, id, content)).join('')
     + line({ ...base, type: 'assistant', uuid: 'a9', timestamp: ts(50), message: { role: 'assistant', content: [{ type: 'text', text: 'All seven screens look right.' }] } })
-    + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 20000, timestamp: ts(51) }));
+    + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 20000, timestamp: ts(51) })
+    // a prompt the CLI sent with two pasted images: one text block with the tags, then the images (R5.13)
+    + line({ ...base, type: 'user', uuid: 'u4', timestamp: ts(55), imagePasteIds: [1, 2], message: { role: 'user', content: [{ type: 'text', text: '[Image #1] is the old screen, [Image #2] the new one. Which reads better?' }, img('image/png', png(400, 100)), img('image/png', png(240, 160))] } })
+    + line({ ...base, type: 'assistant', uuid: 'a10', timestamp: ts(56), message: { role: 'assistant', content: [{ type: 'text', text: 'The new one.' }] } })
+    + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: ts(57) }));
   process.exit(0);
 }
 
@@ -228,13 +232,32 @@ check('Esc closes the run\'s viewer', await ev(`!document.querySelector('.viewer
 await ev(`(() => { const s = cur(); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-unsized', k: 'you', ts: '2026-11-20T10:02:00.000Z', text: 'An image the backend gave no size for', images: 1, imgs: [{ ref: 'rr1:0.0', mediaType: 'image/png' }] }], total: s.total + 1 }); })()`);
 check('an image with no size in the item gets its shape, not a square', await until(`(() => { const i = document.querySelector('[data-key="you:u-unsized"] .thumb.sized img'); if (!i) return false; const cs = getComputedStyle(i); return Math.abs(parseFloat(cs.width) - ${2 * H}) < 0.6 && Math.abs(parseFloat(cs.height) - ${H}) < 0.6; })()`));
 
-// the composer: paste two images, remove one with its ✕, send
+// a CLI-sent prompt with tags: the text with the tags in place as plain dim tags, the thumbnails below
+const cliTags = await ev(`(() => { const p = document.querySelector('[data-key="you:u4"]'); if (!p) return null; const md = p.querySelector('.md'), tags = [...md.querySelectorAll('.img-tag')];
+  return { text: md.querySelector('p')?.textContent, tags: tags.map(t => t.textContent), dim: tags.every(t => getComputedStyle(t).color !== getComputedStyle(md).color && getComputedStyle(t).fontWeight === getComputedStyle(md).fontWeight && getComputedStyle(t).backgroundColor === 'rgba(0, 0, 0, 0)'),
+    thumbs: p.querySelectorAll('.thumbs .thumb').length, below: p.querySelector('.thumbs').getBoundingClientRect().top >= tags[0].getBoundingClientRect().bottom - 0.5 }; })()`);
+check('a CLI-sent prompt shows its [Image #N] tags in place, dim, the two thumbnails below',
+  !!cliTags && cliTags.text?.startsWith('[Image #1] is the old screen, [Image #2] the new one.') && JSON.stringify(cliTags.tags) === '["[Image #1]","[Image #2]"]' && cliTags.dim && cliTags.thumbs === 2 && cliTags.below, JSON.stringify(cliTags));
+await ev(`document.querySelector('[data-key="you:u4"]').scrollIntoView({ block: 'center' })`); await sleep(150);
+await shot('cli-tags', await ev(`(() => { const r = document.querySelector('[data-key="you:u4"]').getBoundingClientRect(); return { x: r.left - 4, y: r.top - 4, width: Math.min(1000, r.width + 8), height: r.height + 8 }; })()`));
+
+// the composer: paste two images at two caret places, each with its [Image #N] tag, remove one with its ✕,
+// two more, delete a tag's text, reload, send: the text with its tags, then the tagged images in tag order
 await ev(`document.getElementById('msg').focus()`);
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
+const SPY = `(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`;
+await ev(SPY);
 const paste = (b64, name) => ev(`(() => { const b = Uint8Array.from(atob(${JSON.stringify(b64)}), c => c.charCodeAt(0)); const dt = new DataTransfer(); dt.items.add(new File([b], ${JSON.stringify(name)}, { type: 'image/png' }));
   document.getElementById('msg').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
-await paste(png(400, 100).toString('base64'), 'a.png');
-await paste(png(3000, 100).toString('base64'), 'b.png');
+const MSG = `document.getElementById('msg').value`;
+const caret = (i) => ev(`(() => { const t = document.getElementById('msg'), i = ${i} < 0 ? t.value.length : ${i}; t.setSelectionRange(i, i); })()`);
+const B64 = { a: png(400, 100).toString('base64'), b: png(3000, 100).toString('base64'), c: png(20, 20).toString('base64'), d: png(240, 160).toString('base64') };
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'left right'; t.dispatchEvent(new Event('input')); })()`);
+await caret(5);
+await paste(B64.a, 'a.png');
+check('a paste puts [Image #3] at the caret (#1 and #2 are in the session\'s prompts), a space between it and the text', (await ev(MSG)) === 'left [Image #3] right', await ev(MSG));
+await caret(-1);
+await paste(B64.b, 'b.png');
+check('the next paste at the end is [Image #4], one more than any tag in the session', (await ev(MSG)) === 'left [Image #3] right [Image #4]', await ev(MSG));
 check('pasted images show as thumbnails below the text', await until(`document.querySelectorAll('.composer .attach.thumbs .thumb img').length === 2 && [...document.querySelectorAll('.composer .attach img')].every(i => i.complete && i.naturalWidth)`) && await ev(`document.querySelector('.composer .attach').getBoundingClientRect().top >= document.getElementById('msg').getBoundingClientRect().bottom - 1`));
 check('they are object URLs, not the server', await ev(`[...document.querySelectorAll('.composer .attach img')].every(i => i.src.startsWith('blob:'))`));
 const comp = await ev(`[...document.querySelectorAll('.composer .attach img')].map(i => parseFloat(getComputedStyle(i).width) + 'x' + parseFloat(getComputedStyle(i).height)).join()`);
@@ -248,17 +271,48 @@ await shot('composer', dock);
 const firstUrl = await ev(`document.querySelector('.composer .attach img').src`);
 await click(await centre('.composer .unattach', 0));
 check('the ✕ removes that image', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 1 && attachments.length === 1 && document.querySelector('.composer .attach img').src !== ${JSON.stringify(firstUrl)}`));
+check('and its tag, with one space; the other tag keeps its number', (await ev(MSG)) === 'left right [Image #4]', await ev(MSG));
 check('its object URL is freed', (await ev(`new Promise(r => { const i = new Image(); i.onload = () => r('loaded'); i.onerror = () => r('freed'); i.src = ${JSON.stringify(firstUrl)}; })`)) === 'freed');
 check('focus stayed in the message box', await ev(`document.activeElement.id === 'msg'`));
 await click(await centre('.composer .thumb', 0));
 check('a pasted thumbnail opens the viewer too', await ev(`!!document.querySelector('.viewer') && document.querySelector('.viewer img').src.startsWith('blob:')`));
 await key('Escape', { code: 'Escape', vk: 27 });
 check('Esc closes it and the box keeps focus and insert mode', await ev(`!document.querySelector('.viewer') && document.activeElement.id === 'msg' && document.body.dataset.mode === 'insert'`));
+await caret(0);
+await paste(B64.c, 'c.png');
+await caret(-1);
+await paste(B64.d, 'd.png');
+check('numbers count up and are not reused: #5 at the start, #6 at the end', (await ev(MSG)) === '[Image #5] left right [Image #4] [Image #6]', await ev(MSG));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = t.value.replace(' [Image #6]', ''); t.dispatchEvent(new Event('input')); })()`);
+const untagged = `[...document.querySelectorAll('.composer .attach .thumb-wrap')].map(f => f.dataset.n + (f.classList.contains('untagged') ? '-' : '+')).join()`;
+check('deleting a tag\'s text dims its thumbnail, with a dashed line; it stays in the row', (await ev(untagged)) === '4+,5+,6-' && await ev(`getComputedStyle(document.querySelector('.composer .thumb-wrap.untagged .thumb img')).borderTopStyle === 'dashed'`), await ev(untagged));
+await shot('composer-tags', dock);
+// the draft, its tags and its images survive a reload (R3.9)
 await until(`attachments.every(a => a.data)`);
-await ev(`document.getElementById('msg').value = 'With a panorama'`);
+await ev(`uiFlush()`); await sleep(500);
+await ev(`window.__before = 1`);
+await c.load(url, `current === '${SID}' && typeof __before === 'undefined'`); // no hash: a real reload, the restored state picks the session
+check('after a reload: the text with its tags, the three images with their numbers, #6 still dimmed',
+  await until(`document.getElementById('msg')?.value === '[Image #5] left right [Image #4]' && attachments.length === 3 && attachments.every(a => a.data) && (${untagged}) === '4+,5+,6-'`, 8000),
+  JSON.stringify(await ev(`({ text: document.getElementById('msg')?.value, n: attachments.map(a => a.n), marks: ${untagged} })`)));
+await ev(SPY);
+await ev(`document.getElementById('msg').focus()`);
 await key('Enter', { code: 'Enter', vk: 13 });
-const sent = await ev(`JSON.stringify(__sent.filter(m => m.t === 'send').map(m => ({ text: m.text, images: m.images.map(i => [i.mediaType, atob(i.data.slice(0, 32)).slice(1, 4)]) })))`);
-check('Enter sends the text and the image as base64', sent === JSON.stringify([{ text: 'With a panorama', images: [['image/png', 'PNG']] }]), sent);
+const sentMsg = await ev(`JSON.stringify(__sent.filter(m => m.t === 'send').map(m => ({ text: m.text, images: m.images })))`);
+const sent = JSON.parse(sentMsg);
+const which = (data) => Object.keys(B64).find((k) => B64[k] === data) || '?';
+check('Enter sends the text with its tags and the tagged images as base64 with their numbers, not the untagged one',
+  sent.length === 1 && sent[0].text === '[Image #5] left right [Image #4]' && JSON.stringify(sent[0].images.map((i) => [i.mediaType, i.n, which(i.data)])) === JSON.stringify([['image/png', 4, 'b'], ['image/png', 5, 'c']]),
+  JSON.stringify(sent.map((m) => ({ text: m.text, images: m.images.map((i) => [i.mediaType, i.n, which(i.data)]) }))));
+// the blocks the backend makes of that message (content.ts): one text block with the tags, then the images in tag order
+const { execFileSync } = await import('node:child_process');
+const { pathToFileURL } = await import('node:url');
+const contentTs = pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../backend/src/content.ts')).href;
+const blocks = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
+  `import { userContent } from ${JSON.stringify(contentTs)}; import fs from 'node:fs'; const m = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(JSON.stringify(userContent(m.text, m.images)));`],
+{ input: JSON.stringify(sent[0] || { text: '', images: [] }) }).toString());
+const shape = Array.isArray(blocks) ? blocks.map((b) => b.type === 'text' ? `text:${b.text}` : `image:${which(b.source.data)}`) : [blocks];
+check('the send\'s blocks: the text with its tags, then #5\'s image, then #4\'s', JSON.stringify(shape) === JSON.stringify(['text:[Image #5] left right [Image #4]', 'image:c', 'image:b']), JSON.stringify(shape));
 check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && attachments.length === 0`));
 check('no CSP violation', (await ev(`__csp.length`)) === 0, JSON.stringify(await ev(`__csp`)));
 await c.cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier });
