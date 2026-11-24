@@ -35,7 +35,7 @@ const [url, stateDir, claude] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
 const shot = (name) => c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, name), Buffer.from(r.result.data, 'base64')));
-await c.load(`${url}#${A.slice(0, 8)}`, `current === '${A}' && !!mounted && cur().driven === true && cur().status === 'busy' && cur().items.length === 3`);
+await c.load(`${url}#${A.slice(0, 8)}`, `__synopia.current() === '${A}' && !!__synopia.mounted() && __synopia.cur().driven === true && __synopia.cur().status === 'busy' && __synopia.cur().items.length === 3`);
 const sendText = (t) => ev(`(() => { const ta = document.getElementById('msg'); ta.value = ${JSON.stringify(t)}; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
 // the log's blocks in order: queued bands as q, your prompts as you, the live line as live
 const order = () => ev(`[...document.querySelectorAll('#log .log-inner > *')].map(e => e.matches('.prompt.queued') ? 'q:' + e.querySelector('.md').textContent.replace('Queued, goes to Claude at its next step', '').trim()
@@ -63,7 +63,7 @@ await shot('queued-two.png');
 // the first lands: the CLI writes it as a queued_command attachment of its own uuid
 const file = path.join(dirOf(claude), `${A}.jsonl`);
 fs.appendFileSync(file, rec(A, { type: 'attachment', uuid: 'q-land1', timestamp: new Date().toISOString(), attachment: { type: 'queued_command', prompt: FIRST, commandMode: 'prompt' } }));
-check('the first landed: one queued band left', await c.until(`document.querySelectorAll('#log .prompt.queued').length === 1 && cur().items.some(i => i.id === 'q-land1')`, 8000), String(await queuedRows()));
+check('the first landed: one queued band left', await c.until(`document.querySelectorAll('#log .prompt.queued').length === 1 && __synopia.cur().items.some(i => i.id === 'q-land1')`, 8000), String(await queuedRows()));
 const o2 = await order();
 check('it became the normal prompt in its place, once, the second still queued below it',
   JSON.stringify(o2.slice(-3)) === JSON.stringify(['you:Also check the demo notes when you are done.', 'live', 'q:And then rename the demo folder.'])
@@ -72,7 +72,7 @@ check('it became the normal prompt in its place, once, the second still queued b
 await ev(`(() => { window.__seen = []; const f = () => { const n = [...document.querySelectorAll('#log .prompt')].filter(p => /Also check/.test(p.textContent)).length; __seen.push(n); };
   new MutationObserver(f).observe(document.getElementById('log'), { childList: true, subtree: true }); })()`);
 await sleep(1500);
-check('after the backend drops it from the outbox: still exactly one, never two or none', await ev(`__seen.every(n => n === 1) && document.querySelectorAll('#log .prompt.queued').length === 1 && cur().outbox.length === 1`), await ev(`JSON.stringify(__seen)`));
+check('after the backend drops it from the outbox: still exactly one, never two or none', await ev(`__seen.every(n => n === 1) && document.querySelectorAll('#log .prompt.queued').length === 1 && __synopia.cur().outbox.length === 1`), await ev(`JSON.stringify(__seen)`));
 await shot('queued-landed.png');
 
 // Esc, Esc interrupts: the second disappears and its text goes back to the box
@@ -84,12 +84,12 @@ check('the landed prompt stays', (await order()).filter((x) => x === 'you:Also c
 
 // nothing runs: a message isn't queued, but shows at once as the new turn's prompt
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`);
-await c.until(`current === '${B}' && !!mounted`);
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
+await c.until(`__synopia.current() === '${B}' && !!__synopia.mounted()`);
+await ev('__synopia.spy()');
 await sendText('Read them again.');
 await sleep(400);
-check('idle session: sent, nothing shows queued, the prompt shows at once undimmed', (await ev(`__sent.filter(m => m.t === 'send').length`)) === 1 && (await queuedRows()) === 0
-  && (await ev(`cur().outbox.length === 1 && cur().outbox[0].queued === false`))
+check('idle session: sent, nothing shows queued, the prompt shows at once undimmed', (await ev(`__synopia.sent('send').length`)) === 1 && (await queuedRows()) === 0
+  && (await ev(`__synopia.cur().outbox.length === 1 && __synopia.cur().outbox[0].queued === false`))
   && (await ev(`[...document.querySelectorAll('#log .prompt')].some(p => p.textContent.includes('Read them again.') && !p.classList.contains('queued'))`)));
 
 c.print(); c.close();

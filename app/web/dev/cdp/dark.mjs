@@ -39,7 +39,7 @@ check('the switch sits at the left of Open session and New session', await ev(`(
 
 /* ---------- a choice sticks: stored, and kept over a reload against the system ---------- */
 await clickSwitch(false);
-check('a click picks light while the system is dark', (await theme()) === 'light' && (await ev(`themePref`)) === 'light');
+check('a click picks light while the system is dark', (await theme()) === 'light');
 check('the choice is stored with the UI state (state.json ui.theme)', await storedIs('light'), String(stored()));
 check('a chosen theme says how to follow the system again', (await label()).startsWith('Dark mode|Dark mode (Alt-click follows the system)'), await label());
 await ev(`localStorage.clear()`); // the stored UI state alone brings it back
@@ -101,7 +101,7 @@ check('the slash menu opens', await ev(`!!document.querySelector('.slash:not([hi
 sampled += await sample('slash menu'); await shot('slash');
 await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); t.blur(); })()`);
 await ev(`showOpenList()`); await sleep(400);
-check('the Open list opens', await ev(`openListShown()`));
+check('the Open list opens', await ev(`document.getElementById('open-list')?.hidden === false`));
 sampled += await sample('Open list'); await shot('open-list');
 
 await ev(`hideOpenList()`);
@@ -117,11 +117,11 @@ check('no element keeps a light background in dark mode', !failed.length, failed
 
 /* the preview asks bat's dark theme (the page's half: the request carries the theme) */
 await ev(`document.querySelector('#groups .row[data-id^="11111111"]').click()`); await sleep(700); // the session with files changed
-const sent = await ev(`(() => { const W = WebSocket.prototype.send, got = []; WebSocket.prototype.send = function (d) { got.push(d); return W.call(this, d); };
+const sent = await ev(`(() => { __synopia.spy();
   const a = document.querySelector('#log a.fp[data-path], #log [data-path]');
-  if (!a) { WebSocket.prototype.send = W; return 'no link'; }
-  previewClick(a, { altKey: false }); WebSocket.prototype.send = W;
-  return got.map(d => JSON.parse(d)).find(m => m.t === 'preview') || 'none'; })()`);
+  if (!a) return 'no link';
+  previewClick(a, { altKey: false });
+  return __synopia.sent('preview')[0] || 'none'; })()`);
 check('a preview request carries the dark theme', sent && sent.theme === 'dark', JSON.stringify(sent));
 
 /* lines stay 1px; nothing transitions, so the switch is instant */

@@ -1,23 +1,16 @@
 // S5-2: keys and modes (R9) with real key events (CDP Input), on the fake driver.
 // usage: run.sh keys (or node keys.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
+import { keyTable } from './helpers.mjs';
 const [url] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
 await c.load(url);
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
-const K = {
-  J: () => key('J', { shift: true, code: 'KeyJ', vk: 74 }), Kk: () => key('K', { shift: true, code: 'KeyK', vk: 75 }),
-  j: () => key('j', { code: 'KeyJ', vk: 74 }), k: () => key('k', { code: 'KeyK', vk: 75 }),
-  g: () => key('g', { code: 'KeyG', vk: 71 }), G: () => key('G', { shift: true, code: 'KeyG', vk: 71 }),
-  i: () => key('i', { code: 'KeyI', vk: 73 }), a: () => key('a', { code: 'KeyA', vk: 65 }),
-  slash: () => key('/', { code: 'Slash', vk: 191 }), esc: () => key('Escape', { code: 'Escape', vk: 27 }),
-  next: () => key(']', { meta: true, shift: true, code: 'BracketRight', vk: 221 }),
-  prev: () => key('[', { meta: true, shift: true, code: 'BracketLeft', vk: 219 }),
-};
-const cur = () => ev('current?.[0]');
+await ev('__synopia.spy()');
+const K = keyTable(key);
+const cur = () => ev('__synopia.current()?.[0]');
 const mode = () => ev('document.body.dataset.mode');
-const order = await ev(`KEYS.map(x => x[0]).join('')`);
+const order = await ev(`[...document.querySelectorAll('#groups .row')].map(r => r.dataset.id[0]).join('')`);
 const go = async (p) => { await ev(`document.querySelector('.row[data-id^="${p}"]').click()`); await ev('document.activeElement.blur()'); await sleep(300); };
 
 // the mode ring: grey in normal, blue in insert
@@ -51,8 +44,8 @@ await ev('document.getElementById("msg").value = ""');
 
 // J/K and Cmd+Shift+[ ] in sidebar order, wrapping
 await K.J(); check('J: next in sidebar order', (await cur()) === order[1], await cur());
-await K.Kk(); check('K: previous', (await cur()) === order[0]);
-await K.Kk(); check('K wraps to the last', (await cur()) === order[order.length - 1]);
+await K.K(); check('K: previous', (await cur()) === order[0]);
+await K.K(); check('K wraps to the last', (await cur()) === order[order.length - 1]);
 await K.J(); check('J wraps to the first', (await cur()) === order[0]);
 await K.next(); check('Cmd+Shift+]: next', (await cur()) === order[1], await cur());
 await K.prev(); check('Cmd+Shift+[: previous', (await cur()) === order[0]);
@@ -61,7 +54,7 @@ await K.prev();
 
 // j/k/g/G scroll the transcript when no card waits
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 420, deviceScaleFactor: 1, mobile: false });
-const idle = await ev(`data.find(s => !pending(s) && s.status === 'idle')?.id[0]`);
+const idle = await ev(`__synopia.data().find(s => !__synopia.pending(s.id).length && s.status === 'idle')?.id[0]`);
 await go(idle);
 await ev(`document.getElementById('log').scrollTop = 0`);
 const h = await ev(`(() => { const l = document.getElementById('log'); return l.scrollHeight - l.clientHeight; })()`);
@@ -77,9 +70,9 @@ await K.g(); await sleep(100);
 check('g: top', (await ev(`document.getElementById('log').scrollTop`)) === 0);
 
 // a question card: j/k move the card cursor, not the log; i types in the card; Esc leaves it
-const q = await ev(`data.find(s => requestsOf(s)[0]?.kind === 'question')?.id[0]`);
+const q = await ev(`__synopia.data().find(s => __synopia.pending(s.id)[0]?.kind === 'question')?.id[0]`);
 await go(q);
-const st = () => ev(`(() => { const s = cur(), a = pendingAsk(s), x = qs(s, a); return x.qi + ':' + x.oi; })()`);
+const st = () => ev(`(() => { const s = __synopia.cur(), a = pendingAsk(s), x = qs(s, a); return x.qi + ':' + x.oi; })()`);
 const s0 = await st(), top0 = await ev(`document.getElementById('log').scrollTop`);
 await K.j();
 check('card: j moves the cursor', (await st()) !== s0 && (await ev(`document.getElementById('log').scrollTop`)) === top0, await st());
@@ -94,47 +87,47 @@ await K.J();
 check('card: J still switches sessions', (await cur()) !== q);
 
 // the interrupt prompt: any other key dismisses it, J included (no switch); Esc, Esc interrupts
-const busy = await ev(`data.find(s => s.status === 'busy' && !pending(s))?.id[0]`);
+const busy = await ev(`__synopia.data().find(s => s.status === 'busy' && !__synopia.pending(s.id).length)?.id[0]`);
 await go(busy);
 await K.esc();
 check('busy: Esc asks to interrupt', await ev('!!document.querySelector(".composer.asking")'));
 await K.J();
 check('J under the prompt dismisses it, no switch', (await cur()) === busy && !(await ev('!!document.querySelector(".composer.asking")')));
 await K.esc(); await K.esc();
-check('Esc, Esc sends interrupt', await ev(`__sent.some(m => m.t === 'interrupt')`));
+check('Esc, Esc sends interrupt', await ev(`__synopia.sent('interrupt').length > 0`));
 
 // the Open list: its keys come first; J, Cmd+Shift+] and j don't reach the sessions
 await ev(`document.getElementById('open').click()`); await sleep(400);
 const before = await cur();
 await K.J(); await K.next(); await K.j();
-check('Open list: J, Cmd+Shift+] and j leave the session', (await cur()) === before && (await ev('openListShown()')));
+check('Open list: J, Cmd+Shift+] and j leave the session', (await cur()) === before && (await ev('document.getElementById("open-list")?.hidden === false')));
 check('Open list: J and j typed into the filter', (await ev('document.getElementById("ol-filter").value')) === 'Jj');
 await K.esc();
-check('Open list: Esc closes it', !(await ev('openListShown()')));
+check('Open list: Esc closes it', !(await ev('document.getElementById("open-list")?.hidden === false')));
 check('Esc that closed the Open list asked nothing', !(await ev('!!document.querySelector(".composer.asking")')));
 
 // hidden sessions are skipped: drop one from the store as a close would
 const hide = order[1];
 await go(order[0]);
-await ev(`(() => { applyRemoved({ id: data.find(s => s.id[0] === '${hide}').id }); renderSide(); })()`);
+await ev(`__synopia.inject({ t: 'removed', id: __synopia.data().find(s => s.id[0] === '${hide}').id })`);
 await K.J();
 check('J skips a session no longer shown', (await cur()) === order[2], await cur());
 
 // Ctrl+J / Ctrl+K: through Main conversation and the session's subagents, wrapping; normal mode only
-const withAgents = await ev(`[...store.sessions.values()].find(s => (s.agents || []).length >= 2)?.id`);
+const withAgents = await ev(`__synopia.data().find(s => (s.agents || []).length >= 2)?.id`);
 if (withAgents) {
   await go(withAgents.slice(0, 8));
   const n = await ev(`new Set([...document.querySelectorAll('.rail [data-agent]')].map(e => e.dataset.agent)).size`);
   const shown = await ev(`[...new Set([...document.querySelectorAll('.rail [data-agent]')].map(e => e.dataset.agent))]`);
   const seen = [];
-  for (let i = 0; i <= n; i++) { await key('j', { ctrl: true, code: 'KeyJ', vk: 74 }); await sleep(150); seen.push(await ev('view')); }
+  for (let i = 0; i <= n; i++) { await key('j', { ctrl: true, code: 'KeyJ', vk: 74 }); await sleep(150); seen.push(await ev('__synopia.view()')); }
   check('Ctrl+J follows the panel top to bottom, then back to Main conversation', JSON.stringify(seen.slice(0, n)) === JSON.stringify(shown) && seen[n] === null, JSON.stringify([shown, seen]));
   await key('k', { ctrl: true, code: 'KeyK', vk: 75 }); await sleep(150);
-  check('Ctrl+K from Main conversation wraps to the last one', (await ev('view')) === seen[n - 1]);
+  check('Ctrl+K from Main conversation wraps to the last one', (await ev('__synopia.view()')) === seen[n - 1]);
   await key('k', { ctrl: true, code: 'KeyK', vk: 75 }); await sleep(150);
-  check('the session stays the same', (await ev('current')) === withAgents);
-  await K.i(); const v = await ev('view');
+  check('the session stays the same', (await ev('__synopia.current()')) === withAgents);
+  await K.i(); const v = await ev('__synopia.view()');
   await key('j', { ctrl: true, code: 'KeyJ', vk: 74 }); await sleep(150);
-  check('insert mode: Ctrl+J does nothing', (await ev('view')) === v); await K.esc();
+  check('insert mode: Ctrl+J does nothing', (await ev('__synopia.view()')) === v); await K.esc();
 } else check('a fixture session with two or more subagents exists', false);
 c.print(); c.close();

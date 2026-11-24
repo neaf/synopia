@@ -9,32 +9,31 @@ const SID = 'e0e0e0e0-0000-4000-8000-0000000000e0', AID = 'e1e1e1e1';
 const [url] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, until } = c;
-await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
-check('loaded the last 160', await until(`cur()?.id === '${SID}' && cur().items.length === 160 && !uiRestoring`));
+await c.load(url + `#${SID.slice(0, 8)}`, `__synopia.current() === '${SID}'`);
+check('loaded the last 160', await until(`__synopia.cur()?.id === '${SID}' && __synopia.cur().items.length === 160 && !__synopia.restoring()`));
 for (const n of [320, 480]) {
   await ev(`document.querySelector('#log .earlier button').click()`);
-  await until(`cur().items.length === ${n}`);
+  await until(`__synopia.cur().items.length === ${n}`);
 }
-check('two earlier pages loaded, from m120', (await ev(`cur().items[0].id`)) === 'm120' && (await ev(`uiFrom(current, null)`)) === 'm120', await ev(`cur().items[0].id`));
-await ev(`view = '${AID}'; renderConv()`);
-check('subagent view', await until(`!uiRestoring && agentById(cur(), '${AID}')?.items?.length === 160`));
+check('two earlier pages loaded, from m120', (await ev(`__synopia.cur().items[0].id`)) === 'm120' && (await ev(`uiFrom(__synopia.current(), null)`)) === 'm120', await ev(`__synopia.cur().items[0].id`));
+await ev(`document.querySelector('#conv [data-agent="${AID}"]').click()`);
+check('subagent view', await until(`!__synopia.restoring() && __synopia.cur().agents.find(a => a.id === '${AID}')?.items?.length === 160`));
 
 // Back: record what was sent and received, and every state of the log on screen.
 await ev(`(() => {
-  window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); };
-  window.__got = []; const g = onMessage; onMessage = m => { if (m.t === 'items') __got.push({ reset: !!m.reset, prepend: !!m.prepend, n: m.upsert.length, first: m.upsert[0]?.id }); g(m); };
+  __synopia.spy();
   window.__frames = [];
   const snap = () => { const inner = document.querySelector('#log .log-inner'); if (!inner) return;
     const keys = [...inner.children].map(e => e.dataset.key).filter(k => !/^(earlier|day:|live|stream|held:)/.test(k));
     __frames.push({ n: keys.length, first: keys[0] ?? null, last: keys[keys.length - 1] ?? null }); };
   new MutationObserver(snap).observe(document.getElementById('conv'), { childList: true, subtree: true });
 })()`);
-await ev(`view = null; renderConv()`);
-check('back: restored, 480 items from m120', await until(`!uiRestoring && cur().items.length === 480 && cur().items[0].id === 'm120'`));
+await ev(`document.querySelector('#conv [data-back]').click()`);
+check('back: restored, 480 items from m120', await until(`!__synopia.restoring() && __synopia.cur().items.length === 480 && __synopia.cur().items[0].id === 'm120'`));
 await sleep(300);
-const sent = await ev(`__sent.filter(m => m.t !== 'ui')`);
+const sent = await ev(`__synopia.sent().filter(m => m.t !== 'ui')`);
 check('one view message with from m120, no earlier', JSON.stringify(sent) === JSON.stringify([{ t: 'view', sid: SID, agent: null, from: 'm120' }]), JSON.stringify(sent));
-const got = await ev(`__got`);
+const got = await ev(`__synopia.received('items').map(m => ({ reset: !!m.reset, prepend: !!m.prepend, n: m.upsert.length, first: m.upsert[0]?.id }))`);
 check('one reset of 480 items from m120', JSON.stringify(got) === JSON.stringify([{ reset: true, prepend: false, n: 480, first: 'm120' }]), JSON.stringify(got));
 // the first block on screen once the log shows anything is the one it ends with, and so is the size
 const frames = (await ev(`__frames`)).filter((f) => f.n > 0), end = frames[frames.length - 1];

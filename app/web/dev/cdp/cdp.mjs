@@ -9,10 +9,9 @@ export { sleep };
 const SEEN = `window.__synSeen = {}; (() => { const W = window.WebSocket;
   window.WebSocket = class extends W { constructor(...a) { super(...a); this.addEventListener('message', (e) => { try { const t = JSON.parse(e.data).t; __synSeen[t] = (__synSeen[t] || 0) + 1; } catch {} }); } }; })();`;
 // ready: the first hello applied, the sidebar rendered, the current view mounted with its first items, no
-// ui restore in flight, and the window visible and focused
-const READY = `typeof __synSeen === 'object' && __synSeen.hello >= 1 && typeof store === 'object' && store.ui.connected && uiLoaded && !uiRestoring
-  && !!document.querySelector('#groups .row') && !!document.getElementById('msg') && (!current || (!!mounted && __synSeen.items >= 1))
-  && document.visibilityState === 'visible' && document.hasFocus()`;
+// ui restore in flight (the page's half is __synopia.ready(), js/test-api.js), and the window visible and focused
+const READY = `typeof __synSeen === 'object' && __synSeen.hello >= 1 && typeof __synopia === 'object' && __synopia.ready()
+  && (!__synopia.current() || __synSeen.items >= 1) && document.visibilityState === 'visible' && document.hasFocus()`;
 
 export async function connect(port = +process.env.SYNOPIA_CHROME_PORT) {
   if (!port) throw new Error('no SYNOPIA_CHROME_PORT: run the check with app/web/dev/cdp/run.sh <name>');
@@ -91,9 +90,8 @@ export async function connect(port = +process.env.SYNOPIA_CHROME_PORT) {
     await cdp('Page.navigate', { url });
     let ok, threw = '';
     try { ok = await until(`(${READY}) && (${extra})`, ms); } catch (e) { ok = false; threw = e.message + ' '; }
-    if (!ok) check('the page is ready after load', false, threw + JSON.stringify(await ev(`({ seen: typeof __synSeen === 'object' ? __synSeen : null, connected: typeof store === 'object' && store.ui.connected,
-      rows: document.querySelectorAll('#groups .row').length, mounted: typeof mounted === 'undefined' ? 'undefined' : mounted, restoring: typeof uiRestoring === 'undefined' ? 'undefined' : !!uiRestoring,
-      visible: document.visibilityState, focus: document.hasFocus() })`)));
+    if (!ok) check('the page is ready after load', false, threw + JSON.stringify(await ev(`({ seen: typeof __synSeen === 'object' ? __synSeen : null,
+      page: typeof __synopia === 'object' ? __synopia.readiness() : 'no __synopia', visible: document.visibilityState, focus: document.hasFocus() })`)));
     else await prime();
     return ok;
   };

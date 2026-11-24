@@ -7,7 +7,7 @@ let ws = null;
 let viewing = null; // the {sid, agent} this page asked the server for
 const hooks = { agent: params.get("agent"), open: params.get("open") }; // one-shot: open a subagent, expand the last diff
 
-function send(msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
+function send(msg) { testSent(msg); if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); } // testSent, testGot: the checks' spy (test-api.js)
 /* `from`: the oldest item this view had loaded, so the reply is one reset with all of it (ui.js) */
 function requestView(sid, agent) {
   viewing = { sid, agent: agent || null };
@@ -137,7 +137,7 @@ let retryMs = 500;
 function connect() {
   ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
   ws.onopen = () => { store.ui.connected = true; retryMs = 500; document.getElementById("conn").hidden = true; ws.send(JSON.stringify({ t: "auth", token: TOKEN })); };
-  ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch { return; } onMessage(m); };
+  ws.onmessage = e => { let m; try { m = JSON.parse(e.data); } catch { return; } testGot(m); onMessage(m); };
   ws.onclose = e => {
     const was = store.ui.connected;
     store.ui.connected = false; viewing = null;

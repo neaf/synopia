@@ -39,6 +39,32 @@ export function keyTable(key) {
   return K;
 }
 
+// The page's test API (window.__synopia, js/test-api.js): state getters, a spy on sent frames, injection.
+// page(c).cur() is a copy of the shown session; inside a page expression write `__synopia.cur()`.
+export const page = (c) => ({
+  current: () => c.ev('__synopia.current()'), view: () => c.ev('__synopia.view()'), mode: () => c.ev('__synopia.mode()'),
+  mounted: () => c.ev('__synopia.mounted()'), cur: () => c.ev('__synopia.cur()'), data: () => c.ev('__synopia.data()'),
+});
+// Starts recording what the page sends (from now on, the earlier record dropped); returns sent(...types),
+// the frames of those types (all with none) sent since.
+export async function spySent(c) {
+  await c.ev('__synopia.spy()');
+  return (...types) => c.ev(`__synopia.sent(${types.map((t) => JSON.stringify(t)).join(', ')})`);
+}
+// A server message, handed to the page as if the server sent it.
+export const inject = (c, msg) => c.ev(`__synopia.inject(${JSON.stringify(msg)})`);
+// Frames sent to the backend from a client of its own (the page's token, from `url`), after its hello.
+export async function serverSend(url, ...msgs) {
+  const { WebSocket } = await import('../../../backend/node_modules/ws/wrapper.mjs');
+  const u = new URL(url), ws = new WebSocket(`ws://${u.host}/ws`, { origin: u.origin }); // the upgrade checks Origin
+  await new Promise((r, j) => { ws.on('open', r); ws.on('error', j); });
+  const hello = new Promise((r) => ws.on('message', (d) => { if (JSON.parse(d).t === 'hello') r(); }));
+  ws.send(JSON.stringify({ t: 'auth', token: u.searchParams.get('token') }));
+  await hello;
+  for (const m of msgs) ws.send(JSON.stringify(m));
+  await new Promise((r) => { ws.on('close', r); ws.close(); });
+}
+
 // A PNG of the page, or of `clip` ({ x, y, width, height }, scale 1 unless given), written to `file`.
 export async function shot(c, file, clip) {
   const r = await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { scale: 1, ...clip } } : {}) });

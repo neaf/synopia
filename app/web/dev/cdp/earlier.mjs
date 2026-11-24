@@ -33,9 +33,9 @@ const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key, until } = c;
-await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
-const ids = () => ev(`(() => { const s = cur(), A = view && agentById(s, view); return (A || s).items.map(i => i.id); })()`);
+await c.load(url + `#${SID.slice(0, 8)}`, `__synopia.current() === '${SID}'`);
+await ev('__synopia.spy()');
+const ids = () => ev(`(() => { const s = __synopia.cur(), v = __synopia.view(), A = v && s.agents.find(a => a.id === v); return (A || s).items.map(i => i.id); })()`);
 const link = () => ev(`document.querySelector('#log .earlier')?.textContent ?? null`);
 // a reply's item id is its record uuid plus `:<block index>`
 const inOrder = (got, prefix, from, to) => got.length === to - from && got.every((id, k) => id.replace(/:\d+$/, '') === `${prefix}${from + k}`);
@@ -48,7 +48,7 @@ const where = (k) => ev(`(() => { const log = document.getElementById('log'); co
   return el ? { key: el.dataset.key, y: Math.round(el.getBoundingClientRect().top - log.getBoundingClientRect().top), text: el.textContent.slice(0, 40) } : null; })()`);
 const same = (a, b) => b && a.key === b.key && a.text === b.text && Math.abs(a.y - b.y) <= 1;
 
-check('loaded the session', await until(`cur()?.id === '${SID}' && cur().items.length === 160`));
+check('loaded the session', await until(`__synopia.cur()?.id === '${SID}' && __synopia.cur().items.length === 160`));
 check('the link: "Show 160 earlier (440 more)"', (await link()) === 'Show 160 earlier (440 more)', await link());
 check('the last 160, in order', inOrder(await ids(), 'm', 440, 600));
 await ev(`document.getElementById('log').scrollTop = 0`);
@@ -62,57 +62,57 @@ await ev(`document.getElementById('log').scrollTop = 120`);
 let before = await place();
 // a second click before the reply: both in one evaluate, so the reply can't land between them
 await ev(`(() => { const b = () => document.querySelector('#log .earlier button'); b().click(); b()?.click(); })()`);
-check('a click sends one earlier message, before the oldest id', await until(`cur().items.length === 320`)
-  && JSON.stringify(await ev(`__sent.filter(m => m.t === 'earlier')`)) === JSON.stringify([{ t: 'earlier', sid: SID, agent: null, before: 'm440' }]),
-  JSON.stringify(await ev(`__sent.filter(m => m.t === 'earlier')`)));
+check('a click sends one earlier message, before the oldest id', await until(`__synopia.cur().items.length === 320`)
+  && JSON.stringify(await ev(`__synopia.sent('earlier')`)) === JSON.stringify([{ t: 'earlier', sid: SID, agent: null, before: 'm440' }]),
+  JSON.stringify(await ev(`__synopia.sent('earlier')`)));
 check('the place on screen is kept', same(before, await where(before.key)), JSON.stringify([before, await where(before.key)]));
 check('320 items in order, no duplicates', inOrder(await ids(), 'm', 280, 600) && await noDupKeys());
 check('the link: "Show 160 earlier (280 more)"', (await link()) === 'Show 160 earlier (280 more)', await link());
 
 // g goes to the top; g at the top loads the next page, keeping the place.
 await key('g', { code: 'KeyG', vk: 71 });
-check('g: to the top, nothing sent', (await ev(`document.getElementById('log').scrollTop`)) === 0 && (await ev(`__sent.filter(m => m.t === 'earlier').length`)) === 1);
+check('g: to the top, nothing sent', (await ev(`document.getElementById('log').scrollTop`)) === 0 && (await ev(`__synopia.sent('earlier').length`)) === 1);
 before = await place();
 await key('g', { code: 'KeyG', vk: 71 });
-check('g at the top: 160 more', await until(`cur().items.length === 480`) && inOrder(await ids(), 'm', 120, 600));
+check('g at the top: 160 more', await until(`__synopia.cur().items.length === 480`) && inOrder(await ids(), 'm', 120, 600));
 check('g at the top: the place on screen is kept', same(before, await where(before.key)), JSON.stringify([before, await where(before.key)]));
 check('the last page reads "Show 120 earlier"', (await link()) === 'Show 120 earlier', await link());
 await ev(`document.querySelector('#log .earlier button').click()`);
-check('the whole history: 600 in order, no link', await until(`cur().items.length === 600`) && inOrder(await ids(), 'm', 0, 600) && (await link()) === null && await noDupKeys());
+check('the whole history: 600 in order, no link', await until(`__synopia.cur().items.length === 600`) && inOrder(await ids(), 'm', 0, 600) && (await link()) === null && await noDupKeys());
 
 // A live append after loading earlier: at the end, once, with the place kept.
 await ev(`document.getElementById('log').scrollTop = 2000`);
 before = await place();
 fs.appendFileSync(mainFile(claudeDir), rec(MAIN) + rec(MAIN + 1));
-check('a live append lands at the end', await until(`cur().items.length === 602`, 5000));
+check('a live append lands at the end', await until(`__synopia.cur().items.length === 602`, 5000));
 const all = await ids();
 check('602 in order, no duplicates', inOrder(all, 'm', 0, 602) && new Set(all).size === 602 && await noDupKeys());
 check('the append keeps the place', same(before, await where(before.key)), JSON.stringify([before, await where(before.key)]));
 
 // A subagent view pages its own transcript.
-await ev(`view = '${AID}'; renderConv()`);
-check('subagent: the last 160', await until(`agentById(cur(), '${AID}')?.items?.length === 160`) && (await link()) === 'Show 90 earlier', await link());
+await ev(`document.querySelector('#conv [data-agent="${AID}"]').click()`);
+check('subagent: the last 160', await until(`__synopia.cur().agents.find(a => a.id === '${AID}')?.items?.length === 160`) && (await link()) === 'Show 90 earlier', await link());
 await ev(`document.querySelector('#log .earlier button').click()`);
-check('subagent: all 250, no link', await until(`agentById(cur(), '${AID}').items.length === 250`) && (await link()) === null);
+check('subagent: all 250, no link', await until(`__synopia.cur().agents.find(a => a.id === '${AID}').items.length === 250`) && (await link()) === null);
 const sub = await ids();
 check('subagent: in order, no duplicates', sub[0] === 's-start' && inOrder(sub.slice(1), 's', 0, SUB - 1) && await noDupKeys());
-check('subagent: the earlier message names it', (await ev(`__sent.filter(m => m.t === 'earlier').pop().agent`)) === AID);
+check('subagent: the earlier message names it', (await ev(`__synopia.sent('earlier').pop().agent`)) === AID);
 
 // Back to the main view: the earlier items it had loaded are asked for again (R3.9); a rewrite resets to the last 160.
 // The store still holds the 602 items from before the subagent view: wait for the restore to finish
 // (the one reset reply from the oldest item it had), not for those.
-const sentBefore = await ev(`__sent.length`);
-await ev(`view = null; renderConv()`);
-const asked = () => ev(`__sent.slice(${sentBefore}).map(m => m.t + ' ' + m.agent + (m.before ? ' ' + m.before : ''))`);
-check('back: the earlier items it had come back', await until(`!uiRestoring && cur().items.length === 602 && cur().items[0].id === 'm0'`)
+const sentBefore = await ev(`__synopia.sent().length`);
+await ev(`document.querySelector('#conv [data-back]').click()`);
+const asked = () => ev(`__synopia.sent().slice(${sentBefore}).map(m => m.t + ' ' + m.agent + (m.before ? ' ' + m.before : ''))`);
+check('back: the earlier items it had come back', await until(`!__synopia.restoring() && __synopia.cur().items.length === 602 && __synopia.cur().items[0].id === 'm0'`)
   && (await link()) === null && await noDupKeys()
   // one request: the view carries the oldest item it had (from: m0), and one reset brings them all
   && JSON.stringify((await asked()).filter(x => !x.startsWith('ui '))) === JSON.stringify(['view null'])
-  && (await ev(`__sent.slice(${sentBefore}).find(m => m.t === 'view')?.from`)) === 'm0',
+  && (await ev(`__synopia.sent().slice(${sentBefore}).find(m => m.t === 'view')?.from`)) === 'm0',
   JSON.stringify(await asked()));
 fs.writeFileSync(mainFile(claudeDir) + '.new', body(400));
 fs.renameSync(mainFile(claudeDir) + '.new', mainFile(claudeDir));
-check('a reset: the last 160 of the new file', await until(`cur().items.length === 160 && cur().items[0].id === 'm240'`, 5000) && (await link()) === 'Show 160 earlier (240 more)', await link());
+check('a reset: the last 160 of the new file', await until(`__synopia.cur().items.length === 160 && __synopia.cur().items[0].id === 'm240'`, 5000) && (await link()) === 'Show 160 earlier (240 more)', await link());
 
 c.print();
 c.close();

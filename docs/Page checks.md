@@ -72,15 +72,42 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 ## Writing a check
 
 - `connect()` from `cdp.mjs` needs `SYNOPIA_CHROME_PORT`, which `run.sh` sets. Each check times out after 180 s.
-- `await c.load(url, extra)` navigates and waits for ready: the first `hello`, the sidebar rendered, the message box, the current view's first `items`, no UI restore in flight, the window visible and focused, plus `extra`. Do not navigate and sleep.
+- `await c.load(url, extra)` navigates and waits for ready: the first `hello`, the sidebar rendered, the message box, the current view's first `items`, no UI restore in flight, the window visible and focused, plus `extra`. The page's half is `__synopia.ready()`; on a timeout the failure prints `__synopia.readiness()`. Do not navigate and sleep.
+- A check reads the page through the test API below and the DOM only, never through page globals.
 - `c.ev(expr)` returns the expression's value and throws on a page exception (a `PageError` naming the expression). A throw anywhere ends the check with `FAIL the check threw: …` after the checks counted so far, and exit 1.
 - `c.check(name, ok)` passes only when `ok === true`. A truthy string, number or object fails, with what it got. Compare explicitly or use `!!`.
 - `c.print()` prints `N/M pass` and the failures and sets exit code 1 on a failure. A check that recorded nothing prints `FAIL no checks ran`. Never `process.exit(0)` after it.
 - Wait with `c.until(expr, ms)` (default 5000; `until` in `helpers.mjs`), never a fixed sleep. It polls until the value is `=== true`; a throw counts as not yet, and a throw on the last try is rethrown. A suite has no `until` of its own.
-- `helpers.mjs` holds the shared pieces: `until`, `sleep`, `PageError`, `keyTable(c.key)` (letters, Shift letters, `esc`, `enter`, `tab`, `space`, `backspace`, `slash`, arrows, `next`/`prev` for Cmd-Shift-]/[, `cmdF`), `shot(c, file, clip)`, and the record builders `line`, `fresh` and `records(cwd, ts)` with `rec`, `you`, `said` and `tool`. It imports nothing from `cdp.mjs`, so `make` modes use it without a browser.
+- `helpers.mjs` holds the shared pieces: `until`, `sleep`, `PageError`, `keyTable(c.key)` (letters, Shift letters, `esc`, `enter`, `tab`, `space`, `backspace`, `slash`, arrows, `next`/`prev` for Cmd-Shift-]/[, `cmdF`), `shot(c, file, clip)`, the test API wrappers `page(c)`, `spySent(c)` and `inject(c, msg)`, `serverSend(url, ...msgs)` (frames to the backend from a socket of its own, for state the page must find at load, such as a layout), and the record builders `line`, `fresh` and `records(cwd, ts)` with `rec`, `you`, `said` and `tool`. It imports nothing from `cdp.mjs`, so `make` modes use it without a browser.
 - When two page actions must both happen before a server reply, do them in one `ev`.
 - `crc32` from `node:zlib` (Node 22.2+) builds the PNG fixtures in `images.mjs` 11.
 - A new suite goes in `SUITES` and the header list in `run.sh`; a fixture it writes goes through the `make` branch there.
+
+## Test API: `window.__synopia`
+
+`app/web/js/test-api.js` defines it; `index.html` loads it before `bridge.js`. Page modules may change freely behind it. A getter returns a copy (`structuredClone`), so a check cannot change the page through it. Write `__synopia.cur()` inside a page expression; `page(c).cur()` from the suite.
+
+| Member | Returns |
+|---|---|
+| `ready()` | `true` once the first `hello` is applied, the sidebar has a row, the message box exists, the current view is mounted and no UI restore is in flight |
+| `readiness()` | the parts of `ready()`: `{connected, uiLoaded, restoring, rows, box, current, mounted}` |
+| `current()` | the shown session's id, or null |
+| `view()` | the subagent id shown, null for the main conversation |
+| `mode()` | `"normal"` or `"insert"` |
+| `mounted()` | `"<sid>\|<agent>"` of the view on screen, or null |
+| `restoring()` | `true` while a restored view still waits for its items |
+| `cur()` | the shown session: `{id, title, status, driven, items, total, agents, background, outbox, …}` |
+| `data()` | every session, in the server's order (only the viewed one holds items) |
+| `pending(sid)` | that session's requests (question, permission, plan), oldest first |
+| `layout()` | the sidebar's groups, closed sessions' ids included |
+| `spy()` | starts recording, dropping what an earlier `spy()` recorded |
+| `sent(...types)` | frames the page sent since `spy()`, of those types (all with none) |
+| `received(...types)` | frames from the server since `spy()`, before the page applied them |
+| `inject(msg)` | hands `msg` to the page's message handler, as if the server sent it |
+
+- Nothing is recorded until `spy()`; in use the API costs a null check per frame. `bridge.js` calls `testSent` in `send` and `testGot` before `onMessage`.
+- Switch views the way a user does: click `#conv [data-agent="<id>"]` for a subagent and `#conv [data-back]` for the main conversation.
+- Suites that still read page globals: `csp`, `dnd`, `extcard`, `files`, `motion`, `preview`, `rail`, `restore`, `states`, `titles`, `tween`. A few reads in the moved suites stay on page helpers that have no state getter: `pendingAsk`/`qs` (keys), `attachments` (images), `interruptAsk` (close, images), `uiFrom` (viewswitch); and some actions call page functions (`renderLog` in steps; `showOpenList`, `toast`, `showViewer`, `previewClick`, `themeSet` in dark).
 
 ## Backend tests
 

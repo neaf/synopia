@@ -37,9 +37,9 @@ if (process.argv[2] === 'make') {
 const [url, stateDir, claude] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, until } = c;
-await c.load(url + '#11111111', `current?.startsWith('11111111')`);
+await c.load(url + '#11111111', `__synopia.current()?.startsWith('11111111')`);
 check('the tool group shows', await until(`!!document.querySelector('details.fold .body details.step')`));
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
+await ev('__synopia.spy()');
 const step = (name) => `[...document.querySelectorAll('details.step')].find(d => d.querySelector('summary').textContent.includes(${JSON.stringify(name)}))`;
 const click = (name) => ev(`${step(name)}.querySelector('summary').click()`);
 await ev(`document.querySelector('details.fold').open = true`);
@@ -55,10 +55,10 @@ check('the input of a search shows', (await ev(`${step('Grep(TODO)')}.querySelec
 check('"Show all 32 lines"', (await ev(`${step('Grep(TODO)')}.querySelector('[data-full]')?.textContent`)) === 'Show all 32 lines');
 await ev(`${step('Grep(TODO)')}.querySelector('[data-full]').click()`);
 check('show all loads the full result', await until(`(() => { const d = ${step('Grep(TODO)')}; return d && d.open && d.querySelector('.out').textContent.split('\\n').length === 32 && !d.querySelector('[data-full]'); })()`));
-check('one toolOutput message', (await ev(`JSON.stringify(__sent.filter(m => m.t === 'toolOutput'))`)) === JSON.stringify([{ t: 'toolOutput', sid: '11111111-0000-4000-8000-000000000001', agent: null, toolUseId: 'toolu_grep1' }]));
+check('one toolOutput message', (await ev(`JSON.stringify(__synopia.sent('toolOutput'))`)) === JSON.stringify([{ t: 'toolOutput', sid: '11111111-0000-4000-8000-000000000001', agent: null, toolUseId: 'toolu_grep1' }]));
 // a live update that redraws the block: the running fetch finishes
 const before = await ev(`document.querySelector('details.fold').closest('[data-key]').dataset.key`);
-await ev(`(() => { const s = store.sessions.get(current), it = s.items.find(i => i.id === 'toolu_fetch1'); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ ...it, state: 'done', out: { text: 'made-up page', lines: 1, cut: false } }], total: s.total }); window.__el = document.querySelector('details.fold'); })()`);
+await ev(`(() => { const s = __synopia.cur(), it = s.items.find(i => i.id === 'toolu_fetch1'); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ ...it, state: 'done', out: { text: 'made-up page', lines: 1, cut: false } }], total: s.total }); window.__el = document.querySelector('details.fold'); })()`);
 await sleep(300);
 check('the live update redrew the block', await ev(`!document.querySelector('details.fold .body').textContent.includes('running')`));
 check('both steps stay open, the full result stays', await ev(`${step('List the demo folder')}.open && ${step('Grep(TODO)')}.open && ${step('Grep(TODO)')}.querySelector('.out').textContent.split('\\n').length === 32`));
@@ -71,7 +71,7 @@ await click('Grep(TODO)');
 await sleep(150);
 check('a click closes it', await ev(`!${step('Grep(TODO)')}.open`));
 // a single step shows inline: make one by viewing a run of one tool
-await ev(`(() => { const s = store.sessions.get(current); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'toolu_one', k: 'tool', ts: '2026-11-20T10:03:00.000Z', name: 'Bash', verb: 'Ran', obj: 'Say hi', state: 'done', input: 'echo hi', out: { text: 'hi', lines: 1, cut: false } }], total: s.total + 1 }); })()`);
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'toolu_one', k: 'tool', ts: '2026-11-20T10:03:00.000Z', name: 'Bash', verb: 'Ran', obj: 'Say hi', state: 'done', input: 'echo hi', out: { text: 'hi', lines: 1, cut: false } }], total: s.total + 1 }); })()`);
 check('a single step is inline', await until(`(() => { const d = ${step('Say hi')}; return d && d.parentElement.matches('.ln.tool'); })()`));
 await click('Say hi');
 await sleep(150);
@@ -82,7 +82,7 @@ check('a single step opens', await ev(`${step('Say hi')}.open && ${step('Say hi'
 const reload = async (u, extra) => { await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200); return c.load(u, extra); };
 const LIVE = `document.querySelector('#log .liveln details.step[data-step="toolu_live1"]')`;
 const OWN = `document.querySelector('#log .ln.tool details.step[data-step="toolu_live1"]')`;
-await reload(`${url}#${S.slice(0, 8)}`, `current === '${S}' && !!mounted && cur().driven === true && cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
+await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
 check('the live line names the running step and can expand', (await ev(`${LIVE}?.querySelector('summary').textContent`)) === `Working Bash(${DESC})`, await ev(`document.querySelector('#log .liveln')?.outerHTML`));
 check('its own line can expand too', await ev(`!!${OWN} && !${OWN}.open && !${LIVE}.open`));
 await ev(`${LIVE}.querySelector('summary').click()`);
@@ -109,14 +109,14 @@ check('and opens both', await c.until(`${LIVE}.open && ${OWN}.open`, 2000));
 await ev(`(() => { window.__old = [${LIVE}, ${OWN}]; document.querySelectorAll('#log .log-inner > *').forEach(e => e._sig = ''); renderLog(); })()`);
 check('both stay open through a redraw', await ev(`${LIVE} !== __old[0] && ${OWN} !== __old[1] && ${LIVE}.open && ${OWN}.open`));
 await sleep(600); // the UI state goes to the server
-await reload(`${url}#${S.slice(0, 8)}`, `current === '${S}' && !!mounted && cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
+await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
 check('the UI-state restore keeps it open', await c.until(`!!${LIVE} && ${LIVE}.open && ${OWN}.open`, 3000));
 // the result lands: the step becomes today's finished view in place
 const topOf = `${OWN}.closest('.ln').offsetTop`;
 const top0 = await ev(topOf);
 fs.appendFileSync(fileOf(claude, S), rec(S, { timestamp: fresh(60), type: 'user', uuid: 's-r1', toolUseResult: { stdout: 'built 3 modules\n12 passing', stderr: '', interrupted: false },
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_live1', content: 'built 3 modules\n12 passing' }] } }));
-check('the result arrives', await c.until(`cur().items.some(i => i.id === 'toolu_live1' && i.state === 'done')`, 8000));
+check('the result arrives', await c.until(`__synopia.cur().items.some(i => i.id === 'toolu_live1' && i.state === 'done')`, 8000));
 await sleep(200);
 const done = await ev(`${OWN}?.open ? ${OWN}.querySelector('.step-out').innerText : ''`);
 check('it is the finished view: the command, then the result under the guide', done.includes('npm run build') && done.includes('12 passing') && !done.includes('Running')
@@ -124,7 +124,7 @@ check('it is the finished view: the command, then the result under the guide', d
 check('in place, no jump', (await ev(topOf)) === top0, `${top0} -> ${await ev(topOf)}`);
 check('the live line no longer expands a finished step', await ev(`!${LIVE}`));
 // a session Synopia doesn't drive: the command and "Running", no timer
-await reload(`${url}#${N.slice(0, 8)}`, `current === '${N}' && !!mounted && cur().items.some(i => i.id === 'toolu_ext1')`);
+await reload(`${url}#${N.slice(0, 8)}`, `__synopia.current() === '${N}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.id === 'toolu_ext1')`);
 const EXT = `document.querySelector('#log .ln.tool details.step[data-step="toolu_ext1"]')`;
 await ev(`${EXT}.querySelector('summary').click()`);
 await sleep(150);
