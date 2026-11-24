@@ -5,7 +5,9 @@ function took(ms) {
   if (m < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
 }
-const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+/* times follow macOS's 12- or 24-hour setting, which the app passes in (the web view's locale can't see it) */
+const hourOpts = () => typeof window.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: window.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {};
+const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...hourOpts() });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 /* a foreground Bash or Agent still running: b, b can send it to the background, and the first b marks it (R9) */

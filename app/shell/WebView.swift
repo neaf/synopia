@@ -28,7 +28,12 @@ final class PageView: NSObject, WKNavigationDelegate, WKUIDelegate {
   }
 
   private func syncChrome() {
-    let js = "document.documentElement.classList.add('in-app');"
+    // macOS's 24-hour setting (System Settings, Date & Time): the web view's locale can't see it, so the
+    // page gets it here and formats every time with it.
+    let hours = DateFormatter.dateFormat(fromTemplate: "j", options: 0, locale: Locale.current) ?? "h"
+    let clock24 = hours.contains("H") || hours.contains("k")
+    let js = "window.SYNOPIA_CLOCK24 = \(clock24);"
+      + "document.documentElement.classList.add('in-app');"
       + "document.documentElement.classList.toggle('fullscreen', \(fullscreen));"
       + "document.documentElement.style.setProperty('--titlebar', '\(fullscreen ? 0 : Int(titlebar))px');"
     let scripts = web.configuration.userContentController

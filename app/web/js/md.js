@@ -25,7 +25,7 @@ function modelLabel(id) {
   const name = ["Claude", ...word.map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()), ...(num.length ? [num.join(".")] : [])].join(" ");
   return big ? `${name} (1M context)` : name;
 }
-const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
+const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit", ...(typeof window.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: window.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {}) });
 
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
 function md(src) {
