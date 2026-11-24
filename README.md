@@ -4,15 +4,26 @@ A macOS app for running several Claude Code sessions side by side: one window th
 
 It is a thin Swift shell (`app/shell/`) hosting a web page (`app/web/`) in a WKWebView, and a Node daemon (`app/backend/`) that runs the sessions through the Claude Agent SDK and outlives the app. The page also runs in a browser.
 
-## Build and run
+## Requirements
 
-Needs macOS 26, Node 22.13+ on PATH and the Xcode command line tools.
+- macOS 26 and the Xcode command line tools (`xcode-select --install`): the shell is built locally with `swiftc`, so nothing needs signing.
+- Node 22.13 or later on PATH.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code), installed and logged in. Synopia drives sessions through the Claude Agent SDK with your Claude Code login and settings, so turns cost what they cost in the CLI, and sessions keep your permission mode.
+- Optional: [bat](https://github.com/sharkdp/bat) for highlighted file previews.
+
+## Install
 
 ```sh
-(cd app/backend && npm ci)        # once: the pinned SDK and ws
+git clone https://github.com/neaf/synopia.git
+cd synopia
+(cd app/backend && npm ci)        # the pinned SDK and ws
 app/build.sh                      # builds build/Synopia.app with swiftc; bakes in the node path
 open build/Synopia.app            # state in ~/Library/Application Support/Synopia
 ```
+
+To update, `git pull`: the running daemon hands over to the new code once nothing runs. Rerun `app/build.sh` and relaunch when the shell (`app/shell/`) changed, or after a Node upgrade.
+
+## Run
 
 Without the shell, for a browser:
 
@@ -76,6 +87,8 @@ Test states for the "needs you" card: add `?demo=ask`, `ask6`, `multi`, `permiss
 | [AGENTS.md](AGENTS.md) | Rules for working on the code |
 | `.ai-notes/` | Handover notes between sessions |
 
-## Before publishing
+## License
 
-The tree holds invented data only. Older commits hold real work data (PR numbers, ticket ids, branch names, a session screenshot): scrub the history before pushing this repository anywhere.
+[MIT](LICENSE). The bundled fonts in `app/web/fonts/` keep their own SIL Open Font License files.
+
+Fixtures, storyboards and prototype data are invented. Never commit `prototype/transcripts.js` or anything from `~/.claude/` (see [AGENTS.md](AGENTS.md)).
