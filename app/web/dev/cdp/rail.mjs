@@ -47,6 +47,35 @@ await shot('rail-open');
 // Past names the subagent; nothing of the subagent's on the main side
 const past = await ev(`[...document.querySelectorAll('.rail .pr .n')].map(n => n.textContent)`);
 check('Past names the subagent of its shells', past.includes('Optimise the images failed in Build image thumbnails') && past.includes('List old images in Check the old images') && past.includes('Copy the icons in Build image thumbnails'), JSON.stringify(past));
+// the item you're viewing, of every kind: exactly one visible edge (no border plus ring), the same ink edge on each,
+// over every state tint of the main card, and selecting moves and resizes nothing
+const sel = (q, state) => ev(`(() => {
+  document.querySelector(${JSON.stringify(q)}).click();
+  return new Promise(r => setTimeout(() => {
+    document.activeElement?.blur();
+    const cur = [...document.querySelectorAll('.rail [aria-current="true"]')], e = cur[0];
+    if (${JSON.stringify(state || '')}) e.dataset.state = ${JSON.stringify(state || '')};
+    const seen = c => c && c !== 'none' && !/rgba\\(0, 0, 0, 0\\)|transparent/.test(c);
+    const edges = [];
+    for (const [s, pe] of [[getComputedStyle(e), ''], [getComputedStyle(e, '::before'), 'before'], [getComputedStyle(e, '::after'), 'after']]) {
+      if (pe && s.content === 'none') continue;
+      if (['Top', 'Right', 'Bottom', 'Left'].some(d => parseFloat(s['border' + d + 'Width']) > 0 && s['border' + d + 'Style'] !== 'none' && seen(s['border' + d + 'Color']))) edges.push((pe || 'self') + ' border ' + s.borderTopColor + ' ' + s.borderTopWidth);
+      if (s.boxShadow !== 'none') edges.push((pe || 'self') + ' shadow ' + s.boxShadow);
+      if (s.outlineStyle !== 'none' && parseFloat(s.outlineWidth) > 0) edges.push((pe || 'self') + ' outline');
+    }
+    const geo = [...document.querySelectorAll('.rail .main-row, .rail .card, .rail .pr, .rail .ind, .rail .tg')].map(x => (b => [b.x, b.y, b.width, b.height].map(v => +v.toFixed(2)))(x.getBoundingClientRect()));
+    r(JSON.stringify({ n: cur.length, edges, geo }));
+  }, 350));
+})()`).then(JSON.parse);
+const items = [['main, working', '[data-back-main]'], ['main, needs you', '[data-back-main]', 'red'], ['main, idle', '[data-back-main]', 'amber'],
+  ['running subagent', '.rail .card[data-agent="bbbb0001"]'], ['Past subagent', '.rail .pr[data-agent="bbbb0002"]']];
+const seenSel = [];
+for (const [label, q, state] of items) seenSel.push({ label, ...(await sel(q, state)) });
+const edgeOf = (x) => x.edges[0]?.replace(/^\w+ /, '');
+check('every selected item has exactly one visible edge, no border plus ring', seenSel.every((x) => x.n === 1 && x.edges.length === 1), JSON.stringify(seenSel.map((x) => [x.label, x.n, x.edges])));
+check('the selected edge is the same 1px ink line on every kind and state', seenSel.every((x) => edgeOf(x) === 'border rgb(31, 35, 40) 1px'), JSON.stringify(seenSel.map((x) => [x.label, x.edges])));
+const g0 = seenSel[0].geo, moved = seenSel.filter((x) => x.geo.length !== g0.length || x.geo.some((b, i) => b.some((v, j) => Math.abs(v - g0[i][j]) > 0.5)));
+check('selecting changes no geometry: every card, row, mark and guide keeps its place and size', moved.length === 0, JSON.stringify(moved.map((x) => x.label)));
 await ev(`document.querySelector('[data-back-main]').click()`);
 await sleep(300);
 check("the sidebar counts only the main thread's shells", (await ev(`document.querySelector('#groups .row[data-id^="66666666"] [data-line="bg"]')?.textContent.trim()`)) === '1 shell or monitor running');
