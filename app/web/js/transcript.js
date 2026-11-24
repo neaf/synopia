@@ -17,7 +17,7 @@ function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
+  const line = `<span class="name">${esc(toolName(t))}</span>${objOf(t)}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
   return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
 }
@@ -96,13 +96,22 @@ function toolsHTML(run) {
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(isFg) ? " data-fg" : ""}><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
-      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)}>${row}</div>`;
     }).join("")}</div></details>${thumbsHTML(run.flatMap(t => (t.imgs || []).map(m => ({ ...m, from: imgFrom(t) }))), current, view)}</div>`; // one row for the run's images (R5.12b)
 }
 
 /* a step's display name: the tool's Claude Code CLI name, as in the terminal; MCP tools read "server tool" */
 function toolName(t) { return t.name && !t.name.startsWith("mcp__") ? (t.name === "Task" ? "Agent" : t.name) : t.verb; }
+/* a step's target in brackets. SendMessage names whom it went to (the subagent's name, from its id) and
+   its summary, so it reads as a message to that subagent */
+function objOf(t) {
+  if (t.name === "SendMessage" && t.to) {
+    const a = cur() && agentById(cur(), t.to), who = a ? a.description : t.to;
+    return `(to “${esc(who)}”${t.obj ? `: ${esc(t.obj)}` : ""})`;
+  }
+  return t.obj ? `(${esc(t.obj)})` : "";
+}
 /* ---------- files changed ---------- */
 function splitPath(f) {
   const m = f.match(/^(~\/dev\/[^/]+\/\.claude\/worktrees\/[^/]+)\/(.*)$/) || f.match(/^(~\/dev\/[^/]+)\/(.*)$/) || f.match(/^(~\/\.claude\/[^/]+(?:\/[^/]+)?)\/([^/]+)$/) || f.match(/^(.*)\/([^/]+)$/);
@@ -306,13 +315,16 @@ const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt q
 const liveStep = t => !!t && t.state === "running" && hasStep(t) && !(t.name === "Agent" || t.name === "Task");
 function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "") => {
-    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span>`;
+    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${objOf(t)}` : "")}</span>`;
     const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
     return `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span>${body}</div>`;
   };
-  if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
+  /* the step named on the live line: the newest step only while it runs. Once it's done (Claude writing,
+     thinking, between steps) the line just says Working, rather than naming a finished step */
+  const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool"); return last && last.state === "running" ? last : null; };
+  if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
   if (stateOf(s) !== "green") return "";
-  const t = [...s.items].reverse().find(x => x.k === "tool");
+  const t = runningStep(s.items);
   return s.status === "busy" ? line(sessionMarkKey(s), t, "Working", phaseText(s)) : line(sessionMarkKey(s), t, wordOf(s), phaseText(s));
 }
 /* what the state means, after its word (status.ts: the source of each) */
@@ -336,7 +348,7 @@ function statusLine(s) {
   const last = [...s.items].reverse();
   if (st === "green") {
     const t = last.find(x => x.k === "tool");
-    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div>`;
+    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${objOf(t)}` : ""}</span></div>`;
   }
   if (s.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
   if (st === "red") {

@@ -30,7 +30,7 @@ export type Item = {
   text?: string; images?: number; interrupted?: boolean; workedMs?: number; // you
   imgs?: ImageRef[]; // you, tool: the images the prompt sent or the result holds (R5.13)
   agent?: string | null; // report
-  name?: string; verb?: string; obj?: string; state?: string; toolUseId?: string; patch?: Patch; // tool
+  name?: string; verb?: string; obj?: string; to?: string; state?: string; toolUseId?: string; patch?: Patch; // tool (to: SendMessage's recipient)
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
   input?: string; out?: Output; // tool: its input as the expanded step shows it, and its result's preview (R5.6)
   fg?: boolean; // tool: a foreground Bash or Agent still running, which b, b can send to the background (R9)
@@ -94,7 +94,7 @@ export function toolLine(name: string, input: unknown, home: string): [string, s
   if (name === 'ToolSearch') return ['Loaded tools', str(inp.query).split('select:').join('')];
   if (name === 'ScheduleWakeup') return ['Scheduled a check-in', str(inp.reason)];
   if (name === 'TaskOutput') return ['Checked a background task', ''];
-  if (name === 'SendMessage') return ['Messaged a subagent', ''];
+  if (name === 'SendMessage') return ['Messaged a subagent', str(inp.summary) || str(inp.message).split('\n')[0].slice(0, 120)]; // the recipient is the item's `to`
   if (name === 'Monitor') return ['Watched', str(inp.description)];
   if (name.startsWith('mcp__')) {
     const parts = name.split('__');
@@ -757,6 +757,7 @@ export class Transcript {
         if (plan.trim()) this.put({ id: `plan:${tid}`, k: 'claude', ts, text: clip(plan) });
         const [verb, o] = toolLine(name, inp, this.home);
         const item: Item = { id: tid, k: 'tool', ts, name, verb, obj: o.slice(0, 200), state: 'running' };
+        if (name === 'SendMessage' && typeof obj(inp).to === 'string') item.to = String(obj(inp).to).slice(0, 80); // whom it went to
         if (name === 'Agent' || name === 'Task') item.toolUseId = tid;
         const input = inputOf(name, inp);
         if (input) item.input = input;
