@@ -54,7 +54,7 @@ document.addEventListener("keydown", e => {
     case "i": case "a": e.preventDefault(); setMode("insert"); break;
     case "/": { // insert with the command menu open; a half-typed message stays as it is
       e.preventDefault(); setMode("insert"); const ta = document.getElementById("msg");
-      if (ta && !ta.value) { ta.value = "/"; ta.dispatchEvent(new Event("input")); }
+      if (ta && !ta.value && !ta.dataset.bash) { ta.value = "/"; ta.dispatchEvent(new Event("input")); } // no slash menu in bash mode
       break; }
   }
 });

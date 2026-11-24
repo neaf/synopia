@@ -73,7 +73,9 @@ function stepHTML(t) {
   });
 }
 function showAll(id) {
-  const key = stepKey(id); if (stepAsked === key) return;
+  const key = stepKey(id);
+  if (id.startsWith("bang:")) { openBangs.add(key); renderLog(); return; } // a `!` command's output is all on the page
+  if (stepAsked === key) return;
   stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
 }
 function applyToolOutput(m) {
@@ -217,10 +219,10 @@ function itemsHTML(items, sessionBusy, s) {
   };
   const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
-  const prompt = (html, ts, key) => {
+  const prompt = (html, ts, key, whole) => {
     flush(); endTurn(); putTitles();
     if (ts && day(ts) !== lastDay) { out.push([`day:${key}`, `<div class="done">${day(ts)}</div>`]); lastDay = day(ts); }
-    out.push([`you:${key}`, `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`]); turnStart = ts; turnKey = key; turnMs = null;
+    out.push(whole ? [`bang:${key}`, whole] : [`you:${key}`, `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`]); turnStart = ts; turnKey = key; turnMs = null;
   };
   for (const it of items) {
     /* your answer to a permission or plan card shows as your turn, before the tool it let run (R6.7) */
@@ -229,6 +231,11 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images && !it.imgs?.length ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}${thumbsHTML(it.imgs, current, view, "your message")}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
+    /* a bash-mode command: on your prompt's band, but no turn of Claude's (the next prompt doesn't end one) */
+    if (it.k === "bang") {
+      if (!it.sh && bangLiveOf(s)?.id === it.id) continue; // its output isn't in yet: the live run shows it
+      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null)); lastTs = it.ts; continue;
+    }
     /* the shown title changed (R5.x): a quiet line in place, like a day separator */
     if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }
     if (titles.length && it.k !== "you" && !(it.k === "tool" && it.answer)) { flush(); putTitles(); }
@@ -259,6 +266,29 @@ function itemsHTML(items, sessionBusy, s) {
   putTitles();
   return out;
 }
+/* ---------- bash mode (R5.13): a `!` command, as the CLI shows it ----------
+   The command on the prompt band with `!` for `❯`, then the run under it (runView). The same for a command
+   run from Synopia (while it runs and until its records land: the session's `bang`) or recorded by the CLI. */
+/* Its whole output is on the page (30,000 characters at most), so the 20-line cut is made here, and "Show all"
+   (data-full, key `bang:<id>`) opens it in place instead of asking the server (showAll). */
+const BANG_LINES = 20, openBangs = new Set();
+const bangKey = id => `bang:${id}`;
+function bangHTML(id, cmd, sh, run) {
+  const lines = t => t ? String(t).replace(/\n$/, "").split("\n") : [];
+  const o = lines(sh?.out), e = lines(sh?.err), total = o.length + e.length;
+  const cut = total > BANG_LINES && !openBangs.has(stepKey(bangKey(id)));
+  const out = !sh ? null : cut ? o.slice(0, BANG_LINES).join("\n") : o.join("\n");
+  const err = cut ? e.slice(0, Math.max(0, BANG_LINES - o.length)).join("\n") : e.join("\n");
+  const running = Boolean(run?.running);
+  const view = runView({ key: bangKey(id), input: "", desc: "", out: running && !out ? null : out ?? "", err, truncatedTotal: cut ? total : 0, running, startedAt: run ? run.at : null,
+    note: running ? "Esc, Esc to end it" : "", exit: sh?.exit ?? run?.exit ?? null, stopped: Boolean(run?.interrupted || sh?.interrupted) });
+  const capped = sh?.cut ? `<div class="res"><span></span><span>Output cut at 30,000 characters</span></div>` : "";
+  const note = run?.error ? `<div class="res failed"><span></span><span>${esc(run.error)}</span></div>` : "";
+  return `<div class="bang" data-bang="${esc(id)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(cmd)}</div></div><div class="bang-res">${view}${capped}${note}</div></div>`;
+}
+/* the command that runs or just ran, until its records are in the transcript */
+const bangLiveOf = s => { const b = s.bang; return b && !s.items.some(i => i.id === (b.landed || b.id) && i.k === "bang" && i.sh) ? b : null; };
+const bangLiveHTML = s => { const b = bangLiveOf(s); return b ? [[`bang:${b.id}`, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b)]] : []; };
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
 const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
@@ -364,7 +394,7 @@ function renderHeader() {
         <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
-  document.getElementById("msg").placeholder = `Message ${s.title}, / for commands`;
+  paintBash(s); // the placeholder: the message's, or bash mode's (composer.js)
 }
 /* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
 const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
@@ -377,6 +407,7 @@ function logEntries(s, A) {
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   if (!A) out.push(...sentHTML(s)); // sent while idle: the new turn's prompt, at once, until its record lands
+  if (!A) out.push(...bangLiveHTML(s));
   out.push(["live", liveLine(s, A)]);
   if (!A) out.push(...queuedHTML(s)); // below the live line: what's working began before you sent it (the author, 2026-11-24)
   return out;

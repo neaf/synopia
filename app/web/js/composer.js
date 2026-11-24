@@ -52,6 +52,7 @@ function attachSlash(ta, onModel) {
     `<span class="eff-o" role="radio" data-eff="${esc(l)}" aria-checked="${l === eff}">${esc(l)}</span>`).join("")}</span>`;
   const update = () => {
     if (mode === "model") return;
+    if (ta.dataset.bash) { close(); return; } // bash mode: no slash menu
     const m = ta.value.match(/^\/(\S*)$/);
     if (!m) { close(); return; }
     mode = "cmd"; items = rank(COMMANDS(), m[1], c => c.name); sel = 0; draw();
@@ -150,7 +151,9 @@ function openModelPicker() {
 /* ---------- Esc, Esc: the message box turns into "Interrupt?" while a turn runs (R9.4) ---------- */
 let interruptAsk = null; // the session id the prompt is for
 /* a running turn, or one waiting on a card (Esc with no in-place field open, plan section 6) */
-const canInterrupt = s => Boolean(s) && s.driven !== false && !termPid(s) && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting"); // never for a session another process runs
+const canInterrupt = s => Boolean(s) && s.driven !== false && !termPid(s) && (stateOf(s) === "green" || stateOf(s) === "red" && s.status === "waiting" || bangRunning(s)); // never for a session another process runs
+/* a `!` command of this session still runs: Esc, Esc ends it first (sessions.ts) */
+const bangRunning = s => Boolean(s?.bang?.running);
 /* the message box's one prompt line: Esc, Esc's or b, b's, whichever came last */
 function askInBox(box, html) {
   const p = box.querySelector(".int-ask") || box.appendChild(Object.assign(document.createElement("p"), { className: "int-ask" }));
@@ -263,6 +266,7 @@ function mountComposer(s) {
   /* Enter sends the text and the pasted images (base64 PNG or JPEG, 5 MB each) to the session's input.
      s.id follows the session when its id changes (a new session's real id), so the message reaches it. */
   const sendMsg = () => {
+    if (ta.dataset.bash) { runBang(s, ta); return; }
     const going = attachments.filter(a => tagged(a, ta.value)); // an image whose tag was deleted stays behind
     if (!ta.value.trim() && !going.length) return;
     if (ta.value.trim() === "/model" && !going.length) { openModelPicker(); return; } // typed in full: the picker, not a message
@@ -282,6 +286,7 @@ function mountComposer(s) {
     uiFlush(); // the sent draft is gone from the backend at once, its images too
   };
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); } });
+  mountBash(s, ta);
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(240, ta.scrollHeight) + "px"; markUntagged(); });
   /* the whole box is the touch target: a press anywhere in it that isn't on a control focuses the field,
      with the caret at the end when it lands outside the text */
@@ -301,6 +306,49 @@ function mountComposer(s) {
   tagLoose(s, ta);
   takeRestored(s.id);
   mountTakeover(s, ta);
+}
+
+/* ---------- bash mode (R5.13): `!` as the first character runs a shell command, as in the Claude Code CLI ----------
+   The `!` itself leaves the text and becomes the box's mark; Backspace on the empty box leaves the mode. Enter
+   runs the command in the session's folder (`bang`); its output shows in the transcript and goes to Claude as
+   context, with no turn. Not in a session another process runs, nor one a terminal holds. */
+const bashOk = s => Boolean(s) && s.driven !== false && !termPid(s);
+/* the box's text as a draft keeps it: with the `!` of bash mode (ui.js) */
+const boxValue = ta => (ta.dataset.bash ? "!" : "") + ta.value;
+function setBash(ta, on) {
+  if (on) ta.dataset.bash = "1"; else delete ta.dataset.bash;
+  paintBash(cur());
+}
+function paintBash(s) {
+  const ta = document.getElementById("msg"), box = ta?.closest(".composer"); if (!ta || !s) return;
+  if (ta.dataset.bash && !bashOk(s)) { delete ta.dataset.bash; ta.value = "!" + ta.value; } // it became read-only: the text stays as typed
+  const on = Boolean(ta.dataset.bash);
+  box.classList.toggle("bash", on);
+  box.querySelector(":scope > .g").textContent = on ? "!" : "❯";
+  ta.setAttribute("aria-label", on ? "Shell command" : "Message");
+  ta.placeholder = on ? `Run a shell command in ${s.cwd}` : `Message ${s.title}, / for commands`;
+}
+function mountBash(s, ta) {
+  ta.addEventListener("beforeinput", () => { ta.bashBefore = ta.value; });
+  /* the first character typed (or pasted, or a kept draft) is a `!`: the mode, and the `!` leaves the text */
+  ta.addEventListener("input", () => {
+    if (ta.dataset.bash || (ta.bashBefore ?? "") !== "" || !ta.value.startsWith("!") || !bashOk(cur())) return;
+    const c = ta.selectionStart; ta.value = ta.value.slice(1); ta.setSelectionRange(Math.max(0, c - 1), Math.max(0, c - 1));
+    ta.bashBefore = ta.value;
+    setBash(ta, true); uiChanged();
+  });
+  ta.addEventListener("keydown", e => {
+    if (e.key === "Backspace" && ta.dataset.bash && !ta.value) { e.preventDefault(); setBash(ta, false); uiChanged(); }
+  });
+}
+/* Enter in bash mode: one command at a time per session */
+function runBang(s, ta) {
+  const cmd = ta.value; if (!cmd.trim()) return;
+  if (bangRunning(cur())) { toast("A shell command is still running in this session. Wait for it, or Esc, Esc to end it."); return; }
+  if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your command is still in the box."); return; }
+  send({ t: "bang", sid: s.id, command: cmd, uuid: newUuid() });
+  ta.value = ""; ta.style.height = "auto"; setBash(ta, false);
+  uiFlush();
 }
 
 /* ---------- a terminal holds the session (R3.2): the box's one line, and the message that takes it back ---------- */
@@ -338,5 +386,6 @@ function syncTakeover() {
   if (line) line.textContent = pid ? `Open in a terminal (pid ${pid}). Type there, or send here to bring it back.` : "";
   if (mark) mark.textContent = d.takeover === "taking" ? "Bringing it back from the terminal…" : d.takeover || takeoverWait?.sid === s.id ? "Waiting for the terminal to finish…" : "";
   box.classList.toggle("held", Boolean(pid));
+  if (ta.dataset.bash && !bashOk(s)) paintBash(s); // no bash mode in a session a terminal holds
   box.classList.toggle("taking", Boolean(mark?.textContent));
 }

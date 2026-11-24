@@ -129,6 +129,13 @@ export class SessionProcess {
     this.events.onPush?.(uuid);
   }
 
+  // Bash mode (bang.ts): context for Claude that starts no turn (sdk.d.ts SDKUserMessage.shouldQuery:
+  // "appended to the transcript without triggering an assistant turn", merged into the next user
+  // message that queries). Not counted as queued, and an interrupt has nothing of it to give back.
+  pushQuiet(text: string, uuid: string): void {
+    this.input.push({ ...userMessage(text, uuid), shouldQuery: false });
+  }
+
   // Interrupts the foreground turn (perTaskStopAffordance spares background work). With the
   // capability, queued messages are cancelled too and their texts come back.
   async interrupt(): Promise<InterruptResult> {

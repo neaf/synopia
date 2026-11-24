@@ -21,13 +21,14 @@
 #   app/web/dev/cdp/run.sh titles  title changes in the transcript (R5.12c): two Retitled lines in place, kept over a reload and a backend restart, with a shot
 # SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 #   app/web/dev/cdp/run.sh queued  messages sent during a turn show pending (R5.5): in order above the live line, one lands in place, an interrupt puts the other back in the box, with shots
-#   app/web/dev/cdp/run.sh close   x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
+#   app/web/dev/cdp/run.sh bang    bash mode (R5.13): ! enters it, Backspace leaves it, a command's output, stderr and exit, Show all, one at a time, Esc, Esc ends a sleep, with shots
+#   app/web/dev/cdp/run.sh close  x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -71,7 +72,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
@@ -88,7 +89,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shots: $state/steps*.png" ;;
-  extcard|preview|images|rail|background|dark|close|titles|queued) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|background|dark|close|titles|queued|bang) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

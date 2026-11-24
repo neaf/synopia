@@ -31,6 +31,8 @@ import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
 import { pruneUi, rekeyUi } from './ui.ts';
 import { userContent } from './content.ts';
+import { Bang, bashInput, bashOutput } from './bang.ts';
+import type { BangRun } from './bang.ts';
 import type { Image } from './content.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
@@ -111,7 +113,9 @@ type Active = {
   idleTimer: NodeJS.Timeout | null;
   choice: ModelChoice | null; // slice 5: a placeholder's model and effort, stored once it has its id
   interrupting: boolean; // an interrupt is on its way: held messages go back to the box, not to Claude
-  afterExit: { content: Content; uuid: string; text: string }[]; // sent while the process was ending (idle end)
+  afterExit: { content: Content; uuid: string; text: string; quiet?: boolean }[]; // sent while the process was ending (idle end); quiet: bash mode's context, no turn
+  bang: Bang | null; // the `!` command that runs or ran last (bash mode, bang.ts): one at a time
+  quietOnly: boolean; // its process was started only to take bash mode's context: its init starts no turn
   ownEnd: number; // when a process of ours last ended (0: none yet), for feedRunning
   askId: string; // the tool use id of the question or plan another process asks (R6.8), '' for none
   terminal: Terminal | null; // the terminal's CLI that holds it (R3.2): read-only while set
@@ -301,16 +305,65 @@ export class Sessions {
     }
     if (ending) { // the idle end closed its input: the message goes to a new process once this one exits
       a.afterExit.push({ content, uuid: id, text });
+      a.quietOnly = false;
       this.clearIdle(a);
       a.status.turnStarted();
       this.log('sessions.afterExit', { sid: a.id, images: images.length });
       return { ok: true, sid: a.id };
     }
     (a.proc as SessionProcess).push(content, id);
+    a.quietOnly = false;
     this.clearIdle(a);
     a.status.turnStarted();
     this.log('sessions.send', { sid: a.id, images: images.length });
     return { ok: true, sid: a.id };
+  }
+
+  // ---------- bash mode (R5.13): `!` runs a shell command in the session's folder ----------
+  // The output streams to the page (views.setBang) and, once the command ends, the command and its
+  // output go to the session as context that starts no turn (bang.ts). Not in a session a terminal
+  // holds (one writer), and one command at a time.
+  bang(sid: string, cmd: string, uuid?: string): SendResult {
+    const a = this.live.get(this.resolve(sid));
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    if (!cmd.trim()) return { ok: false, error: 'Type a shell command after the !.' };
+    if (a.terminal || a.takeover) return { ok: false, error: `A terminal holds this session (pid ${a.terminal?.pid ?? '?'}). Run the command there.` };
+    if (a.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
+    if (!isDir(a.cwd)) return { ok: false, error: `Folder ${this.tilde(a.cwd)} no longer exists` };
+    const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
+    const bang: Bang = new Bang({
+      id, cmd, cwd: a.cwd, now: this.now,
+      onUpdate: (run) => { if (a.bang === bang) this.views.setBang(a.id, run); },
+      onDone: (run) => {
+        if (a.bang !== bang) return; // closed meanwhile
+        this.log('bang.done', { sid: a.id, exit: run.exit, interrupted: run.interrupted, cut: run.cut, chars: run.out.length + run.err.length });
+        if (!run.error) this.shareBang(a, run);
+        this.views.setBang(a.id, run);
+      },
+    });
+    a.bang = bang;
+    this.log('bang.start', { sid: a.id });
+    this.views.setBang(a.id, bang.run);
+    return { ok: true, sid: a.id };
+  }
+
+  // The command and its output go to Claude in the CLI's format, as two user messages that start
+  // no turn: into the running process, after the ending one, or a process started for them.
+  private shareBang(a: Active, run: BangRun): void {
+    const msgs = [{ text: bashInput(run.cmd), uuid: run.id }, { text: bashOutput(run), uuid: randomUUID() }];
+    if (a.terminal || a.takeover) { run.error = 'Not shared with Claude: a terminal took the session meanwhile.'; return; }
+    if (a.proc?.ending) {
+      for (const m of msgs) a.afterExit.push({ content: m.text, uuid: m.uuid, text: m.text, quiet: true });
+      return;
+    }
+    if (!a.proc) {
+      const why = this.startProcess(a);
+      if (why) { run.error = `Not shared with Claude: ${why === 'terminal' ? 'a terminal holds this session' : why}.`; return; }
+      a.quietOnly = true;
+      this.armIdle(a); // no turn will arm it
+    }
+    for (const m of msgs) (a.proc as SessionProcess).pushQuiet(m.text, m.uuid);
+    this.log('bang.shared', { sid: a.id, newProcess: a.quietOnly });
   }
 
   // ---------- a terminal holds the session (R3.2) ----------
@@ -437,7 +490,7 @@ export class Sessions {
     a.ownEnd = this.now();
     this.clearIdle(a);
     this.setStreamClear(a);
-    const after = a.afterExit.splice(0).map((m) => m.text).filter((x) => x.trim());
+    const after = a.afterExit.splice(0).filter((m) => !m.quiet).map((m) => m.text).filter((x) => x.trim());
     if (after.length) this.views.restore(a.id, after);
     this.endNeeds(a);
     this.ended(a);
@@ -465,6 +518,8 @@ export class Sessions {
     const proc = a.proc;
     a.proc = null; // its exit is no failure
     a.afterExit = [];
+    a.bang?.kill();
+    a.bang = null;
     a.needs.abortAll();
     proc?.close();
     if (proc) this.ended(a);
@@ -496,6 +551,11 @@ export class Sessions {
   // without the cancel capability runs them afterwards, and the toast says so.
   async interrupt(sid: string): Promise<void> {
     const a = this.live.get(this.resolve(sid));
+    if (a?.bang?.run.running) { // Esc, Esc ends the `!` command first; another Esc, Esc then stops the turn
+      this.log('bang.interrupt', { sid: a.id });
+      a.bang.kill();
+      return;
+    }
     if (!a?.proc || !a.status.working) return;
     a.status.interrupted();
     a.interrupting = true;
@@ -641,6 +701,7 @@ export class Sessions {
     for (const a of this.live.values()) {
       this.clearIdle(a);
       if (a.streamTimer) clearTimeout(a.streamTimer);
+      a.bang?.kill();
       if (a.proc) {
         a.proc.close();
         this.ended(a);
@@ -674,7 +735,7 @@ export class Sessions {
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Active {
     const a: Active = {
-      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], ownEnd: 0, askId: '',
+      id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], bang: null, quietOnly: false, ownEnd: 0, askId: '',
       terminal: placeholder ? null : this.opts.registry?.holder(id) ?? null, takeover: null,
       status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
       needs: new NeedsYou({
@@ -794,17 +855,21 @@ export class Sessions {
     const next = a.afterExit.splice(0);
     if (!next.length || this.live.get(a.id) !== a) return;
     if (this.startProcess(a)) {
-      this.views.restore(a.id, next.map((m) => m.text).filter((t) => t.trim()));
+      this.views.restore(a.id, next.filter((m) => !m.quiet).map((m) => m.text).filter((t) => t.trim()));
       return;
     }
-    for (const m of next) (a.proc as SessionProcess | null)?.push(m.content, m.uuid);
-    a.status.turnStarted();
+    a.quietOnly = next.every((m) => m.quiet);
+    for (const m of next) {
+      if (m.quiet) (a.proc as SessionProcess | null)?.pushQuiet(m.text, m.uuid);
+      else (a.proc as SessionProcess | null)?.push(m.content, m.uuid);
+    }
+    if (!a.quietOnly) a.status.turnStarted();
   }
 
   private onMessage(a: Active, m: Msg): void {
     if (m.type === 'system' && m.subtype === 'init') {
       if (typeof m.session_id === 'string' && m.session_id && m.session_id !== a.id) this.swap(a, m.session_id, a.placeholder ? 'init' : 'moved');
-      a.status.turnStarted();
+      if (!a.quietOnly) a.status.turnStarted(); // a process started only for bash mode's context runs no turn
     } else if (m.type === 'system' && m.subtype === 'session_state_changed') {
       a.status.stateChanged(String(m.state));
     } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {

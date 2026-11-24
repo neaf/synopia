@@ -224,6 +224,9 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     if (!r.ok) client.send({ t: 'toast', text: r.error });
     // shown at once: sent while idle it is the new turn's prompt; sent during a turn it's queued (R5.5)
     else if (uuid && !sessions.terminalHolds(msg.sid)) views.sent(r.sid, uuid, text, images.length, queues);
+  } else if (sessions && msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') { // bash mode (R5.13)
+    const r = sessions.bang(msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : undefined);
+    if (!r.ok) client.send({ t: 'toast', text: r.error });
   } else if (sessions && msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });

@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
+import { parseBashInput, parseBashOutput, BANG_CAP } from './bang.ts';
+import type { BashOutput } from './bang.ts';
 
 export type Hunk = { o: number; n: number; lines: string[] };
 // `bare`: a file a shell command changed with no diff in the record (bashEditDiff.changedFiles).
@@ -22,7 +24,8 @@ export type Output = { text: string; lines: number; cut: boolean; interrupted?: 
 export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
 export type Question = { q: string; header: unknown; multi: boolean; opts: [string, string][] };
 export type Item = {
-  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title'; ts: string | null;
+  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang'; ts: string | null;
+  cmd?: string; sh?: BashOutput; // bang: a bash-mode command (`!`) and its output, from Synopia or the CLI (R5.13)
   title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
   text?: string; images?: number; interrupted?: boolean; workedMs?: number; // you
   imgs?: ImageRef[]; // you, tool: the images the prompt sent or the result holds (R5.13)
@@ -53,6 +56,7 @@ export type WrittenTitle = { title: string; at: number };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
 
 const MAX_TEXT = 6000;
+const MAX_BANG_CMD = 4000;
 const MAX_DIFF_LINES = 400;
 const REPORT_PREFIX = 'Another Claude session sent a message';
 
@@ -347,6 +351,7 @@ export class Transcript {
   private byId = new Map<string, Item>();
   private seq = 0;
   private lastYou: Item | null = null;
+  private lastBang: Item | null = null; // the bash-mode command whose output comes next
   private results = new Map<string, boolean>(); // tool_use id -> is_error
   private asks = new Set<string>();
   private answers = new Map<string, string>();
@@ -619,6 +624,22 @@ export class Transcript {
       if (content.every((b) => isBlock(b, 'tool_result'))) return;
     }
     const txt = textOf(content);
+    // Bash mode (R5.13), as the CLI records it: a user record `<bash-input>…</bash-input>`, then one
+    // `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>` with its output. Neither is a turn.
+    if (txt.startsWith('<bash-input>')) {
+      const cmd = parseBashInput(txt);
+      if (cmd !== null) this.lastBang = this.put({ id: uuid, k: 'bang', ts, cmd: clip(cmd, MAX_BANG_CMD) });
+      return;
+    }
+    if (txt.startsWith('<bash-stdout>')) {
+      const sh = parseBashOutput(txt);
+      const b = this.lastBang;
+      if (sh && b && !b.sh) {
+        b.sh = { ...sh, out: clip(sh.out, BANG_CAP), err: clip(sh.err, BANG_CAP) };
+        this.changed.add(b.id);
+      }
+      return;
+    }
     if (d.isMeta && !txt.startsWith(REPORT_PREFIX)) return;
     const images = Array.isArray(content) ? content.filter((b) => isBlock(b, 'image')).length : 0;
     for (const tn of txt.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
