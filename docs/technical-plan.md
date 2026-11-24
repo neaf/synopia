@@ -138,6 +138,7 @@ Node 22.13 with TypeScript run by `--experimental-strip-types`. There's no build
 | `lock.ts` | An exclusive lock file `backend.lock` in the state folder. A second backend on the same state folder exits with a message. |
 | `sessions.ts` | The open list, new sessions, the Open list from `listSessions()`, close. |
 | `driver.ts` | One SDK `query()` per active session: input queue, canUseTool, interrupt, setModel, process lifetime. |
+| `registry.ts` | The terminals that hold sessions, from the CLI's pid files `~/.claude/sessions/<pid>.json` (the only reader), and the take-over's mechanics: ending a CLI, the note to its terminal, waiting for the transcript to settle (section 6). |
 | `tail.ts` | Byte-offset tailing of one file, with a line buffer for the partial last line. |
 | `transcript.ts` | JSONL records to items, per session and per subagent, with stable ids. The port of `export_transcripts.py`, and the only code that reads the JSONL. |
 | `status.ts` | One status per session from SDK events and pending requests. |
@@ -241,7 +242,13 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
 
 ## 6. Sessions: new, open, drive, stop, close
 
-- **The open list** is `state.json` `open[]`: `{id, cwd, openedAt, closedAt}`. A session shows when it is in the list and not closed. Nothing else is discovered.
+- **The open list** is `state.json` `open[]`: `{id, cwd, openedAt, closedAt}`. A session shows when it is in the list and not closed. Nothing else is discovered: terminals only mark sessions (below).
+- **Terminals** (requirements R3.2 and R3.10, decided 2026-11-24, reversing the "unaware of the terminal" of Q10): `registry.ts` watches `~/.claude/sessions/` (`fs.watch` plus a 2 s poll), reading only names matching `^\d+\.json$`, never `*.key`.
+  - A file counts when its pid is alive, its `procStart` equals `LC_ALL=C TZ=UTC ps -o lstart= -p <pid>` (the CLI writes it in UTC), it is `kind: "interactive"` with `entrypoint: "cli"`, not spare, and no ancestor of the pid (up to 8) is the daemon. Synopia's own SDK children write pid files too, with entrypoint `sdk-ts` (checked 2026-11-24). Fields used: `pid`, `sessionId`, `cwd`, `status` (busy, idle or waiting), `statusUpdatedAt`. A file of another shape is skipped, logged once (`registry.format`).
+  - **Yield:** a terminal appears on an open session: if Synopia's process runs a turn it is interrupted (at most 3 s), then the process is closed; held and after-exit messages go back to the box. The status detail gets `terminal: <pid>`, and the page replaces the box's placeholder with "Open in a terminal (pid N). Type there, or send here to bring it back." The transcript keeps tailing, and the transcript's own rules give the status (working, needs you read-only, R6.8). The CLI's exit clears `terminal` and nothing else.
+  - **Take-over:** a send on a held session is kept (`detail.takeover: 'waiting'`), the page keeps the text in the box. It goes when the pid file says idle and the transcript shows no open turn, no pending ask, no running subagent and no background work: the registry is re-read for that session (pid and `procStart` again; busy, or another pid, means waiting again), the CLI's tty is read (`ps -o tty=`), SIGTERM, SIGINT at 5 s, give up at 10 s (toast, message stays, never SIGKILL). After the exit the note goes to `/dev/<tty>` (skipped and logged once if there is none or it fails), the JSONL must be unchanged for 500 ms (at most 5 s), and the message is sent as any other (the start guard runs again). The mark clears in the same update that starts the turn, which tells the page to empty the box. An edit or Esc sends `cancelTakeover`. A CLI that exits by itself meanwhile lets the message go at once.
+  - **Start guard:** `startProcess` re-reads the registry for the session before every start. A live terminal there means no start: a plain send gets its text back in the box (`restore`) with a toast; a take-over goes back to waiting.
+  - **The Open list:** each row carries the pid of a terminal that holds it, shown as "Open in a terminal". Opening such a row opens it read-only.
 - **New session:** `newSession` adds a placeholder row with a local id, the folder `settings.newSessionCwd` (default `~/dev/demo-project`) and the title "New session".
   - The first `send` starts `query()` without `resume`. Messages sent before `system/init` arrives go into the same input queue, in order.
   - `system/init` gives the session id. The backend writes it to `open[]` and the layout, and sends `session` with `replaces`.
@@ -434,12 +441,13 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
 
 ## 13. Dependencies outside the documented SDK
 
-Synopia drives sessions only through the SDK's typed API: `query`, its options, `canUseTool`, the `Query` methods, the typed messages and `listSessions`. Three things it needs aren't part of that, and each lives in one module with fixtures and a fallback:
+Synopia drives sessions only through the SDK's typed API: `query`, its options, `canUseTool`, the `Query` methods, the typed messages and `listSessions`. Four things it needs aren't part of that, and each lives in one module with fixtures and a fallback:
 
 | Dependency | Module | Why | If it changes |
 |---|---|---|---|
 | The JSONL transcript records | `transcript.ts` | the only source of diffs (`structuredPatch`), subagent files and full history | the fixtures for each record shape fail first; unknown records are skipped, never fatal |
 | `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` | `status.ts` | live running, needs you and idle | the fallback from `send` to `result` |
+| The CLI's pid files `~/.claude/sessions/<pid>.json` (back on 2026-11-24) | `registry.ts` | which sessions a terminal holds, for the yield, the take-over and the one-writer guard (section 6) | a file of another shape counts as no terminal, logged once: Synopia then stops seeing terminals, as before the decision |
 | `cancelQueued` on interrupt | `driver.ts` | so messages queued at interrupt return to you | used only when `system/init` advertises `interrupt_cancel_queued_v1`; otherwise the typed `interrupt()` |
 
 Facts the documented surface leaves open are settled by one scripted check on a scratch session and recorded in `.ai-notes/app/` as shapes, never values. Synopia never reads SDK or CLI internals.
@@ -452,6 +460,7 @@ Facts the documented surface leaves open are settled by one scripted check on a 
   - `tail`: a partial last line, an append in two writes, truncation and reset, a 60 KB line;
   - `sessions`: placeholder to real id, two sends before init, open, close and reopen keeping the group;
   - `status`: every row of the status table, several pending requests, the fallback without the state flag;
+  - `registry` and `takeover`: a fake sessions folder (alive, dead, a `procStart` mismatch, a `.key` never read, other kinds and entrypoints, Synopia's own children, a changed format), the take-over (idle: the last check, the end with the note, the resume; busy waits; the race at the last check; a CLI that won't exit; cancel) and the yield (interrupt, end, read-only, then Synopia's again);
   - `card answers`: each card choice to its canUseTool result, including multi-select, notes and each kind of update entry in the "Always allow" text;
   - `store`: atomic write, layout reconcile, the lock;
   - `server`: a wrong token, Host or Origin, path traversal, an oversized frame;
@@ -551,7 +560,7 @@ Each is settled by a check in the slice named, and recorded in `.ai-notes/app/`.
 
 - **Electron:** it is a downloaded runtime of about 150 MB that Jamf may block, and a second browser engine.
 - **Native SwiftUI:** there is no Swift Agent SDK, and the custom UI would be a rewrite.
-- **Showing or taking over terminal sessions:** you're leaving the terminal. It would tie Synopia to the CLI's pid files and signals for a short transition.
+- **Listing terminal sessions in the sidebar:** only sessions open in Synopia show. (Taking over and showing a held session read-only were ruled out here until 2026-11-24, when the author reversed it after two writers hit one transcript: section 6, Terminals.)
 - **Rendering from SDK messages:** it gives two paths that must render identically, and the SDK's history readers carry no diffs.
 - **A stdio relay through the shell:** it is secure without a port, but needs more Swift, and the page couldn't run in Chrome for checks.
 - **`permissionMode: 'default'`:** every edit and command would stop for you, unlike the terminal.
