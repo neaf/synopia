@@ -1,13 +1,14 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { request } from 'node:http';
+import { connect as tcp } from 'node:net';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { startServer, MAX_PAYLOAD } from '../src/server.ts';
-import type { Server } from '../src/server.ts';
+import type { Client, Server } from '../src/server.ts';
 
 const TOKEN = 'a'.repeat(64);
 const base = mkdtempSync(join(tmpdir(), 'synopia-server-'));
@@ -15,27 +16,36 @@ const webRoot = join(base, 'web');
 mkdirSync(join(webRoot, 'css'), { recursive: true });
 writeFileSync(join(webRoot, 'index.html'), '<p>index</p>');
 writeFileSync(join(webRoot, 'css', 'app.css'), 'body{}');
+mkdirSync(join(webRoot, 'fonts'));
+writeFileSync(join(webRoot, 'fonts', 'a.woff2'), 'wOF2');
+writeFileSync(join(webRoot, 'fonts', 'a.ttf'), 'true');
 writeFileSync(join(base, 'secret.txt'), 'SECRET');
 
 let server: Server;
+const lines: string[] = [];
+const SOFT = 64 * 1024, HARD = 1024 * 1024;
 before(async () => {
   server = await startServer({
     port: 0,
     token: TOKEN,
     webRoot,
-    hello: () => ({ sessions: [], layout: { groups: [], others: [] }, reviewed: ['r1'], menu: {}, settings: { writerModel: 'haiku' }, pending: [] }),
-    quitCheck: () => ({ running: [], background: [] }),
+    onAuthed: (c) => c.send({ t: 'hello', sessions: [] }),
+    quitCheck: () => ({ running: [], background: [], counts: {}, summary: '' }),
+    onMessage: (c, m) => { if (m.t === 'throw') throw new Error('boom'); c.send({ t: 'echo', of: m.t }); },
+    log: (event, fields) => lines.push(`${event} ${JSON.stringify(fields ?? {})}`),
+    sendSoft: SOFT,
+    sendHard: HARD,
   });
 });
 after(() => server.close());
 
 type Res = { status: number; body: string };
-function get(path: string, headers: Record<string, string> = {}): Promise<Res> {
+function get(path: string, headers: Record<string, string> = {}): Promise<Res & { type: string }> {
   return new Promise((ok, fail) => {
     const req = request({ host: '127.0.0.1', port: server.port, path, headers }, (res) => {
       let body = '';
       res.on('data', (c) => (body += c));
-      res.on('end', () => ok({ status: res.statusCode ?? 0, body }));
+      res.on('end', () => ok({ status: res.statusCode ?? 0, body, type: String(res.headers['content-type'] ?? '') }));
     });
     req.on('error', fail);
     req.end();
@@ -86,6 +96,11 @@ test('serves the page', async () => {
   assert.equal((await get('/nope.js')).status, 404);
 });
 
+test('serves the bundled fonts with their font types', async () => {
+  assert.equal((await get('/fonts/a.woff2')).type, 'font/woff2');
+  assert.equal((await get('/fonts/a.ttf')).type, 'font/ttf');
+});
+
 test('every response carries the strict CSP, naming its own origin', async () => {
   const csp = await new Promise<string>((ok, fail) => {
     request({ host: '127.0.0.1', port: server.port, path: '/' }, (res) => {
@@ -99,20 +114,33 @@ test('every response carries the strict CSP, naming its own origin', async () =>
   assert.ok(!/unsafe-(inline|eval)/.test(dir('script-src')));
   assert.equal(dir('connect-src'), `connect-src 'self' ${server.origin} ws://127.0.0.1:${server.port}`);
   assert.equal(dir('img-src'), "img-src 'self' data: blob:");
-  assert.match(dir('style-src'), /fonts\.googleapis\.com/);
-  assert.match(dir('font-src'), /fonts\.gstatic\.com/);
+  assert.equal(dir('style-src'), "style-src 'self'");
+  assert.equal(dir('font-src'), "font-src 'self'");
 });
 
-test('the real page has no inline script and repeats the CSP as a meta tag', () => {
+test('the real page has no inline script, no meta CSP and no other host', () => {
   const web = join(import.meta.dirname, '..', '..', 'web');
-  for (const f of ['index.html', 'check.html']) {
+  for (const f of ['index.html']) {
     const html = readFileSync(join(web, f), 'utf8');
     assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), `${f}: inline script`);
     assert.ok(!/<style/i.test(html), `${f}: inline style element`);
     assert.ok(!/\son[a-z]+=/i.test(html), `${f}: inline handler`);
   }
-  const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(readFileSync(join(web, 'index.html'), 'utf8'));
-  assert.ok(meta && meta[1].includes("script-src 'self';") && meta[1].includes("default-src 'self'"));
+  const html = readFileSync(join(web, 'index.html'), 'utf8');
+  assert.ok(!/http-equiv="Content-Security-Policy"/i.test(html), 'a meta CSP would have to repeat the header');
+  assert.ok(!/https?:\/\//.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'index.html loads nothing from another host');
+  assert.match(html, /<script type="module" src="js\/main\.js"><\/script>/);
+});
+
+test('every font app.css names is bundled, with its license beside it', () => {
+  const web = join(import.meta.dirname, '..', '..', 'web');
+  const css = readFileSync(join(web, 'css', 'app.css'), 'utf8');
+  const urls = [...css.matchAll(/url\("\.\.\/(fonts\/[^"]+)"\)/g)].map((m) => m[1]);
+  assert.ok(urls.length >= 5, String(urls));
+  for (const u of urls) {
+    assert.ok(existsSync(join(web, u)), u);
+    assert.ok(existsSync(join(web, dirname(u), 'OFL.txt')), `${u}: no OFL.txt beside it`);
+  }
 });
 
 test('path traversal is refused', async () => {
@@ -133,7 +161,7 @@ test('quit-check needs the token', async () => {
   assert.equal((await get('/api/quit-check?token=wrong')).status, 403);
   const res = await get(`/api/quit-check?token=${TOKEN}`);
   assert.equal(res.status, 200);
-  assert.deepEqual(JSON.parse(res.body), { running: [], background: [] });
+  assert.deepEqual(JSON.parse(res.body), { running: [], background: [], counts: {}, summary: '' });
 });
 
 test('the upgrade checks Host and Origin', async () => {
@@ -162,19 +190,77 @@ test('a first frame that is not auth closes the socket', async () => {
   assert.equal(await closeCode(ws), 4001);
 });
 
-test('hello after auth', async () => {
-  const ws = connect();
+// an authenticated page whose frames are collected
+async function page() {
+  const ws = connect(), got: { t: string; [k: string]: unknown }[] = [];
+  ws.on('message', (d) => got.push(JSON.parse(String(d))));
   await once(ws, 'open');
   ws.send(JSON.stringify({ t: 'auth', token: TOKEN }));
-  const [data] = await once(ws, 'message');
-  const hello = JSON.parse(String(data));
-  assert.equal(hello.t, 'hello');
-  assert.deepEqual(hello.sessions, []);
-  assert.deepEqual(hello.pending, []);
-  assert.deepEqual(hello.reviewed, ['r1']);
-  assert.deepEqual(hello.layout, { groups: [], others: [] });
-  assert.equal(hello.settings.writerModel, 'haiku');
+  await waitUntil(() => got.length > 0);
+  return { ws, got, client: [...server.clients].at(-1) as Client };
+}
+async function waitUntil(ok: () => boolean, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+test('after auth the hello comes from onAuthed (publisher.ts), then each frame goes to onMessage', async () => {
+  const { ws, got } = await page();
+  assert.deepEqual(got[0], { t: 'hello', sessions: [] });
+  ws.send(JSON.stringify({ t: 'view' }));
+  await waitUntil(() => got.length === 2);
+  assert.deepEqual(got[1], { t: 'echo', of: 'view' });
   ws.close();
+});
+
+test('a handler that throws is logged, and the socket and server go on (NFR-07)', async () => {
+  const { ws, got } = await page();
+  ws.send(JSON.stringify({ t: 'throw' }));
+  ws.send(JSON.stringify({ t: 'after' }));
+  await waitUntil(() => got.some((m) => m.of === 'after'));
+  assert.ok(lines.some((l) => l.startsWith('ws.failed') && l.includes('"t":"throw"')), lines.join('\n'));
+  ws.close();
+});
+
+test('a page that doesn\'t read: stream previews are dropped past the soft limit, other frames kept, and it is cut off past the hard one', async () => {
+  const { ws, got, client } = await page();
+  (ws as unknown as { _socket: { pause(): void; resume(): void } })._socket.pause();
+  const big = 'x'.repeat(16 * 1024);
+  for (let i = 0; i < 4000 && client.buffered() <= SOFT; i++) client.send({ t: 'toast', text: big });
+  assert.ok(client.buffered() > SOFT, `buffered ${client.buffered()}`);
+  client.send({ t: 'stream', sid: 's', text: 'dropped' });
+  client.send({ t: 'stream', sid: 's', clear: true });
+  client.send({ t: 'toast', text: 'kept' });
+  (ws as unknown as { _socket: { resume(): void } })._socket.resume();
+  await waitUntil(() => got.some((m) => m.text === 'kept'));
+  assert.equal(got.some((m) => m.t === 'stream' && m.text === 'dropped'), false, 'the preview text went');
+  assert.equal(got.some((m) => m.t === 'stream' && m.clear === true), true, 'the clear did not');
+  assert.ok(lines.some((l) => l.startsWith('ws.behind')));
+  // past the hard limit the page is cut off (it reconnects, and its hello has everything)
+  (ws as unknown as { _socket: { pause(): void } })._socket.pause();
+  const closed = once(ws, 'close');
+  for (let i = 0; i < 4000 && ws.readyState === ws.OPEN && server.clients.has(client); i++) {
+    client.send({ t: 'toast', text: big });
+    if (client.buffered() > HARD) { client.send({ t: 'toast', text: 'one more' }); break; }
+  }
+  (ws as unknown as { _socket: { resume(): void } })._socket.resume();
+  await closed;
+  assert.ok(lines.some((l) => l.startsWith('ws.slow')), lines.join('\n'));
+});
+
+test('a request Node can\'t parse gets 400 and a log line; the server goes on', async () => {
+  const sock = tcp(server.port, '127.0.0.1');
+  await once(sock, 'connect');
+  let reply = '';
+  sock.on('data', (d) => (reply += d));
+  sock.write('NOT HTTP AT ALL\r\n\r\n');
+  await once(sock, 'close');
+  assert.match(reply, /^HTTP\/1\.1 400 /);
+  assert.ok(lines.some((l) => l.startsWith('http.clientError')));
+  assert.equal((await get('/')).status, 200);
 });
 
 test('an oversized frame closes the socket', async () => {
@@ -193,4 +279,27 @@ test('an oversized frame before auth closes the socket', async () => {
   const done = closeCode(ws);
   ws.send(Buffer.alloc(MAX_PAYLOAD + 1, 0x20));
   assert.equal(await done, 1009);
+});
+
+test('close: a page gets what was sent to it, then a close frame; a frame after it reaches nothing', async () => {
+  const seen: string[] = [];
+  const s2 = await startServer({
+    port: 0, token: TOKEN, webRoot, quitCheck: () => ({ running: [], background: [], counts: {}, summary: '' }),
+    onAuthed: (c) => c.send({ t: 'hello' }),
+    onMessage: (_c, m) => { seen.push(m.t); },
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${s2.port}/ws`, { origin: s2.origin });
+  const got: string[] = [];
+  ws.on('message', (d) => got.push(JSON.parse(String(d)).t));
+  await once(ws, 'open');
+  ws.send(JSON.stringify({ t: 'auth', token: TOKEN }));
+  await waitUntil(() => got.length === 1);
+  const closed = closeCode(ws);
+  for (const c of s2.clients) c.send({ t: 'ack' });
+  const stopping = s2.close();
+  ws.send(JSON.stringify({ t: 'late' }));
+  await stopping;
+  assert.equal(await closed, 1001);
+  assert.deepEqual(got, ['hello', 'ack']);
+  assert.deepEqual(seen, []);
 });

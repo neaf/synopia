@@ -8,12 +8,13 @@ import path from 'node:path';
 import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, BANG_CAP } from '../src/bang.ts';
 import type { BangRun, BangOptions } from '../src/bang.ts';
 import { Transcript } from '../src/transcript.ts';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import { openStore } from '../src/store.ts';
-import type { QueryFn } from '../src/driver.ts';
+import { emit, fakeQuery } from './support/fake-query.ts';
 import type { Client } from '../src/server.ts';
-import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-bang-')));
 const ID = '0b0b0b0b-1111-4222-8333-444444444444';
@@ -88,6 +89,43 @@ test('bang: a folder that is gone fails to start', async () => {
   assert.match(r.error ?? '', /couldn't start/);
 });
 
+test('bang: a spawn that throws ends the run after the constructor, never inside it', async () => {
+  let inside = true;
+  let done: BangRun | null = null;
+  new Bang({ id: ID, cmd: 'echo \0x', cwd: tmp(), shell: '/bin/sh', onUpdate: () => {}, onDone: (r) => { assert.equal(inside, false, 'not from the constructor'); done = r; } });
+  inside = false;
+  await new Promise((r) => setTimeout(r, 10));
+  assert.match((done as BangRun | null)?.error ?? '', /couldn't start/);
+});
+
+test('bang: the SIGKILL timer goes once the group is empty', async () => {
+  let bang!: Bang;
+  const done = new Promise<void>((resolve) => {
+    bang = new Bang({ id: ID, cmd: 'sleep 30', cwd: tmp(), shell: '/bin/sh', killAfterMs: 60_000, onUpdate: () => {}, onDone: () => resolve() });
+  });
+  await new Promise((r) => setTimeout(r, 100));
+  bang.kill();
+  await done;
+  assert.equal((bang as unknown as { killTimer: unknown }).killTimer, null, 'no SIGKILL armed for a group id that may be reused');
+});
+
+test('bang: the cap counts code points, never splits a pair, and the cut line names the cap', async () => {
+  const { run: r } = await run(`printf '\\360\\237\\230\\200%.0s' 1 2 3 4 5`, { cap: 3 });
+  assert.equal(r.out, '😀😀😀');
+  assert.equal(r.cut, true);
+  assert.equal(bashOutput({ out: 'x', err: '', cut: true, exit: 0 }, 3), '<bash-stdout>x</bash-stdout><bash-stderr>[Output cut at 3 characters]</bash-stderr>');
+});
+
+test('delivery: a command that cannot spawn toasts, and the daemon goes on', async () => {
+  const { sessions, SID, got, last } = setup();
+  assert.equal(sessions.get(SID)!.runBang('echo \0x').ok, true);
+  await until(() => last()?.bang?.running === false);
+  assert.match(String(got.find((m) => m.t === 'toast')?.text), /couldn't start/);
+  assert.equal(sessions.get(SID)!.runBang('echo again').ok, true, 'the next command runs');
+  await until(() => last()?.bang?.running === false);
+  sessions.stop();
+});
+
 test('bang format: the CLI tags, the exit and cut lines, and back', () => {
   assert.equal(bashInput('ls -la'), '<bash-input>ls -la</bash-input>');
   const text = bashOutput({ out: 'hi\n', err: 'err\n', cut: false, exit: 3 });
@@ -117,23 +155,6 @@ test('transcript: the CLI records of bash mode make one bang item, no prompt and
 });
 
 // ---------- the delivery: two shouldQuery:false user messages in the CLI's format ----------
-function channel<T>() {
-  const buf: T[] = [];
-  let wake: (() => void) | null = null;
-  let done = false;
-  return {
-    push(m: T) { buf.push(m); wake?.(); wake = null; },
-    end() { done = true; wake?.(); wake = null; },
-    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
-      while (true) {
-        while (buf.length) yield buf.shift() as T;
-        if (done) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-  };
-}
-
 function setup() {
   const root = tmp();
   const claudeDir = path.join(root, 'claude');
@@ -145,25 +166,20 @@ function setup() {
   const store = openStore(path.join(root, 'state'), { minIntervalMs: 0 });
   const SID = '0c0c0c0c-1111-4222-8333-444444444444';
   store.state.open.push({ id: SID, cwd, openedAt: 1, closedAt: null });
-  const views = new Views({ claudeDir, clients: () => new Set([c]), home: root, pollMs: 0, watch: false });
+  const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false });
+  const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: root, recheckMs: 0 });
   const inputs: SDKUserMessage[] = [];
-  const outs: ReturnType<typeof channel<SDKMessage>>[] = [];
-  const fn: QueryFn = ({ prompt }) => {
-    const out = channel<SDKMessage>();
-    outs.push(out);
-    void (async () => { for await (const m of prompt) inputs.push(m); })();
-    return Object.assign(out, { close: () => out.end(), interrupt: async () => ({ still_queued: [] }) });
-  };
-  const sessions = new Sessions({ store, views, queryFn: fn, listFn: async () => [], home: root });
+  const q = fakeQuery({ onInput: (_, m) => { inputs.push(m); } });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root });
   sessions.start();
-  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { status: string; bang: (BangRun & { landed?: string }) | null } | undefined;
-  return { sessions, SID, cwd, inputs, outs, got, last };
+  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string }; bang: (BangRun & { landed?: string }) | null } | undefined;
+  return { sessions, SID, cwd, inputs, q, got, last };
 }
 const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 
 test('delivery: the command and its output go as shouldQuery:false user messages, and no turn starts', async () => {
-  const { sessions, SID, inputs, outs, last } = setup();
-  const r = sessions.bang(SID, 'echo hi; echo err >&2; exit 3', ID);
+  const { sessions, SID, inputs, q, last } = setup();
+  const r = sessions.get(SID)!.runBang('echo hi; echo err >&2; exit 3', ID);
   assert.equal(r.ok, true);
   assert.equal(last()?.bang?.running, true, 'the page sees it running');
   await until(() => inputs.length === 2);
@@ -174,30 +190,30 @@ test('delivery: the command and its output go as shouldQuery:false user messages
   assert.equal(inputs[0].uuid, ID, 'the input record carries the run id, so it lands in place');
   assert.deepEqual({ ...last()?.bang, at: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0 });
   // A process started only for this: its init starts no turn.
-  outs[0].push({ type: 'system', subtype: 'init', session_id: SID } as unknown as SDKMessage);
+  emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
   await new Promise((r) => setTimeout(r, 20));
-  assert.notEqual(last()?.status, 'busy');
+  assert.notEqual(last()?.state.status, 'busy');
   // The next message goes as usual and starts the turn.
-  assert.equal(sessions.send(SID, 'what did it print?').ok, true);
+  assert.equal(sessions.get(SID)!.send('what did it print?').ok, true);
   await until(() => inputs.length === 3);
   assert.equal(inputs[2].shouldQuery, undefined);
-  assert.equal(last()?.status, 'busy');
+  assert.equal(last()?.state.status, 'busy');
   sessions.stop();
 });
 
 test('delivery: one command at a time, Esc, Esc ends it, not in a session a terminal holds', async () => {
   const { sessions, SID, inputs, last } = setup();
-  assert.equal(sessions.bang(SID, 'sleep 30').ok, true);
-  const second = sessions.bang(SID, 'echo again');
+  assert.equal(sessions.get(SID)!.runBang('sleep 30').ok, true);
+  const second = sessions.get(SID)!.runBang('echo again');
   assert.equal(second.ok, false);
   assert.match((second as { error: string }).error, /still running/);
-  await sessions.interrupt(SID);
+  await sessions.get(SID)!.interrupt();
   await until(() => last()?.bang?.running === false);
   assert.equal(last()?.bang?.interrupted, true);
   assert.equal(last()?.bang?.exit, 143);
   await until(() => inputs.length === 2);
   assert.match(String(inputs[1].message.content), /<bash-stderr>Interrupted by the user, exit code 143<\/bash-stderr>$/);
   assert.deepEqual(parseBashOutput(String(inputs[1].message.content)), { out: '', err: '', cut: false, exit: 143, interrupted: true });
-  assert.equal(sessions.bang(SID, '  ').ok, false);
+  assert.equal(sessions.get(SID)!.runBang('  ').ok, false);
   sessions.stop();
 });

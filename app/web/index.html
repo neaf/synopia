@@ -2,16 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- A fallback for the header server.ts sends (contentSecurityPolicy), which also names the port. -->
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:*; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Synopia</title>
 <link rel="icon" type="image/svg+xml" href="icon/favicon.svg">
 <link rel="icon" type="image/png" sizes="32x32" href="icon/favicon-32.png">
 <link rel="apple-touch-icon" href="icon/icon-256.png">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="css/app.css">
 <link rel="stylesheet" href="css/preview.css">
 <link rel="stylesheet" href="css/dark.css">
@@ -28,23 +23,9 @@
 </div>
 <div class="toast" id="toast" role="status"></div>
 
-<!-- Classic scripts sharing one global scope, in this order: later files use earlier ones at load time.
-     The data comes from the backend over /ws (bridge.js), authenticated with ?token=. -->
-<script src="js/marks.js"></script>
-<script src="js/md.js"></script>
-<script src="js/store.js"></script>
-<script src="js/tween.js"></script>
-<script src="js/sidebar.js"></script>
-<script src="js/dnd.js"></script>
-<script src="js/images.js"></script>
-<script src="js/transcript.js"></script>
-<script src="js/rail.js"></script>
-<script src="js/card.js"></script>
-<script src="js/composer.js"></script>
-<script src="js/keys.js"></script>
-<script src="js/open-list.js"></script>
-<script src="js/preview.js"></script>
-<script src="js/ui.js"></script>
-<script src="js/bridge.js"></script>
+<!-- The page is ES modules from one entry, main.js (deferred: it runs once the body above is parsed); only
+     theme.js, in <head>, is a classic script, so the first paint is in the right theme. The CSP comes as a
+     header from server.ts. -->
+<script type="module" src="js/main.js"></script>
 </body>
 </html>

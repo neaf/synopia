@@ -1,0 +1,69 @@
+{
+  "about": "Script for the scripted SDK (app/backend/dev/scripted-sdk.ts, --sdk-script). Made up. A step's `after` is ms after the step before, `ago` how far in the past it plays; an `ask` waits for its answer. 11111111 is idle with a process (the menu comes from it); 22222222, 33333333 and 55555555 wait on a question, a permission with an \"Always allow\" suggestion and a plan, and work 3 s once answered; 44444444 works, with a stream preview. A message that starts a turn is worked on for 3 s.",
+  "home": "/Users/fixture",
+  "menu": {
+    "models": [
+      { "value": "default", "displayName": "Default", "description": "Use the default model (currently Fixture Large (Default))", "supportedEffortLevels": ["low", "medium", "high"] },
+      { "value": "fixture-large", "displayName": "Fixture Large", "description": "The larger fixture model", "supportedEffortLevels": ["low", "medium", "high"] },
+      { "value": "fixture-small", "displayName": "Fixture Small", "description": "The fast fixture model", "supportedEffortLevels": [] }
+    ],
+    "commands": [
+      { "name": "clear", "description": "Clear the conversation", "argumentHint": "", "builtin": true },
+      { "name": "compact", "description": "Summarise the conversation to free context", "argumentHint": "[instructions]", "builtin": true },
+      { "name": "model", "description": "Choose the model for this session", "argumentHint": "", "builtin": true },
+      { "name": "plan", "description": "Plan before changing files", "argumentHint": "", "builtin": true },
+      { "name": "pr-review", "description": "Review a pull request", "argumentHint": "&lt;number&gt;" },
+      { "name": "release-notes", "description": "Draft release notes from merged work", "argumentHint": "" },
+      { "name": "fixture:deploy", "description": "Deploy the fixture app", "argumentHint": "&lt;env&gt;" },
+      { "name": "__internal", "description": "Hidden from the menu", "argumentHint": "" }
+    ]
+  },
+  "onSend": [
+    { "after": 3000, "message": { "type": "result", "subtype": "success", "is_error": false, "result": "", "duration_ms": 3000, "num_turns": 1 } },
+    { "message": { "type": "system", "subtype": "session_state_changed", "state": "idle" } }
+  ],
+  "sessions": {
+    "11111111-0000-4000-8000-000000000001": { "state": { "status": "idle", "ago": 720000 }, "start": true },
+
+    "22222222-0000-4000-8000-000000000002": { "start": true, "steps": [
+      { "ago": 240000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 240000, "ask": { "id": "req-question-1", "tool": "AskUserQuestion", "toolUseId": "toolu_ask2", "input": { "questions": [
+        { "question": "Ship it today?", "header": "Ship", "multiSelect": false, "options": [
+          { "label": "Yes (recommended)", "description": "Today, after the checks pass" },
+          { "label": "No", "description": "Next week, with the docs" } ] },
+        { "question": "Which pages get the banner?", "header": "Pages", "multiSelect": true, "options": [
+          { "label": "Home", "description": "The landing page" },
+          { "label": "Docs", "description": "Every docs page" },
+          { "label": "Blog", "description": "Only new posts" } ] }
+      ] } } },
+      { "after": 3000, "message": { "type": "result", "subtype": "success", "is_error": false, "result": "", "duration_ms": 3000, "num_turns": 1 } },
+      { "message": { "type": "system", "subtype": "session_state_changed", "state": "idle" } }
+    ] },
+
+    "33333333-0000-4000-8000-000000000003": { "state": { "cwd": "/Users/fixture/dev/demo" }, "start": true, "steps": [
+      { "ago": 120000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 120000, "ask": { "id": "req-permission-1", "tool": "Bash", "toolUseId": "toolu_fake_push1",
+        "input": { "command": "git push origin demo-banner", "description": "Push the banner branch so CI runs the demo build on it." },
+        "suggestions": [ { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "git push:*" }], "behavior": "allow", "destination": "localSettings" } ] } },
+      { "after": 3000, "message": { "type": "result", "subtype": "success", "is_error": false, "result": "", "duration_ms": 3000, "num_turns": 1 } },
+      { "message": { "type": "system", "subtype": "session_state_changed", "state": "idle" } }
+    ] },
+
+    "44444444-0000-4000-8000-000000000004": { "start": true, "steps": [
+      { "ago": 60000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "message": { "type": "stream_event", "parent_tool_use_id": null, "event": { "type": "message_start", "message": { "id": "msg_fixture_stream4" } } } },
+      { "message": { "type": "stream_event", "parent_tool_use_id": null, "event": { "type": "content_block_start", "index": 0, "content_block": { "type": "text", "text": "" } } } },
+      { "message": { "type": "stream_event", "parent_tool_use_id": null, "event": { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "Two subagents are" } } } },
+      { "after": 300, "message": { "type": "stream_event", "parent_tool_use_id": null, "event": { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": " still running. I'll merge" } } } },
+      { "after": 300, "message": { "type": "stream_event", "parent_tool_use_id": null, "event": { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": " their changes when both report back." } } } }
+    ] },
+
+    "55555555-0000-4000-8000-000000000005": { "start": true, "steps": [
+      { "ago": 240000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 240000, "ask": { "id": "req-plan-1", "tool": "ExitPlanMode", "toolUseId": "toolu_fake_plan2",
+        "input": { "plan": "## Plan: ship the demo release\n\n1. **Tag.** Tag `v0.3.0` on main after the banner change merges.\n2. **Notes.** Use the release notes from the review subagent, with the teal banner first.\n3. **Ship.** Run `make demo-release` and check the demo site.\n\nThen tell you the release link." } } },
+      { "after": 3000, "message": { "type": "result", "subtype": "success", "is_error": false, "result": "", "duration_ms": 3000, "num_turns": 1 } },
+      { "message": { "type": "system", "subtype": "session_state_changed", "state": "idle" } }
+    ] }
+  }
+}

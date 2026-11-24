@@ -3,15 +3,14 @@
 // Checks: a file edited by a tool and by the shell shows once with summed counts and both diffs, a
 // file the shell created reads "new", a changed file with no diff has no counts, "and 2 more files",
 // the total, and the Bash step stays a "Bash(…)" line. Writes files-changed.png.
-import fs from 'node:fs';
 import path from 'node:path';
+import { shot } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
-const { ev, check } = c;
-await c.load(url + '#11111111', `current?.startsWith('11111111')`);
-const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
+const { ev, check, until } = c;
+await c.load(url + '#11111111', `__synopia.current()?.startsWith('11111111')`);
 check('the files block shows', await until(`!!document.querySelector('.ln.files')`));
 const rows = await ev(`[...document.querySelectorAll('.ln.files .frow')].map(r => [r.querySelector('.fp').textContent, r.querySelector('.fc')?.textContent.replace(/\\s+/g, ' ').trim() || ''])`);
 const row = (f) => (rows.find((r) => r[0] === f) || [])[1];
@@ -27,6 +26,6 @@ check('the notes.md diff has both changes', diff.includes('the first idea') && d
 await ev(`document.querySelector('.ln.files').scrollIntoView({ block: 'start' })`);
 await sleep(200);
 const clip = await ev(`(() => { const r = document.querySelector('.ln.files').getBoundingClientRect(); return { x: Math.max(0, r.left - 20), y: Math.max(0, r.top - 10), width: Math.min(900, r.width + 40), height: Math.min(700, r.height + 20), scale: 1 }; })()`);
-fs.writeFileSync(path.join(stateDir, 'files-changed.png'), Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png', clip })).result.data, 'base64'));
+await shot(c, path.join(stateDir, 'files-changed.png'), clip);
 c.print();
 c.close();

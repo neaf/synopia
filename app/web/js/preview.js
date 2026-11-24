@@ -1,20 +1,34 @@
 /* Preview: a text or source file, read-only and highlighted, over the main area (requirements R5.9).
    A file link asks the backend with `preview {path}`; a text file comes back as `preview` (bat's colours as
-   escaped spans, one line per '\n'), anything else is opened by the backend as `open` would. HTML opens in
+   escaped spans, one line per '\n'), anything else is opened by the backend as `open` would, and its reply says `opened`. HTML opens in
    the browser; Alt-click shows its source here. Keys while it is shown: Esc closes, j/k scroll a line, g/G
    top and bottom, / or Cmd+F find, Enter or n the next match (Shift or N the previous). A click outside
    closes it. It always opens at the top. Lines the turn changed get quiet gutter marks (a green bar for added, a red
    mark where lines were removed); the diff is where the change itself shows. */
-const pv = { el: null, want: null, path: null, line: 0, back: null, hits: [], at: -1 };
+import { send, request } from "./connection.js";
+import { esc } from "./format.js";
+import { setMode } from "./mode.js";
+import { themeNow } from "./theme-switch.js";
+
+export const pv = { el: null, want: null, path: null, line: 0, back: null, hits: [], at: -1 };
 const PV_HTML = /\.html?$/i;
 
 /* the click handler's branch (transcript.js): true when the preview took the click */
-function previewClick(a, e) {
+export function previewClick(a, e) {
   const p = a.dataset.path;
   if (!p || (PV_HTML.test(p) && !e.altKey)) return false;
   pv.want = { path: p, back: a, ...pvChanges(a) };
-  send({ t: "preview", path: p, theme: themeNow() });
+  if (!request({ t: "preview", path: p, theme: themeNow() })) pv.want = null; // offline: a toast, and nothing waits
   return true;
+}
+/* the file the stored UI state had open (ui-state.js, after a reload): asked again, its find and scroll put back once shown */
+export function restorePreview({ path, scroll, find }) {
+  pv.want = { path, back: null, added: new Set(), cut: new Set(), first: 0, restore: { scroll: +scroll || 0, find: String(find || "") } };
+  send({ t: "preview", path, theme: themeNow() });
+}
+function restored(r) {
+  if (r.find) { pvOpenFind(); const q = document.getElementById("pv-q"); q.value = r.find; pvFind(r.find); }
+  document.getElementById("pv-code").scrollTop = r.scroll;
 }
 /* the lines the row's diff changed, in the new file: added lines, and for a deletion the line after it.
    The preview marks them quietly in the gutter, like an editor's change bars; it doesn't scroll to them. */
@@ -45,15 +59,16 @@ function pvBuild() {
     </div>`);
   pv.el = document.getElementById("preview");
   document.getElementById("pv-close").addEventListener("click", hidePreview);
-  document.getElementById("pv-open").addEventListener("click", () => { if (pv.path) send({ t: "open", path: pv.path }); });
+  document.getElementById("pv-open").addEventListener("click", () => { if (pv.path) request({ t: "open", path: pv.path }); });
   const q = document.getElementById("pv-q");
   q.addEventListener("input", () => pvFind(q.value));
 }
-const previewShown = () => Boolean(pv.el && !pv.el.hidden);
+export const previewShown = () => Boolean(pv.el && !pv.el.hidden);
 
-/* the backend's reply (bridge.js); one for a file asked before the last is dropped */
-function showPreview(m) {
+/* the backend's reply (main.js); one for a file asked before the last is dropped */
+export function showPreview(m) {
   if (!pv.want || m.path !== pv.want.path) return;
+  if (m.opened) { pv.want = null; return; } // not text: the backend opened it in its app
   if (!pv.el) pvBuild();
   const want = pv.want; pv.want = null;
   pv.path = m.path; pv.line = 0; pv.back = want.back;
@@ -73,7 +88,7 @@ function showPreview(m) {
   code.scrollLeft = 0;
   code.scrollTop = 0; // just the file, from the top: the diff is where changes show
   pv.el.querySelector(".pv-panel").focus({ preventScroll: true });
-  if (want.restore) uiPreviewRestored(want.restore); // reopened after a reload: its find and scroll (ui.js)
+  if (want.restore) restored(want.restore); // reopened after a reload: its find and scroll (restorePreview)
 }
 const pvSize = b => b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 function hidePreview() {
@@ -83,8 +98,8 @@ function hidePreview() {
   const back = pv.back; pv.back = null;
   if (back && back.isConnected) back.focus({ preventScroll: true });
 }
-/* the theme changed (theme.js): the file shown is asked again in bat's other theme, keeping its marks, scroll and find */
-function previewRetheme() {
+/* the theme changed (theme-switch.js, through main.js): the file shown is asked again in bat's other theme, keeping its marks, scroll and find */
+export function previewRetheme() {
   if (!previewShown() || !pv.path) return;
   const rows = [...document.querySelectorAll("#pv-lines .pl")], at = cls => new Set(rows.flatMap((r, i) => r.classList.contains(cls) ? [i + 1] : []));
   const find = document.getElementById("pv-find");
@@ -109,14 +124,26 @@ function pvCloseFind() {
   f.hidden = true; document.getElementById("pv-q").value = ""; document.getElementById("pv-count").textContent = "";
   pvClearHits();
 }
+/* The [from, to) of each match of needle in text, ignoring case, in text's own offsets. Each character is
+   lowercased on its own and remembers where it came from, because lowercasing can change a length
+   ("İ" becomes two code units), so offsets in the lowercased text don't fit the text shown. */
+export function findIn(text, needle) {
+  const q = String(needle).toLowerCase(), out = []; if (!q) return out;
+  let hay = "", pos = 0; const from = [], to = []; // for each code unit of hay: the original character's start and end
+  for (const ch of String(text)) {
+    const lo = ch.toLowerCase();
+    for (let k = 0; k < lo.length; k++) { from.push(pos); to.push(pos + ch.length); }
+    hay += lo; pos += ch.length;
+  }
+  for (let i = hay.indexOf(q); i >= 0; i = hay.indexOf(q, i + q.length)) out.push([from[i], to[i + q.length - 1]]);
+  return out;
+}
 function pvFind(text) {
   pvClearHits();
-  const needle = text.toLowerCase(), count = document.getElementById("pv-count");
-  if (!needle) { count.textContent = ""; return; }
-  for (const tx of document.querySelectorAll("#pv-lines .tx")) {
-    const hay = tx.textContent.toLowerCase();
-    for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) pv.hits.push(pvRange(tx, i, i + needle.length));
-  }
+  const count = document.getElementById("pv-count");
+  if (!text) { count.textContent = ""; return; }
+  for (const tx of document.querySelectorAll("#pv-lines .tx"))
+    for (const [from, to] of findIn(tx.textContent, text)) pv.hits.push(pvRange(tx, from, to));
   if (pvHL) CSS.highlights.set("pv-find", new Highlight(...pv.hits));
   count.textContent = pv.hits.length ? "" : "No match";
   if (pv.hits.length) pvStep(1, true);
@@ -153,10 +180,9 @@ function pvFirstBelow() {
   return i < 0 ? 0 : i;
 }
 
-/* its keys come before every other handler while it is shown (window, capture), and nothing else gets them */
-window.addEventListener("keydown", e => {
-  if (!previewShown()) return;
-  e.stopImmediatePropagation();
+/* its keys while it is shown (keys.js: the top layer); nothing under it gets them */
+export function previewKey(e) {
+  e.stopPropagation();
   const code = document.getElementById("pv-code"), inFind = e.target.id === "pv-q";
   const row = () => code.querySelector(".pl")?.offsetHeight || 17;
   let done = true;
@@ -173,6 +199,6 @@ window.addEventListener("keydown", e => {
   else if (e.key === "N") pvStep(-1);
   else done = false;
   if (done) e.preventDefault();
-}, true);
+}
 /* a click outside the panel closes it */
 document.addEventListener("mousedown", e => { if (previewShown() && !e.target.closest(".pv-panel")) hidePreview(); }, true);

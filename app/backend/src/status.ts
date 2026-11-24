@@ -1,6 +1,6 @@
-// One status per session (plan section 8), from the SDK's events and the driver's own state,
+// One status per session (FR-STAT-02), from the SDK's events and the session's own state,
 // in the page's vocabulary:
-//   busy       working: `session_state_changed: running`, or the driver started a turn
+//   busy       working: `session_state_changed: running`, or the session started a turn
 //   waiting    needs you: a pending canUseTool request, which wins over everything
 //   idle       your turn: idle after a normal `result`, or the process isn't running
 //   stopped    stopped by you: idle after a turn that ended by interrupt
@@ -26,14 +26,14 @@
 // A turn in another process (2026-11-23): with no process of Synopia's, a main turn the transcript
 // shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
 // and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
-// QUIET_MS) is working too. Sessions with no driver status use transcriptStatus().
+// QUIET_MS) is working too. Sessions with no status of our process use transcriptStatus().
 // A card in another process (R6.8, 2026-11-24): with no process of Synopia's, a transcript whose
 // thread (main or a running subagent's) ends on an AskUserQuestion or ExitPlanMode with no result
 // (Transcript.pendingAsk) is needs you, over working; its age counts from the tool_use. It clears
 // when the result lands, or once the transcript has been quiet for ASK_STALE_MS (your turn then).
 // An ask our own process left behind (a crash) is not one: "Not answered".
 // A terminal (R3.2, 2026-11-24): `detail.terminal` is the pid of the terminal's Claude Code that holds
-// the session (registry.ts), whatever the status, and `detail.takeover` says a message of yours waits
+// the session (cli-terminals.ts), whatever the status, and `detail.takeover` says a message of yours waits
 // for it (`waiting`: it runs a turn or waits on you) or is taking it back (`taking`).
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.
@@ -49,7 +49,9 @@ type Outcome = 'idle' | 'stopped' | 'failed';
 export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string };
 // queued: messages waiting for the running turn. retry: the attempt, its cap and when it goes (ms).
 export type Takeover = 'waiting' | 'taking';
-export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover };
+// external: the status is another process's, read from the transcript (its main turn, or its question
+// or plan), not Synopia's own process's: publisher.ts sends the session as not `driven`.
+export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover; external?: true };
 export type StatusEntry = { status: Status; at: number; detail?: StatusDetail };
 
 // 15 min: longer than the Bash tool's longest timeout (10 min), the longest a foreground tool
@@ -130,7 +132,12 @@ export class SessionStatus {
     return this.running;
   }
 
-  // The driver pushed a message, or a turn began (system/init comes at the start of each turn).
+  // Another process runs the main turn, or asks its question, by the transcript (no process of ours).
+  get externalTurn(): boolean {
+    return this.external || this.ask !== null;
+  }
+
+  // The session pushed a message, or a turn began (system/init comes at the start of each turn).
   turnStarted(): void {
     this.running = true;
     this.resulted = false;
@@ -139,7 +146,7 @@ export class SessionStatus {
     this.update();
   }
 
-  // The driver pushed a message: during a turn it is queued until a reply lists its uuid.
+  // The session pushed a message: during a turn it is queued until a reply lists its uuid.
   pushed(uuid: string): void {
     if (!this.running) return;
     this.queued.push(uuid);
@@ -279,6 +286,7 @@ export class SessionStatus {
     if (next === 'retrying' && this.retry) detail.retry = { ...this.retry };
     if (this.terminal) detail.terminal = this.terminal;
     if (this.takeover) detail.takeover = this.takeover;
+    if (!this.running && this.pending === 0 && (this.ask || this.external)) detail.external = true;
     this.armStale(next, silentFor - (now - this.last));
     // another process's card: its age counts from the tool_use, a new card's from its own
     const askAt = next === 'waiting' && this.pending === 0 && this.ask ? this.ask.since || now : null;
@@ -307,7 +315,12 @@ export class SessionStatus {
   }
 }
 
-// The status of a session no driver set (the transcript alone): working while its subagents or
+// Whether a turn runs that a message sent now queues behind (R5.5).
+export function queuesBehind(s: Status): boolean {
+  return s === 'busy' || s === 'retrying' || s === 'compacting';
+}
+
+// The status of a session no process of ours set (the transcript alone): working while its subagents or
 // forks or its main turn run, else your turn. A question or plan waiting there is needs you.
 export function transcriptStatus(r: Running): Status {
   return r.ask ? 'waiting' : r.agents > 0 || r.turn ? 'busy' : 'idle';
@@ -324,5 +337,127 @@ function uuidsOf(m: Loose): string[] {
 }
 
 function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
-  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
+  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.external === b.external && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
+}
+
+// ---------- what the page shows: the one derivation ----------
+// The page renders `session.state` and decides nothing about status itself.
+//   light    red: needs you. green: a turn runs, interruptible (working, compacting, rate limited,
+//            no updates). amber: your turn (idle, stopped, failed, signed out).
+//   tone     the state word's colour: red for needs you and signed out, amber for rate limited,
+//            grey for no updates, else the light.
+//   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
+//            ("Signed out", "No updates", "Rate limited", "Compacting").
+//   mark     the session mark's key (marks.js).
+//   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
+//            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
+//            `Interrupt`; a turned-down tool is not one).
+//   needsYou what the session waits on: the oldest request's kind, or the question or plan
+//            another process asks; null when it waits on nothing.
+//   review   finished "For review: …" subagents not marked reviewed (R10.1).
+//   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
+//            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
+export type Light = 'red' | 'amber' | 'green';
+export type Needs = 'question' | 'permission' | 'plan';
+export type SessionState = {
+  status: Status; since: number; detail: StatusDetail;
+  light: Light; tone: Light | 'grey'; word: string; mark: string;
+  stopped: boolean; needsYou: Needs | null; review: number; driven: boolean;
+};
+export type StateFacts = {
+  pending: Needs[]; // the session's requests' kinds, oldest first
+  ask: { kind: 'question' | 'plan' } | null; // a card another process waits on
+  interrupted: boolean; // the latest item (titles aside) is a `stop` interrupt marker
+  review: number;
+  driven: boolean;
+};
+
+const LIGHT: Record<Status, Light> = {
+  waiting: 'red', busy: 'green', compacting: 'green', retrying: 'green', stale: 'green',
+  idle: 'amber', stopped: 'amber', failed: 'amber', signedout: 'amber',
+};
+const PHASE: Partial<Record<Status, { word: string; mark: string }>> = {
+  signedout: { word: 'Signed out', mark: 'creds' },
+  stale: { word: 'No updates', mark: 'stale' },
+  retrying: { word: 'Rate limited', mark: 'ratelimit' },
+  compacting: { word: 'Compacting', mark: 'compact' },
+};
+
+export function sessionState(e: { status: Status; at: number; detail?: StatusDetail }, f: StateFacts): SessionState {
+  const status = e.status, detail = e.detail ?? {};
+  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : null);
+  const light: Light = needsYou ? 'red' : LIGHT[status];
+  const phase = light === 'red' ? undefined : PHASE[status];
+  const stopped = light === 'amber' && !phase && status !== 'failed' && (status === 'stopped' || f.interrupted);
+  const word = phase ? phase.word : light === 'red' ? 'Needs you' : light === 'green' ? 'Working'
+    : status === 'failed' ? 'Failed' : stopped ? 'Stopped' : 'Your turn';
+  const tone: Light | 'grey' = light === 'red' || status === 'signedout' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' ? 'grey' : light;
+  // your turn shows the grey square, whether or not background work runs
+  const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (detail.queued ? 'queued' : 'work')
+    : status === 'failed' ? 'failed' : 'stopped';
+  return { status, since: e.at, detail, light, tone, word, mark, stopped, needsYou, review: f.review, driven: f.driven };
+}
+
+// What a session adds to the Dock badge (R2.6): 1 while it needs you, plus its deliverables to review.
+// Signed out, no updates, rate limited, compacting and working don't count.
+export const badgeOf = (s: SessionState): number => (s.needsYou ? 1 : 0) + s.review;
+
+// The Dock badge's count, kept as sessions change: the shell polls it every 2 s and nothing is rebuilt
+// per poll. `onChange` runs when the total moves (the `badge` log line).
+export class BadgeCounter {
+  private per = new Map<string, number>();
+  private total = 0;
+  private onChange: (n: number) => void;
+
+  constructor(onChange: (n: number) => void = () => {}) {
+    this.onChange = onChange;
+  }
+
+  get count(): number {
+    return this.total;
+  }
+
+  set(sid: string, n: number): void {
+    const was = this.per.get(sid) ?? 0;
+    if (n > 0) this.per.set(sid, n);
+    else this.per.delete(sid);
+    if (n === was) return;
+    this.total += n - was;
+    this.onChange(this.total);
+  }
+
+  // A closed session no longer counts.
+  drop(sid: string): void {
+    this.set(sid, 0);
+  }
+}
+
+// GET /api/quit-check, what "Stop All Work…" and "Restart Backend Now…" ask with (FR-PLAT-06): the
+// running turns, the background work (one `{sid, kind}` each), `counts` per kind, and `summary`, the
+// alert's sentence after its question ("2 sessions are working and 1 background shell will stop."),
+// empty when nothing runs. The shell shows `summary` as it is and knows no kind: a new kind is counted
+// and named here. `background` keeps the list shape of the daemons before `summary`: a shell of that
+// time still decodes it and asks first (docs/Daemon files.md).
+export type QuitCheck = { running: string[]; background: { sid: string; kind: string }[]; counts: Record<string, number>; summary: string };
+
+const KIND_WORDS: Record<string, [string, string]> = {
+  subagent: ['subagent', 'subagents'],
+  shell: ['background shell', 'background shells'],
+  monitor: ['monitor', 'monitors'],
+};
+
+export function quitSummary(q: { running: string[]; background: { sid: string; kind: string }[] }): QuitCheck {
+  const counts: Record<string, number> = {};
+  for (const { kind } of q.background) counts[kind] = (counts[kind] ?? 0) + 1;
+  const kinds = [...Object.keys(KIND_WORDS).filter((k) => counts[k]), ...Object.keys(counts).filter((k) => !KIND_WORDS[k]).sort()];
+  const work = kinds.map((k) => {
+    const n = counts[k];
+    const [one, many] = KIND_WORDS[k] ?? [`background ${k}`, `background ${k}s`];
+    return `${n} ${n === 1 ? one : many}`;
+  });
+  const n = q.running.length;
+  const turns = n === 0 ? '' : n === 1 ? '1 session is working' : `${n} sessions are working`;
+  const list = work.length > 1 ? `${work.slice(0, -1).join(', ')} and ${work.at(-1)}` : (work[0] ?? '');
+  const summary = turns && list ? `${turns} and ${list} will stop.` : turns ? `${turns} and will stop.` : list ? `${list} will stop.` : '';
+  return { running: q.running, background: q.background.map(({ sid, kind }) => ({ sid, kind })), counts, summary };
 }

@@ -2,7 +2,7 @@
 // subagent's own shells and monitors one level deeper, guides on every mark, the corner on each last child,
 // opening a subagent moving nothing, Past naming the subagent, and none of them on the main side.
 // usage: run.sh rail (or node rail.mjs <url> <state-dir>); writes rail-tree.png and rail-open.png
-import { writeFileSync } from 'node:fs';
+import { shot as shotTo } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 const [url, state] = process.argv.slice(2);
 const c = await connect();
@@ -11,7 +11,7 @@ await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, de
 await c.load(url);
 await ev(`document.querySelector('#groups .row[data-id^="66666666"]').click()`);
 await sleep(500);
-const shot = async (name) => writeFileSync(`${state}/${name}.png`, Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+const shot = (name) => shotTo(c, `${state}/${name}.png`);
 // every child: its tick (or corner) at its mark's height and its guide under its parent's mark
 const tree = () => ev(`(() => {
   const mid = r => r.y + r.height / 2, box = e => e.getBoundingClientRect();
@@ -99,4 +99,3 @@ check("the sidebar counts only the main thread's shells", (await ev(`document.qu
 check("the main transcript doesn't show them", await ev(`!/Resize the images|Watch the resize log|Optimise the images/.test(document.getElementById('log').textContent)`));
 c.print();
 c.close();
-process.exit(0);

@@ -1,0 +1,109 @@
+{
+  "t": "items",
+  "sid": "44444444-0000-4000-8000-000000000004",
+  "agent": null,
+  "upsert": [
+    {
+      "id": "s-u1",
+      "k": "you",
+      "ts": "2026-11-20T13:00:00.000Z",
+      "text": "Split the demo work over a few subagents.",
+      "images": 0
+    },
+    {
+      "id": "toolu_ag1",
+      "k": "tool",
+      "ts": "2026-11-20T13:00:05.000Z",
+      "name": "Agent",
+      "verb": "Subagent",
+      "obj": "Find the demo config",
+      "state": "done",
+      "toolUseId": "toolu_ag1",
+      "input": "description: Find the demo config\nsubagent_type: Explore\nprompt: made-up",
+      "out": {
+        "text": "The config is in demo.toml.",
+        "lines": 1,
+        "cut": false
+      }
+    },
+    {
+      "id": "toolu_ag2",
+      "k": "tool",
+      "ts": "2026-11-20T13:00:05.000Z",
+      "name": "Agent",
+      "verb": "Subagent",
+      "obj": "Rewrite the demo tests",
+      "state": "running",
+      "toolUseId": "toolu_ag2",
+      "input": "description: Rewrite the demo tests\nsubagent_type: general-purpose\nprompt: made-up\nrun_in_background: true",
+      "out": {
+        "text": "Async agent launched successfully.",
+        "lines": 1,
+        "cut": false
+      }
+    },
+    {
+      "id": "toolu_ag3",
+      "k": "tool",
+      "ts": "2026-11-20T13:00:05.000Z",
+      "name": "Agent",
+      "verb": "Subagent",
+      "obj": "Try the other approach",
+      "state": "done",
+      "toolUseId": "toolu_ag3",
+      "input": "description: Try the other approach\nprompt: made-up\nrun_in_background: true",
+      "out": {
+        "text": "Async agent launched successfully.",
+        "lines": 1,
+        "cut": false
+      }
+    },
+    {
+      "id": "toolu_ag4",
+      "k": "tool",
+      "ts": "2026-11-20T13:00:05.000Z",
+      "name": "Agent",
+      "verb": "Subagent",
+      "obj": "For review: Draft the demo release notes",
+      "state": "running",
+      "toolUseId": "toolu_ag4",
+      "input": "description: For review: Draft the demo release notes\nprompt: made-up\nrun_in_background: true",
+      "out": {
+        "text": "Async agent launched successfully.",
+        "lines": 1,
+        "cut": false
+      }
+    },
+    {
+      "id": "toolu_ag6",
+      "k": "tool",
+      "ts": "2026-11-20T13:00:05.000Z",
+      "name": "Agent",
+      "verb": "Subagent",
+      "obj": "Count the demo files",
+      "state": "done",
+      "toolUseId": "toolu_ag6",
+      "input": "description: Count the demo files\nprompt: made-up",
+      "out": {
+        "text": "12 files.",
+        "lines": 1,
+        "cut": false
+      }
+    },
+    {
+      "id": "s-u4",
+      "k": "report",
+      "ts": "2026-11-20T13:12:00.000Z",
+      "agent": "aaaa0004",
+      "text": "# Release notes\n- Teal banner\n  - nested point"
+    },
+    {
+      "id": "s-a2:0",
+      "k": "claude",
+      "ts": "2026-11-20T13:12:30.000Z",
+      "text": "The release notes are ready for you to review."
+    }
+  ],
+  "total": 8,
+  "reset": true
+}

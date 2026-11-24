@@ -42,13 +42,24 @@ export function displayPath(p: string, home: string): string {
   return out;
 }
 
-// Paths inside a text (a tool line's object, a command): every occurrence that starts a path.
+// Paths inside a text (a tool line's object, a command): every occurrence that starts a path. A
+// path starts the text or follows a space, a quote, a bracket or a shell operator, so a URL
+// (`https://host/Users/x`) or a longer path (`/mnt/private/tmp`) stays as it is.
 export function displayIn(text: string, home: string): string {
   let out = text;
   for (const [from, to] of rules(home)) {
-    out = out.replace(new RegExp(escapeRe(from) + '(?=/|$|[\\s"\'`)\\]])', 'g'), to);
+    out = out.replace(new RegExp('(?<=^|[\\s"\'`(\\[{=<>,;|&])' + escapeRe(from) + '(?=/|$|[\\s"\'`)\\]])', 'g'), to);
   }
   return out;
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Whether `p` is a folder now (a session's, the menu probe's).
+export function isDir(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}

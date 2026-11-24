@@ -39,7 +39,7 @@ check('the switch sits at the left of Open session and New session', await ev(`(
 
 /* ---------- a choice sticks: stored, and kept over a reload against the system ---------- */
 await clickSwitch(false);
-check('a click picks light while the system is dark', (await theme()) === 'light' && (await ev(`themePref`)) === 'light');
+check('a click picks light while the system is dark', (await theme()) === 'light');
 check('the choice is stored with the UI state (state.json ui.theme)', await storedIs('light'), String(stored()));
 check('a chosen theme says how to follow the system again', (await label()).startsWith('Dark mode|Dark mode (Alt-click follows the system)'), await label());
 await ev(`localStorage.clear()`); // the stored UI state alone brings it back
@@ -100,40 +100,44 @@ await sleep(300);
 check('the slash menu opens', await ev(`!!document.querySelector('.slash:not([hidden]) .it')`));
 sampled += await sample('slash menu'); await shot('slash');
 await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input', { bubbles: true })); t.blur(); })()`);
-await ev(`showOpenList()`); await sleep(400);
-check('the Open list opens', await ev(`openListShown()`));
+await ev(`document.getElementById('open').click()`); await sleep(400);
+check('the Open list opens', await ev(`document.getElementById('open-list')?.hidden === false`));
 sampled += await sample('Open list'); await shot('open-list');
 
-await ev(`hideOpenList()`);
-await ev(`toast('A toast in dark mode')`); await sleep(100);
+await c.key('Escape', { code: 'Escape', vk: 27 }); // the filter has focus: Esc closes the list
+check('Esc closes the Open list', (await ev(`__synopia.openList().shown`)) === false);
+await ev(`__synopia.inject({ t: 'toast', text: 'A toast in dark mode' })`); await sleep(100);
 sampled += await sample('toast');
 const img = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="200"><rect width="320" height="200" fill="#4493F8"/></svg>');
-await ev(`showViewer(['${img}'], 0)`); await sleep(300);
+// a thumbnail of its own, clicked: the page opens the viewer on any .thumb[data-full-src] (images.js)
+await ev(`(() => { document.body.insertAdjacentHTML('beforeend', '<div class="thumbs" id="dk-thumbs"><button class="thumb" data-full-src="${img}"></button></div>'); document.querySelector('#dk-thumbs .thumb').click(); })()`); await sleep(300);
 check('the image viewer opens', await ev(`!!document.querySelector('.viewer')`));
 sampled += await sample('viewer'); await shot('viewer');
-await ev(`closeViewer()`); await sleep(200);
+await c.key('Escape', { code: 'Escape', vk: 27 }); await ev(`document.getElementById('dk-thumbs').remove()`); await sleep(200);
+check('Esc closes the image viewer', await ev(`!document.querySelector('.viewer')`));
 check('enough key containers sampled in dark mode', sampled >= 40, String(sampled));
 check('no element keeps a light background in dark mode', !failed.length, failed.slice(0, 6).join(' | '));
 
 /* the preview asks bat's dark theme (the page's half: the request carries the theme) */
 await ev(`document.querySelector('#groups .row[data-id^="11111111"]').click()`); await sleep(700); // the session with files changed
-const sent = await ev(`(() => { const W = WebSocket.prototype.send, got = []; WebSocket.prototype.send = function (d) { got.push(d); return W.call(this, d); };
+const sent = await ev(`(() => { __synopia.spy();
   const a = document.querySelector('#log a.fp[data-path], #log [data-path]');
-  if (!a) { WebSocket.prototype.send = W; return 'no link'; }
-  previewClick(a, { altKey: false }); WebSocket.prototype.send = W;
-  return got.map(d => JSON.parse(d)).find(m => m.t === 'preview') || 'none'; })()`);
+  if (!a) return 'no link';
+  a.click();
+  return __synopia.sent('preview')[0] || 'none'; })()`);
 check('a preview request carries the dark theme', sent && sent.theme === 'dark', JSON.stringify(sent));
 
 /* lines stay 1px; nothing transitions, so the switch is instant */
 check('panel and diff lines stay 1px', await ev(`[...document.querySelectorAll('.panel, .diff, .main-row')].every(e => getComputedStyle(e).borderTopWidth === '1px')`));
 check('no transition on the page', await ev(`[...document.querySelectorAll('body, body *')].every(e => { const s = getComputedStyle(e); return s.transitionDuration.split(',').every(d => parseFloat(d) === 0); })`));
 // the switch back is instant: the canvas is light in the same frame
-await ev(`themeSet('light')`);
+await ev(`document.getElementById('theme').click()`); // dark now: the switch picks light
 check('the switch is instant: light at once', await ev(`getComputedStyle(document.body).backgroundColor === 'rgb(237, 239, 242)'`));
 // the same states in light, for the side-by-side review
 for (const sid of sids) { await ev(`document.querySelector('#groups .row[data-id="${sid}"]').click()`); await sleep(500); await shot(sid.slice(0, 8)); }
-await ev(`showOpenList()`); await sleep(300); await shot('open-list');
-await ev(`themeSet(null)`);
+await ev(`document.getElementById('open').click()`); await sleep(300); await shot('open-list');
+await c.key('Escape', { code: 'Escape', vk: 27 });
+await clickSwitch(true); // follows the system again
 console.log('shots: ' + shots.length + ' in ' + stateDir);
 c.print();
 c.close();

@@ -1,6 +1,8 @@
 // Byte-offset tailing of one JSONL file, and a watcher for a session's subagents folder.
-// Plan section 7: read from the last offset, keep the partial last line, skip bad JSON,
-// reset on a shrink, an inode change or a same-size rewrite, triggered by fs.watch plus a poll.
+// It reads from the last offset, keeps the partial last line, skips bad JSON, and starts again on a
+// shrink, an inode change or a rewrite in place, triggered by fs.watch plus a poll. A rewrite in
+// place (the same size, or grown) shows as changed bytes at the start or the end of what was read
+// so far; a bare touch reads nothing (docs/Claude Code transcripts.md#quirk-plan-approval-rewrites-the-file).
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -18,6 +20,7 @@ export type TailOptions = {
 
 const NL = 0x0a;
 const CHUNK = 4 << 20;
+const SIG_BYTES = 4096; // how much of the file's start and end tells a rewrite from a touch
 // start() reads a backlog this big per event-loop turn, so a large transcript never holds up the
 // sockets (or the ready line) for the whole file.
 export const SLICE_BYTES = 4 << 20;
@@ -40,6 +43,7 @@ export class Tailer {
   private ino = -1;
   private size = -1;
   private mtimeMs = -1;
+  private sig: Buffer | null = null; // the first and last SIG_BYTES read, as of the last read
   private timer: NodeJS.Timeout | null = null;
   private watchers: fs.FSWatcher[] = [];
   private watchedIno = -1;
@@ -105,8 +109,16 @@ export class Tailer {
       return { changed: false, more }; // not there (yet, or mid-replace): the next trigger tries again
     }
     let changed = false;
-    const rewritten = st.ino !== this.ino || st.size < this.offset ||
-      (st.size === this.offset && st.size === this.size && st.mtimeMs !== this.mtimeMs);
+    let rewritten = st.ino !== this.ino || st.size < this.offset;
+    if (!rewritten && st.size === this.offset && st.size === this.size && st.mtimeMs !== this.mtimeMs) {
+      const sig = this.sigOf(st.size);
+      if (sig && this.sig && sig.equals(this.sig)) this.mtimeMs = st.mtimeMs; // touched, same bytes
+      else rewritten = true;
+    } else if (!rewritten && this.sig && st.size > this.offset && this.size === this.offset) {
+      // Grown: an append keeps the bytes read so far, a rewrite in place that grew doesn't.
+      const sig = this.sigOf(this.offset);
+      if (sig && !sig.equals(this.sig)) rewritten = true;
+    }
     if (this.ino !== -1 && rewritten) {
       this.resetState();
       this.opts.onReset?.();
@@ -141,6 +153,7 @@ export class Tailer {
         this.size = now.size;
         this.mtimeMs = now.mtimeMs;
         this.ino = now.ino;
+        this.sig = this.sigOf(this.offset, fd);
         break;
       }
     } finally {
@@ -155,6 +168,24 @@ export class Tailer {
     this.partial = null;
     this.size = -1;
     this.mtimeMs = -1;
+    this.sig = null;
+  }
+
+  // The file's first and last SIG_BYTES up to `size` (both the whole file when it is small); null
+  // when it can't be read.
+  private sigOf(size: number, open?: number): Buffer | null {
+    let fd = open;
+    try {
+      fd ??= fs.openSync(this.path, 'r');
+      const n = Math.min(SIG_BYTES, size);
+      const buf = Buffer.alloc(2 * n);
+      if (fs.readSync(fd, buf, 0, n, 0) !== n || fs.readSync(fd, buf, n, n, size - n) !== n) return null;
+      return buf;
+    } catch {
+      return null;
+    } finally {
+      if (open === undefined && fd !== undefined) fs.closeSync(fd);
+    }
   }
 
   // `chunk` holds the n bytes read just before this.offset.

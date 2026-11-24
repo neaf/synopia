@@ -1,6 +1,7 @@
 # Real session data: never commit
 prototype/transcripts.js
 prototype/transcripts.js.tmp
+# real SDK logs an old checkout may still hold
 spike/logs/
 
 # Dependencies and OS files
@@ -14,6 +15,3 @@ build/
 # Synopia app: dev state and local-only fixtures
 app/.dev-state/
 app/backend/test/fixtures/local/
-# The port reads fixture data only through dev/compare.sh temp copies
-app/web/transcripts.js
-app/web/menu.js

@@ -3,78 +3,26 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Views } from '../src/views.ts';
-import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
-import { STATE_FLAG } from '../src/driver.ts';
-import type { QueryFn } from '../src/driver.ts';
-import { openStore, reconcileLayout } from '../src/store.ts';
-import { patchUi } from '../src/ui.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
+import { Sessions } from '../src/sessions.ts';
+import { StreamPreview } from '../src/session.ts';
+import { STATE_FLAG } from '../src/sdk.ts';
+import { emit, fakeQuery } from './support/fake-query.ts';
+import { openStore } from '../src/store.ts';
+import { patchUi } from '../src/ui-state.ts';
 import type { Client } from '../src/server.ts';
-import type { CanUseTool, Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 type Msg = { t: string; [k: string]: unknown };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-// An async-iterable channel: the fake CLI's output.
-function channel<T>() {
-  const buf: T[] = [];
-  let wake: (() => void) | null = null;
-  let done = false;
-  let fail: Error | null = null;
-  return {
-    push(m: T) { buf.push(m); wake?.(); wake = null; },
-    end(err?: Error) { done = true; fail = err ?? null; wake?.(); wake = null; },
-    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
-      while (true) {
-        while (buf.length) yield buf.shift() as T;
-        if (fail) throw fail;
-        if (done) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-  };
-}
-
-type Call = {
-  options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean;
-  interrupts: unknown[]; reply: { still_queued: string[]; cancelled?: string[] } | undefined;
-  controls: [string, unknown][]; // slice 5: setModel and applyFlagSettings calls
-  exitDelay?: number; // ms between the input closing and the process ending (L1)
-  background?: boolean | Error; // what backgroundTasks() returns or throws (default true)
-};
-function fakeQuery() {
-  const calls: Call[] = [];
-  const fn: QueryFn = ({ prompt, options }) => {
-    const out = channel<SDKMessage>();
-    const call: Call = { options, inputs: [], out, closed: false, interrupts: [], reply: { still_queued: [] }, controls: [] };
-    calls.push(call);
-    void (async () => {
-      for await (const m of prompt) call.inputs.push(m);
-      if (call.exitDelay) await new Promise((r) => setTimeout(r, call.exitDelay));
-      out.end(); // the input closed: the process ends after its turn
-    })();
-    return Object.assign(out, {
-      close: () => { call.closed = true; out.end(); },
-      interrupt: async (req?: unknown) => { call.interrupts.push(req); return call.reply; },
-      setModel: async (m?: string) => { call.controls.push(['setModel', m]); },
-      applyFlagSettings: async (x: unknown) => { call.controls.push(['applyFlagSettings', x]); },
-      backgroundTasks: async (id?: string) => {
-        call.controls.push(['backgroundTasks', id]);
-        if (call.background instanceof Error) throw call.background;
-        return call.background ?? true;
-      },
-    });
-  };
-  return { calls, fn };
-}
-
-const emit = (c: Call, m: object) => c.out.push(m as SDKMessage);
 const init = (id: string) => ({ type: 'system', subtype: 'init', session_id: id, uuid: 'u-init' });
 const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_reason: 'completed' };
 const REAL = '11111111-2222-4333-8444-555555555555';
 const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
-function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void } = {}) {
+function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void; now?: () => number } = {}) {
   const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const claudeDir = path.join(root, 'claude');
   const stateDir = path.join(root, 'state');
@@ -88,20 +36,16 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
   store.state.settings.newSessionCwd = cwd;
   store.state.settings.model = 'haiku';
   let sessions: Sessions | null = null;
-  const views = new Views({
-    claudeDir, clients: () => clients, home: root, pollMs: 0, watch: false,
-    onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
-    onRunning: (sid, r) => sessions?.runningChanged(sid, r),
-    choice: (sid) => sessions?.choiceOf(sid),
-  });
-  const q = fakeQuery();
-  sessions = new Sessions({ store, views, queryFn: q.fn, listFn: async () => past, home: root, ...extra });
+  const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
+  const publisher = new Publisher({ transcripts, clients: () => clients, home: root, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r), layout: () => sessions?.layout.get() });
+  const q = fakeQuery({ sessions: past });
+  sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, ...extra });
   const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
-  return { root, claudeDir, cwd, c, store, views, sessions, q, take };
+  return { root, claudeDir, cwd, c, store, transcripts, publisher, sessions, q, take };
 }
 
 test('sessions: a placeholder takes its real id from system/init', async () => {
-  const { sessions, store, q, take, cwd, c, views } = setup();
+  const { sessions, store, q, take, cwd, c, transcripts, publisher } = setup();
   const ph = sessions.newSession();
   assert.match(ph, /^new-/);
   const first = take('session');
@@ -109,9 +53,9 @@ test('sessions: a placeholder takes its real id from system/init', async () => {
   assert.equal(first[0].id, ph);
   assert.equal(first[0].title, 'New session');
   assert.equal(store.state.open.length, 0, 'a placeholder is not stored');
-  views.view(c, ph, null);
+  publisher.view(c, ph, null);
 
-  assert.equal(sessions.send(ph, 'hello').ok, true);
+  assert.equal(sessions.get(ph)!.send('hello').ok, true);
   await tick();
   assert.equal(q.calls.length, 1);
   const o = q.calls[0].options;
@@ -124,7 +68,7 @@ test('sessions: a placeholder takes its real id from system/init', async () => {
   assert.deepEqual(o.settings, { bashEditDiffEnabled: true }, 'shell edits get a diff (bashEditDiff)');
   assert.equal((o.env as Record<string, string>)[STATE_FLAG], '1');
   assert.equal(o.settingSources, undefined);
-  assert.equal(take('session').at(-1)?.status, 'busy');
+  assert.equal(take('session').at(-1)?.state.status, 'busy');
 
   emit(q.calls[0], init(REAL));
   await tick();
@@ -136,14 +80,14 @@ test('sessions: a placeholder takes its real id from system/init', async () => {
   assert.deepEqual(store.state.layout.others, [REAL]);
   assert.equal(store.state.status[REAL].status, 'busy');
   assert.equal(sessions.resolve(ph), REAL);
-  assert.deepEqual(views.ids(), [REAL]);
+  assert.deepEqual(transcripts.ids(), [REAL]);
 });
 
 test('sessions: two sends before init go to one process, in order', async () => {
   const { sessions, q } = setup();
   const ph = sessions.newSession();
-  sessions.send(ph, 'one', [], '0e9b7f1c-0000-4000-8000-000000000001');
-  sessions.send(ph, 'two [Image #1]', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64'), n: 1 }], '0e9b7f1c-0000-4000-8000-000000000002');
+  sessions.get(ph)!.send('one', [], '0e9b7f1c-0000-4000-8000-000000000001');
+  sessions.get(ph)!.send('two [Image #1]', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64'), n: 1 }], '0e9b7f1c-0000-4000-8000-000000000002');
   await tick();
   assert.equal(q.calls.length, 1);
   const inputs = q.calls[0].inputs;
@@ -156,7 +100,7 @@ test('sessions: two sends before init go to one process, in order', async () => 
 
   emit(q.calls[0], init(REAL));
   await tick();
-  sessions.send(ph, 'three'); // an old id still reaches the session
+  sessions.get(ph)!.send('three'); // an old id still reaches the session
   await tick();
   assert.equal(q.calls.length, 1);
   assert.equal(inputs.length, 3);
@@ -166,15 +110,16 @@ test('sessions: images over 5 MB or not PNG/JPEG are refused', () => {
   const { sessions, q } = setup();
   const ph = sessions.newSession();
   const big = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
-  assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/png', data: big }]).ok, false);
-  assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/gif', data: 'R0lG' }]).ok, false);
+  assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/png', data: big }]).ok, false);
+  assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/gif', data: 'R0lG' }]).ok, false);
+  assert.equal(sessions.get(ph)!.send('x', [{ mediaType: 'image/png', data: '' }]).ok, false, 'empty image data is refused');
   assert.equal(q.calls.length, 0);
 });
 
 test('sessions: the alias map reaches the session through every id it had', async () => {
-  const { sessions, q, views, c, take } = setup();
+  const { sessions, q, transcripts, publisher, c, take } = setup();
   const ph = sessions.newSession();
-  sessions.send(ph, 'hi');
+  sessions.get(ph)!.send('hi');
   emit(q.calls[0], init(REAL));
   await tick();
   emit(q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: REAL, trigger: 'clear' });
@@ -183,7 +128,7 @@ test('sessions: the alias map reaches the session through every id it had', asyn
   assert.equal(sessions.resolve(REAL), RESET);
   assert.equal(sessions.resolve('unknown'), 'unknown');
   take();
-  views.view(c, sessions.resolve(ph), null);
+  publisher.view(c, sessions.resolve(ph), null);
   const items = take('items');
   assert.equal(items[0].sid, RESET);
   assert.equal(items[0].reset, true);
@@ -192,10 +137,11 @@ test('sessions: the alias map reaches the session through every id it had', asyn
 test('sessions: conversation_reset moves the id in the open list, layout, models, rules and status', async () => {
   const { sessions, store, q, take } = setup();
   const ph = sessions.newSession();
-  sessions.send(ph, 'hi');
+  sessions.get(ph)!.send('hi');
   emit(q.calls[0], init(REAL));
   await tick();
   const st = store.state;
+  st.open.push({ id: 'x', cwd: '/x', openedAt: 0, closedAt: 1 }); // a closed one, hidden in the group
   st.layout = { groups: [{ id: 'g1', name: 'Group', ids: ['x', REAL] }], others: [] };
   st.models[REAL] = { model: 'haiku', effort: 'low' };
   st.rules[REAL] = ['Bash(ls:*)'];
@@ -203,7 +149,7 @@ test('sessions: conversation_reset moves the id in the open list, layout, models
   take();
   emit(q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: REAL });
   await tick();
-  assert.deepEqual(st.open.map((e) => e.id), [RESET]);
+  assert.deepEqual(st.open.map((e) => e.id), [RESET, 'x']);
   assert.deepEqual(st.layout.groups[0].ids, ['x', RESET]);
   assert.deepEqual(st.models[RESET], { model: 'haiku', effort: 'low' });
   assert.equal(st.models[REAL], undefined);
@@ -222,7 +168,7 @@ test('sessions: the page ui state follows init and a reset, and goes when the se
   const drafts = (id: string) => path.join(path.dirname(store.path), 'drafts', id);
   const ph = sessions.newSession();
   patchUi(store, { current: ph, sessions: { [ph]: { draft: { text: 'typed before init', images: [{ id: 'i1', mediaType: 'image/png', data: Buffer.from('made-up').toString('base64') }] } } } });
-  sessions.send(ph, 'hi');
+  sessions.get(ph)!.send('hi');
   emit(q.calls[0], init(REAL));
   await tick();
   const ui = store.state.ui;
@@ -244,7 +190,7 @@ test('sessions: the open list is stored, and the session resumes on the first me
   const a = setup();
   const ph = a.sessions.newSession();
   a.sessions.newSession(); // never sent to: not stored
-  a.sessions.send(ph, 'hi');
+  a.sessions.get(ph)!.send('hi');
   emit(a.q.calls[0], init(REAL));
   emit(a.q.calls[0], RESULT);
   await tick();
@@ -258,9 +204,9 @@ test('sessions: the open list is stored, and the session resumes on the first me
   const b = setup(a.root);
   b.store.state.models[REAL] = { model: 'sonnet' };
   b.sessions.start();
-  assert.deepEqual(b.views.ids(), [REAL]);
+  assert.deepEqual(b.transcripts.ids(), [REAL]);
   assert.equal(b.q.calls.length, 0, 'no process until a message');
-  b.sessions.send(REAL, 'four');
+  b.sessions.get(REAL)!.send('four');
   await tick();
   assert.equal(b.q.calls.length, 1);
   assert.equal(b.q.calls[0].options.resume, REAL);
@@ -277,8 +223,8 @@ test('sessions: a session whose last permission mode is plan resumes in plan mod
   fs.writeFileSync(path.join(dir, `${REAL}.jsonl`), JSON.stringify({ type: 'permission-mode', permissionMode: 'plan', sessionId: REAL }) + '\n');
   a.store.state.open.push({ id: REAL, cwd: a.cwd, openedAt: 0, closedAt: null });
   a.sessions.start();
-  a.views.check();
-  a.sessions.send(REAL, 'go');
+  a.transcripts.poll();
+  a.sessions.get(REAL)!.send('go');
   await tick();
   assert.equal(a.q.calls[0].options.permissionMode, 'plan');
 });
@@ -291,7 +237,7 @@ function askOpts(id: string, extra: Partial<Opts> = {}) {
 async function waitingSession() {
   const t = setup();
   const ph = t.sessions.newSession();
-  t.sessions.send(ph, 'go');
+  t.sessions.get(ph)!.send('go');
   emit(t.q.calls[0], init(REAL));
   await tick();
   t.take();
@@ -319,32 +265,33 @@ test('needs you: canUseTool parks requests in arrival order, the status is needs
   assert.equal(r1.always, 'Always allow Bash(npm test) in this project (.claude/settings.local.json).');
   assert.equal((pend[1].request as Record<string, unknown>).kind, 'question');
   assert.equal((pend[1].request as Record<string, unknown>).agentId, 'agent-7');
-  assert.equal(got.filter((m) => m.t === 'session').at(-1)?.status, 'waiting', 'needs you wins over running');
+  assert.equal(got.filter((m) => m.t === 'session').at(-1)?.state.status, 'waiting', 'needs you wins over running');
   // A reload gets them again in hello, oldest first.
-  assert.deepEqual(t.views.pending().map((p) => p.request.id), ['rq-1', 'rq-2']);
+  assert.deepEqual(t.publisher.pending().map((p) => p.request.id), ['rq-1', 'rq-2']);
 
-  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'once' }).ok, true);
+  assert.equal(t.sessions.get(REAL)!.answer('rq-1', { choice: 'once' }).ok, true);
   await tick();
   assert.deepEqual(ra, { behavior: 'allow', updatedInput: { command: 'npm test', description: 'Run the tests' }, decisionClassification: 'user_temporary' });
   assert.equal(rb, null);
   assert.equal(t.store.state.answers['tu-1'], 'Allow once');
   const after = t.take();
   assert.deepEqual(after.filter((m) => m.t === 'pending').map((m) => m.cleared), ['rq-1']);
-  assert.equal(after.filter((m) => m.t === 'session').length, 0, 'still needs you: one request left');
-  assert.deepEqual(t.views.pending().map((p) => p.request.id), ['rq-2']);
+  const left = after.filter((m) => m.t === 'session').map((m) => m.state as { status: string; needsYou: string });
+  assert.deepEqual(left.map((st) => [st.status, st.needsYou]), [['waiting', 'question']], 'still needs you: one request left, a question now');
+  assert.deepEqual(t.publisher.pending().map((p) => p.request.id), ['rq-2']);
 
-  assert.equal(t.sessions.answer(REAL, 'rq-2', { questions: [{ picks: ['B'], note: 'because' }] }).ok, true);
+  assert.equal(t.sessions.get(REAL)!.answer('rq-2', { questions: [{ picks: ['B'], note: 'because' }] }).ok, true);
   await tick();
   assert.deepEqual((rb as { updatedInput: Record<string, unknown> }).updatedInput.answers, { 'Which?': 'B' });
-  assert.equal(t.take('session').at(-1)?.status, 'busy');
-  assert.equal(t.sessions.answer(REAL, 'rq-2', { choice: 'once' }).ok, false, 'an answered request is gone');
+  assert.equal(t.take('session').at(-1)?.state.status, 'busy');
+  assert.equal(t.sessions.get(REAL)!.answer('rq-2', { choice: 'once' }).ok, false, 'an answered request is gone');
 });
 
 test('needs you: a card appearing or answered tells the writer, and the work lines name it', async () => {
   const waits: string[] = [];
   const t = setup(undefined, [], { onWaiting: (sid) => waits.push(sid) });
   const ph = t.sessions.newSession();
-  t.sessions.send(ph, 'go');
+  t.sessions.get(ph)!.send('go');
   emit(t.q.calls[0], init(REAL));
   await tick();
   const canUseTool = t.q.calls[0].options.canUseTool as CanUseTool;
@@ -353,18 +300,18 @@ test('needs you: a card appearing or answered tells the writer, and the work lin
   void canUseTool('Bash', { command: 'npm test', description: 'Run the tests' }, a.o);
   await tick();
   assert.deepEqual(waits, [REAL]);
-  assert.deepEqual(t.views.work(REAL), ['card waiting for you: allow Bash “Run the tests”']);
+  assert.deepEqual(t.publisher.work(REAL), ['card waiting for you: allow Bash “Run the tests”']);
   void canUseTool('AskUserQuestion', { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }, { question: 'And?', header: 'B', options: [{ label: 'C' }], multiSelect: false }] }, b.o);
   await tick();
   assert.equal(waits.length, 2);
-  assert.deepEqual(t.views.work(REAL), ['card waiting for you: allow Bash “Run the tests”', 'card waiting for you: question “Which?” and 1 more']);
-  t.sessions.answer(REAL, 'rq-1', { choice: 'once' });
+  assert.deepEqual(t.publisher.work(REAL), ['card waiting for you: allow Bash “Run the tests”', 'card waiting for you: question “Which?” and 1 more']);
+  t.sessions.get(REAL)!.answer('rq-1', { choice: 'once' });
   await tick();
   assert.equal(waits.length, 3, 'answered');
   b.ctl.abort();
   await tick();
   assert.equal(waits.length, 4, 'dropped by its signal');
-  assert.deepEqual(t.views.work(REAL), []);
+  assert.deepEqual(t.publisher.work(REAL), []);
   // A question another process asks (R6.8): once when it appears, not again while it stays, once when it ends.
   const ran = (ask: string | null) => ({ agents: 0, turn: false, lastAt: 0, ask: ask ? { kind: 'question' as const, toolUseId: ask, agentId: null, since: 1 } : null });
   t.sessions.runningChanged(REAL, ran('toolu_x'));
@@ -383,7 +330,7 @@ test('needs you: a request ends when its signal aborts, on interrupt and when th
   a.ctl.abort();
   await tick();
   assert.equal((ra as { behavior: string }).behavior, 'deny');
-  assert.equal(t.views.pending().length, 0);
+  assert.equal(t.publisher.pending().length, 0);
   assert.equal(t.take('pending').at(-1)?.cleared, 'rq-1');
 
   // An interrupt ends what is left and sends back the messages held behind the card.
@@ -391,11 +338,11 @@ test('needs you: a request ends when its signal aborts, on interrupt and when th
   let rb: unknown = null;
   void t.canUseTool('ExitPlanMode', { plan: '1. Do it' }, b.o).then((r) => (rb = r));
   await tick();
-  assert.equal(t.sessions.send(REAL, 'wait, one more thing').ok, true);
+  assert.equal(t.sessions.get(REAL)!.send('wait, one more thing').ok, true);
   assert.deepEqual(t.take('session').at(-1)?.held, ['wait, one more thing']);
-  await t.sessions.interrupt(REAL);
+  await t.sessions.get(REAL)!.interrupt();
   assert.equal((rb as { behavior: string }).behavior, 'deny');
-  assert.equal(t.views.pending().length, 0);
+  assert.equal(t.publisher.pending().length, 0);
   const got = t.take();
   assert.deepEqual(got.filter((m) => m.t === 'restore').map((m) => m.texts), [['wait, one more thing']]);
   assert.equal(t.call.inputs.length, 1, 'the held message was never pushed');
@@ -404,11 +351,11 @@ test('needs you: a request ends when its signal aborts, on interrupt and when th
   const c = askOpts('3');
   void t.canUseTool('AskUserQuestion', { questions: [] }, c.o);
   await tick();
-  assert.equal(t.views.pending().length, 1);
+  assert.equal(t.publisher.pending().length, 1);
   t.call.out.end();
   await tick();
-  assert.equal(t.views.pending().length, 0);
-  assert.notEqual(t.take('session').at(-1)?.status, 'waiting');
+  assert.equal(t.publisher.pending().length, 0);
+  assert.notEqual(t.take('session').at(-1)?.state.status, 'waiting');
 });
 
 test('needs you: a message sent while a card waits is held, and pushed once the card is answered', async () => {
@@ -416,13 +363,13 @@ test('needs you: a message sent while a card waits is held, and pushed once the 
   const a = askOpts('1');
   void t.canUseTool('Bash', { command: 'ls' }, a.o);
   await tick();
-  t.sessions.send(REAL, 'first');
-  t.sessions.send(REAL, 'second');
+  t.sessions.get(REAL)!.send('first');
+  t.sessions.get(REAL)!.send('second');
   await tick();
   assert.equal(t.call.inputs.length, 1);
-  assert.deepEqual(t.views.sessions().find((s) => (s as { id: string }).id === REAL)?.['held' as never], ['first', 'second']);
+  assert.deepEqual(t.publisher.sessions().find((s) => (s as { id: string }).id === REAL)?.['held' as never], ['first', 'second']);
   t.take();
-  t.sessions.answer(REAL, 'rq-1', { choice: 'deny', text: 'not now' });
+  t.sessions.get(REAL)!.answer('rq-1', { choice: 'deny', text: 'not now' });
   await tick();
   assert.deepEqual(t.call.inputs.slice(1).map((m) => m.message.content), ['first', 'second']);
   assert.deepEqual(t.take('session').find((m) => 'held' in m)?.held, []);
@@ -434,7 +381,7 @@ test('needs you: a plan answer stores the plan text the card showed', async () =
   const a = askOpts('1');
   void t.canUseTool('ExitPlanMode', { plan: '1. Write "final"', planFilePath: '/tmp/p.md' }, a.o);
   await tick();
-  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'changes', text: 'shorter' }).ok, true);
+  assert.equal(t.sessions.get(REAL)!.answer('rq-1', { choice: 'changes', text: 'shorter' }).ok, true);
   assert.equal(t.store.state.plans['tu-1'], '1. Write "final"');
   assert.equal(t.store.state.answers['tu-1'], 'Changes: shorter');
 });
@@ -447,14 +394,14 @@ test('needs you: Always allow stores session rules, passed back as allowedTools 
   await tick();
   const req = t.take('pending')[0].request as Record<string, unknown>;
   assert.equal(req.always, 'Always allow Read(//tmp/x/**) for this session, and allow access to /tmp/x for this session.');
-  t.sessions.answer(REAL, 'rq-1', { choice: 'always' });
+  t.sessions.get(REAL)!.answer('rq-1', { choice: 'always' });
   await tick();
   assert.deepEqual((ra as { updatedPermissions: unknown }).updatedPermissions, req.suggestions);
   assert.deepEqual(t.store.state.rules[REAL], ['Read(//tmp/x/**)']);
   assert.equal(t.store.state.answers['tu-1'], 'Always allow');
   t.call.out.end();
   await tick();
-  t.sessions.send(REAL, 'again');
+  t.sessions.get(REAL)!.send('again');
   await tick();
   assert.deepEqual(t.q.calls[1].options.allowedTools, ['Read(//tmp/x/**)']);
 });
@@ -465,57 +412,57 @@ test('needs you: suppressAlwaysAllowRule hides Always allow and refuses it', asy
   void t.canUseTool('Bash', { command: 'npm test' }, a.o);
   await tick();
   assert.equal((t.take('pending')[0].request as Record<string, unknown>).always, null);
-  assert.equal(t.sessions.answer(REAL, 'rq-1', { choice: 'always' }).ok, false);
-  assert.equal(t.views.pending().length, 1, 'still waiting');
+  assert.equal(t.sessions.get(REAL)!.answer('rq-1', { choice: 'always' }).ok, false);
+  assert.equal(t.publisher.pending().length, 1, 'still waiting');
 });
 
 test('sessions: statuses go working, then your turn; a failed process is failed and toasts', async () => {
   const { sessions, q, take } = setup();
   const ph = sessions.newSession();
-  sessions.send(ph, 'hi');
+  sessions.get(ph)!.send('hi');
   emit(q.calls[0], init(REAL));
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running' });
   await tick();
   emit(q.calls[0], RESULT);
   await tick();
-  assert.equal(take('session').at(-1)?.status, 'busy');
+  assert.equal(take('session').at(-1)?.state.status, 'busy');
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
   await tick();
-  assert.equal(take('session').at(-1)?.status, 'idle');
+  assert.equal(take('session').at(-1)?.state.status, 'idle');
 
   q.calls[0].out.end(new Error('boom'));
   await tick();
   const got = take();
-  assert.equal(got.filter((m) => m.t === 'session').at(-1)?.status, 'failed');
+  assert.equal(got.filter((m) => m.t === 'session').at(-1)?.state.status, 'failed');
   assert.equal(got.filter((m) => m.t === 'toast').length, 1);
-  sessions.send(REAL, 'again');
+  sessions.get(REAL)!.send('again');
   await tick();
   assert.equal(q.calls.length, 2, 'the next message tries again');
   assert.equal(q.calls[1].options.resume, REAL);
 });
 
-test('sessions: the driver passes every message to the status: compacting, queued, signed out', async () => {
+test('sessions: the process passes every message to the status: compacting, queued, signed out', async () => {
   const { sessions, q, take } = setup();
   const ph = sessions.newSession();
-  sessions.send(ph, 'hi');
+  sessions.get(ph)!.send('hi');
   emit(q.calls[0], init(REAL));
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running' });
   emit(q.calls[0], { type: 'system', subtype: 'status', status: 'compacting' });
   await tick();
-  assert.equal(take('session').at(-1)?.status, 'compacting');
+  assert.equal(take('session').at(-1)?.state.status, 'compacting');
   emit(q.calls[0], { type: 'system', subtype: 'status', status: null });
   await tick();
-  sessions.send(REAL, 'and this', [], Q_SENT);
+  sessions.get(REAL)!.send('and this', [], Q_SENT);
   await tick();
-  const s = take('session').at(-1) as { status: string; statusDetail: { queued?: number } };
-  assert.equal(s.status, 'busy');
-  assert.deepEqual(s.statusDetail, { queued: 1 });
+  const s = take('session').at(-1) as { state: { status: string; detail: { queued?: number } } };
+  assert.equal(s.state.status, 'busy');
+  assert.deepEqual(s.state.detail, { queued: 1 });
   emit(q.calls[0], { type: 'assistant', parent_tool_use_id: null, error: 'authentication_failed', user_message_uuids: [Q_SENT], message: { content: [] } });
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
   await tick();
-  const end = take('session').at(-1) as { status: string; statusDetail: object };
-  assert.equal(end.status, 'signedout');
-  assert.deepEqual(end.statusDetail, {});
+  const end = take('session').at(-1) as { state: { status: string; detail: object } };
+  assert.equal(end.state.status, 'signedout');
+  assert.deepEqual(end.state.detail, {});
 });
 const Q_SENT = '0e9b7f1c-0000-4000-8000-0000000000b1';
 
@@ -523,18 +470,20 @@ test('sessions: a missing folder fails without starting a process', () => {
   const { sessions, store, q, take } = setup();
   store.state.settings.newSessionCwd = '/tmp/synopia-no-such-folder-' + process.pid;
   const ph = sessions.newSession();
-  const r = sessions.send(ph, 'hi');
+  const r = sessions.get(ph)!.send('hi');
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /no longer exists/);
   assert.equal(q.calls.length, 0);
-  assert.equal(take('session').at(-1)?.status, 'failed');
+  assert.equal(take('session').at(-1)?.state.status, 'failed');
 });
 
 test('sessions: the stream preview builds from deltas and clears when the block lands and on result', async () => {
-  const { sessions, q, take, claudeDir, views } = setup();
+  const { sessions, q, take, claudeDir, transcripts, publisher, c } = setup();
   const ph = sessions.newSession();
-  sessions.send(ph, 'hi');
+  sessions.get(ph)!.send('hi');
   emit(q.calls[0], init(REAL));
+  await tick();
+  publisher.view(c, REAL, null); // the text goes to the pages viewing it
   const ev = (event: object, parent: string | null = null) => emit(q.calls[0], { type: 'stream_event', event, parent_tool_use_id: parent, uuid: 'u', session_id: REAL });
   ev({ type: 'message_start', message: { id: 'msg_1' } });
   ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
@@ -552,7 +501,7 @@ test('sessions: the stream preview builds from deltas and clears when the block 
   fs.writeFileSync(path.join(dir, `${REAL}.jsonl`), JSON.stringify({
     type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:00.000Z', message: { id: 'msg_1', role: 'assistant', content: [{ type: 'text', text: 'Hello' }] },
   }) + '\n');
-  views.check();
+  transcripts.poll();
   await tick();
   assert.equal(take('stream').at(-1)?.clear, true);
 
@@ -577,12 +526,6 @@ test('stream preview: thinking blocks are not shown, and land by type', () => {
   assert.equal(p.text(), 'A');
   assert.equal(p.land('m', ['text']), true);
   assert.equal(p.text(), null);
-});
-
-test('renameInLayout: swaps in place, or adds to Not in a group', () => {
-  assert.deepEqual(renameInLayout({ groups: [{ id: 'g', name: 'G', ids: ['a', 'b'] }], others: [] }, 'a', 'z', true),
-    { groups: [{ id: 'g', name: 'G', ids: ['z', 'b'] }], others: [] });
-  assert.deepEqual(renameInLayout({ groups: [], others: ['q'] }, 'a', 'z', true), { groups: [], others: ['q', 'z'] });
 });
 
 // A past session's JSONL, hand-written: one prompt and one reply.
@@ -633,7 +576,7 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const cwd = path.join(root, 'scratch');
   const file = writePast(path.join(root, 'claude'), cwd);
-  const { sessions, store, q, take, views, c } = setup(root, [info(PAST, { cwd, lastModified: Date.parse('2026-11-20T10:00:05.000Z') })]);
+  const { sessions, store, q, take, transcripts, publisher, c } = setup(root, [info(PAST, { cwd, lastModified: Date.parse('2026-11-20T10:00:05.000Z') })]);
   assert.equal((await sessions.listRecent()).length, 1);
   take();
   const r = await sessions.openSession(PAST);
@@ -643,13 +586,13 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   const meta = take('session');
   assert.equal(meta[0].id, PAST);
   assert.equal(meta[0].title, 'Count the fixture lines');
-  views.view(c, PAST, null);
+  publisher.view(c, PAST, null);
   const items = take('items');
   assert.equal(items[0].reset, true);
   assert.ok((items[0].upsert as unknown[]).length >= 2, 'the history shows at once');
   assert.equal((await sessions.listRecent()).length, 0, 'an open session is no longer listed');
 
-  assert.equal(sessions.send(PAST, 'And now?').ok, true);
+  assert.equal(sessions.get(PAST)!.send('And now?').ok, true);
   await tick();
   assert.equal(q.calls.length, 1);
   assert.equal(q.calls[0].options.resume, PAST);
@@ -657,7 +600,7 @@ test('openSession: adds it to the open list, shows its transcript, and resumes i
   assert.equal(q.calls[0].options.model, 'claude-haiku-test', 'the resume keeps the model the session used');
   emit(q.calls[0], init(PAST));
   await tick();
-  assert.deepEqual(views.ids(), [PAST], 'the same id, no swap');
+  assert.deepEqual(transcripts.ids(), [PAST], 'the same id, no swap');
   assert.ok(fs.existsSync(file));
   assert.equal((await sessions.openSession('not-an-id')).ok, false);
 });
@@ -668,13 +611,13 @@ const Q3 = '0e9b7f1c-0000-4000-8000-0000000000a3';
 async function runningTurn(caps: string[] | undefined) {
   const t = setup();
   const ph = t.sessions.newSession();
-  t.sessions.send(ph, 'count slowly', [], Q1);
+  t.sessions.get(ph)!.send('count slowly', [], Q1);
   await tick();
   emit(t.q.calls[0], { ...init(REAL), ...(caps ? { capabilities: caps } : {}) });
   emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running', uuid: 'u-s', session_id: REAL });
   await tick();
-  t.sessions.send(REAL, 'and then this', [], Q2);
-  t.sessions.send(REAL, '', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }], Q3);
+  t.sessions.get(REAL)!.send('and then this', [], Q2);
+  t.sessions.get(REAL)!.send('', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }], Q3);
   t.take();
   return t;
 }
@@ -682,15 +625,16 @@ async function runningTurn(caps: string[] | undefined) {
 test('interrupt: with interrupt_cancel_queued_v1 it cancels the queued messages and restores their text', async () => {
   const t = await runningTurn(['interrupt_receipt_v1', 'interrupt_cancel_queued_v1']);
   t.q.calls[0].reply = { still_queued: [], cancelled: [Q2, Q3, 'unknown-uuid'] };
-  await t.sessions.interrupt(REAL);
+  await t.sessions.get(REAL)!.interrupt();
   assert.deepEqual(t.q.calls[0].interrupts, [{ cancelQueued: true }]);
   const got = t.take();
-  assert.deepEqual(got.filter((m) => m.t === 'restore'), [{ t: 'restore', sid: REAL, texts: ['and then this'] }], 'an image-only message and unknown uuids give no text');
+  // an image-only message comes back with its image; an unknown uuid gives nothing
+  assert.deepEqual(got.filter((m) => m.t === 'restore'), [{ t: 'restore', sid: REAL, texts: ['and then this'], images: [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }] }]);
   assert.equal(got.filter((m) => m.t === 'toast').length, 0);
   emit(t.q.calls[0], { ...RESULT, subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' });
   emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: 'u-i', session_id: REAL });
   await tick();
-  assert.equal(t.take('session').at(-1)?.status, 'stopped');
+  assert.equal(t.take('session').at(-1)?.state.status, 'stopped');
   assert.equal(t.q.calls[0].closed, false, 'the process (and its background work) keeps running');
   assert.equal(t.q.calls.length, 1);
 });
@@ -698,7 +642,7 @@ test('interrupt: with interrupt_cancel_queued_v1 it cancels the queued messages 
 test('interrupt: without the capability it uses the plain interrupt and toasts what still runs', async () => {
   const t = await runningTurn(['interrupt_receipt_v1']);
   t.q.calls[0].reply = { still_queued: [Q2] };
-  await t.sessions.interrupt(REAL);
+  await t.sessions.get(REAL)!.interrupt();
   assert.deepEqual(t.q.calls[0].interrupts, [undefined]);
   const got = t.take();
   assert.equal(got.filter((m) => m.t === 'restore').length, 0);
@@ -706,19 +650,19 @@ test('interrupt: without the capability it uses the plain interrupt and toasts w
   emit(t.q.calls[0], { ...RESULT, subtype: 'success' });
   emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: 'u-i', session_id: REAL });
   await tick();
-  assert.equal(t.take('session').at(-1)?.status, 'stopped', 'an interrupted turn is stopped by you, whatever its subtype');
+  assert.equal(t.take('session').at(-1)?.state.status, 'stopped', 'an interrupted turn is stopped by you, whatever its subtype');
 });
 
 test('interrupt: an idle session or one without a process is left alone', async () => {
   const t = setup();
   const ph = t.sessions.newSession();
-  await t.sessions.interrupt(ph);
-  t.sessions.send(ph, 'hi');
+  await t.sessions.get(ph)!.interrupt();
+  t.sessions.get(ph)!.send('hi');
   await tick();
   emit(t.q.calls[0], init(REAL));
   emit(t.q.calls[0], RESULT);
   await tick();
-  await t.sessions.interrupt(REAL);
+  await t.sessions.get(REAL)!.interrupt();
   assert.deepEqual(t.q.calls[0].interrupts, []);
 });
 
@@ -730,8 +674,9 @@ test('close: ends the process, sends removed, hides it in its group; reopening p
   const t = setup(root, past);
   await t.sessions.openSession(PAST);
   const st = t.store.state;
+  st.open.push({ id: 'x', cwd: '/x', openedAt: 0, closedAt: 1 }); // a closed one, hidden in the group
   st.layout = { groups: [{ id: 'g1', name: 'Work', ids: ['x', PAST] }], others: [] };
-  t.sessions.send(PAST, 'go');
+  t.sessions.get(PAST)!.send('go');
   await tick();
   emit(t.q.calls[0], init(PAST));
   await tick();
@@ -743,21 +688,20 @@ test('close: ends the process, sends removed, hides it in its group; reopening p
   assert.equal(t.take('toast').length, 0, 'a close is not a failure');
   assert.equal(typeof st.open[0].closedAt, 'number');
   assert.deepEqual(st.layout.groups[0].ids, ['x', PAST], 'it keeps its place, hidden');
-  assert.equal(t.sessions.has(PAST), false);
+  assert.equal(t.sessions.get(PAST), undefined);
   assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), [PAST], 'the Open list has it again');
   t.store.flush();
 
   // after a restart it stays closed
   const t2 = setup(root, past);
   t2.sessions.start();
-  assert.deepEqual(t2.views.ids(), []);
-  assert.equal(t2.sessions.send(PAST, 'x').ok, false);
+  assert.deepEqual(t2.transcripts.ids(), []);
+  assert.equal(t2.sessions.get(PAST), undefined, 'not open');
 
   // reopening it: back in its group, the same open[] entry
   await t2.sessions.openSession(PAST);
-  assert.deepEqual(t2.views.ids(), [PAST]);
-  assert.equal(t2.store.state.open.length, 1);
-  assert.equal(t2.store.state.open[0].closedAt, null);
+  assert.deepEqual(t2.transcripts.ids(), [PAST]);
+  assert.deepEqual(t2.store.state.open.map((e) => [e.id, e.closedAt === null]), [[PAST, true], ['x', false]], 'the same open[] entry');
   assert.deepEqual(t2.store.state.layout.groups[0].ids, ['x', PAST]);
 });
 
@@ -773,7 +717,7 @@ test('close: a placeholder is dropped and never stored', () => {
 test('idle end: the process ends after the idle time, not while background work runs, and the next message resumes', async () => {
   const t = setup(undefined, [], { idleMs: 30 });
   const ph = t.sessions.newSession();
-  t.sessions.send(ph, 'hi');
+  t.sessions.get(ph)!.send('hi');
   await tick();
   emit(t.q.calls[0], init(REAL));
   emit(t.q.calls[0], RESULT);
@@ -783,7 +727,7 @@ test('idle end: the process ends after the idle time, not while background work 
   assert.equal(t.sessions.quitCheck().running.length, 0);
   t.take();
   assert.equal(t.take('toast').length, 0);
-  t.sessions.send(REAL, 'again');
+  t.sessions.get(REAL)!.send('again');
   await tick();
   assert.equal(t.q.calls.length, 2, 'a new process');
   assert.equal(t.q.calls[1].options.resume, REAL);
@@ -798,7 +742,7 @@ test('quitCheck: running turns and the background work of running processes', as
   const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
   await t.sessions.openSession(BG);
   assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [] }, 'no process, nothing stops');
-  t.sessions.send(BG, 'go');
+  t.sessions.get(BG)!.send('go');
   await tick();
   const c = t.sessions.quitCheck();
   assert.deepEqual(c.running, [BG]);
@@ -809,7 +753,7 @@ test('quitCheck: running turns and the background work of running processes', as
   assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [{ sid: BG, kind: 'monitor' }] });
 });
 
-test("stop task: the SDK's task_notification ends the task between turns", async () => {
+test("task notification: the SDK's task_notification ends the task between turns", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const BG = '33333333-0000-4000-8000-000000000003';
   const dir = path.join(root, 'claude', 'projects', '-tmp-fixture');
@@ -817,10 +761,10 @@ test("stop task: the SDK's task_notification ends the task between turns", async
   fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
   const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
   await t.sessions.openSession(BG);
-  t.views.check();
-  const bg = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string }[] }[]).find((s) => s.id === BG)!.background;
+  t.transcripts.poll();
+  const bg = () => (t.publisher.sessions() as { id: string; background: { toolUseId: string; status: string }[] }[]).find((s) => s.id === BG)!.background;
   const run = bg().find((b) => b.status === 'running')!;
-  t.sessions.send(BG, 'go');
+  t.sessions.get(BG)!.send('go');
   await tick();
   emit(t.q.calls[0], init(BG));
   emit(t.q.calls[0], RESULT);
@@ -829,7 +773,7 @@ test("stop task: the SDK's task_notification ends the task between turns", async
   assert.equal(bg().find((b) => b.toolUseId === run.toolUseId)!.status, 'stopped');
   assert.deepEqual(t.sessions.quitCheck().background, []);
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 // b, b (R9): a session whose turn runs a foreground Bash and a foreground Agent (made up)
@@ -851,9 +795,9 @@ test("tool_progress: a driven session's running step gets its start from the ela
   const t = backgroundSetup();
   const { BGS } = t;
   await t.sessions.openSession(BGS);
-  t.views.check();
-  t.views.view(t.c, BGS, null);
-  t.sessions.send(BGS, 'go');
+  t.transcripts.poll();
+  t.publisher.view(t.c, BGS, null);
+  t.sessions.get(BGS)!.send('go');
   await tick();
   const call = t.q.calls[0];
   emit(call, init(BGS));
@@ -866,19 +810,19 @@ test("tool_progress: a driven session's running step gets its start from the ela
   const since = Date.parse(ups.find((i) => i.id === 'toolu_sl')?.since ?? '');
   assert.ok(since >= before - 12_000 && since <= Date.now() - 12_000, 'now minus 12 s');
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 test('background: b, b calls backgroundTasks; background_tasks_changed shows the steps as background work at once, once', async () => {
   const t = backgroundSetup();
   const { BGS } = t;
   await t.sessions.openSession(BGS);
-  t.views.check();
-  const sess = () => (t.views.sessions() as { id: string; background: { toolUseId: string; status: string; taskId: string | null }[] }[]).find((s) => s.id === BGS)!;
-  const item = (id: string) => (t.views.dump(BGS) as { items: { id: string; fg?: boolean; state?: string }[] }).items.find((i) => i.id === id)!;
+  t.transcripts.poll();
+  const sess = () => (t.publisher.sessions() as { id: string; background: { toolUseId: string; status: string; taskId: string | null }[] }[]).find((s) => s.id === BGS)!;
+  const item = (id: string) => t.transcripts.get(BGS)!.get(id)!;
   assert.equal(item('toolu_sl').fg, undefined, 'not before its task_started');
-  assert.equal((await t.sessions.background(BGS)).ok, false, 'no process: nothing to move');
-  t.sessions.send(BGS, 'go');
+  assert.equal((await t.sessions.get(BGS)!.background()).ok, false, 'no process: nothing to move');
+  t.sessions.get(BGS)!.send('go');
   await tick();
   const call = t.q.calls[0];
   emit(call, init(BGS));
@@ -888,7 +832,7 @@ test('background: b, b calls backgroundTasks; background_tasks_changed shows the
   assert.equal(item('toolu_sl').fg, true, 'a foreground Bash can go');
   assert.equal(item('toolu_ag').fg, true, 'a foreground Agent can go');
   t.take();
-  assert.deepEqual(await t.sessions.background(BGS), { ok: true, sid: BGS });
+  assert.deepEqual(await t.sessions.get(BGS)!.background(), { ok: true, sid: BGS });
   assert.deepEqual(call.controls.filter(([k]) => k === 'backgroundTasks'), [['backgroundTasks', undefined]], 'every foreground task: no tool use id');
   emit(call, { type: 'system', subtype: 'background_tasks_changed', tasks: [
     { task_id: 'bsl1', task_type: 'local_bash', description: 'Wait' },
@@ -904,7 +848,7 @@ test('background: b, b calls backgroundTasks; background_tasks_changed shows the
   // the transcript's own record of the move adds nothing
   fs.appendFileSync(t.file, t.rec({ type: 'user', uuid: 'b-r1', timestamp: '2026-11-24T10:00:05.000Z', toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bsl1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sl', content: 'Command was moved to the background with ID: bsl1.' }] } })
     + t.rec({ type: 'user', uuid: 'b-r2', timestamp: '2026-11-24T10:00:05.000Z', toolUseResult: { status: 'async_launched', agentId: 'aag1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ag', content: 'Moved to the background.' }] } }));
-  t.views.check();
+  t.transcripts.poll();
   await tick();
   assert.deepEqual(sess().background.map((b) => [b.toolUseId, b.status]), [['toolu_sl', 'running']], 'one shell, not two');
   assert.equal(item('toolu_ag').state, 'running');
@@ -918,25 +862,25 @@ test('background: b, b calls backgroundTasks; background_tasks_changed shows the
   assert.equal(sess().background[0].status, 'failed', 'the notification wins');
   assert.equal(sess().background.length, 1);
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 test('background: a toast when nothing could go, or background tasks are turned off', async () => {
   const t = backgroundSetup();
   await t.sessions.openSession(t.BGS);
-  t.sessions.send(t.BGS, 'go');
+  t.sessions.get(t.BGS)!.send('go');
   await tick();
   const call = t.q.calls[0];
   emit(call, init(t.BGS));
   await tick();
   call.background = false;
-  assert.deepEqual(await t.sessions.background(t.BGS), { ok: false, error: 'Nothing could go to the background.' });
+  assert.deepEqual(await t.sessions.get(t.BGS)!.background(), { ok: false, error: 'Nothing could go to the background.' });
   call.background = new Error('disabled');
-  const r = await t.sessions.background(t.BGS);
+  const r = await t.sessions.get(t.BGS)!.background();
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /turned off.*CLAUDE_CODE_DISABLE_BACKGROUND_TASKS/);
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
 });
 
 test('process end: background work of a failed or quit process reads as stopped, also after a restart', async () => {
@@ -947,10 +891,10 @@ test('process end: background work of a failed or quit process reads as stopped,
   fs.copyFileSync(path.join(import.meta.dirname, 'fixtures/claude/projects/-tmp-fixture', `${BG}.jsonl`), path.join(dir, `${BG}.jsonl`));
   const t = setup(root, [info(BG, { cwd: path.join(root, 'scratch') })]);
   await t.sessions.openSession(BG);
-  t.views.check();
-  const running = () => (t.views.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background.filter((b) => b.status === 'running').length;
+  t.transcripts.poll();
+  const running = () => (t.publisher.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background.filter((b) => b.status === 'running').length;
   assert.equal(running(), 1, 'the fixture monitor runs');
-  t.sessions.send(BG, 'go');
+  t.sessions.get(BG)!.send('go');
   await tick();
   emit(t.q.calls[0], init(BG));
   await tick();
@@ -963,21 +907,21 @@ test('process end: background work of a failed or quit process reads as stopped,
   assert.equal(typeof t.store.state.ended[BG], 'number', 'stored');
   assert.equal(t.store.state.endedFailed[BG], true, 'stored as a failure');
   t.sessions.stop();
-  t.views.stop();
+  t.transcripts.stop(); t.publisher.stop();
   // a restart: the transcript still says running, the stored end says stopped
   const t2 = setup(root);
   t2.store.state.open.push({ id: BG, cwd: path.join(root, 'scratch'), openedAt: 0, closedAt: null });
   t2.store.state.ended[BG] = t.store.state.ended[BG];
   t2.sessions.start();
-  t2.views.check();
-  const bg2 = (t2.views.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background;
+  t2.transcripts.poll();
+  const bg2 = (t2.publisher.sessions() as { id: string; background: { status: string }[] }[]).find((s) => s.id === BG)!.background;
   assert.ok(bg2.some((b) => b.status === 'stopped') && !bg2.some((b) => b.status === 'running'));
 });
 
 test('process end: quit marks the work of every running process', async () => {
   const t = setup();
   const id = t.sessions.newSession();
-  t.sessions.send(id, 'hi');
+  t.sessions.get(id)!.send('hi');
   await tick();
   emit(t.q.calls[0], init(REAL));
   await tick();
@@ -989,9 +933,9 @@ test('process end: quit marks the work of every running process', async () => {
 test('model: a choice without a process is stored and passed at the next start; default passes no model', async () => {
   const t = setup();
   const id = t.sessions.newSession();
-  assert.deepEqual(await t.sessions.setModel(id, 'sonnet', 'low'), { ok: true, sid: id });
+  assert.deepEqual(await t.sessions.get(id)!.setModel('sonnet', 'low'), { ok: true, sid: id });
   assert.equal(t.store.state.models[id], undefined, 'a placeholder is not stored');
-  t.sessions.send(id, 'hello');
+  t.sessions.get(id)!.send('hello');
   await tick();
   assert.equal(t.q.calls[0].options.model, 'sonnet');
   assert.equal(t.q.calls[0].options.effort, 'low');
@@ -1000,8 +944,8 @@ test('model: a choice without a process is stored and passed at the next start; 
   assert.deepEqual(t.store.state.models[REAL], { model: 'sonnet', effort: 'low' }, 'moves to the real id');
   t.q.calls[0].out.end(); // the process ends
   await tick();
-  await t.sessions.setModel(REAL, 'default', null);
-  t.sessions.send(REAL, 'again');
+  await t.sessions.get(REAL)!.setModel('default', null);
+  t.sessions.get(REAL)!.send('again');
   await tick();
   assert.equal(t.q.calls[1].options.model, undefined, 'default: the CLI default, not the last requestedModel');
   assert.equal(t.q.calls[1].options.effort, undefined);
@@ -1011,24 +955,24 @@ test('model: a choice without a process is stored and passed at the next start; 
 test('model: a running process gets setModel and applyFlagSettings; an effort change alone no setModel', async () => {
   const t = setup();
   const id = t.sessions.newSession();
-  t.sessions.send(id, 'hello');
+  t.sessions.get(id)!.send('hello');
   await tick();
   emit(t.q.calls[0], init(REAL));
   await tick();
   t.take();
-  await t.sessions.setModel(REAL, 'sonnet', 'high');
+  await t.sessions.get(REAL)!.setModel('sonnet', 'high');
   assert.deepEqual(t.q.calls[0].controls, [['setModel', 'sonnet'], ['applyFlagSettings', { effortLevel: 'high' }]]);
-  assert.equal((t.views.meta(REAL) as { model: unknown }).model, 'sonnet', 'the meta shows the choice');
-  assert.equal((t.views.meta(REAL) as { effort: unknown }).effort, 'high');
+  assert.equal((t.publisher.meta(REAL) as { model: unknown }).model, 'sonnet', 'the meta shows the choice');
+  assert.equal((t.publisher.meta(REAL) as { effort: unknown }).effort, 'high');
   t.q.calls[0].controls.length = 0;
-  await t.sessions.setModel(REAL, 'sonnet', 'low');
+  await t.sessions.get(REAL)!.setModel('sonnet', 'low');
   assert.deepEqual(t.q.calls[0].controls, [['applyFlagSettings', { effortLevel: 'low' }]]);
   t.q.calls[0].controls.length = 0;
-  await t.sessions.setModel(REAL, 'default', null);
+  await t.sessions.get(REAL)!.setModel('default', null);
   assert.deepEqual(t.q.calls[0].controls, [['setModel', undefined], ['applyFlagSettings', { effortLevel: null }]]);
   assert.deepEqual(t.store.state.models[REAL], { model: 'default', effort: null });
   assert.ok(t.take('session').some((m) => m.id === REAL && m.model === 'default'), 'pages get the change');
-  assert.equal((await t.sessions.setModel('nope', 'sonnet', null)).ok, false);
+  assert.equal(t.sessions.get('nope'), undefined, 'an id no session has');
 });
 
 test('needs you: held messages go out when the last card ends by its own signal (M1)', async () => {
@@ -1036,7 +980,7 @@ test('needs you: held messages go out when the last card ends by its own signal 
   const a = askOpts('1', { agentID: 'agent-7' });
   void t.canUseTool('Bash', { command: 'ls' }, a.o);
   await tick();
-  assert.equal(t.sessions.send(REAL, 'held one').ok, true);
+  assert.equal(t.sessions.get(REAL)!.send('held one').ok, true);
   assert.equal(t.call.inputs.length, 1, 'held while the card waits');
   t.take();
   a.ctl.abort(); // the subagent was stopped, or the CLI cancelled the tool
@@ -1051,10 +995,10 @@ test('needs you: an interrupt restores the held messages even when the CLI abort
   const a = askOpts('1');
   void t.canUseTool('Bash', { command: 'ls' }, a.o);
   await tick();
-  t.sessions.send(REAL, 'keep me');
+  t.sessions.get(REAL)!.send('keep me');
   // the CLI aborts the request's signal while the interrupt is on its way
   t.call.interrupts.push = (...x: unknown[]) => { a.ctl.abort(); return x.length; };
-  await t.sessions.interrupt(REAL);
+  await t.sessions.get(REAL)!.interrupt();
   assert.equal(t.call.inputs.length, 1, 'not pushed');
   assert.deepEqual(t.take('restore').map((m) => m.texts), [['keep me']]);
 });
@@ -1066,7 +1010,7 @@ test('open list: after a reset the earlier conversation is listed and opens as i
   const past = [info(PAST, { cwd, lastModified: 5000 })];
   const t = setup(root, past);
   await t.sessions.openSession(PAST);
-  t.sessions.send(PAST, 'go');
+  t.sessions.get(PAST)!.send('go');
   await tick();
   emit(t.q.calls[0], init(PAST));
   emit(t.q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: PAST, trigger: 'clear' });
@@ -1074,7 +1018,7 @@ test('open list: after a reset the earlier conversation is listed and opens as i
   assert.equal(t.sessions.resolve(PAST), RESET);
   assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), [PAST], 'the pre-clear conversation is a past session');
   assert.deepEqual(await t.sessions.openSession(PAST), { ok: true, sid: PAST });
-  assert.deepEqual(t.views.ids().sort(), [PAST, RESET].sort());
+  assert.deepEqual(t.transcripts.ids().sort(), [PAST, RESET].sort());
   assert.equal(t.sessions.resolve(PAST), PAST, 'page messages with its id reach it, not the new conversation');
   assert.deepEqual(t.store.state.open.map((e) => e.id).sort(), [PAST, RESET].sort());
   assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), []);
@@ -1083,7 +1027,7 @@ test('open list: after a reset the earlier conversation is listed and opens as i
 test('idle end: a message sent while the process is ending goes to the next process (L1)', async () => {
   const t = setup(undefined, [], { idleMs: 30 });
   const ph = t.sessions.newSession();
-  t.sessions.send(ph, 'hi');
+  t.sessions.get(ph)!.send('hi');
   await tick();
   emit(t.q.calls[0], init(REAL));
   emit(t.q.calls[0], RESULT);
@@ -1091,10 +1035,10 @@ test('idle end: a message sent while the process is ending goes to the next proc
   t.q.calls[0].exitDelay = 80;
   await new Promise((r) => setTimeout(r, 50)); // the idle end closed the input; the exit comes later
   t.take();
-  assert.equal(t.sessions.send(REAL, 'during the exit').ok, true);
+  assert.equal(t.sessions.get(REAL)!.send('during the exit').ok, true);
   await tick();
   assert.equal(t.q.calls.length, 1, 'never two processes for one session');
-  assert.equal(t.take('session').at(-1)?.status, 'busy');
+  assert.equal(t.take('session').at(-1)?.state.status, 'busy');
   await new Promise((r) => setTimeout(r, 120));
   assert.equal(t.q.calls.length, 2, 'a new process once the old one exited');
   assert.equal(t.q.calls[1].options.resume, REAL);
@@ -1107,44 +1051,52 @@ test('status: an interrupt after the result, or one that failed, does not stop t
   const state = (s: string, uuid: string) => emit(q, { type: 'system', subtype: 'session_state_changed', state: s, uuid, session_id: REAL });
   emit(q, RESULT);
   await tick();
-  await t.sessions.interrupt(REAL); // Esc Esc between result and idle
+  await t.sessions.get(REAL)!.interrupt(); // Esc Esc between result and idle
   state('idle', 'u-i');
   await tick();
-  t.sessions.send(REAL, 'next');
+  t.sessions.get(REAL)!.send('next');
   state('running', 'u-s2');
   emit(q, RESULT);
   state('idle', 'u-i2');
   await tick();
-  assert.equal(t.take('session').at(-1)?.status, 'idle');
+  assert.equal(t.take('session').at(-1)?.state.status, 'idle');
 
   // an interrupt that throws
-  t.sessions.send(REAL, 'again');
+  t.sessions.get(REAL)!.send('again');
   state('running', 'u-s3');
   await tick();
   q.interrupts.push = () => { throw new Error('control channel closed'); };
-  await t.sessions.interrupt(REAL);
+  await t.sessions.get(REAL)!.interrupt();
   assert.match(String(t.take('toast').at(-1)?.text), /couldn't interrupt/);
   emit(q, RESULT);
   state('idle', 'u-i3');
   await tick();
-  assert.equal(t.take('session').at(-1)?.status, 'idle');
+  assert.equal(t.take('session').at(-1)?.state.status, 'idle');
 });
 
 test('layout: a new session dragged into a group keeps its place through init (L2)', async () => {
   const t = setup();
   const ph = t.sessions.newSession();
   const st = t.store.state;
-  st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [ph] }], others: [] }, st.layout, t.sessions.layoutEntries());
-  assert.deepEqual(st.layout.groups.map((g) => g.ids), [[ph]], 'the placeholder is kept');
-  t.sessions.send(ph, 'hi');
+  assert.deepEqual(st.layout.others, [ph], 'a new session is placed at once');
+  const other = t.sessions.newSession();
+  assert.deepEqual(t.sessions.layout.newGroup(ph, other, 'g1', 'Work'), { ok: true });
+  assert.deepEqual(t.sessions.layout.move(other, { group: 'others' }), { ok: true });
+  assert.deepEqual(st.layout.groups.map((g) => g.ids), [[ph]], 'the placeholder is kept in its group');
+  const frames = t.take('layout');
+  assert.deepEqual(frames.at(-1)?.layout, st.layout, 'each change goes to the pages');
+  t.sessions.get(ph)!.send('hi');
   await tick();
   emit(t.q.calls[0], init(REAL));
   await tick();
   assert.deepEqual(st.layout.groups.map((g) => g.ids), [[REAL]]);
-  assert.deepEqual(st.layout.others, [], 'not also under Not in a group');
-  // an id no session has is still dropped
-  st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [REAL, 'new-gone'] }], others: [] }, st.layout, t.sessions.layoutEntries());
-  assert.deepEqual(st.layout.groups[0].ids, [REAL]);
+  assert.deepEqual(st.layout.others, [other], 'not also under Not in a group');
+  const after = t.take();
+  assert.deepEqual(after.find((m) => m.t === 'session' && m.replaces === ph)?.layout, st.layout, 'the session frame with replaces carries the layout');
+  assert.equal(after.filter((m) => m.t === 'layout').length, 0, 'not sent alone');
+  // a closed placeholder's id goes
+  t.sessions.close(other);
+  assert.deepEqual(st.layout, { groups: [{ id: 'g1', name: 'Work', ids: [REAL] }], others: [] });
 });
 
 test('sessions: a session whose turn runs in another process reads working, until that turn ends', async () => {
@@ -1155,12 +1107,70 @@ test('sessions: a session whose turn runs in another process reads working, unti
   const add = (r: object) => fs.appendFileSync(file, JSON.stringify({ ...base, ...r }) + '\n');
   add({ type: 'user', uuid: 'p-3', timestamp: '2026-11-20T10:01:00.000Z', message: { role: 'user', content: 'Now run the tests' } });
   add({ type: 'assistant', uuid: 'p-4', timestamp: '2026-11-20T10:01:05.000Z', message: { id: 'm-2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ext', name: 'Bash', input: { command: 'npm test' } }] } });
-  const { sessions, views, take } = setup(root, [info(PAST, { cwd })]);
+  const { sessions, transcripts, publisher, take } = setup(root, [info(PAST, { cwd })]);
   await sessions.openSession(PAST);
-  views.check();
-  assert.equal(take('session').at(-1)?.status, 'busy', 'its tool waits for a result in the other process');
+  transcripts.poll();
+  assert.equal(take('session').at(-1)?.state.status, 'busy', 'its tool waits for a result in the other process');
   add({ type: 'user', uuid: 'p-5', timestamp: '2026-11-20T10:02:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ext', content: 'ok' }] } });
   add({ type: 'system', subtype: 'turn_duration', durationMs: 60000, timestamp: '2026-11-20T10:02:01.000Z' });
-  views.check();
-  assert.equal(take('session').at(-1)?.status, 'idle');
+  transcripts.poll();
+  assert.equal(take('session').at(-1)?.state.status, 'idle');
+});
+
+test('bash mode: refused while another process runs the turn, as with a terminal', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  const file = writePast(path.join(root, 'claude'), cwd);
+  const base = { sessionId: PAST, cwd, isSidechain: false };
+  const add = (r: object) => fs.appendFileSync(file, JSON.stringify({ ...base, ...r }) + '\n');
+  add({ type: 'user', uuid: 'p-3', timestamp: new Date().toISOString(), message: { role: 'user', content: 'Now run the tests' } });
+  add({ type: 'assistant', uuid: 'p-4', timestamp: new Date().toISOString(), message: { id: 'm-2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ext', name: 'Bash', input: { command: 'npm test' } }] } });
+  const { sessions, transcripts } = setup(root, [info(PAST, { cwd })]);
+  await sessions.openSession(PAST);
+  transcripts.poll();
+  const r = sessions.get(PAST)!.runBang('ls');
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /Another Claude Code process is running this session's turn/);
+  add({ type: 'user', uuid: 'p-5', timestamp: new Date().toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ext', content: 'ok' }] } });
+  add({ type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: new Date().toISOString() });
+  transcripts.poll();
+  const ok = sessions.get(PAST)!.runBang('true');
+  assert.equal(ok.ok, true, 'once that turn ended');
+  sessions.stop();
+});
+
+test('openSession: reopening makes it the most recently opened, for the new-session folder', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  writePast(path.join(root, 'claude'), cwd);
+  let now = 1000;
+  const t = setup(root, [info(PAST, { cwd })], { now: () => now });
+  const other = path.join(root, 'other');
+  fs.mkdirSync(other);
+  delete t.store.state.settings.newSessionCwd;
+  await t.sessions.openSession(PAST);
+  t.store.state.open.push({ id: RESET, cwd: other, openedAt: 2000, closedAt: null }); // opened after it
+  t.sessions.close(PAST);
+  now = 3000;
+  await t.sessions.openSession(PAST);
+  assert.equal(t.store.state.open.find((e) => e.id === PAST)?.openedAt, 3000);
+  const ph = t.sessions.newSession();
+  assert.equal(t.publisher.meta(ph)?.cwd, '~/scratch', 'the reopened one\'s folder');
+});
+
+test('start: the page ui state of a session that is not open goes, with its draft images', () => {
+  const t = setup();
+  const OPEN = REAL, CLOSED = RESET, GONE = '77777777-0000-4000-8000-000000000007';
+  t.store.state.open.push({ id: OPEN, cwd: t.cwd, openedAt: 1, closedAt: null }, { id: CLOSED, cwd: t.cwd, openedAt: 1, closedAt: 2 });
+  const png = Buffer.from('png').toString('base64');
+  for (const sid of [OPEN, CLOSED, GONE]) patchUi(t.store, { sessions: { [sid]: { draft: { text: 'x', images: [{ id: 'i1', mediaType: 'image/png', data: png }] } } } });
+  const drafts = (id: string) => path.join(path.dirname(t.store.path), 'drafts', id);
+  fs.mkdirSync(drafts('88888888-0000-4000-8000-000000000008'), { recursive: true }); // a folder with no entry
+  t.store.state.ui.current = GONE;
+  t.sessions.start();
+  assert.deepEqual(Object.keys(t.store.state.ui.sessions), [OPEN]);
+  assert.equal(t.store.state.ui.current, null);
+  assert.ok(fs.existsSync(drafts(OPEN)));
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(t.store.path), 'drafts')), [OPEN]);
+  t.sessions.stop();
 });

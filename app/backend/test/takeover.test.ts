@@ -1,58 +1,26 @@
 // The terminal take-over (R3.2, 2026-11-24): Synopia yields to a terminal, and takes a session
-// back from one, with a fake registry and a fake CLI.
+// back from one, with fake terminals (cli-terminals.ts) and a fake CLI.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Views } from '../src/views.ts';
+import { Transcripts } from '../src/transcripts.ts';
+import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import type { TerminalSource } from '../src/sessions.ts';
-import type { QueryFn } from '../src/driver.ts';
-import type { Terminal } from '../src/registry.ts';
+import { fakeQuery } from './support/fake-query.ts';
+import type { Terminal } from '../src/cli-terminals.ts';
 import { openStore } from '../src/store.ts';
 import type { Client } from '../src/server.ts';
-import type { Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 type Msg = { t: string; [k: string]: unknown };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 const SID = '11111111-2222-4333-8444-555555555555';
 
-function channel<T>() {
-  const buf: T[] = [];
-  let wake: (() => void) | null = null;
-  let done = false;
-  return {
-    push(m: T) { buf.push(m); wake?.(); wake = null; },
-    end() { done = true; wake?.(); wake = null; },
-    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
-      while (true) {
-        while (buf.length) yield buf.shift() as T;
-        if (done) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-  };
-}
-type Call = { options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean; interrupts: number };
-function fakeQuery(events: string[]) {
-  const calls: Call[] = [];
-  const fn: QueryFn = ({ prompt, options }) => {
-    const out = channel<SDKMessage>();
-    const call: Call = { options, inputs: [], out, closed: false, interrupts: 0 };
-    calls.push(call);
-    events.push('start');
-    void (async () => { for await (const m of prompt) call.inputs.push(m); out.end(); })();
-    return Object.assign(out, {
-      close: () => { call.closed = true; events.push('close'); out.end(); },
-      interrupt: async () => { call.interrupts++; events.push('interrupt'); return { still_queued: [] }; },
-    });
-  };
-  return { calls, fn };
-}
-
-// A registry whose terminals the test sets. `fresh` answers the last check before acting.
-function fakeRegistry(events: string[]) {
+// A terminal source whose terminals the test sets. `fresh` answers the last check before acting.
+function fakeTerminals(events: string[]) {
   const held = new Map<string, Terminal>();
   const listeners: (() => void)[] = [];
   const r = {
@@ -80,7 +48,7 @@ function fakeRegistry(events: string[]) {
   };
   return r;
 }
-const term = (status: string, pid = 54166): Terminal => ({ pid, sessionId: SID, cwd: '/tmp/x', status, statusUpdatedAt: 1 });
+const term = (status: string, pid = 54166): Terminal => ({ pid, sessionId: SID, procStart: 'Tue Nov 24 10:02:03 2026', cwd: '/tmp/x', status, statusUpdatedAt: 1 });
 
 function setup(opts: { terminal?: Terminal | null; past?: SDKSessionInfo[] } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-takeover-'));
@@ -92,22 +60,23 @@ function setup(opts: { terminal?: Terminal | null; past?: SDKSessionInfo[] } = {
   const c: Client = { send: (m) => got.push(JSON.parse(JSON.stringify(m))), close: () => {} };
   const store = openStore(path.join(root, 'state'), { minIntervalMs: 0 });
   store.state.open.push({ id: SID, cwd, openedAt: 1, closedAt: null });
-  const views = new Views({ claudeDir, clients: () => new Set([c]), home: root, pollMs: 0, watch: false });
+  const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false });
+  const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: root, recheckMs: 0 });
   const events: string[] = [];
-  const q = fakeQuery(events);
-  const reg = fakeRegistry(events);
+  const q = fakeQuery({ events, sessions: opts.past });
+  const reg = fakeTerminals(events);
   if (opts.terminal) reg.set(opts.terminal);
-  const sessions = new Sessions({ store, views, queryFn: q.fn, listFn: async () => opts.past ?? [], home: root, registry: reg.source });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, terminals: reg.source });
   sessions.start();
-  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { status: string; statusDetail: Record<string, unknown> } | undefined;
+  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;
   const take = (t: string) => { const out = got.filter((m) => m.t === t); got.length = 0; return out; };
   return { sessions, q, reg, events, last, take, store };
 }
 
 test('takeover: an idle terminal: the last check, the end (with the note), then the resume and the message', async () => {
   const { sessions, q, reg, events, last } = setup({ terminal: term('idle') });
-  assert.equal(last()?.statusDetail.terminal, 54166, 'read-only, with its pid');
-  assert.equal(sessions.send(SID, 'hello').ok, true);
+  assert.equal(last()?.state.detail.terminal, 54166, 'read-only, with its pid');
+  assert.equal(sessions.get(SID)!.send('hello').ok, true);
   await tick();
   assert.deepEqual(events, ['recheck', 'end', 'recheck', 'start'], 'checked again right before acting, and before the start');
   assert.match(reg.ends[0].note, new RegExp(`^Synopia took over this session at \\d\\d:\\d\\d\\. To continue here instead: claude --resume ${SID}\\n$`));
@@ -115,19 +84,19 @@ test('takeover: an idle terminal: the last check, the end (with the note), then 
   assert.equal(q.calls[0].inputs.length, 1);
   assert.equal(q.calls[0].inputs[0].message.content, 'hello');
   const s = last();
-  assert.equal(s?.status, 'busy');
-  assert.equal(s?.statusDetail.terminal, undefined);
-  assert.equal(s?.statusDetail.takeover, undefined, 'the mark clears with the turn started: the page clears the box');
+  assert.equal(s?.state.status, 'busy');
+  assert.equal(s?.state.detail.terminal, undefined);
+  assert.equal(s?.state.detail.takeover, undefined, 'the mark clears with the turn started: the page clears the box');
 });
 
 test('takeover: a busy terminal: the message waits, and goes once it is idle', async () => {
   const { sessions, q, reg, last } = setup({ terminal: term('busy') });
-  assert.equal(sessions.send(SID, 'first').ok, true);
-  assert.equal(last()?.statusDetail.takeover, 'waiting');
+  assert.equal(sessions.get(SID)!.send('first').ok, true);
+  assert.equal(last()?.state.detail.takeover, 'waiting');
   reg.set(term('waiting'));
   await tick();
   assert.equal(reg.ends.length, 0, 'not while it waits on you');
-  assert.equal(sessions.send(SID, 'second').ok, true, 'a newer message replaces it');
+  assert.equal(sessions.get(SID)!.send('second').ok, true, 'a newer message replaces it');
   reg.set(term('idle'));
   await tick();
   assert.equal(reg.ends.length, 1);
@@ -137,10 +106,10 @@ test('takeover: a busy terminal: the message waits, and goes once it is idle', a
 
 test('takeover: an edit or Esc cancels the wait', async () => {
   const { sessions, q, reg, last } = setup({ terminal: term('busy') });
-  sessions.send(SID, 'hello');
-  sessions.cancelTakeover(SID);
-  assert.equal(last()?.statusDetail.takeover, undefined);
-  assert.equal(last()?.statusDetail.terminal, 54166);
+  sessions.get(SID)!.send('hello');
+  sessions.get(SID)!.cancelTakeover();
+  assert.equal(last()?.state.detail.takeover, undefined);
+  assert.equal(last()?.state.detail.terminal, 54166);
   reg.set(term('idle'));
   await tick();
   assert.equal(reg.ends.length, 0);
@@ -150,10 +119,10 @@ test('takeover: an edit or Esc cancels the wait', async () => {
 test('takeover: the race: the CLI is busy at the last check, so it waits again', async () => {
   const { sessions, q, reg, last } = setup({ terminal: term('idle') });
   reg.fresh = () => term('busy');
-  sessions.send(SID, 'hello');
+  sessions.get(SID)!.send('hello');
   await tick();
   assert.equal(reg.ends.length, 0, 'never ended');
-  assert.equal(last()?.statusDetail.takeover, 'waiting');
+  assert.equal(last()?.state.detail.takeover, 'waiting');
   reg.fresh = null;
   reg.set(term('idle'));
   await tick();
@@ -165,17 +134,17 @@ test("takeover: a CLI that won't exit keeps your message in the box, with a toas
   const { sessions, q, reg, last, take } = setup({ terminal: term('idle') });
   reg.endOk = false;
   take('toast');
-  sessions.send(SID, 'hello');
+  sessions.get(SID)!.send('hello');
   await tick();
   assert.equal(q.calls.length, 0);
-  assert.equal(last()?.statusDetail.takeover, undefined);
-  assert.equal(last()?.statusDetail.terminal, 54166, 'still the terminal’s');
+  assert.equal(last()?.state.detail.takeover, undefined);
+  assert.equal(last()?.state.detail.terminal, 54166, 'still the terminal’s');
   assert.match(String(take('toast')[0]?.text), /didn't exit.*still in the box/);
 });
 
 test('takeover: the CLI exits by itself while the message waits: it goes', async () => {
   const { sessions, q, reg } = setup({ terminal: term('busy') });
-  sessions.send(SID, 'hello');
+  sessions.get(SID)!.send('hello');
   reg.set(null);
   await tick();
   assert.equal(reg.ends.length, 0, 'nothing to end');
@@ -185,28 +154,28 @@ test('takeover: the CLI exits by itself while the message waits: it goes', async
 
 test('yield: a terminal appears: the turn is interrupted, the process ends, read-only, then Synopia’s again', async () => {
   const { sessions, q, reg, events, last } = setup();
-  sessions.send(SID, 'working');
+  sessions.get(SID)!.send('working');
   await tick();
   assert.equal(q.calls.length, 1);
   events.length = 0;
   reg.set(term('busy'));
   await tick();
   assert.deepEqual(events, ['interrupt', 'close'], 'interrupt, then end');
-  assert.equal(last()?.statusDetail.terminal, 54166);
-  assert.notEqual(last()?.status, 'failed', 'a yield is no failure');
+  assert.equal(last()?.state.detail.terminal, 54166);
+  assert.notEqual(last()?.state.status, 'failed', 'a yield is no failure');
   // while it holds the session, a message waits instead of reaching a process
-  sessions.send(SID, 'mine');
+  sessions.get(SID)!.send('mine');
   assert.equal(q.calls.length, 1);
-  sessions.cancelTakeover(SID);
+  sessions.get(SID)!.cancelTakeover();
   reg.set(null);
   await tick();
-  assert.equal(last()?.statusDetail.terminal, undefined, 'its own again');
+  assert.equal(last()?.state.detail.terminal, undefined, 'its own again');
   assert.equal(q.calls.length, 1, 'quietly: nothing starts');
 });
 
 test('yield: an idle process just ends (no interrupt)', async () => {
   const { sessions, q, reg, events } = setup();
-  sessions.send(SID, 'x');
+  sessions.get(SID)!.send('x');
   await tick();
   q.calls[0].out.push({ type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage);
   await tick();
@@ -220,7 +189,7 @@ test('one writer: a start the last check refuses keeps the message', async () =>
   const { sessions, q, reg, take } = setup();
   reg.fresh = () => term('busy', 777); // the scan hadn't seen it yet
   take('restore');
-  const r = sessions.send(SID, 'hello');
+  const r = sessions.get(SID)!.send('hello');
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /terminal holds this session \(pid 777\)/);
   assert.equal(q.calls.length, 0);

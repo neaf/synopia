@@ -2,4 +2,4 @@
 
 | Area | State |
 |---|---|
-| [app](app/README.md) | Milestone 1 built and extended (2026-11-24): daemon with self-update, take-over with terminals, dark mode, `!` bash mode, images, previews. Next: /rearchitect in a separate worktree (`~/dev/synopia-rearch`, branch `rearch`), run from the iTerm CLI while Synopia is used read-only |
+| [app](app/README.md) | Rearchitecture done (2026-11-24, branch `rearch`): one module per job, one adapter per external system, protocol v2 with acks, scripted SDK for checks; `app/check.sh --page` green. Next: history scrub before any push, merge into `main`; open items in `docs/functional-requirements.md` "Known gaps" |

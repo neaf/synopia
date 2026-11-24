@@ -1,4 +1,4 @@
-/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js sets <html data-theme>:
+/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js and theme-switch.js set <html data-theme>:
    the system's appearance until the switch in the sidebar footer picks one. The layout reads as in the light
    theme: the sidebar (#22272E, unchanged) stays the darkest surface, the canvas a step lighter, the panels a
    step lighter again; lines stay 1px; text keeps 4.5:1 or more; the marks take the bright set the dark
@@ -18,11 +18,11 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --canvas: #2A3038; --side: #22272E; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
-  --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #8F9AA6;
+  --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1;
   --red: #FF7B72; --amber: #E3B341; --green: #56D364; --link: #6CB6FF;
   --bash: #F778BA;
-  --dot-red: #FF7B72; --dot-amber: #E3B341; --dot-green: #3FB950; --dot-off: #66707C;
-  --add-bg: #2A4234; --del-bg: #482D31; --sel: #1F3B5C; --guide: #606B78; --fork: #C69CFF;
+  --dot-amber: #E3B341; --dot-green: #3FB950;
+  --add-bg: #2A4234; --del-bg: #482D31; --sel: #1F3B5C; --guide: #606B78;
   --k-sub: #3FB950; --k-fork: #BC8CFF; --k-shell: #39C5CF; --k-mon: #58A6FF;
   /* the marks' dark set, as in the sidebar */
   --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
@@ -43,7 +43,6 @@
   --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
   --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
 :root[data-theme="dark"] .side .row[aria-current="true"] .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
-:root[data-theme="dark"] .side .row[aria-current="true"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
 :root[data-theme="dark"] .side .row[aria-current="true"] .r-side { border-color: #6E7781; }
 :root[data-theme="dark"] .side .tree .row[aria-current="true"] .tg::before, :root[data-theme="dark"] .side .tree .row[aria-current="true"] .tg::after { border-color: #6E7781; }
 :root[data-theme="dark"] .drop-into { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
@@ -51,7 +50,6 @@
 /* ---------- transcript ---------- */
 :root[data-theme="dark"] .prompt { background: #2C3644; }
 :root[data-theme="dark"] .prompt.queued { background: none; }
-:root[data-theme="dark"] .atype.fork { color: var(--fork); }
 /* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
 :root[data-theme="dark"] .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
 :root[data-theme="dark"] .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px var(--blue-bg), 0 0 0 3px var(--blue-line); }
@@ -72,8 +70,6 @@
 
 /* needs you: the question card, its options, the own-answer field */
 :root[data-theme="dark"] .nd-head { background: var(--red-bg); border-bottom-color: var(--red-line); }
-:root[data-theme="dark"] .qq .qh { background: var(--red-bg); border-color: var(--red-line); }
-:root[data-theme="dark"] .qo[aria-pressed="true"] { background: var(--blue-bg); }
 :root[data-theme="dark"] .o.focus { box-shadow: inset 0 0 0 1px var(--blue-line); }
 :root[data-theme="dark"] .o.on > .box::after { border-color: var(--panel); }
 :root[data-theme="dark"] .qa-own { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }
@@ -93,21 +89,7 @@
 :root[data-theme="dark"] .rv { border-color: #2F5A88; background: #22344A; }
 
 /* ---------- marks and kind tags: the dark tracks under the turning parts ---------- */
-:root[data-theme="dark"] .spinner { border-color: #1F4D2C; border-top-color: #3FB950; border-right-color: #3FB950; }
-:root[data-theme="dark"] .ind .arc { border-color: #1F4D2C; border-top-color: var(--green); border-right-color: var(--green); }
-:root[data-theme="dark"] .ind .arc.dual { border-color: #1F4D2C; border-top-color: var(--green); border-bottom-color: var(--green); }
-:root[data-theme="dark"] .ind .arc.fork { border-color: #3E2F66; border-top-color: var(--k-fork); border-right-color: var(--k-fork); }
-:root[data-theme="dark"] .ind .arc.k2 { border-color: #3E2F66; border-top-color: var(--k-fork); border-bottom-color: var(--k-fork); }
-:root[data-theme="dark"] .ind .arc.grey, :root[data-theme="dark"] .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
-:root[data-theme="dark"] .ind .sat { border-color: #545D68; }
-:root[data-theme="dark"] .ind .v-escal .bars i { background: linear-gradient(180deg, var(--red) 0 .19em, #8E3A36 .19em .3em); background-size: 100% .3em; }
-:root[data-theme="dark"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
-@media (prefers-reduced-motion: reduce) {
-  :root[data-theme="dark"] .spinner { border-color: #3FB950; }
-  :root[data-theme="dark"] .ind .arc:not(.frozen):not(.grey) { border-color: var(--green); }
-  :root[data-theme="dark"] .ind .arc.fork, :root[data-theme="dark"] .ind .arc.k2 { border-color: var(--k-fork); }
-  :root[data-theme="dark"] .ind .radar .sweep { background: none; }
-}
+:root[data-theme="dark"] .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
 :root[data-theme="dark"] .kind { --kc: #ADBAC7; --kb: #3A424D; }
 :root[data-theme="dark"] .kd-sub { --kc: #56D364; --kb: #1F3A28; }
 :root[data-theme="dark"] .kd-fork { --kc: #D2A8FF; --kb: #382B54; }

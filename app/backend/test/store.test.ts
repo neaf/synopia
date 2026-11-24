@@ -1,10 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStore, defaultState, reconcileLayout } from '../src/store.ts';
-import type { OpenEntry, Layout } from '../src/store.ts';
+import { openStore, defaultState, newSessionFolder, ReviewedMarks, REVIEWED_MAX } from '../src/store.ts';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'synopia-store-'));
 const wait = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
@@ -13,7 +12,7 @@ test('defaults when there is no state file', () => {
   const dir = tmp();
   const s = openStore(dir);
   assert.deepEqual(s.state, defaultState());
-  assert.equal(s.state.settings.newSessionCwd, '~/dev/demo-project');
+  assert.equal(s.state.settings.newSessionCwd, undefined);
   assert.equal(s.state.settings.writerModel, 'haiku');
   assert.equal(existsSync(join(dir, 'state.json')), false);
 });
@@ -24,9 +23,25 @@ test('a partial state file is filled with defaults', () => {
   const s = openStore(dir);
   assert.deepEqual(s.state.reviewed, ['a1']);
   assert.equal(s.state.settings.writerModel, 'sonnet');
-  assert.equal(s.state.settings.newSessionCwd, '~/dev/demo-project');
+  assert.equal(s.state.settings.newSessionCwd, undefined);
   assert.deepEqual(s.state.layout, { groups: [], others: [] });
   assert.deepEqual(s.state.open, []);
+});
+
+test('new sessions open in the setting, else the most recent session folder, else home', () => {
+  const s = defaultState();
+  assert.equal(newSessionFolder(s), '~');
+  s.open = [
+    { id: 'a', cwd: '/w/old', openedAt: 1, closedAt: null },
+    { id: 'b', cwd: '/w/new', openedAt: 3, closedAt: 5 },
+    { id: 'c', cwd: '/w/mid', openedAt: 2, closedAt: null },
+  ];
+  assert.equal(newSessionFolder(s), '/w/new');
+  s.settings.newSessionCwd = '~/work';
+  assert.equal(newSessionFolder(s), '~/work');
+  const dir = tmp();
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ version: 1, settings: { newSessionCwd: '' } }));
+  assert.equal(openStore(dir).state.settings.newSessionCwd, undefined);
 });
 
 test('a corrupt state file is kept aside, not overwritten', () => {
@@ -69,63 +84,76 @@ test('flush writes at once', () => {
   assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).settings.writerModel, 'opus');
 });
 
-// Layout reconcile (section 11).
-const open = (ids: string[], closed: string[] = []): OpenEntry[] => [
-  ...ids.map((id) => ({ id, cwd: '/x', openedAt: 1, closedAt: null })),
-  ...closed.map((id) => ({ id, cwd: '/x', openedAt: 1, closedAt: 2 })),
-];
-const empty: Layout = { groups: [], others: [] };
-
-test('reconcile: new sessions go to Not in a group', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a'] }], others: [] };
-  const got = reconcileLayout(stored, stored, open(['a', 'b', 'c']));
-  assert.deepEqual(got, { groups: [{ id: 'g1', name: 'Work', ids: ['a'] }], others: ['b', 'c'] });
+test('a failed write keeps the state dirty and is tried again; the file is 0600', async () => {
+  const dir = tmp();
+  const lines: string[] = [];
+  const s = openStore(dir, { minIntervalMs: 30, log: (e, f) => lines.push(`${e} ${f?.code ?? ''}`.trim()) });
+  const blocker = join(dir, `state.json.tmp-${process.pid}`);
+  mkdirSync(blocker); // the temp file can't be written while a folder holds its name
+  s.state.settings.writerModel = 'opus';
+  s.changed();
+  s.flush();
+  assert.equal(existsSync(join(dir, 'state.json')), false);
+  await wait(80);
+  assert.deepEqual(lines, ['store.new', 'store.writeFailed EISDIR'], 'logged once, though tried again');
+  rmSync(blocker, { recursive: true });
+  await wait(80);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).settings.writerModel, 'opus', 'written on a retry, no change needed');
+  assert.equal(lines.at(-1), 'store.writeOk');
+  assert.equal(statSync(join(dir, 'state.json')).mode & 0o777, 0o600);
+  mkdirSync(blocker);
+  s.state.settings.writerModel = 'sonnet';
+  s.changed();
+  s.close(); // a stop's last write fails: nothing stays armed to hold the process
+  rmSync(blocker, { recursive: true });
+  await wait(80);
+  assert.equal(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).settings.writerModel, 'opus');
 });
 
-test('reconcile: the page layout is authoritative for visible ids', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'b'] }], others: ['c'] };
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Renamed', ids: ['c', 'a'] }], others: ['b'] };
-  assert.deepEqual(reconcileLayout(incoming, stored, open(['a', 'b', 'c'])), incoming);
-});
-
-test('reconcile: closed ids stay hidden in their group, at their place', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'x', 'b'] }], others: ['y'] };
-  // The page doesn't show x and y (closed) and moves b before a.
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['b', 'a'] }], others: [] };
-  const got = reconcileLayout(incoming, stored, open(['a', 'b'], ['x', 'y']));
-  assert.deepEqual(got, { groups: [{ id: 'g1', name: 'Work', ids: ['b', 'a', 'x'] }], others: ['y'] });
-});
-
-test('reconcile: a group with only hidden ids is kept', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Old', ids: ['x', 'a'] }], others: [] };
-  // The page moved a out and no longer sends g1.
-  const incoming: Layout = { groups: [], others: ['a'] };
-  const got = reconcileLayout(incoming, stored, open(['a'], ['x']));
-  assert.deepEqual(got, { groups: [{ id: 'g1', name: 'Old', ids: ['x'] }], others: ['a'] });
-});
-
-test('reconcile: a group with no ids at all is dropped', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a'] }, { id: 'g2', name: 'Empty', ids: [] }], others: [] };
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Work', ids: [] }, { id: 'g2', name: 'Empty', ids: [] }], others: ['a'] };
-  assert.deepEqual(reconcileLayout(incoming, stored, open(['a'])), { groups: [], others: ['a'] });
-});
-
-test('reconcile: unknown and duplicate ids are removed', () => {
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'ghost', 'a'] }], others: ['a', 'b'] };
-  assert.deepEqual(reconcileLayout(incoming, empty, open(['a', 'b'])), {
-    groups: [{ id: 'g1', name: 'Work', ids: ['a'] }],
-    others: ['b'],
+test('every map entry is checked on load; a wrong one is dropped', () => {
+  const dir = tmp();
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({
+    version: 1,
+    models: { a: { model: 'opus', effort: 'high' }, b: { model: 'sonnet', effort: null }, c: { model: 3 }, d: 'opus', e: { model: 'haiku', effort: 7 } },
+    rules: { a: ['Bash(ls:*)'], b: ['x', 2], c: 'x' },
+    answers: { t1: 'Yes', t2: { no: 1 } },
+    plans: { t1: 'The plan', t2: null },
+    status: { a: { status: 'idle', at: 5 }, b: { status: 'busy' }, c: { status: 1, at: 5 }, d: null },
+    ended: { a: 5, b: '5', c: Infinity },
+    endedFailed: { a: true, b: 'yes' },
+    written: {
+      a: { title: 'Ship it', now: 'Waiting', at: 9, history: [{ title: 'Ship', at: 1 }, { title: 2, at: 2 }] },
+      b: { title: 'No time' }, c: { at: 3, title: 4 }, d: { at: 4, history: 'x' },
+    },
+    reviewed: Array.from({ length: 1005 }, (_, i) => `agent-${i}`),
+  }));
+  const st = openStore(dir).state;
+  assert.deepEqual(st.models, { a: { model: 'opus', effort: 'high' }, b: { model: 'sonnet', effort: null }, e: { model: 'haiku' } });
+  assert.deepEqual(st.rules, { a: ['Bash(ls:*)'] });
+  assert.deepEqual(st.answers, { t1: 'Yes' });
+  assert.deepEqual(st.plans, { t1: 'The plan' });
+  assert.deepEqual(st.status, { a: { status: 'idle', at: 5 } });
+  assert.deepEqual(st.ended, { a: 5 });
+  assert.deepEqual(st.endedFailed, { a: true });
+  assert.deepEqual(st.written, {
+    a: { at: 9, title: 'Ship it', now: 'Waiting', history: [{ title: 'Ship', at: 1 }] },
+    c: { at: 3 }, d: { at: 4, history: [] },
   });
+  // reviewed marks: the newest REVIEWED_MAX kept
+  assert.equal(st.reviewed.length, REVIEWED_MAX);
+  assert.equal(st.reviewed[0], 'agent-5');
+  assert.equal(st.reviewed.at(-1), 'agent-1004');
 });
 
-test('reconcile: a reopened session keeps its place', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'x', 'b'] }], others: [] };
-  // x was closed and is now open again: it is visible where it was.
-  const got = reconcileLayout(stored, stored, open(['a', 'x', 'b']));
-  assert.deepEqual(got, stored);
-});
-
-test('reconcile: malformed input is treated as empty', () => {
-  const got = reconcileLayout({ groups: 'no' } as unknown as Layout, empty, open(['a']));
-  assert.deepEqual(got, { groups: [], others: ['a'] });
+test('reviewed marks: a new mark past REVIEWED_MAX drops the oldest', () => {
+  const s = openStore(tmp(), { minIntervalMs: 0 });
+  const marks = new ReviewedMarks(s);
+  for (let i = 0; i < REVIEWED_MAX; i++) marks.mark(`a${i}`);
+  assert.equal(marks.mark('a5'), false, 'marked already');
+  assert.equal(marks.mark('new'), true);
+  assert.equal(s.state.reviewed.length, REVIEWED_MAX);
+  assert.equal(marks.has('a0'), false);
+  assert.equal(marks.has('a1'), true);
+  assert.equal(marks.has('new'), true);
+  s.close();
 });

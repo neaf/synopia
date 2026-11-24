@@ -1,11 +1,12 @@
 // A question or plan asked in another Claude Code process (R6.8), on the ext fixture: the row reads
 // needs you, the read-only card shows the questions, their options and the quiet footer, keys and
-// the message box stay the page's, a driver's session keeps "Not answered", the Dock badge counts
+// the message box stay the page's, a session Synopia drives keeps "Not answered", the Dock badge counts
 // them, and the card goes once the answer lands. Writes extcard-<n>.png in the state folder.
 // usage: node extcard.mjs make <fixture-dir> <claude-dir>   copies the fixture, its cards 4 min old (run.sh does this)
 //        node extcard.mjs <url> <state-dir> <claude-dir>
 import fs from 'node:fs';
 import path from 'node:path';
+import { shot as shotTo } from './helpers.mjs';
 
 const Q = 'e1e1e1e1-0000-4000-8000-00000000000a', P = 'e2e2e2e2-0000-4000-8000-00000000000b', D = 'e3e3e3e3-0000-4000-8000-00000000000e';
 const file = (dir, sid) => path.join(dir, 'projects', '-tmp-ext', `${sid}.jsonl`);
@@ -26,11 +27,10 @@ if (process.argv[2] === 'make') {
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
 const c = await connect();
-const { ev, check, key } = c;
+const { ev, check, key, until } = c;
 const text = (sel) => ev(`document.querySelector(${JSON.stringify(sel)})?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`);
-const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 let n = 0;
-const shot = async () => { const s = await c.cdp('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${stateDir}/extcard-${++n}.png`, Buffer.from(s.result.data, 'base64')); };
+const shot = () => shotTo(c, `${stateDir}/extcard-${++n}.png`);
 const open = async (sid) => { await ev(`document.querySelector('.row[data-id^="${sid.slice(0, 8)}"]').click()`); await sleep(800); };
 const row = (sid) => ev(`(() => { const r = document.querySelector('.row[data-id^="${sid.slice(0, 8)}"]'); return r && { state: r.dataset.state, word: r.querySelector('.r-state').textContent.trim() }; })()`);
 
@@ -61,11 +61,11 @@ await shot();
 
 // 2. keys: j/k aren't the card's, i goes to the message box, nothing answers
 const card0 = await ev(`document.querySelector('.qa-card.ro').outerHTML`);
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
+await ev('__synopia.spy()');
 await key('j', { code: 'KeyJ', vk: 74 }); await key('k', { code: 'KeyK', vk: 75 }); await key(' ', { code: 'Space', vk: 32 }); await key('Enter', { code: 'Enter', vk: 13 });
 await sleep(300);
 check('keys: j k Space Enter leave the card as it was', (await ev(`document.querySelector('.qa-card.ro').outerHTML`)) === card0);
-check('keys: no card state, nothing sent', (await ev(`Object.keys(qstate).length === 0 && !__sent.some(m => m.t === 'answer')`)), JSON.stringify(await ev('__sent')));
+check('keys: no card state, nothing sent', (await ev(`Object.keys(__synopia.cards()).length === 0 && __synopia.sent('answer').length === 0`)), JSON.stringify(await ev('__synopia.sent()')));
 await key('i', { code: 'KeyI', vk: 73 }); await sleep(200);
 check('keys: i focuses the message box', (await ev(`document.activeElement?.id`)) === 'msg', JSON.stringify(await ev(`document.activeElement?.id`)));
 await key('x', { code: 'KeyX', vk: 88 }); await sleep(100);
@@ -85,11 +85,11 @@ const pw = await text('.log .waitln');
 check('plan: transcript line', pw === 'Waiting for you: your approval of the plan above, asked in another process', JSON.stringify(pw));
 await shot();
 
-// 4. a driver's session whose ask has no request: Not answered, as before
+// 4. a session Synopia drives, whose ask has no request: Not answered, as before
 await open(D);
-check('driver: no card', !(await ev(`!!document.querySelector('.dock .qa-card')`)));
-check('driver: Not answered (Synopia quit)', (await ev(`document.querySelector('.log').textContent.includes('Not answered (Synopia quit)')`)));
-check('driver: row your turn', (await row(D))?.state === 'amber', JSON.stringify(await row(D)));
+check('driven: no card', !(await ev(`!!document.querySelector('.dock .qa-card')`)));
+check('driven: Not answered (Synopia quit)', (await ev(`document.querySelector('.log').textContent.includes('Not answered (Synopia quit)')`)));
+check('driven: row your turn', (await row(D))?.state === 'amber', JSON.stringify(await row(D)));
 
 // 5. the Dock badge counts the two (the shell polls GET /api/badge)
 const badge = async () => { const u = new URL(url); u.pathname = '/api/badge'; return (await (await fetch(u)).json()).badge; };

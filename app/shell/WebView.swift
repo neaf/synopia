@@ -97,15 +97,4 @@ final class PageView: NSObject, WKNavigationDelegate, WKUIDelegate {
     PageView.openOutside(action.request.url)
     return nil
   }
-
-  /// The page's `confirm()` ("Close “…”? Claude is working…") as a sheet on the window.
-  func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
-               initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-    let alert = NSAlert()
-    alert.messageText = message
-    alert.addButton(withTitle: "Close session")
-    alert.addButton(withTitle: "Cancel")
-    guard let window = webView.window else { return completionHandler(alert.runModal() == .alertFirstButtonReturn) }
-    alert.beginSheetModal(for: window) { completionHandler($0 == .alertFirstButtonReturn) }
-  }
 }

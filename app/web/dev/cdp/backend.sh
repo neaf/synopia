@@ -1,5 +1,6 @@
 #!/bin/bash
-# usage: backend.sh <port|0> <state-dir> [extra flags]; port 0 lets the backend pick a free one.
+# usage: backend.sh <port|0> <state-dir> [extra flags]; port 0 lets the backend pick a free one. The checks pass
+# --claude-dir <tree> --sdk-script <tree>/sdk-script.json: the scripted SDK seeds a fresh state folder.
 # Waits for its {"port","token"} line, writes <state-dir>/pid and <state-dir>/url and prints the url.
 W="$(cd "$(dirname "$0")/../../../.." && pwd)"
 port=$1; state=$2; shift 2

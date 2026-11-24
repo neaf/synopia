@@ -1,15 +1,19 @@
-// The backend daemon (plan section 2). The app is only UI: the Node backend owns the sessions and
-// outlives the app. The shell finds a running daemon through <state-dir>/daemon.json ({pid,
-// procStart, port, token, version}): the pid runs, `ps -o lstart=` matches procStart, and
-// GET /api/ping answers with the token. Otherwise it starts one detached (its own session through
-// POSIX_SPAWN_SETSID, stdin /dev/null, stdout and stderr appended to daemon.log) and waits for the
-// file. It polls GET /api/badge every 2 s for the Dock badge, which also notices a daemon that went
-// away. "Stop All Work" is POST /api/stop, "Restart Backend Now…" POST /api/restart.
+// The backend daemon (requirements R2.8). The app is only UI: the Node backend owns the sessions and
+// outlives the app. The shell finds a running daemon through <state-dir>/daemon.json (DaemonFiles):
+// the pid runs, `ps -o lstart=` matches procStart, and GET /api/ping answers with the token. Otherwise
+// it starts one detached (its own session through POSIX_SPAWN_SETSID, stdin /dev/null, stdout and
+// stderr appended to daemon.log) and waits for the file. It polls GET /api/badge every 2 s for the
+// Dock badge, which also notices a daemon that went away. "Stop All Work" is POST /api/stop,
+// "Restart Backend Now…" POST /api/restart. See docs/Daemon files.md.
 //
 // Updates are the daemon's own: it notices its checkout's code changed, and once nothing runs it
-// starts its successor and exits. The shell sees that as a daemon that went away, with daemon.log's
-// last line "… Synopia backend: stop (update)" (or "(restart)"): it waits for the successor's
-// daemon.json and reloads the page from it, without starting one or counting it as a crash.
+// starts its successor and exits. The shell sees that as a daemon that went away whose daemon.json
+// has a `handover` (or already names the successor): it waits for the successor's daemon.json and
+// reloads the page from it, without starting one or counting it as a crash.
+//
+// Threading: everything here runs on the main actor. HTTP is async with a timeout, so a slow or hung
+// daemon never blocks the UI, a stop or a restart; `ps` and posix_spawn run on one serial queue; one
+// thread per spawned daemon waits for its exit.
 import Darwin
 import Foundation
 
@@ -30,26 +34,29 @@ struct ShellError: Error, CustomStringConvertible {
   init(_ d: String) { description = d }
 }
 
+@MainActor
 final class Backend {
-  struct Ready { let pid: pid_t; let port: Int; let token: String }
-  private struct Info: Decodable { let pid: Int32; let procStart: String; let port: Int; let token: String; let version: String }
+  /// A daemon that answered: its pid with the start time daemon.json recorded (a pid alone may be
+  /// reused once it exits), and where its page is.
+  struct Ready { let pid: pid_t; let procStart: String; let port: Int; let token: String }
 
-  /// Main queue: a daemon answers, at launch or after one went away.
+  /// A daemon that answers, at launch or after one went away.
   var onReady: ((Ready) -> Void)?
-  /// Main queue: no daemon could be found or started, with the reason (daemon.log's last line).
+  /// No daemon could be found or started, with the reason (daemon.log's last line).
   var onExit: ((String) -> Void)?
-  /// Main queue: the badge count, on each change and 0 when the daemon is gone.
+  /// The badge count, on each change and 0 when the daemon is gone.
   var onBadge: ((Int) -> Void)?
 
   private(set) var ready: Ready?
   let stateDir: URL
-  private let queue = DispatchQueue(label: "Synopia.backend")
+  let files: DaemonFiles
+  private let processes = DispatchQueue(label: "Synopia.backend")  // ps and posix_spawn
   private var connecting = false
   private var stopping = false
+  private var polling = false
   private var badgeTimer: Timer?
   private var badge = 0
   private var lastRestart = Date.distantPast
-  private let childLock = NSLock()
   private var childExits: [pid_t: Int32] = [:]  // daemons this app started that have exited, with their status
 
   init() {
@@ -61,6 +68,7 @@ final class Backend {
       stateDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Synopia", isDirectory: true)
     }
+    files = DaemonFiles(stateDir: stateDir)
   }
 
   /// Finds the running daemon or starts one, then calls onReady (or onExit). `wait`: seconds to
@@ -68,36 +76,36 @@ final class Backend {
   func connect(wait: Double = 0) {
     guard !connecting, !stopping else { return }
     connecting = true
-    queue.async {
-      let result = self.findOrStart(wait: wait)
-      DispatchQueue.main.async {
-        self.connecting = false
-        switch result {
-        case .success(let r):
-          self.ready = r
-          self.startPolling()
-          self.onReady?(r)
-        case .failure(let e):
-          self.ready = nil
-          self.onExit?(e.description)
-        }
+    Task {
+      let result = await findOrStart(wait: wait)
+      connecting = false
+      switch result {
+      case .success(let r):
+        ready = r
+        startPolling()
+        onReady?(r)
+      case .failure(let e):
+        ready = nil
+        onExit?(e.description)
       }
     }
   }
 
-  /// "Stop All Work": POST /api/stop, then waits for the daemon's pid to go (SIGTERM after 15 s).
+  /// "Stop All Work": POST /api/stop, then waits for the daemon to go. SIGTERM after 15 s, and only
+  /// to the same process (its start time still daemon.json's), never to a pid reused meanwhile.
   func stopDaemon(done: @escaping () -> Void) {
     stopping = true
     badgeTimer?.invalidate()
     guard let r = ready else { return done() }
-    queue.async {
-      self.log("stop pid \(r.pid)")
-      _ = self.request(r, "stop", method: "POST", timeout: 3)
-      if !self.waitGone(r.pid, seconds: 15) {
+    Task {
+      log("stop pid \(r.pid)")
+      _ = await request(r, "stop", method: "POST", timeout: 3)
+      if await !waitGone(r, seconds: 15), await same(r) {
+        log("SIGTERM pid \(r.pid)")
         kill(r.pid, SIGTERM)
-        _ = self.waitGone(r.pid, seconds: 3)
+        _ = await waitGone(r, seconds: 3)
       }
-      DispatchQueue.main.async(execute: done)
+      done()
     }
   }
 
@@ -105,98 +113,155 @@ final class Backend {
   /// badge poll then finds as after an update.
   func restartDaemon() {
     guard let r = ready, !stopping else { return connect() }
-    queue.async {
-      self.log("restart pid \(r.pid)")
-      _ = self.request(r, "restart", method: "POST", timeout: 3)
+    Task {
+      log("restart pid \(r.pid)")
+      _ = await request(r, "restart", method: "POST", timeout: 3)
     }
+  }
+
+  /// GET /api/quit-check, or nil when there is no daemon or it doesn't answer within 2 s.
+  func quitCheck() async -> DaemonFiles.QuitCheck? {
+    guard let r = ready else { return nil }
+    return DaemonFiles.decode(DaemonFiles.QuitCheck.self, await request(r, "quit-check", timeout: 2))
   }
 
   // MARK: finding and starting
 
-  private func findOrStart(wait: Double) -> Result<Ready, ShellError> {
+  /// What daemon.json names: a daemon that answers, one that runs but didn't answer the ping in
+  /// time (busy, or hung), or none (no file, or its process is gone).
+  private enum Probe { case live(Ready), slow(Ready), none }
+
+  private func probe() async -> Probe {
+    guard let i = files.info(), i.pid > 0, !i.procStart.isEmpty, running(i.pid) else { return .none }
+    let r = Ready(pid: i.pid, procStart: i.procStart, port: i.port, token: i.token)
+    guard await same(r) else { return .none }
+    let ping = DaemonFiles.decode(DaemonFiles.Ping.self, await request(r, "ping", timeout: 2))
+    return ping?.pid == i.pid ? .live(r) : .slow(r)
+  }
+
+  private func findOrStart(wait: Double) async -> Result<Ready, ShellError> {
+    // A handover's successor, or a daemon that is slow to answer: wait for it rather than start a
+    // second one, which would only find the lock held (exit 3).
     let waitUntil = Date().addingTimeInterval(wait)
-    repeat {
-      if let r = live() {
+    var slowUntil: Date?
+    while true {
+      switch await probe() {
+      case .live(let r):
         log("daemon found pid \(r.pid)")
         return .success(r)
+      case .slow(let r):
+        if slowUntil == nil { log("daemon slow pid \(r.pid)") }
+        slowUntil = slowUntil ?? Date().addingTimeInterval(20)
+        if Date() > slowUntil! {
+          return .failure(ShellError("The Synopia backend (pid \(r.pid)) runs but doesn't answer."))
+        }
+        await pause(0.5)
+        continue
+      case .none:
+        break
       }
-      if Date() < waitUntil { usleep(100_000) }
-    } while Date() < waitUntil
+      if Date() >= waitUntil { break }
+      await pause(0.1)
+    }
     let config: BackendConfig
     do { config = try BackendConfig.load() } catch { return .failure(ShellError("\(error)")) }
     let pid: pid_t
-    do { pid = try spawnDaemon(config) } catch { return .failure(error as? ShellError ?? ShellError("\(error)")) }
+    do { pid = try await spawnDaemon(config) } catch { return .failure(error as? ShellError ?? ShellError("\(error)")) }
     log("daemon started pid \(pid)")
     let deadline = Date().addingTimeInterval(20)
     var exitedAt: Date?
     while Date() < deadline {
-      usleep(100_000)
-      if let r = live() { return .success(r) }
-      childLock.lock(); let status = childExits[pid]; childLock.unlock()
-      guard let status else { continue }
+      await pause(0.1)
+      if case .live(let r) = await probe() { return .success(r) }
+      guard let status = childExits[pid] else { continue }
       // Exit 3: another daemon holds the lock (a second launch at the same moment): wait for its file.
+      // The status is waitpid's raw one, the code shifted left 8 bits (docs/Daemon files.md).
       if status == 3 << 8 { continue }
       if exitedAt == nil { exitedAt = Date() }
       if Date().timeIntervalSince(exitedAt!) > 1 { break }
     }
-    return .failure(ShellError(lastLogLine() ?? "The Synopia backend didn't start. See daemon.log in \(stateDir.path)."))
-  }
-
-  /// The daemon daemon.json names, when it runs and answers; nil for a missing or stale file.
-  private func live() -> Ready? {
-    guard let data = try? Data(contentsOf: stateDir.appendingPathComponent("daemon.json")),
-          let i = try? JSONDecoder().decode(Info.self, from: data), i.pid > 0, !i.procStart.isEmpty,
-          running(i.pid), Backend.procStart(i.pid) == i.procStart else { return nil }
-    let r = Ready(pid: i.pid, port: i.port, token: i.token)
-    guard let body = request(r, "ping", timeout: 2),
-          let ping = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
-          (ping["pid"] as? Int) == Int(i.pid) else { return nil }
-    return r
+    return .failure(ShellError(files.lastLogLine() ?? "The Synopia backend didn't start. See daemon.log in \(stateDir.path)."))
   }
 
   private func running(_ pid: pid_t) -> Bool {
-    childLock.lock(); let exited = childExits[pid] != nil; childLock.unlock()
-    if exited { return false }
+    if childExits[pid] != nil { return false }
     return kill(pid, 0) == 0 || errno == EPERM
   }
 
-  private func waitGone(_ pid: pid_t, seconds: Double) -> Bool {
+  /// Whether `r.pid` is still the process daemon.json recorded (`ps` gives the same start time).
+  private func same(_ r: Ready) async -> Bool {
+    guard running(r.pid) else { return false }
+    return await Backend.procStart(r.pid, on: processes) == r.procStart
+  }
+
+  /// Waits until `r` is gone: its pid exited, or now belongs to another process (checked each second).
+  private func waitGone(_ r: Ready, seconds: Double) async -> Bool {
     let deadline = Date().addingTimeInterval(seconds)
-    while running(pid) {
+    var checked = Date()
+    while running(r.pid) {
+      if Date().timeIntervalSince(checked) >= 1 {
+        if await !same(r) { return true }
+        checked = Date()
+      }
       if Date() > deadline { return false }
-      usleep(50_000)
+      await pause(0.05)
     }
     return true
   }
 
-  /// `ps -o lstart=` in the C locale and UTC, as the daemon recorded it.
-  static func procStart(_ pid: pid_t) -> String {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/bin/ps")
-    p.arguments = ["-o", "lstart=", "-p", String(pid)]
-    p.environment = ["LC_ALL": "C", "TZ": "UTC"]
-    let out = Pipe()
-    p.standardOutput = out
-    p.standardError = FileHandle.nullDevice
-    do { try p.run() } catch { return "" }
-    let data = out.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
-    return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+  private func pause(_ seconds: Double) async {
+    try? await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+  }
+
+  /// `ps -o lstart=` in the C locale and UTC, as the daemon recorded it (docs/Daemon files.md).
+  nonisolated static func procStart(_ pid: pid_t, on queue: DispatchQueue) async -> String {
+    await withCheckedContinuation { done in
+      queue.async {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/ps")
+        p.arguments = ["-o", "lstart=", "-p", String(pid)]
+        p.environment = ["LC_ALL": "C", "TZ": "UTC"]
+        let out = Pipe()
+        p.standardOutput = out
+        p.standardError = FileHandle.nullDevice
+        do { try p.run() } catch { return done.resume(returning: "") }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        done.resume(returning: String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
+      }
+    }
   }
 
   /// Starts the daemon in its own session and process group, so the app's end never reaches it.
-  private func spawnDaemon(_ c: BackendConfig) throws -> pid_t {
+  private func spawnDaemon(_ c: BackendConfig) async throws -> pid_t {
     try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true,
                                             attributes: [.posixPermissions: 0o700])
     var args = [c.node, "--disable-warning=ExperimentalWarning", "--experimental-strip-types", c.backend]
     let env = ProcessInfo.processInfo.environment
     if let dir = env["SYNOPIA_STATE_DIR"], !dir.isEmpty { args += ["--state-dir", stateDir.path] }
-    // SYNOPIA_FAKE=<fixture claude dir> plays the fake driver over that tree (checks, no model calls).
-    if let dir = env["SYNOPIA_FAKE"], !dir.isEmpty { args += ["--fake", "--claude-dir", dir] }
+    // SYNOPIA_SDK_SCRIPT=<fixture claude dir> runs the scripted SDK over that tree and its
+    // sdk-script.json (checks, no model calls). The script writes to the tree: give it a copy.
+    if let dir = env["SYNOPIA_SDK_SCRIPT"], !dir.isEmpty {
+      args += ["--claude-dir", dir, "--sdk-script", (dir as NSString).appendingPathComponent("sdk-script.json")]
+    }
     // SYNOPIA_EXIT_IDLE_MS (checks only): a shorter idle exit than 30 min.
     if let ms = env["SYNOPIA_EXIT_IDLE_MS"], !ms.isEmpty { args += ["--exit-idle-ms", ms] }
-
     let logPath = stateDir.appendingPathComponent("daemon.log").path
+    let spawned: Result<pid_t, ShellError> = await withCheckedContinuation { done in
+      processes.async { done.resume(returning: Backend.spawn(node: c.node, args: args, log: logPath)) }
+    }
+    let pid = try spawned.get()
+    // While the app runs the daemon is its child: reap it when it exits, so no zombie passes for alive.
+    Thread.detachNewThread { [weak self] in
+      var status: Int32 = 0
+      while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
+      let exit = status
+      DispatchQueue.main.async { MainActor.assumeIsolated { self?.childExits[pid] = exit } }
+    }
+    return pid
+  }
+
+  nonisolated private static func spawn(node: String, args: [String], log logPath: String) -> Result<pid_t, ShellError> {
     var actions: posix_spawn_file_actions_t?
     posix_spawn_file_actions_init(&actions)
     defer { posix_spawn_file_actions_destroy(&actions) }
@@ -223,37 +288,33 @@ final class Backend {
     let argv: [UnsafeMutablePointer<CChar>?] = args.map { strdup($0) } + [nil]
     defer { argv.forEach { free($0) } }
     var pid: pid_t = 0
-    let rc = posix_spawn(&pid, c.node, &actions, &attr, argv, environ)
-    if rc != 0 { throw ShellError("Cannot start \(c.node): \(String(cString: strerror(rc)))") }
-    // While the app runs the daemon is its child: reap it when it exits, so no zombie passes for alive.
-    Thread.detachNewThread { [weak self] in
-      var status: Int32 = 0
-      while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
-      guard let self else { return }
-      self.childLock.lock(); self.childExits[pid] = status; self.childLock.unlock()
-    }
-    return pid
+    let rc = posix_spawn(&pid, node, &actions, &attr, argv, environ)
+    if rc != 0 { return .failure(ShellError("Cannot start \(node): \(String(cString: strerror(rc)))")) }
+    return .success(pid)
   }
 
   // MARK: the badge, and noticing a daemon that went away
 
   private func startPolling() {
     badgeTimer?.invalidate()
-    badgeTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in self?.poll() }
+    badgeTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+      MainActor.assumeIsolated { self?.poll() }
+    }
     poll()
   }
 
+  /// One badge request at a time: a slow daemon skips polls instead of queueing them.
   private func poll() {
-    guard let r = ready, !stopping else { return }
-    queue.async {
-      let body = self.request(r, "badge", timeout: 2)
-      let n = body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["badge"] as? Int
-      let gone = n == nil && !(self.running(r.pid) && Backend.procStart(r.pid) != "")
-      DispatchQueue.main.async {
-        guard !self.stopping, self.ready?.pid == r.pid else { return }
-        if let n { return self.setBadge(n) }
-        if gone { self.lost(r) }
-      }
+    guard let r = ready, !stopping, !polling else { return }
+    polling = true
+    Task {
+      defer { polling = false }
+      let n = DaemonFiles.decode(DaemonFiles.Badge.self, await request(r, "badge", timeout: 2))?.badge
+      // no answer from a process that is still daemon.json's: slow, not gone
+      let gone = n == nil ? await !same(r) : false
+      guard !stopping, ready?.pid == r.pid else { return }
+      if let n { return setBadge(n) }
+      if gone { lost(r) }
     }
   }
 
@@ -272,28 +333,22 @@ final class Backend {
     badgeTimer?.invalidate()
     setBadge(0)
     // A handover: the new daemon is starting (it waits for the old pid, then writes daemon.json).
-    if handover() {
+    if files.handedOver(from: r.pid) {
       log("handover from pid \(r.pid)")
       return connect(wait: 20)
     }
     if Date().timeIntervalSince(lastRestart) < 60 {
-      onExit?(lastLogLine() ?? "The Synopia backend stopped.")
+      onExit?(files.lastLogLine() ?? "The Synopia backend stopped.")
       return
     }
     lastRestart = Date()
     connect()
   }
 
-  /// Whether the daemon that went away handed over to a new one (an update or a restart).
-  private func handover() -> Bool {
-    guard let line = lastLogLine() else { return false }
-    return line.hasSuffix("Synopia backend: stop (update)") || line.hasSuffix("Synopia backend: stop (restart)")
-  }
-
   // MARK: helpers
 
-  /// A synchronous call to /api/<path>?token=…; the body on a 200, else nil. Off the main queue only.
-  private func request(_ r: Ready, _ path: String, method: String = "GET", timeout: TimeInterval) -> Data? {
+  /// /api/<path>?token=…: the body on a 200, else nil (no answer within `timeout` too).
+  private func request(_ r: Ready, _ path: String, method: String = "GET", timeout: TimeInterval) async -> Data? {
     var c = URLComponents()
     c.scheme = "http"
     c.host = "127.0.0.1"
@@ -304,24 +359,9 @@ final class Backend {
     var req = URLRequest(url: url)
     req.httpMethod = method
     req.timeoutInterval = timeout
-    let done = DispatchSemaphore(value: 0)
-    var out: Data?
-    URLSession.shared.dataTask(with: req) { data, resp, _ in
-      if (resp as? HTTPURLResponse)?.statusCode == 200 { out = data }
-      done.signal()
-    }.resume()
-    done.wait()
-    return out
-  }
-
-  /// The last non-empty line of daemon.log (the daemon's stderr: an error, or its stop reason).
-  func lastLogLine() -> String? {
-    guard let h = try? FileHandle(forReadingFrom: stateDir.appendingPathComponent("daemon.log")) else { return nil }
-    defer { try? h.close() }
-    let size = (try? h.seekToEnd()) ?? 0
-    try? h.seek(toOffset: size > 4096 ? size - 4096 : 0)
-    let text = String(decoding: h.readDataToEndOfFile(), as: UTF8.self)
-    return text.split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init)
+    guard let (data, resp) = try? await URLSession.shared.data(for: req),
+          (resp as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+    return data
   }
 
   private func log(_ s: String) {

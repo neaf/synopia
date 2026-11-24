@@ -7,9 +7,8 @@ import { Transcript } from '../src/transcript.ts';
 import type { JsonRecord } from '../src/tail.ts';
 import type { WrittenTitle } from '../src/transcript.ts';
 import { Writer, withTitle, MAX_HISTORY } from '../src/writer.ts';
-import type { WriterQueryFn } from '../src/writer.ts';
+import { emit, fakeQuery, result } from './support/fake-query.ts';
 import { openStore } from '../src/store.ts';
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const T = (min: number) => new Date(Date.UTC(2026, 10, 24, 9, min)).toISOString();
 const you = (n: number, text: string): JsonRecord => ({ type: 'user', uuid: `u${n}`, timestamp: T(n), message: { role: 'user', content: text } });
@@ -92,13 +91,10 @@ test('history: the writer keeps a new title only when it changed, the newest 50'
   const store = openStore(dir);
   let n = 0;
   const replies = ['Fix the test', 'Fix the test', 'Fix the docs'];
-  const fn: WriterQueryFn = ({ prompt }) => (async function* () {
-    for await (const _ of prompt) { /* drain */ }
-    yield { type: 'result', subtype: 'success', result: JSON.stringify({ title: replies[n++], now: 'Now' }) } as unknown as SDKMessage;
-  })();
+  const q = fakeQuery({ onInput: (c) => emit(c, result(JSON.stringify({ title: replies[n++], now: 'Now' }))) });
   let clock = 1000;
   const w = new Writer({
-    store, stateDir: dir, queryFn: fn, debounceMs: 1, now: () => clock++,
+    store, stateDir: dir, sdk: q.sdk, debounceMs: 1, now: () => clock++,
     source: { title: () => 'x', turns: () => [{ you: 'a', claude: 'b' }], resolve: (s) => s, changed: () => {} },
   });
   for (let i = 0; i < 3; i++) {

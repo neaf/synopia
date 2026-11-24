@@ -1,16 +1,16 @@
-// Claude-written titles and Now lines (plan section 10, R3.4). After a session's turn ends
+// Claude-written titles and Now lines (FR-SES-06, R3.4). After a session's turn ends
 // (debounced 20 s), and once when a session opens with no stored text, a one-shot `query()`
 // reads the last turns and writes a title and a Now line. The call can't act: no tools, no MCP
 // servers, no hooks, its own system prompt, no saved session, and a scratch folder of its own.
 // Its result never reaches the sessions, so a writer call can't start another one.
-// The text is stored in state.json `written[sid]`; views.ts puts it in the `session` message.
+// The text is stored in state.json `written[sid]`; publisher.ts puts it in the `session` message.
 import fs from 'node:fs';
 import path from 'node:path';
-import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { oneShot, realSdk, writerOptions } from './sdk.ts';
+import type { OneShot, Sdk } from './sdk.ts';
 
 export const DEBOUNCE_MS = 20_000;
 export const TURNS = 3;
@@ -21,7 +21,6 @@ export const MAX_HISTORY = 50; // written titles kept per session (state.json wr
 
 export type Turn = { you: string; claude: string };
 export type Written = { title: string; now: string };
-export type WriterQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => AsyncIterable<SDKMessage>;
 
 // What the writer reads of a session: its shown title and its turns, oldest first.
 // `undefined` when the session isn't open any more.
@@ -39,7 +38,7 @@ export type WriterOptions = {
   source: WriterSource;
   stateDir: string;
   log?: Log;
-  queryFn?: WriterQueryFn;
+  sdk?: Pick<Sdk, 'query'>; // tests inject a fake; the default is the SDK
   now?: () => number;
   debounceMs?: number;
 };
@@ -123,28 +122,6 @@ export function limit(s: string, n: number): string {
   const cut = one.slice(0, n - 1);
   const sp = cut.lastIndexOf(' ');
   return (sp > n / 2 ? cut.slice(0, sp) : cut).replace(/[\s,.;:–-]+$/, '') + '…';
-}
-
-// The options of section 10: nothing the call could act with, and nothing written to disk.
-export function writerOptions(model: string, cwd: string): Options {
-  return {
-    model,
-    maxTurns: 1,
-    tools: [],
-    mcpServers: {},
-    strictMcpConfig: true,
-    permissionMode: 'dontAsk',
-    settings: { disableAllHooks: true },
-    systemPrompt: SYSTEM_PROMPT,
-    verbatimPrompts: true, // no @path expansion, slash commands or CLAUDE.md attachments
-    persistSession: false,
-    includeHookEvents: true, // so a hook that still runs (a managed one) shows in the log
-    cwd,
-  };
-}
-
-async function* one(text: string): AsyncGenerator<SDKUserMessage> {
-  yield { type: 'user', message: { role: 'user', content: text }, parent_tool_use_id: null };
 }
 
 export class Writer {
@@ -235,19 +212,20 @@ export class Writer {
     const turns = this.src.turns(sid);
     if (title === undefined || !turns?.length) return;
     const cwd = path.join(this.opts.stateDir, 'writer');
-    fs.mkdirSync(cwd, { recursive: true });
-    const options = writerOptions(this.store.state.settings.writerModel || 'haiku', cwd);
+    try {
+      fs.mkdirSync(cwd, { recursive: true });
+    } catch (e) { // no scratch folder (EACCES, ENOSPC): no call, and the log says why
+      this.log('writer.failed', { sid, error: (e as NodeJS.ErrnoException).code ?? 'mkdir' });
+      return;
+    }
+    const options = writerOptions(this.store.state.settings.writerModel || 'haiku', cwd, SYSTEM_PROMPT);
     const ac = new AbortController();
     options.abortController = ac;
     this.abort = ac;
     const started = this.now();
-    let reply = '';
-    const hooks: string[] = []; // the events of hooks that still ran (managed ones), names only
+    let r: OneShot;
     try {
-      for await (const m of (this.opts.queryFn ?? (sdkQuery as WriterQueryFn))({ prompt: one(buildPrompt(title, turns, this.src.work?.(sid) ?? [])), options })) {
-        if (m.type === 'system' && m.subtype === 'hook_started') hooks.push(String(m.hook_event));
-        if (m.type === 'result') reply = m.subtype === 'success' ? m.result : '';
-      }
+      r = await oneShot((this.opts.sdk ?? realSdk).query, buildPrompt(title, turns, this.src.work?.(sid) ?? []), options);
     } catch (e) {
       this.log('writer.failed', { sid, error: String((e as Error)?.name ?? 'error') });
       return;
@@ -255,8 +233,13 @@ export class Writer {
       if (this.abort === ac) this.abort = null;
     }
     if (ac.signal.aborted) return;
-    const w = parseReply(reply);
-    this.log('writer.done', { sid, ok: Boolean(w), ms: this.now() - started, hooks: hooks.join(',') || 'none' });
+    const hooks = r.hooks.join(',') || 'none'; // the events of hooks that still ran (managed ones), names only
+    if (r.failure) { // rate limit, sign-in, a turn cut short: no reply to read
+      this.log('writer.failed', { sid, result: r.failure, error: r.apiError, ms: this.now() - started, hooks });
+      return;
+    }
+    const w = parseReply(r.reply);
+    this.log('writer.done', { sid, ok: Boolean(w), ms: this.now() - started, hooks });
     if (!w) return;
     const cur = this.src.resolve(sid); // the session may have moved to a new id meanwhile
     if (this.src.title(cur) === undefined) return;

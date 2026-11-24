@@ -1,0 +1,428 @@
+{
+  "t": "hello",
+  "v": 2,
+  "code": "<code>",
+  "sessions": [
+    {
+      "id": "11111111-0000-4000-8000-000000000001",
+      "title": "Demo notes cleanup",
+      "name": "A later generated title",
+      "now": "",
+      "cwd": "~/dev/demo",
+      "prs": [
+        102,
+        103,
+        104,
+        105
+      ],
+      "state": {
+        "status": "idle",
+        "since": "<time>",
+        "detail": {},
+        "light": "amber",
+        "tone": "amber",
+        "word": "Your turn",
+        "mark": "stopped",
+        "stopped": false,
+        "needsYou": null,
+        "review": 0,
+        "driven": true
+      },
+      "ask": null,
+      "model": "claude-opus-4-1",
+      "effort": "high",
+      "outbox": [],
+      "bang": null,
+      "agents": [],
+      "background": [],
+      "stream": null,
+      "held": []
+    },
+    {
+      "id": "22222222-0000-4000-8000-000000000002",
+      "title": "Pick a colour for the demo banner.",
+      "name": "",
+      "now": "",
+      "cwd": "",
+      "prs": [],
+      "state": {
+        "status": "waiting",
+        "since": "<time>",
+        "detail": {},
+        "light": "red",
+        "tone": "red",
+        "word": "Needs you",
+        "mark": "pause",
+        "stopped": false,
+        "needsYou": "question",
+        "review": 0,
+        "driven": true
+      },
+      "ask": null,
+      "model": null,
+      "effort": null,
+      "outbox": [],
+      "bang": null,
+      "agents": [],
+      "background": [],
+      "stream": null,
+      "held": []
+    },
+    {
+      "id": "33333333-0000-4000-8000-000000000003",
+      "title": "Run the demo build in the background and watch the log.",
+      "name": "",
+      "now": "",
+      "cwd": "~/dev/demo",
+      "prs": [],
+      "state": {
+        "status": "waiting",
+        "since": "<time>",
+        "detail": {},
+        "light": "red",
+        "tone": "red",
+        "word": "Needs you",
+        "mark": "pause",
+        "stopped": false,
+        "needsYou": "permission",
+        "review": 0,
+        "driven": true
+      },
+      "ask": null,
+      "model": null,
+      "effort": null,
+      "outbox": [],
+      "bang": null,
+      "agents": [],
+      "background": [
+        {
+          "toolUseId": "toolu_bgsh1",
+          "taskId": "bash_1",
+          "kind": "shell",
+          "description": "Build the demo",
+          "command": "make demo-build",
+          "persistent": false,
+          "start": "2026-11-20T12:00:05.000Z",
+          "status": "completed",
+          "summary": "Build finished with 0 errors",
+          "end": "2026-11-20T12:05:00.000Z"
+        },
+        {
+          "toolUseId": "toolu_mon1",
+          "taskId": null,
+          "kind": "monitor",
+          "description": "Watch the demo log",
+          "command": "tail -f /tmp/demo.log",
+          "timeout": 600000,
+          "persistent": false,
+          "start": "2026-11-20T12:00:05.000Z",
+          "status": "failed",
+          "summary": "",
+          "end": "2026-11-20T12:06:00.000Z"
+        },
+        {
+          "toolUseId": "toolu_mon2",
+          "taskId": null,
+          "kind": "monitor",
+          "description": "Watch the other log",
+          "command": "tail -f /tmp/other.log",
+          "persistent": true,
+          "start": "2026-11-20T12:00:05.000Z",
+          "status": "running",
+          "summary": "",
+          "end": null
+        }
+      ],
+      "stream": null,
+      "held": []
+    },
+    {
+      "id": "44444444-0000-4000-8000-000000000004",
+      "title": "Split the demo work over a few subagents.",
+      "name": "",
+      "now": "",
+      "cwd": "",
+      "prs": [],
+      "state": {
+        "status": "busy",
+        "since": "<time>",
+        "detail": {},
+        "light": "green",
+        "tone": "green",
+        "word": "Working",
+        "mark": "work",
+        "stopped": false,
+        "needsYou": null,
+        "review": 1,
+        "driven": true
+      },
+      "ask": null,
+      "model": null,
+      "effort": null,
+      "outbox": [],
+      "bang": null,
+      "agents": [
+        {
+          "id": "aaaa0001",
+          "type": "Explore",
+          "fork": false,
+          "description": "Find the demo config",
+          "toolUseId": "toolu_ag1",
+          "model": "haiku",
+          "depth": 1,
+          "finished": true,
+          "running": false,
+          "review": false,
+          "stopped": false,
+          "start": "2026-11-20T13:00:06.000Z",
+          "end": "2026-11-20T13:01:50.000Z",
+          "total": 2
+        },
+        {
+          "id": "aaaa0002",
+          "type": "general-purpose",
+          "fork": false,
+          "description": "Rewrite the demo tests",
+          "toolUseId": "toolu_ag2",
+          "model": null,
+          "depth": 1,
+          "finished": false,
+          "running": true,
+          "review": false,
+          "stopped": false,
+          "start": "2026-11-20T13:00:07.000Z",
+          "end": "2026-11-20T13:20:00.000Z",
+          "total": 2
+        },
+        {
+          "id": "aaaa0003",
+          "type": "general-purpose",
+          "fork": true,
+          "description": "Try the other approach",
+          "toolUseId": "toolu_ag3",
+          "model": null,
+          "depth": 1,
+          "finished": true,
+          "running": false,
+          "review": false,
+          "stopped": false,
+          "start": "2026-11-20T13:00:08.000Z",
+          "end": "2026-11-20T13:09:50.000Z",
+          "total": 2
+        },
+        {
+          "id": "aaaa0004",
+          "type": "general-purpose",
+          "fork": false,
+          "description": "For review: Draft the demo release notes",
+          "toolUseId": "toolu_ag4",
+          "model": null,
+          "depth": 1,
+          "finished": true,
+          "running": false,
+          "review": true,
+          "stopped": false,
+          "start": "2026-11-20T13:00:09.000Z",
+          "end": "2026-11-20T13:11:59.000Z",
+          "total": 2
+        },
+        {
+          "id": "aaaa0005",
+          "type": "subagent",
+          "fork": false,
+          "description": "",
+          "toolUseId": null,
+          "model": null,
+          "depth": 1,
+          "finished": false,
+          "running": true,
+          "review": false,
+          "stopped": false,
+          "start": "2026-11-20T13:00:10.000Z",
+          "end": "2026-11-20T13:00:40.000Z",
+          "total": 2
+        },
+        {
+          "id": "aaaa0006",
+          "type": "Explore",
+          "fork": false,
+          "description": "Count the demo files",
+          "toolUseId": "toolu_ag6",
+          "model": null,
+          "depth": 1,
+          "finished": true,
+          "running": false,
+          "review": false,
+          "stopped": false,
+          "start": "2026-11-20T13:00:11.000Z",
+          "end": "2026-11-20T13:01:00.000Z",
+          "total": 2
+        }
+      ],
+      "background": [],
+      "stream": "Two subagents are still running. I'll merge their changes when both report back.",
+      "held": []
+    },
+    {
+      "id": "55555555-0000-4000-8000-000000000005",
+      "title": "Plan the demo release.",
+      "name": "",
+      "now": "",
+      "cwd": "/tmp/fixture",
+      "prs": [],
+      "state": {
+        "status": "waiting",
+        "since": "<time>",
+        "detail": {},
+        "light": "red",
+        "tone": "red",
+        "word": "Needs you",
+        "mark": "pause",
+        "stopped": false,
+        "needsYou": "plan",
+        "review": 0,
+        "driven": true
+      },
+      "ask": null,
+      "model": null,
+      "effort": null,
+      "outbox": [],
+      "bang": null,
+      "agents": [],
+      "background": [],
+      "stream": null,
+      "held": []
+    }
+  ],
+  "pending": [
+    {
+      "sid": "22222222-0000-4000-8000-000000000002",
+      "request": {
+        "id": "req-question-1",
+        "kind": "question",
+        "since": "<time>",
+        "toolName": "AskUserQuestion",
+        "toolUseId": "toolu_ask2",
+        "agentId": null,
+        "input": {
+          "questions": [
+            {
+              "question": "Ship it today?",
+              "header": "Ship",
+              "multiSelect": false,
+              "options": [
+                {
+                  "label": "Yes (recommended)",
+                  "description": "Today, after the checks pass"
+                },
+                {
+                  "label": "No",
+                  "description": "Next week, with the docs"
+                }
+              ]
+            },
+            {
+              "question": "Which pages get the banner?",
+              "header": "Pages",
+              "multiSelect": true,
+              "options": [
+                {
+                  "label": "Home",
+                  "description": "The landing page"
+                },
+                {
+                  "label": "Docs",
+                  "description": "Every docs page"
+                },
+                {
+                  "label": "Blog",
+                  "description": "Only new posts"
+                }
+              ]
+            }
+          ]
+        },
+        "cwd": "",
+        "description": "",
+        "title": "",
+        "decisionReason": "",
+        "defaultToNo": false,
+        "suppressAlwaysAllowRule": false,
+        "suggestions": [],
+        "always": null
+      }
+    },
+    {
+      "sid": "33333333-0000-4000-8000-000000000003",
+      "request": {
+        "id": "req-permission-1",
+        "kind": "permission",
+        "since": "<time>",
+        "toolName": "Bash",
+        "toolUseId": "toolu_fake_push1",
+        "agentId": null,
+        "input": {
+          "command": "git push origin demo-banner",
+          "description": "Push the banner branch so CI runs the demo build on it."
+        },
+        "cwd": "~/dev/demo",
+        "description": "",
+        "title": "",
+        "decisionReason": "",
+        "defaultToNo": false,
+        "suppressAlwaysAllowRule": false,
+        "suggestions": [
+          {
+            "type": "addRules",
+            "rules": [
+              {
+                "toolName": "Bash",
+                "ruleContent": "git push:*"
+              }
+            ],
+            "behavior": "allow",
+            "destination": "localSettings"
+          }
+        ],
+        "always": "Always allow Bash(git push:*) in this project (.claude/settings.local.json)."
+      }
+    },
+    {
+      "sid": "55555555-0000-4000-8000-000000000005",
+      "request": {
+        "id": "req-plan-1",
+        "kind": "plan",
+        "since": "<time>",
+        "toolName": "ExitPlanMode",
+        "toolUseId": "toolu_fake_plan2",
+        "agentId": null,
+        "input": {
+          "plan": "## Plan: ship the demo release\n\n1. **Tag.** Tag `v0.3.0` on main after the banner change merges.\n2. **Notes.** Use the release notes from the review subagent, with the teal banner first.\n3. **Ship.** Run `make demo-release` and check the demo site.\n\nThen tell you the release link."
+        },
+        "cwd": "/tmp/fixture",
+        "description": "",
+        "title": "",
+        "decisionReason": "",
+        "defaultToNo": false,
+        "suppressAlwaysAllowRule": false,
+        "suggestions": [],
+        "always": null
+      }
+    }
+  ],
+  "layout": {
+    "groups": [],
+    "others": [
+      "11111111-0000-4000-8000-000000000001",
+      "22222222-0000-4000-8000-000000000002",
+      "33333333-0000-4000-8000-000000000003",
+      "44444444-0000-4000-8000-000000000004",
+      "55555555-0000-4000-8000-000000000005"
+    ]
+  },
+  "menu": {},
+  "ui": {
+    "sessions": {}
+  },
+  "update": false
+}

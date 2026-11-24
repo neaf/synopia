@@ -7,11 +7,12 @@
 // the composer: a synthetic paste, the ✕ on hover, remove, send. Writes images-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { shot as shotTo, writeScript } from './helpers.mjs';
 import { deflateSync, crc32 } from 'node:zlib';
 
 const SID = 'c0c0c0c0-0000-4000-8000-0000000000c0';
 // A made-up w x h RGB PNG: a hue ramp left to right, darker in a band at the centre (so a crop shows).
-export function png(w, h) {
+function png(w, h) {
   const chunk = (type, data) => {
     const t = Buffer.concat([Buffer.from(type, 'latin1'), data]);
     const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
@@ -78,21 +79,22 @@ if (process.argv[2] === 'make') {
     + line({ ...base, type: 'user', uuid: 'u4', timestamp: ts(55), imagePasteIds: [1, 2], message: { role: 'user', content: [{ type: 'text', text: '[Image #1] is the old screen, [Image #2] the new one. Which reads better?' }, img('image/png', png(400, 100)), img('image/png', png(240, 160))] } })
     + line({ ...base, type: 'assistant', uuid: 'a10', timestamp: ts(56), message: { role: 'assistant', content: [{ type: 'text', text: 'The new one.' }] } })
     + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: ts(57) }));
+  // the session's folder is one that exists (the backend refuses a send to a folder that's gone)
+  writeScript(process.argv[3], 'images: the composer sends to a folder that exists', { [SID]: { state: { cwd: process.argv[3] } } });
   process.exit(0);
 }
 
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
-const { ev, check, key, mouse } = c;
+const { ev, check, key, mouse, until } = c;
 await c.cdp('Page.enable');
 const { identifier } = await c.cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__csp = []; document.addEventListener('securitypolicyviolation', e => __csp.push(e.violatedDirective + ' ' + e.blockedURI));` }).then((r) => r.result);
-await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
-const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
-const shot = async (name, clip) => fs.writeFileSync(path.join(stateDir, `images-${name}.png`), Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) })).result.data, 'base64'));
+await c.load(url + `#${SID.slice(0, 8)}`, `__synopia.current() === '${SID}'`);
+const shot = (name, clip) => shotTo(c, path.join(stateDir, `images-${name}.png`), clip && { ...clip, scale: 1 });
 const near = (a, b) => Math.abs(a - b) < 0.6;
 
-check('the session loads with its prompt thumbnails', await until(`cur()?.id === '${SID}' && document.querySelectorAll('[data-key="you:u1"] .thumbs .thumb').length === 3`));
+check('the session loads with its prompt thumbnails', await until(`__synopia.cur()?.id === '${SID}' && document.querySelectorAll('[data-key="you:u1"] .thumbs .thumb').length === 3`));
 check('sizes come from the backend before load', await ev(`[...document.querySelectorAll('[data-key="you:u1"] .thumbs .thumb')].map(b => b.style.getPropertyValue('--iw') + 'x' + b.style.getPropertyValue('--ih')).join() === '400x100,20x20,3000x100'`));
 check('no "[3 pasted images]" line', await ev(`!document.querySelector('.prompt .img')`));
 check('the images load', await until(`[...document.querySelectorAll('[data-key="you:u1"] .thumbs img')].every(i => i.complete && i.naturalWidth > 0)`));
@@ -110,8 +112,8 @@ check('a run shows its Read image with the run closed', await ev(`(() => { const
 check('a single step shows its two screenshot images under it, closed', await ev(`(() => { const s = [...document.querySelectorAll('.ln.tool > details.step')].find(d => d.textContent.includes('screenshot')); const b = s?.parentElement; return !!b && !s.open && b.querySelectorAll(':scope > .thumbs .thumb').length === 2; })()`));
 check('the thumbnails sit in the text column', await ev(`(() => { const t = document.querySelector('.ln.tool > .thumbs'), g = t.parentElement.querySelector('.g'); return t.getBoundingClientRect().left >= g.getBoundingClientRect().right - 0.5; })()`));
 check('a 415 type is a quiet tile', await until(`!!document.querySelector('.prompt .thumbs .thumb.gone') && document.querySelector('.prompt .thumbs .thumb.gone').textContent === 'Image gone'`));
-await ev(`(() => { const s = cur(); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-missing', k: 'you', ts: '2026-11-20T10:01:00.000Z', text: 'An image whose file was rewritten', images: 1, imgs: [{ ref: 'nope:0', mediaType: 'image/png', w: 400, h: 100 }] }], total: s.total + 1 }); })()`);
-check('a 404 is the same tile, the image\'s shape', await until(`(() => { const t = document.querySelector('[data-key="you:u-missing"] .thumb.gone'); return !!t && Math.abs(t.getBoundingClientRect().width - ${4 * H + 2}) < 1; })()`));
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-missing', k: 'you', ts: '2026-11-20T10:01:00.000Z', text: 'An image whose file was rewritten', images: 1, imgs: [{ ref: 'nope:0', mediaType: 'image/png', w: 400, h: 100 }] }], total: s.total + 1 }); })()`);
+check('a 404 is the same tile, "Image gone", the image\'s shape', await until(`(() => { const t = document.querySelector('[data-key="you:u-missing"] .thumb.gone'); return !!t && t.textContent === 'Image gone' && Math.abs(t.getBoundingClientRect().width - ${4 * H + 2}) < 1; })()`));
 
 // the collapsed run: all seven images in one wrapping row under the run's line, the shapes as soon as known
 const RUN_ROW = `[...document.querySelectorAll('.ln.tool')].find(l => l.querySelector('details.fold') && l.textContent.includes('read 5 files'))`;
@@ -146,7 +148,7 @@ const click = async ([x, y]) => { await mouse('mouseMoved', x, y); await mouse('
 const VN = `(document.querySelector('.viewer .v-n')?.textContent || '')`, VFROM = `(document.querySelector('.viewer .v-from')?.textContent || '')`;
 const VIMG = `document.querySelector('.viewer .v-stage img')`, VST = `document.querySelector('.viewer .v-stage')`;
 const loaded = () => until(`${VIMG}.complete && ${VIMG}.naturalWidth > 0`);
-const modeBefore = await ev(`document.body.dataset.mode`), sessionBefore = await ev(`current`);
+const modeBefore = await ev(`document.body.dataset.mode`), sessionBefore = await ev(`__synopia.current()`);
 await ev(`document.getElementById('log').scrollTop = 0`); await sleep(100);
 await click(await centre('.prompt .thumbs .thumb'));
 check('a click opens the viewer on that image', await ev(`!!document.querySelector('.viewer') && ${VIMG}.getAttribute('src') === document.querySelectorAll('.prompt .thumb')[0].dataset.fullSrc`));
@@ -167,14 +169,14 @@ await key('ArrowLeft', { code: 'ArrowLeft', vk: 37 });
 check('← moves back', (await ev(VN)) === '2 of 3');
 await key('J', { shift: true, vk: 74 });
 await key('i', { vk: 73 });
-check('keys stay in the viewer: no session switch, no mode change', (await ev(`current`)) === sessionBefore && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`!!document.querySelector('.viewer')`)));
+check('keys stay in the viewer: no session switch, no mode change', (await ev(`__synopia.current()`)) === sessionBefore && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`!!document.querySelector('.viewer')`)));
 await key('Escape', { code: 'Escape', vk: 27 });
-check('Esc closes it, the mode as before', (await ev(`!document.querySelector('.viewer')`)) && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`interruptAsk === null`)));
+check('Esc closes it, the mode as before', (await ev(`!document.querySelector('.viewer')`)) && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`__synopia.prompt() !== 'interrupt'`)));
 await click(await centre('.ln.tool > .thumbs .thumb', 2));
 check('a tool\'s viewer has its own images: 2 of 2', (await ev(VN)) === '2 of 2');
 await click([20, 400]);
 check('a click outside closes it', await ev(`!document.querySelector('.viewer')`));
-check('the transcript beneath did not take that click', (await ev(`current`)) === sessionBefore);
+check('the transcript beneath did not take that click', (await ev(`__synopia.current()`)) === sessionBefore);
 
 // the run's set: all seven, its sources, then fit, 100% and panning on the 2400x1600 one
 await ev(`${RUN_ROW}.scrollIntoView({ block: 'center' })`); await sleep(150);
@@ -229,7 +231,7 @@ await key('Escape', { code: 'Escape', vk: 27 });
 check('Esc closes the run\'s viewer', await ev(`!document.querySelector('.viewer')`));
 
 // a size the item doesn't carry: the thumbnail takes the image's shape from the image itself
-await ev(`(() => { const s = cur(); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-unsized', k: 'you', ts: '2026-11-20T10:02:00.000Z', text: 'An image the backend gave no size for', images: 1, imgs: [{ ref: 'rr1:0.0', mediaType: 'image/png' }] }], total: s.total + 1 }); })()`);
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-unsized', k: 'you', ts: '2026-11-20T10:02:00.000Z', text: 'An image the backend gave no size for', images: 1, imgs: [{ ref: 'rr1:0.0', mediaType: 'image/png' }] }], total: s.total + 1 }); })()`);
 check('an image with no size in the item gets its shape, not a square', await until(`(() => { const i = document.querySelector('[data-key="you:u-unsized"] .thumb.sized img'); if (!i) return false; const cs = getComputedStyle(i); return Math.abs(parseFloat(cs.width) - ${2 * H}) < 0.6 && Math.abs(parseFloat(cs.height) - ${H}) < 0.6; })()`));
 
 // a CLI-sent prompt with tags: the text with the tags in place as plain dim tags, the thumbnails below
@@ -244,7 +246,7 @@ await shot('cli-tags', await ev(`(() => { const r = document.querySelector('[dat
 // the composer: paste two images at two caret places, each with its [Image #N] tag, remove one with its ✕,
 // two more, delete a tag's text, reload, send: the text with its tags, then the tagged images in tag order
 await ev(`document.getElementById('msg').focus()`);
-const SPY = `(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`;
+const SPY = '__synopia.spy()';
 await ev(SPY);
 const paste = (b64, name) => ev(`(() => { const b = Uint8Array.from(atob(${JSON.stringify(b64)}), c => c.charCodeAt(0)); const dt = new DataTransfer(); dt.items.add(new File([b], ${JSON.stringify(name)}, { type: 'image/png' }));
   document.getElementById('msg').dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
@@ -270,7 +272,7 @@ const dock = await ev(`(() => { const r = document.querySelector('.dock').getBou
 await shot('composer', dock);
 const firstUrl = await ev(`document.querySelector('.composer .attach img').src`);
 await click(await centre('.composer .unattach', 0));
-check('the ✕ removes that image', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 1 && attachments.length === 1 && document.querySelector('.composer .attach img').src !== ${JSON.stringify(firstUrl)}`));
+check('the ✕ removes that image', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 1 && __synopia.attachments().length === 1 && document.querySelector('.composer .attach img').src !== ${JSON.stringify(firstUrl)}`));
 check('and its tag, with one space; the other tag keeps its number', (await ev(MSG)) === 'left right [Image #4]', await ev(MSG));
 check('its object URL is freed', (await ev(`new Promise(r => { const i = new Image(); i.onload = () => r('loaded'); i.onerror = () => r('freed'); i.src = ${JSON.stringify(firstUrl)}; })`)) === 'freed');
 check('focus stayed in the message box', await ev(`document.activeElement.id === 'msg'`));
@@ -288,32 +290,61 @@ const untagged = `[...document.querySelectorAll('.composer .attach .thumb-wrap')
 check('deleting a tag\'s text dims its thumbnail, with a dashed line; it stays in the row', (await ev(untagged)) === '4+,5+,6-' && await ev(`getComputedStyle(document.querySelector('.composer .thumb-wrap.untagged .thumb img')).borderTopStyle === 'dashed'`), await ev(untagged));
 await shot('composer-tags', dock);
 // the draft, its tags and its images survive a reload (R3.9)
-await until(`attachments.every(a => a.data)`);
-await ev(`uiFlush()`); await sleep(500);
+await until(`__synopia.attachments().every(a => a.data)`);
+await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(500); // the UI state goes now (ui-state.js flushes on pagehide)
 await ev(`window.__before = 1`);
-await c.load(url, `current === '${SID}' && typeof __before === 'undefined'`); // no hash: a real reload, the restored state picks the session
+await c.load(url, `__synopia.current() === '${SID}' && typeof __before === 'undefined'`); // no hash: a real reload, the restored state picks the session
 check('after a reload: the text with its tags, the three images with their numbers, #6 still dimmed',
-  await until(`document.getElementById('msg')?.value === '[Image #5] left right [Image #4]' && attachments.length === 3 && attachments.every(a => a.data) && (${untagged}) === '4+,5+,6-'`, 8000),
-  JSON.stringify(await ev(`({ text: document.getElementById('msg')?.value, n: attachments.map(a => a.n), marks: ${untagged} })`)));
+  await until(`document.getElementById('msg')?.value === '[Image #5] left right [Image #4]' && __synopia.attachments().length === 3 && __synopia.attachments().every(a => a.data) && (${untagged}) === '4+,5+,6-'`, 8000),
+  JSON.stringify(await ev(`({ text: document.getElementById('msg')?.value, n: __synopia.attachments().map(a => a.n), marks: ${untagged} })`)));
 await ev(SPY);
 await ev(`document.getElementById('msg').focus()`);
 await key('Enter', { code: 'Enter', vk: 13 });
-const sentMsg = await ev(`JSON.stringify(__sent.filter(m => m.t === 'send').map(m => ({ text: m.text, images: m.images })))`);
+const sentMsg = await ev(`JSON.stringify(__synopia.sent('send').map(m => ({ text: m.text, images: m.images })))`);
 const sent = JSON.parse(sentMsg);
 const which = (data) => Object.keys(B64).find((k) => B64[k] === data) || '?';
 check('Enter sends the text with its tags and the tagged images as base64 with their numbers, not the untagged one',
   sent.length === 1 && sent[0].text === '[Image #5] left right [Image #4]' && JSON.stringify(sent[0].images.map((i) => [i.mediaType, i.n, which(i.data)])) === JSON.stringify([['image/png', 4, 'b'], ['image/png', 5, 'c']]),
   JSON.stringify(sent.map((m) => ({ text: m.text, images: m.images.map((i) => [i.mediaType, i.n, which(i.data)]) }))));
-// the blocks the backend makes of that message (content.ts): one text block with the tags, then the images in tag order
+// the blocks the backend makes of that message (sdk.ts userContent): one text block with the tags, then the images in tag order
 const { execFileSync } = await import('node:child_process');
 const { pathToFileURL } = await import('node:url');
-const contentTs = pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../backend/src/content.ts')).href;
+const contentTs = pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../backend/src/sdk.ts')).href;
+// the message goes through a file: a large stdin pipe can read EAGAIN while the child loads sdk.ts
+const { tmpdir } = await import('node:os');
+const msgFile = path.join(fs.mkdtempSync(path.join(tmpdir(), 'synopia-images-')), 'sent.json');
+fs.writeFileSync(msgFile, JSON.stringify(sent[0] || { text: '', images: [] }));
 const blocks = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
-  `import { userContent } from ${JSON.stringify(contentTs)}; import fs from 'node:fs'; const m = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(JSON.stringify(userContent(m.text, m.images)));`],
-{ input: JSON.stringify(sent[0] || { text: '', images: [] }) }).toString());
+  `import { userContent } from ${JSON.stringify(contentTs)}; import fs from 'node:fs'; const m = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(JSON.stringify(userContent(m.text, m.images)));`, msgFile],
+{ stdio: ['ignore', 'pipe', 'pipe'] }).toString());
+fs.rmSync(path.dirname(msgFile), { recursive: true, force: true });
 const shape = Array.isArray(blocks) ? blocks.map((b) => b.type === 'text' ? `text:${b.text}` : `image:${which(b.source.data)}`) : [blocks];
 check('the send\'s blocks: the text with its tags, then #5\'s image, then #4\'s', JSON.stringify(shape) === JSON.stringify(['text:[Image #5] left right [Image #4]', 'image:c', 'image:b']), JSON.stringify(shape));
-check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && attachments.length === 0`));
+check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && __synopia.attachments().length === 0`), await ev(`document.getElementById('toast').textContent`));
+
+// a send the backend refuses (an empty image: sdk.ts imageError) comes back to the box with its image (requirements Q9)
+const TOAST = `document.getElementById('toast').textContent`;
+await until(`__synopia.acting() === 0`);
+await ev(SPY);
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'refused '; t.dispatchEvent(new Event('input')); t.focus(); const n = t.value.length; t.setSelectionRange(n, n);
+  const dt = new DataTransfer(); dt.items.add(new File([], 'empty.png', { type: 'image/png' })); t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
+await until(`__synopia.attachments().length === 1 && __synopia.attachments()[0].data !== null`);
+const refusedText = await ev(MSG);
+await key('Enter', { code: 'Enter', vk: 13 });
+check('a refused send: the backend said why', await until(`__synopia.sent('send').length === 1 && __synopia.acting() === 0 && /empty or damaged/.test(${TOAST})`), await ev(TOAST));
+check('and its text and image are back in the box', (await ev(MSG)) === refusedText && await ev(`__synopia.attachments().length === 1 && document.querySelectorAll('.composer .attach .thumb-wrap').length === 1`), JSON.stringify(await ev(`({ text: ${MSG}, atts: __synopia.attachments().length })`)));
+await click(await centre('.composer .unattach', 0));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
+
+// over 20 MB of images together: the page says so and sends nothing, so the frame never passes the socket's cap
+await ev(SPY);
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'big'; t.dispatchEvent(new Event('input')); t.focus(); t.setSelectionRange(3, 3);
+  const dt = new DataTransfer(); for (let i = 0; i < 5; i++) dt.items.add(new File([new Uint8Array(4.5 * 1048576)], 'big' + i + '.png', { type: 'image/png' }));
+  t.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); })()`);
+await until(`__synopia.attachments().length === 5 && __synopia.attachments().every(a => a.data)`, 10000);
+await key('Enter', { code: 'Enter', vk: 13 });
+check('five 4.5 MB images: refused in the page, nothing sent, all kept', /23 MB together, over 20 MB/.test(await ev(TOAST)) && (await ev(`__synopia.sent('send').length`)) === 0 && await ev(`__synopia.attachments().length === 5`), await ev(TOAST));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
 check('no CSP violation', (await ev(`__csp.length`)) === 0, JSON.stringify(await ev(`__csp`)));
 await c.cdp('Page.removeScriptToEvaluateOnNewDocument', { identifier });
 c.print();

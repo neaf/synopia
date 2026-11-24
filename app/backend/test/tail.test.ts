@@ -145,9 +145,14 @@ test('first read of a 50 MB transcript takes under 2 s', (t) => {
     const ts = new Date(Date.UTC(2026, 10, 1, 0, 0, i)).toISOString();
     const recs: JsonRecord[] = [
       { type: 'user', uuid: `u${i}`, timestamp: ts, message: { role: 'user', content: `prompt ${i}` } },
+      // one content block per assistant record, as the CLI writes them
       {
         type: 'assistant', uuid: `a${i}`, timestamp: ts, requestedModel: 'm', effort: 'low',
-        message: { role: 'assistant', content: [{ type: 'text', text: filler }, { type: 'tool_use', id: `t${i}`, name: 'Bash', input: { command: 'ls', description: 'List' } }] },
+        message: { id: `msg_${i}`, role: 'assistant', content: [{ type: 'text', text: filler }] },
+      },
+      {
+        type: 'assistant', uuid: `b${i}`, timestamp: ts, requestedModel: 'm', effort: 'low',
+        message: { id: `msg_${i}`, role: 'assistant', content: [{ type: 'tool_use', id: `t${i}`, name: 'Bash', input: { command: 'ls', description: 'List' } }] },
       },
       {
         type: 'user', uuid: `r${i}`, timestamp: ts,
@@ -202,4 +207,42 @@ test('the subagent watcher calls onScan after every scan, so its subagents need 
   w.start();
   w.scan();
   assert.equal(scans, 2);
+});
+
+test('a bare touch (same bytes, new mtime) reads nothing and resets nothing', (t) => {
+  const file = path.join(tmp(t), 's.jsonl');
+  fs.writeFileSync(file, '{"n":1}\n{"n":2}\n');
+  fs.utimesSync(file, 1000, 1000);
+  const { tail, got, resets } = tailer(file);
+  tail.check();
+  fs.utimesSync(file, 2000, 2000);
+  assert.equal(tail.check(), false);
+  assert.equal(resets(), 0);
+  assert.deepEqual(got, [{ n: 1 }, { n: 2 }]);
+  fs.appendFileSync(file, '{"n":3}\n');
+  tail.check();
+  assert.deepEqual(got, [{ n: 1 }, { n: 2 }, { n: 3 }], 'an append after the touch reads on from the offset');
+  // a same-size rewrite after the touch still resets
+  fs.writeFileSync(file, '{"n":7}\n{"n":8}\n{"n":9}\n');
+  fs.utimesSync(file, 3000, 3000);
+  tail.check();
+  assert.equal(resets(), 1);
+  assert.deepEqual(got.slice(3), [{ n: 7 }, { n: 8 }, { n: 9 }]);
+});
+
+test('a rewrite in place that grows resets; an append with the same start does not', (t) => {
+  const file = path.join(tmp(t), 's.jsonl');
+  fs.writeFileSync(file, '{"n":1,"plan":"old"}\n{"n":2}\n');
+  const ino = fs.statSync(file).ino;
+  const { tail, got, resets } = tailer(file);
+  tail.check();
+  fs.appendFileSync(file, '{"n":3}\n');
+  tail.check();
+  assert.equal(resets(), 0, 'an append is no rewrite');
+  // the same inode, rewritten longer (a plan approval edits a record and the file goes on)
+  fs.writeFileSync(file, '{"n":1,"plan":"new, longer"}\n{"n":2}\n{"n":3}\n{"n":4}\n');
+  assert.equal(fs.statSync(file).ino, ino, 'rewritten in place');
+  tail.check();
+  assert.equal(resets(), 1);
+  assert.deepEqual(got.slice(3), [{ n: 1, plan: 'new, longer' }, { n: 2 }, { n: 3 }, { n: 4 }], 'read again from the start, not mid-record');
 });

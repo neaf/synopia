@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Tailer, SubagentWatcher } from '../src/tail.ts';
 import type { JsonRecord, Span } from '../src/tail.ts';
-import { Transcript, findTranscript, sessionDirOf, clip, previewOf, readResult } from '../src/transcript.ts';
+import { Transcript, sessionDirOf, clip, previewOf } from '../src/transcript.ts';
+import { findTranscript, readLine } from '../src/transcripts.ts';
+import { resultTextIn } from '../src/claude-jsonl.ts';
 import { ASK_STALE_MS, transcriptStatus } from '../src/status.ts';
 import type { Item } from '../src/transcript.ts';
 
@@ -37,14 +39,14 @@ const byId = (t: Transcript, id: string): Item => t.get(id) as Item;
 test('tools: verbs, states, ids and skipped records', () => {
   const t = load(ID.tools);
   assert.deepEqual(t.items.map((i) => i.id), [
-    't-u1', 't-a1:1', 'toolu_bash1', 'toolu_read1', 'toolu_edit1', 'toolu_write1', 'toolu_write2',
-    'toolu_bashedit1', 'toolu_grep1', 'toolu_mcp1', 'toolu_ts1', 'toolu_fetch1', 't-a5:1', 't-u9', 't-u10',
-    'title@21', // the rename (custom-title) after the prompts; the first ai-title only named it
+    't-u1', 't-a1-b1:0', 'toolu_bash1', 'toolu_read1', 'toolu_edit1', 'toolu_write1', 'toolu_write2',
+    'toolu_bashedit1', 'toolu_grep1', 'toolu_mcp1', 'toolu_ts1', 'toolu_fetch1', 't-a5-b1:0', 't-u9', 't-u10',
+    'title@29', // the rename (custom-title) after the prompts; the first ai-title only named it
   ]);
   assert.deepEqual(byId(t, 't-u1'), {
     id: 't-u1', k: 'you', ts: '2026-11-20T10:00:00.000Z', text: 'Tidy the demo notes and add a changelog.', images: 0,
   });
-  assert.equal(byId(t, 't-a1:1').k, 'claude');
+  assert.equal(byId(t, 't-a1-b1:0').k, 'claude');
   const bash = byId(t, 'toolu_bash1');
   assert.deepEqual([bash.k, bash.name, bash.verb, bash.obj, bash.state], ['tool', 'Bash', 'Ran', 'List the demo folder', 'done']);
   const read = byId(t, 'toolu_read1');
@@ -56,7 +58,7 @@ test('tools: verbs, states, ids and skipped records', () => {
   assert.equal(byId(t, 'toolu_bash1').toolUseId, undefined);
   assert.deepEqual(byId(t, 't-u9'), { id: 't-u9', k: 'you', ts: '2026-11-20T10:01:00.000Z', text: '/review the changelog' });
   assert.equal(byId(t, 't-u10').images, 2);
-  assert.equal(byId(t, 't-a5:1').text, 'Done. The notes are tidy.');
+  assert.equal(byId(t, 't-a5-b1:0').text, 'Done. The notes are tidy.');
 });
 
 test('tools: diffs for update, create and the 400-line cut', () => {
@@ -116,7 +118,7 @@ test('previewOf: 20 lines, 4 KB at most, the count of all lines', () => {
   assert.equal(wide.lines, 1);
 });
 
-test('tool steps: input and result preview, the span of the result record, and the full read', () => {
+test('tool steps: input and result preview, the span of the result record, and the full read', async () => {
   const file = findTranscript(CLAUDE, ID.tools) as string;
   const recs: JsonRecord[] = [];
   const spans: Span[] = [];
@@ -130,10 +132,11 @@ test('tool steps: input and result preview, the span of the result record, and t
   assert.equal(byId(t, 'toolu_grep1').input, 'pattern: TODO');
   assert.equal(byId(t, 'toolu_edit1').input, undefined, 'an edit shows its diff instead');
   const span = t.resultSpan('toolu_read1')!;
-  assert.equal(readResult(file, span, 'toolu_read1'), 'File does not exist.', 'a record holding two results, read across 512-byte chunks');
-  assert.equal(readResult(file, span, 'toolu_bash1'), 'notes.md\nREADME.md');
-  assert.equal(readResult(file, { offset: span.offset + 1, length: span.length }, 'toolu_bash1'), null, 'not a record there');
-  assert.equal(readResult(file + '.gone', span, 'toolu_bash1'), null);
+  const readResult = async (f: string, sp: Span, id: string) => resultTextIn(await readLine(f, sp), id);
+  assert.equal(await readResult(file, span, 'toolu_read1'), 'File does not exist.', 'a record holding two results, read across 512-byte chunks');
+  assert.equal(await readResult(file, span, 'toolu_bash1'), 'notes.md\nREADME.md');
+  assert.equal(await readResult(file, { offset: span.offset + 1, length: span.length }, 'toolu_bash1'), null, 'not a record there');
+  assert.equal(await readResult(file + '.gone', span, 'toolu_bash1'), null);
 });
 
 test('tools: title, PRs, model, effort and mode', () => {
@@ -145,18 +148,18 @@ test('tools: title, PRs, model, effort and mode', () => {
   assert.equal(t.permissionMode, 'auto');
   assert.equal(t.view(3).items.length, 3);
   assert.equal(t.view(3).total, 16);
-  assert.deepEqual(byId(t, 'title@21'), { id: 'title@21', k: 'title', ts: null, title: 'Demo notes cleanup', by: 'you' });
+  assert.deepEqual(byId(t, 'title@29'), { id: 'title@29', k: 'title', ts: null, title: 'Demo notes cleanup', by: 'you' });
 });
 
 test('a tool result updates the same item, and takeChanges lists it', () => {
   const recs = records(findTranscript(CLAUDE, ID.tools) as string);
   const t = new Transcript({ home: HOME });
-  t.pushAll(recs.slice(0, 4));
+  t.pushAll(recs.slice(0, 7)); // through the four records of the first reply
   const first = t.takeChanges();
-  assert.deepEqual(first.items, ['t-u1', 't-a1:1', 'toolu_bash1', 'toolu_read1']);
+  assert.deepEqual(first.items, ['t-u1', 't-a1-b1:0', 'toolu_bash1', 'toolu_read1']);
   assert.equal(first.meta, true);
   assert.equal(byId(t, 'toolu_bash1').state, 'running');
-  t.push(recs[4]);
+  t.push(recs[7]);
   assert.deepEqual(t.takeChanges().items, ['toolu_bash1', 'toolu_read1']);
   assert.equal(byId(t, 'toolu_bash1').state, 'done');
   assert.equal(byId(t, 'toolu_read1').state, 'failed');
@@ -210,9 +213,9 @@ test('background shell and monitors with task notifications', () => {
 test('background changes are reported when a notification lands', () => {
   const recs = records(findTranscript(CLAUDE, ID.bg) as string);
   const t = new Transcript({ home: HOME });
-  t.pushAll(recs.slice(0, 4));
+  t.pushAll(recs.slice(0, 6));
   assert.deepEqual(t.takeChanges().background, ['toolu_bgsh1', 'toolu_mon1', 'toolu_mon2']);
-  t.push(recs[4]);
+  t.push(recs[6]);
   assert.deepEqual(t.takeChanges().background, ['toolu_bgsh1']);
 });
 
@@ -288,11 +291,11 @@ test('agent reports from agent-message', () => {
   });
 });
 
-test('interrupted prompt, permission-mode plan and turn_duration', () => {
+test('a turned-down tool marker (not a stop), permission-mode plan and turn_duration', () => {
   const t = load(ID.plan);
   const last = t.items[t.items.length - 1];
   assert.deepEqual(last, {
-    id: 'i-u3', k: 'you', ts: '2026-11-20T14:01:20.000Z', text: '[Request interrupted by user for tool use]', images: 0, interrupted: true,
+    id: 'i-u3', k: 'you', ts: '2026-11-20T14:01:20.000Z', text: '[Request interrupted by user for tool use]', images: 0, turnedDown: true,
   });
   assert.equal(t.permissionMode, 'plan');
   assert.equal(t.lastNonPlanMode, 'acceptEdits');
@@ -302,14 +305,14 @@ test('interrupted prompt, permission-mode plan and turn_duration', () => {
   assert.deepEqual([plan.verb, plan.obj, plan.state], ['Plan', 'shown for approval', 'running']);
 });
 
-test('long text is clipped as in the reference parser', () => {
+test('long text is clipped at MAX_TEXT, with the cut marked', () => {
   const t = new Transcript({ home: HOME });
   t.push({ type: 'user', uuid: 'long', message: { content: 'x'.repeat(7000) } });
   assert.equal(byId(t, 'long').text, 'x'.repeat(6000) + '\n\n[cut: message continues]');
   assert.equal(clip('short'), 'short');
 });
 
-test('slice 3: a plan shows as Claude\'s reply, and a stored card answer lands on the tool once its result does', () => {
+test('a plan shows as Claude\'s reply, and a stored card answer lands on the tool once its result does', () => {
   const answers: Record<string, string> = { 'tu-bash': 'Allow once' };
   const t = new Transcript({ home: HOME, answerOf: (id) => answers[id] });
   t.push({ type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [
@@ -701,7 +704,7 @@ test("subagents' shells and monitors: changes reported, and they end when their 
   assert.deepEqual([t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], ['stopped', 'Ended with its subagent']);
 });
 
-// Facts settled 2026-11-24 (.ai-notes/app/README.md), in the shapes real files hold (made-up content).
+// Facts settled 2026-11-24 (docs/Claude Code transcripts.md), in the shapes real files hold (made-up content).
 const SID = '77777777-0000-4000-8000-000000000007';
 const stopHooks = (uuid: string, ts: string, entrypoint = 'sdk-cli'): JsonRecord => ({
   type: 'system', subtype: 'stop_hook_summary', uuid, timestamp: ts, isSidechain: false, entrypoint, sessionId: SID, session_id: SID,
@@ -824,4 +827,132 @@ test('a stale card: a question in a transcript quiet for 12 hours is your turn, 
   sub.pushAll([{ ...replied('y-s1', ago(60), [askUse('toolu_ysq')]), isSidechain: true }]);
   main.setAgent('yyyy0001', { agentType: 'general-purpose', description: 'Pick', toolUseId: 'toolu_yag' }, sub);
   assert.equal(main.pendingAsk(NOW, ASK_STALE_MS)?.toolUseId, 'toolu_ysq');
+});
+
+// Each of these failed on the reducer before it tracked a response across its records (the reset
+// test pins the rebuild). The CLI writes one content block per assistant
+// record; the records of one response share message.id (docs/Claude Code
+// transcripts.md#assistant-records-one-block-per-record).
+const block = (uuid: string, ts: string, mid: string, b: object): JsonRecord => ({ type: 'assistant', uuid, timestamp: ts, message: { id: mid, role: 'assistant', content: [b] } });
+
+test('a pending ask followed by a later block of its message still waits', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('u1', 'Go', ago(10)),
+    block('a1', ago(9), 'msg_1', { type: 'text', text: 'Two things.' }),
+    block('a2', ago(9), 'msg_1', askUse('toolu_q1')),
+    block('a3', ago(9), 'msg_1', { type: 'tool_use', id: 'toolu_r1', name: 'Read', input: { file_path: '/tmp/a' } }),
+    toolResult('r1', ago(9), 'toolu_r1'),
+  ]);
+  assert.equal(t.pendingAsk()?.toolUseId, 'toolu_q1');
+  assert.equal(t.turnRunning(NOW, QUIET), true, 'the open turn changed 9 min ago');
+  t.pushAll([toolResult('r2', ago(8), 'toolu_q1')]);
+  assert.equal(t.pendingAsk(), null);
+  t.pushAll([block('a4', ago(7), 'msg_1', { type: 'tool_use', id: 'toolu_q3', name: 'AskUserQuestion', input: {} })]);
+  assert.equal(t.pendingAsk()?.toolUseId, 'toolu_q3');
+  t.pushAll([block('a5', ago(6), 'msg_2', { type: 'text', text: 'Next.' })]);
+  assert.equal(t.pendingAsk(), null, 'a new message replaces the old one');
+});
+
+test('a long Bash in an earlier block, then a text block of its message, still runs after 30 min', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('u1', 'Go', ago(50)),
+    block('a1', ago(45), 'msg_1', bashUse('toolu_long')),
+    block('a2', ago(45), 'msg_1', { type: 'text', text: 'This takes a while.' }),
+  ]);
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+  t.pushAll([toolResult('r1', ago(40), 'toolu_long')]);
+  assert.equal(t.turnRunning(NOW, QUIET), false, 'its result came, then 40 min of quiet');
+});
+
+test('the ext fixture asks in another process, a later Read in the same message', () => {
+  const claude = path.join(import.meta.dirname, 'fixtures', 'claude-ext');
+  const t = new Transcript({ home: HOME });
+  t.pushAll(records(findTranscript(claude, 'e1e1e1e1-0000-4000-8000-00000000000a') as string));
+  assert.equal(t.pendingAsk()?.toolUseId, 'toolu_xask1');
+  assert.equal(byId(t, 'toolu_xread2').state, 'done');
+});
+
+test('an empty custom-title removes the rename', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('u1', 'Go', ago(9)),
+    { type: 'ai-title', aiTitle: 'Demo notes', timestamp: ago(8) },
+    { type: 'custom-title', customTitle: 'My notes', timestamp: ago(7) },
+    { type: 'custom-title', customTitle: '', timestamp: ago(6) },
+  ]);
+  assert.equal(t.customTitle, null);
+  assert.equal(t.title, 'Demo notes');
+  assert.deepEqual(t.items.filter((i) => i.k === 'title').map((i) => [i.title, i.by]), [['My notes', 'you'], ['Demo notes', 'claude']]);
+});
+
+test('a sidechain turn_duration in the main file sets no worked time', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('u1', 'Go', ago(9)), { ...turnDuration('s1', ago(8), 42_000), isSidechain: true }]);
+  assert.equal(byId(t, 'u1').workedMs, undefined);
+  assert.equal(t.turnRunning(NOW, QUIET), true, "a subagent's turn end doesn't close the main turn");
+});
+
+test('the process end and a record time compare as instants, not as text', () => {
+  const t = new Transcript({ home: HOME });
+  t.processEnded('2026-11-20T10:00:05.000Z');
+  t.pushAll([{ type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:05Z', message: { id: 'm1', content: [
+    { type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 9', run_in_background: true } }] } }]);
+  assert.equal(t.getBackground('toolu_bg')?.status, 'stopped', 'started at the same instant the process ended');
+  t.processEnded('2026-11-20T10:00:05Z');
+  assert.equal(t.getBackground('toolu_bg')?.end, '2026-11-20T10:00:05.000Z', 'the same end again changes nothing');
+});
+
+test('a reset rebuilds the reader: the same records give what a new reader gives', () => {
+  const recs = records(findTranscript(CLAUDE, ID.tools) as string);
+  const t = new Transcript({ home: HOME });
+  t.pushAll([...recs, typed('x', 'stray', ago(1)), { type: 'custom-title', customTitle: 'Stray' }]);
+  t.reset();
+  t.pushAll(recs);
+  const fresh = new Transcript({ home: HOME });
+  fresh.pushAll(recs);
+  assert.deepEqual(t.items, fresh.items);
+  assert.deepEqual([t.title, t.permissionMode, t.lastTs, t.prs], [fresh.title, fresh.permissionMode, fresh.lastTs, fresh.prs]);
+  assert.equal(t.turnRunning(NOW, QUIET), fresh.turnRunning(NOW, QUIET));
+});
+
+test("a turned-down tool is not a stop; the turn keeps your prompt's time", () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('u1', 'Go', ago(10)),
+    block('a1', ago(9), 'msg_1', bashUse('toolu_rm')),
+    toolResult('r1', ago(9), 'toolu_rm', { is_error: true, content: '[Request interrupted by user for tool use]' }),
+    typed('u2', '[Request interrupted by user for tool use]', ago(9)),
+    block('a2', ago(8), 'msg_2', { type: 'text', text: "I'll leave it." }),
+    stopHooks('s1', ago(8)),
+  ]);
+  assert.deepEqual([byId(t, 'u2').turnedDown, byId(t, 'u2').interrupted], [true, undefined]);
+  assert.equal(byId(t, 'u1').workedMs, 2 * 60_000, 'from your prompt to the turn end');
+  assert.equal(byId(t, 'u2').workedMs, undefined);
+  t.pushAll([typed('u3', 'Again', ago(7)), typed('u4', '[Request interrupted by user]', ago(6))]);
+  assert.deepEqual([byId(t, 'u4').interrupted, byId(t, 'u4').turnedDown], [true, undefined]);
+});
+
+// The CLI writes one block per assistant record (docs/Claude Code transcripts.md); an older or other
+// writer may put a response's blocks in one record. Both reduce alike, apart from the text items' ids
+// (`<record uuid>:<block index>`).
+test('a multi-block assistant record reduces like its split form', () => {
+  const blocks = [
+    { type: 'thinking', thinking: 'Look first.' },
+    { type: 'text', text: 'Checking the folder.' },
+    bashUse('toolu_ls'),
+    { type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'npm test', run_in_background: true } },
+    { type: 'text', text: 'Both started.' },
+  ];
+  const before = [typed('u1', 'Go', ago(10))];
+  const after = [toolResult('r1', ago(8), 'toolu_ls'), toolResult('r2', ago(8), 'toolu_bg'), typed('u2', 'And now?', ago(7))];
+  const split = new Transcript({ home: HOME });
+  split.pushAll([...before, ...blocks.map((b, i) => block(`a${i}`, ago(9), 'msg_1', b)), ...after]);
+  const one = new Transcript({ home: HOME });
+  one.pushAll([...before, { type: 'assistant', uuid: 'a', timestamp: ago(9), message: { id: 'msg_1', role: 'assistant', content: blocks } }, ...after]);
+  const shape = (t: Transcript) => t.items.map((it) => (it.k === 'claude' ? { ...it, id: 'text' } : it));
+  assert.deepEqual(shape(one), shape(split));
+  assert.deepEqual(one.items.filter((i) => i.k === 'claude').map((i) => i.text), ['Checking the folder.', 'Both started.']);
+  assert.deepEqual([one.background(), one.agents(), one.turnRunning(NOW, QUIET)], [split.background(), split.agents(), split.turnRunning(NOW, QUIET)]);
 });

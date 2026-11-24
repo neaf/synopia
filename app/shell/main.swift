@@ -1,9 +1,11 @@
 // The Synopia shell: one window hosting the page, served by the Node backend
-// daemon it finds or starts (Backend.swift). See docs/technical-plan.md section 2.
+// daemon it finds or starts (Backend.swift). See docs/architecture.md and docs/Daemon files.md.
 import Cocoa
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.setActivationPolicy(.regular)
-app.run()
+MainActor.assumeIsolated {
+  let app = NSApplication.shared
+  let delegate = AppDelegate()
+  app.delegate = delegate
+  app.setActivationPolicy(.regular)
+  app.run()
+}

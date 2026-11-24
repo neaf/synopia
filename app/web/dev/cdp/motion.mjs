@@ -1,6 +1,6 @@
-// Motion and mark geometry (R8.1, R8.2, R8.5, R8.6), on the fake driver.
+// Motion and mark geometry (R8.1, R8.2, R8.5, R8.6), on the scripted SDK.
 // Draws every mark in marks.js's table in the three colour sets (light panel, dark sidebar, open row), then:
-// every running mark (CSS animations, anything in a mark, the running bar, the spinner) is linear, infinite, never alternates and never animates opacity; it moves only
+// every running mark (CSS animations, anything in a mark) is linear, infinite, never alternates and never animates opacity; it moves only
 // shapes; the sidebar sub-line tween (R8.1) is one run, height then a linear fade, and none with reduced motion; with prefers-reduced-motion: reduce (CDP emulation) nothing
 // plays and every mark keeps its painted size; squares stay square at 9 to 64 px; marks centre in the sidebar
 // box and on the transcript's ● gutter. Also reads app.css for words the rules forbid.
@@ -20,34 +20,36 @@ const decls = (css.match(/\banimation(-timing-function|-direction)?\s*:[^;}]*/g)
 const badWord = /\bease(-in|-out|-in-out)?\b|\balternate\b|\bpulse\b|\bblink\b/i;
 check('app.css animations have no ease, alternate, pulse or blink', !badWord.test(decls) && !/@keyframes\s+[\w-]*(pulse|blink)/i.test(css), String(decls.match(badWord)));
 const frames = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})*)\s*\}/g)];
-check('app.css keyframes found', frames.length > 5, String(frames.length));
+check('app.css keyframes found, every one parsed', frames.length > 0 && frames.length === (css.match(/@keyframes\b/g) || []).length, String(frames.length));
 check('no keyframe animates opacity, visibility or a colour', frames.every((f) => !/opacity|visibility|color|background-color|fill:|stroke:/.test(f[2])), frames.filter((f) => /opacity|visibility|color|fill:|stroke:/.test(f[2])).map((f) => f[1]).join(' '));
-const tweenOf = (kind) => `(async () => { const s = data.find(s => KEYS.includes(s.id) && !bgOf(s).some(b => bgState(b) === 'running')); s.background = [...(s.background || []), { toolUseId: 'mt-bg', kind: 'shell', status: 'running', start: new Date().toISOString() }]; renderSide();
+// a running shell comes to a row that has no background line, then goes (as a server message would put it)
+const tweenOf = () => `(async () => { const row = [...document.querySelectorAll('#groups .row')].find(r => !r.querySelector('[data-line="bg"]')), s = __synopia.data().find(s => s.id === row.dataset.id);
+  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'mt-bg', kind: 'shell', status: 'running', start: new Date().toISOString() }] });
   const a = document.getAnimations().find(a => a.id === 'side-line'); const r = a && { duration: a.effect.getComputedTiming().duration, iterations: a.effect.getComputedTiming().iterations, kf: a.effect.getKeyframes().map(k => ({ o: k.computedOffset, e: k.easing, op: +k.opacity, h: k.height })) };
-  s.background = s.background.filter(b => b.toolUseId !== 'mt-bg'); renderSide(); await new Promise(r => setTimeout(r, 400)); return r || null; })()`;
+  __synopia.inject({ t: 'session', id: s.id, background: s.background || [] }); await new Promise(r => setTimeout(r, 400)); return r || null; })()`;
 
 await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
-await c.load(url + '#44444444', `current?.startsWith('44444444')`);
+await c.load(url + '#44444444', `__synopia.current()?.startsWith('44444444')`);
 // the one layout tween, a sidebar sub-line (R8.1): finite, height (eased) then opacity (linear), 150 ms each; tween.mjs checks it frame by frame
 const tw = await ev(tweenOf());
 check('sub-line tween: one run of 300 ms, height first (eased), then opacity (linear)', !!tw && tw.duration === 300 && tw.iterations === 1 && tw.kf.length === 3
   && tw.kf[0].op === 0 && tw.kf[1].op === 0 && tw.kf[2].op === 1 && tw.kf[0].h === '0px' && tw.kf[1].h === tw.kf[2].h && tw.kf[1].o === 0.5 && tw.kf[1].e === 'linear', JSON.stringify(tw));
 const SIZES = [9, 10, 11, 12, 16, 32, 64];
 await ev(`(() => {
-  const keys = Object.keys(P), sizes = ${JSON.stringify(SIZES)};
+  const keys = __synopia.marks(), sizes = ${JSON.stringify(SIZES)};
   const sets = [['light', '<div class="panel">', '</div>'], ['dark', '<div class="side">', '</div>'], ['open', '<div class="side"><div class="row" aria-current="true" style="display:block">', '</div></div>']];
-  const cells = keys.map(k => '<div data-k="' + k + '">' + sizes.map(s => ind(k, s)).join('') + '</div>').join('');
+  const cells = keys.map(k => '<div data-k="' + k + '">' + sizes.map(s => __synopia.mark(k, s)).join('') + '</div>').join('');
   document.body.insertAdjacentHTML('beforeend', '<div id="mt" style="position:fixed;inset:0;z-index:99;overflow:auto;background:var(--canvas);display:flex;gap:8px;align-items:start">'
     + sets.map(([n, a, b]) => a.replace('>', ' data-set="' + n + '" style="padding:6px">') + cells + b).join('') + '</div>');
 })()`);
 await sleep(400);
 
 // what moves, and how
-// running things: every CSS animation, and anything moving in a mark, the running bar or the spinner
-const anims = await ev(`document.getAnimations().filter(a => a.playState === 'running' && (a.animationName || a.effect.target.closest('.ind, .bar.st-running, .spinner'))).map(a => {
+// running things: every CSS animation, and anything moving in a mark (the page draws every running thing as a mark)
+const anims = await ev(`document.getAnimations().filter(a => a.playState === 'running' && (a.animationName || a.effect.target.closest('.ind'))).map(a => {
   const t = a.effect.getComputedTiming(), el = a.effect.target, kf = a.effect.getKeyframes();
-  return { name: a.animationName, el: el.tagName.toLowerCase() + '.' + (el.getAttribute('class') || ''), inMark: !!el.closest('.ind'), bar: !!el.closest('.bar.st-running'), spinner: el.classList.contains('spinner'),
+  return { name: a.animationName, el: el.tagName.toLowerCase() + '.' + (el.getAttribute('class') || ''), inMark: !!el.closest('.ind'),
     easing: [...new Set([t.easing, ...kf.map(k => k.easing)])], iterations: t.iterations, direction: t.direction, props: [...new Set(kf.flatMap(k => Object.keys(k)))].filter(p => !['offset', 'easing', 'composite', 'computedOffset'].includes(p)) };
 })`);
 check('marks are animated (some animations run)', anims.length > 20, String(anims.length));
@@ -56,7 +58,7 @@ check('every animation is linear', anims.every((a) => a.easing.every((e) => e ==
 check('every animation is infinite', anims.every((a) => a.iterations === null || a.iterations === Infinity), bad((a) => !(a.iterations === null || a.iterations === Infinity)));
 check('no animation alternates', anims.every((a) => !/alternate/.test(a.direction)), bad((a) => /alternate/.test(a.direction)));
 check('animations move shapes only (transform, offsets, positions)', anims.every((a) => a.props.every((p) => /^(transform|strokeDashoffset|backgroundPosition|backgroundPositionX|backgroundPositionY)$/.test(p))), bad((a) => a.props.some((p) => !/^(transform|strokeDashoffset|backgroundPosition)/.test(p))));
-check('CSS animations are on running things (marks, the running bar, the spinner)', anims.every((a) => a.inMark || a.bar || a.spinner), bad((a) => !(a.inMark || a.bar || a.spinner)));
+check('CSS animations are on running things (marks)', anims.every((a) => a.inMark), bad((a) => !a.inMark));
 
 // painted size of every mark at 64 px, in each set, before and after reduced motion; and the squares
 const paint = `(() => { const out = {};
@@ -89,7 +91,7 @@ const off = await ev(`[...document.querySelectorAll('#groups .r-side')].map(b =>
   return Math.max(Math.abs(i.left + i.width / 2 - r.left - r.width / 2), Math.abs(i.top + i.height / 2 - r.top - r.height / 2)); })`);
 check('sidebar marks centred in their box', off.length > 0 && off.every((d) => d < .3), JSON.stringify(off));
 const gut = await ev(`(() => { const log = document.querySelector('.log-inner');
-  log.insertAdjacentHTML('afterbegin', '<div class="ln claude" id="mt-dot"><span class="g">●</span><span>a</span></div><div class="ln claude" id="mt-mark"><span class="g">' + ind('stopped') + '</span><span>a</span></div>');
+  log.insertAdjacentHTML('afterbegin', '<div class="ln claude" id="mt-dot"><span class="g">●</span><span>a</span></div><div class="ln claude" id="mt-mark"><span class="g">' + __synopia.mark('stopped') + '</span><span>a</span></div>');
   const g = document.querySelector('#mt-dot .g'), rg = document.createRange(); rg.selectNodeContents(g);
   const d = rg.getBoundingClientRect(), gd = g.getBoundingClientRect(), m = document.querySelector('#mt-mark .ind').getBoundingClientRect(), gm = document.querySelector('#mt-mark .g').getBoundingClientRect();
   const lh = parseFloat(getComputedStyle(g).lineHeight);
@@ -102,7 +104,7 @@ console.log('reduced-motion shot: ' + stateDir + '/motion-reduced.png');
 // a re-render keeps each running mark's phase (syncMarks pins startTime to the timeline origin)
 const phase = () => ev(`(() => { const a = document.getAnimations().find(a => a.effect?.target?.closest?.('.side .ind')); return a ? { t: a.startTime, cur: a.currentTime } : null; })()`);
 await sleep(200); const p1 = await phase();
-await ev('renderSide()'); await sleep(120);
+await ev('__synopia.render("side")'); await sleep(120);
 const p2 = await phase();
 check('a rebuilt mark keeps its phase (startTime pinned to 0)', !!p1 && !!p2 && p1.t === 0 && p2.t === 0, JSON.stringify([p1, p2]));
 c.print(); c.close();

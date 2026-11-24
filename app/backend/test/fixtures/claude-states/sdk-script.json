@@ -1,0 +1,28 @@
+{
+  "about": "Script for the scripted SDK (app/backend/dev/scripted-sdk.ts) over the states fixture: one session per wired state of requirements R8.2. Made up. a1a1 works with one message queued, b2b2 compacts, c3c3 is rate limited (attempt 3 of 10, the retry 38 s off), d4d4 is signed out (its last reply said so), e5e5 has had no message for 16 min. f6f6 and f7f7 have no script: f6f6's main turn is over and its background subagents run, f7f7's turn runs in another process, so both read working. Run: app/dev.sh --script --claude-dir app/backend/test/fixtures/claude-states, or app/web/dev/cdp/run.sh states.",
+  "home": "/Users/fixture",
+  "sessions": {
+    "a1a1a1a1-0000-4000-8000-00000000000a": { "start": true, "steps": [
+      { "ago": 60000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 60000, "send": "Also run the lint when the tests pass." }
+    ] },
+    "b2b2b2b2-0000-4000-8000-00000000000b": { "start": true, "steps": [
+      { "ago": 40000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 40000, "message": { "type": "system", "subtype": "status", "status": "compacting" } }
+    ] },
+    "c3c3c3c3-0000-4000-8000-00000000000c": { "start": true, "steps": [
+      { "ago": 30000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 30000, "message": { "type": "system", "subtype": "api_retry", "attempt": 3, "max_retries": 10, "retry_delay_ms": 68000, "error": "rate_limit", "error_status": 429 } }
+    ] },
+    "d4d4d4d4-0000-4000-8000-00000000000d": { "start": true, "steps": [
+      { "ago": 300000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } },
+      { "ago": 300000, "message": { "type": "assistant", "parent_tool_use_id": null, "error": "authentication_failed",
+        "message": { "id": "msg_fixture_d4", "role": "assistant", "content": [{ "type": "text", "text": "Not logged in. Run /login." }] } } },
+      { "ago": 300000, "message": { "type": "result", "subtype": "success", "is_error": true, "result": "Not logged in. Run /login.", "duration_ms": 900, "num_turns": 1 } },
+      { "ago": 300000, "message": { "type": "system", "subtype": "session_state_changed", "state": "idle" } }
+    ] },
+    "e5e5e5e5-0000-4000-8000-00000000000e": { "start": true, "steps": [
+      { "ago": 960000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } }
+    ] }
+  }
+}

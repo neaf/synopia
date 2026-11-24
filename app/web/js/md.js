@@ -1,34 +1,12 @@
-/* Md: small helpers and the markdown renderer (split from prototype/app.html). */
-/* ---------- helpers ---------- */
-/* every string that goes into HTML, as text or as an attribute, passes through esc (all five characters) */
-const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+/* Md: markdown as the Claude Code CLI renders it (requirements R5.10), and the answer text of a question
+   card. DOM-free (app/web/test/md.test.js runs it in Node). */
+import { esc } from "./format.js";
+
 /* back from esc, for a URL found in escaped text that is escaped again as an attribute */
 const unesc = s => s.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
-function dur(ms) {
-  const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
-  if (m < 60) return `${m} min`;
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d`;
-}
-/* A model id as a name, until the folder's menu names it: "eu.anthropic.claude-opus-5-5[1m]" reads
-   "Claude Opus 5.5 (1M context)". Region and provider prefixes, an ARN's path, a date, a Vertex `@`
-   version and a Bedrock `-v1:0` go; a bare alias ("haiku") reads "Claude Haiku"; anything else stays. */
-function modelLabel(id) {
-  let s = String(id ?? "").trim(); if (!s) return "Default";
-  const big = /\[1m\]$/i.test(s); s = s.replace(/\[1m\]$/i, "");
-  s = s.slice(s.lastIndexOf("/") + 1).replace(/^([a-z]{2,7}\.)*anthropic\./i, "").replace(/^[a-z]{2,7}\.(?=claude-)/i, "")
-    .replace(/@.*$/, "").replace(/-v\d+(:\d+)?$/i, "").replace(/-\d{8}$/, "").replace(/-latest$/i, "");
-  const fam = /^(opus|sonnet|haiku)$/i.test(s) ? [s] : null;
-  const m = fam ? null : /^claude-((?:[a-z]+|\d+)(?:-(?:[a-z]+|\d+))*)$/i.exec(s);
-  if (!fam && !m) return String(id);
-  const parts = fam || m[1].split("-"), word = parts.filter(p => !/^\d+$/.test(p)), num = parts.filter(p => /^\d+$/.test(p));
-  const name = ["Claude", ...word.map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()), ...(num.length ? [num.join(".")] : [])].join(" ");
-  return big ? `${name} (1M context)` : name;
-}
-const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit", ...(typeof window.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: window.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {}) });
 
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
-function md(src) {
+export function md(src) {
   const out = []; const lines = (src || "").split("\n"); let i = 0;
   /* Code spans and [text](url) links are cut out of the raw text first and built from escaped parts, so no
      later step runs inside them or their attributes; the rest is escaped, then bold and bare URLs are added. */
@@ -54,7 +32,10 @@ function md(src) {
     if (/^\s*\|.*\|\s*$/.test(l)) {
       const rows = []; while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
       const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      const body = rows.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(cells);
+      /* a separator row is one whose every cell is dashes (colons for alignment): "| --flag | x |" is data */
+      const sep = cs => cs.every(c => /^:?-+:?$/.test(c));
+      const body = rows.map(cells).filter(cs => !sep(cs));
+      if (!body.length) { out.push(`<p>${lines2(rows)}</p>`); continue; } // only separators: the text as written
       const [head, ...rest] = body;
       out.push(`<table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
       continue;
@@ -96,13 +77,13 @@ function md(src) {
 }
 
 /* AskUserQuestion results read: "question"="answer". Pull the answers out. */
-function parseAnswers(a) {
+export function parseAnswers(a) {
   const res = []; const re = /"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"/g; let m;
   while ((m = re.exec(a || ""))) res.push(m[2]);
   return res;
 }
 /* The note you added to each answer: `"question"="answer" notes: <note>.`, up to the next answer or the CLI's closing sentence. */
-function parseNotes(a) {
+export function parseNotes(a) {
   const res = []; const re = /"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"/g; const ms = [...(a || "").matchAll(re)];
   ms.forEach((m, i) => {
     const rest = a.slice(m.index + m[0].length, i + 1 < ms.length ? ms[i + 1].index : a.length).replace(/\s*Read the answers carefully[\s\S]*$/, "");

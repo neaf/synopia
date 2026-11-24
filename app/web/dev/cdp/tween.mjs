@@ -1,6 +1,6 @@
-// Sidebar sub-line tweens (R8.1, R4.3, R4.4), on the fake driver. Puts two sessions in a group (so the guides
+// Sidebar sub-line tweens (R8.1, R4.3, R4.4), on the scripted SDK. Puts two sessions in a group (so the guides
 // show), then adds and removes a running background shell and a "to review" subagent on the first one, and
-// samples every frame (requestAnimationFrame) while renderSide re-renders every 40 ms. Asserts: coming, the
+// samples every frame (requestAnimationFrame) while the sidebar re-renders every 40 ms. Asserts: coming, the
 // height opens first and the line stays transparent until it is full, then it fades in; going, the line fades
 // out at full height, then the height closes; no jump (the first frame keeps the old height, no frame steps
 // far, the row below moves only by the row's own change); the guide spans the row on every frame; afterwards
@@ -8,11 +8,12 @@
 // being dragged keeps its dimmed state through a tween.
 // usage: run.sh tween (or node tween.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
+import { serverSend } from './helpers.mjs';
 const [url] = process.argv.slice(2);
 const c = await connect();
 const { check, mouse } = c;
 const ev = c.ev;
-// a background tab gets no animation frames (this Chrome sometimes opens a settings tab over the page): bring it to front first
+// a background tab gets no animation frames: bring it to front first
 const sample = async (change, key, ms) => { await c.cdp('Page.bringToFront');
   const r = await ev(`Promise.race([TW_SAMPLE('${change}', '${key}', ${ms}), new Promise(r => setTimeout(() => r({ before: TW_GEO(), frames: [], anims: -1, hidden: document.visibilityState }), ${ms} + 3000))])`);
   if (!r.frames?.length) console.log('no frames sampled: ' + JSON.stringify(r).slice(0, 200));
@@ -22,29 +23,35 @@ await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
 await c.load(url);
 
-// a group of two sessions, the first one under test
-const setup = await ev(`(() => {
-  const ids = KEYS.slice(0, 2); if (ids.length < 2) return 'need two sessions';
-  layout.groups.forEach(g => g.ids = g.ids.filter(x => !ids.includes(x))); layout.others = layout.others.filter(x => !ids.includes(x));
-  layout.groups.unshift({ id: 'gtw', name: 'Tween', proc: '', ids }); renderSide();
-  window.TWID = ids[0]; return 'ok'; })()`);
+// a group of two sessions, the first one under test: made as a drop would make it, then a reload
+const ids = await ev(`[...document.querySelectorAll('#groups .row')].slice(0, 2).map(r => r.dataset.id)`);
+await serverSend(url, { t: 'newGroup', sid: ids[1], onto: ids[0], group: 'gtw', name: 'Tween' });
+await c.load(url);
+const setup = ids.length < 2 ? 'need two sessions' : await ev(`(() => {
+  const g = [...document.querySelectorAll('#groups .group')].find(g => g.querySelector('.g-name')?.textContent === 'Tween');
+  if (JSON.stringify(g ? [...g.querySelectorAll('.row')].map(r => r.dataset.id) : null) !== ${JSON.stringify(JSON.stringify(ids))}) return 'no group of the two';
+  window.TWID = ${JSON.stringify(ids[0])}; return 'ok'; })()`);
 check('setup: a group of two', setup === 'ok', setup);
 
-// page helpers: change the session, re-render, and sample the row each frame
+// page helpers: change the session as a server message would (the protocol has no message that drops a
+// line, so a session message with the shorter list does), re-render, and sample the row each frame
 await ev(`(() => {
-  const S = () => store.sessions.get(TWID);
+  const S = () => __synopia.data().find(s => s.id === TWID), put = m => __synopia.inject(m), iso = () => new Date().toISOString();
   const row = () => [...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID);
-  window.TW_CHANGE = { bgOn: () => { const s = S(); s.background = [...(s.background || []), { toolUseId: 'tw-bg', kind: 'shell', status: 'running', start: new Date().toISOString(), description: 'tween check' }]; },
-    bgOff: () => { const s = S(); s.background = (s.background || []).filter(b => b.toolUseId !== 'tw-bg'); },
-    revOn: () => { const s = S(); s.agents = [...(s.agents || []), { id: 'tw-rev', toolUseId: 'tw-rev-t', description: 'For review: tween check', finished: true, start: new Date().toISOString() }]; },
-    revOff: () => { const s = S(); s.agents = (s.agents || []).filter(a => a.id !== 'tw-rev'); } };
+  window.TW_PUT = put; window.TW_S = S;
+  window.TW_CHANGE = { bgOn: () => put({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg', kind: 'shell', status: 'running', start: iso(), description: 'tween check' }] }),
+    bgOff: () => put({ t: 'session', id: TWID, background: (S().background || []).filter(b => b.toolUseId !== 'tw-bg') }),
+    // the backend sends a deliverable with review: true and counts it in the session's state (status.ts)
+    revOn: () => { put({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-rev', toolUseId: 'tw-rev-t', description: 'For review: tween check', finished: true, review: true, start: iso() }] });
+      put({ t: 'session', id: TWID, state: { ...S().state, review: S().state.review + 1 } }); },
+    revOff: () => put({ t: 'session', id: TWID, agents: (S().agents || []).filter(a => a.id !== 'tw-rev'), state: { ...S().state, review: S().state.review - 1 } }) };
   const geo = () => { const r = row(); if (!r) return null; const b = r.getBoundingClientRect(), tg = r.querySelector('.tg').getBoundingClientRect(), nx = r.nextElementSibling?.getBoundingClientRect();
     return { top: b.top, h: b.height, tgTop: tg.top - b.top, tgBot: tg.bottom - b.bottom, gapNext: nx ? nx.top - b.bottom : null, dragging: r.classList.contains('dragging') }; };
   window.TW_GEO = geo;
   window.TW_SAMPLE = (change, key, ms) => new Promise(done => {
     const out = [], t0 = performance.now(), b = geo();
-    TW_CHANGE[change](); renderSide();
-    const iv = setInterval(() => renderSide(), 40); // full re-renders mid-tween must neither restart nor skip it
+    TW_CHANGE[change](); __synopia.render('side');
+    const iv = setInterval(() => __synopia.render('side'), 40); // full re-renders mid-tween must neither restart nor skip it
     const f = () => { const r = row(), ln = r && r.querySelector('.r-main > [data-line="' + key + '"]'), g = geo();
       out.push({ t: performance.now() - t0, ...g, line: !!ln, lh: ln ? ln.getBoundingClientRect().height : 0, op: ln ? +getComputedStyle(ln).opacity : null });
       if (performance.now() - t0 < ms) requestAnimationFrame(f); else { clearInterval(iv); done({ before: b, frames: out, anims: document.getAnimations().filter(a => a.id === 'side-line').length }); } };
@@ -83,7 +90,7 @@ function judge(name, res, coming) {
   check(name + ': tweens finish (no animation left)', res.anims === 0, String(res.anims));
 }
 async function aligned(name) {
-  const a = await ev('TW_SHAPE()'); await ev('tweens.clear(); renderSide()'); const b = await ev('TW_SHAPE()');
+  const a = await ev('TW_SHAPE()'); await ev(`__synopia.resetTweens(); __synopia.render('side')`); const b = await ev('TW_SHAPE()');
   check(name + ': geometry afterwards equals a fresh render (lines, L corners, the guide and its tick, the mark box)', a === b, a + '\n  vs ' + b);
 }
 
@@ -93,16 +100,16 @@ for (const [name, on, off, key] of [['background line', 'bgOn', 'bgOff', 'bg'], 
 }
 
 // a turn-around mid-way goes back from where it is: no jump
-const turn = await ev(`(async () => { const h0 = TW_GEO().h; TW_CHANGE.bgOn(); renderSide(); await new Promise(r => setTimeout(r, 100)); const h1 = TW_GEO().h;
-  TW_CHANGE.bgOff(); renderSide(); const h2 = TW_GEO().h; await new Promise(r => setTimeout(r, 450)); return { h0, h1, h2, h3: TW_GEO().h }; })()`);
+const turn = await ev(`(async () => { const h0 = TW_GEO().h; TW_CHANGE.bgOn(); await new Promise(r => setTimeout(r, 100)); const h1 = TW_GEO().h;
+  TW_CHANGE.bgOff(); const h2 = TW_GEO().h; await new Promise(r => setTimeout(r, 450)); return { h0, h1, h2, h3: TW_GEO().h }; })()`);
 check('turning round mid-way keeps the height (no jump), then closes', turn.h1 > turn.h0 + 0.5 && eq(turn.h2, turn.h1, 0.3) && eq(turn.h3, turn.h0, 0.05), JSON.stringify(turn));
 
 // a text-only change doesn't animate
-await ev(`TW_CHANGE.bgOn(); renderSide()`); await sleep(450);
-const textOnly = await ev(`(() => { const s = store.sessions.get(TWID); s.background.push({ toolUseId: 'tw-bg2', kind: 'monitor', status: 'running', start: new Date().toISOString(), description: 'two' }); renderSide();
+await ev(`TW_CHANGE.bgOn()`); await sleep(450);
+const textOnly = await ev(`(() => { TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg2', kind: 'monitor', status: 'running', start: new Date().toISOString(), description: 'two' }] });
   return document.getAnimations().filter(a => a.id === 'side-line').length; })()`);
 check('a count changing on a line does not animate', textOnly === 0, String(textOnly));
-await ev(`(() => { const s = store.sessions.get(TWID); s.background = s.background.filter(b => !b.toolUseId.startsWith('tw-')); renderSide(); })()`); await sleep(450);
+await ev(`TW_PUT({ t: 'session', id: TWID, background: TW_S().background.filter(b => !b.toolUseId.startsWith('tw-')) })`); await sleep(450);
 
 // a row being dragged: a line comes mid-drag, the row stays dimmed and its guide aligned
 const r = await ev(`(() => { const b = [...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID).getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
@@ -111,7 +118,7 @@ const dr = await sample('revOn', 'review', 420);
 check('dragged row stays dimmed through the tween', dr.frames.every((f) => f.dragging), String(dr.frames.filter((f) => !f.dragging).length));
 check('dragged row: guide spans the row on every frame', dr.frames.every((f) => eq(f.tgTop, dr.before.tgTop, 0.05) && eq(f.tgBot, dr.before.tgBot, 0.05)), '');
 await c.key('Escape', { vk: 27 }); await mouse('mouseReleased', r.x + 12, r.y + 40);
-await ev(`TW_CHANGE.revOff(); renderSide()`); await sleep(450);
+await ev(`TW_CHANGE.revOff()`); await sleep(450);
 
 // reduced motion: both steps instant
 await reduce(true); await sleep(100);
@@ -122,17 +129,19 @@ for (const [ch, key, coming] of [['bgOn', 'bg', true], ['bgOff', 'bg', false]]) 
 await reduce(false);
 
 // ---------- the background panel: children tween in and out like the sub-lines, guides following (R7.1) ----------
-await ev(`(() => { current = TWID; view = null; openBg = null; const s0 = store.sessions.get(TWID); s0.background = [...(s0.background || []), { toolUseId: 'tw-past', kind: 'shell', status: 'completed', start: new Date(Date.now() - 60000).toISOString(), end: new Date().toISOString(), description: 'the panel is up', command: 'true' }]; renderAll();
-  const S = () => store.sessions.get(TWID), iso = () => new Date().toISOString();
+await ev(`[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID).click()`); // its view, the panel up
+await ev(`(() => { const iso = () => new Date().toISOString();
+  TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-past', kind: 'shell', status: 'completed', start: new Date(Date.now() - 60000).toISOString(), end: iso(), description: 'the panel is up', command: 'true' }] });
+  const shell = { toolUseId: 'tw-rb', kind: 'shell', status: 'running', description: 'rail tween check', command: 'sleep 9' };
   window.RW = { kid: k => document.querySelector('.rail .kid[data-line="' + k + '"]'),
-    shellOn: () => { const s = S(); s.background = [...(s.background || []), { toolUseId: 'tw-rb', kind: 'shell', status: 'running', start: iso(), description: 'rail tween check', command: 'sleep 9' }]; },
-    shellOff: () => { const s = S(); s.background = s.background.filter(b => b.toolUseId !== 'tw-rb'); },
-    shellDone: () => { const b = S().background.find(b => b.toolUseId === 'tw-rb'); b.status = 'completed'; b.end = iso(); },
-    agentOn: () => { const s = S(); s.agents = [...(s.agents || []), { id: 'tw-ag', toolUseId: 'tw-ag-t', description: 'grace check', type: 'general-purpose', finished: false, start: iso() }]; },
-    agentDone: () => { const a = S().agents.find(a => a.id === 'tw-ag'); a.finished = true; a.end = iso(); } };
+    shellOn: () => { shell.start = iso(); TW_PUT({ t: 'background', sid: TWID, upsert: [shell] }); },
+    shellOff: () => TW_PUT({ t: 'session', id: TWID, background: TW_S().background.filter(b => b.toolUseId !== 'tw-rb') }),
+    shellDone: () => TW_PUT({ t: 'background', sid: TWID, upsert: [{ ...shell, status: 'completed', end: iso() }] }),
+    agentOn: () => TW_PUT({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-ag', toolUseId: 'tw-ag-t', description: 'grace check', type: 'general-purpose', finished: false, start: iso() }] }),
+    agentDone: () => TW_PUT({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-ag', finished: true, end: iso() }] }) };
   window.RW_SAMPLE = (change, key, ms) => new Promise(done => {
-    const out = [], t0 = performance.now(); RW[change](); renderRail();
-    const iv = setInterval(() => renderRail(), 40);
+    const out = [], t0 = performance.now(); RW[change](); __synopia.render('rail');
+    const iv = setInterval(() => __synopia.render('rail'), 40);
     const f = () => { const k = RW.kid(key);
       if (k) { const b = k.getBoundingClientRect(), tg = k.querySelector(':scope > .tg').getBoundingClientRect(), card = k.querySelector(':scope > .card');
         out.push({ t: performance.now() - t0, h: b.height, op: +getComputedStyle(card).opacity, tgTop: tg.top - b.top, tgBot: tg.bottom - b.bottom, tgOp: +getComputedStyle(k.querySelector(':scope > .tg')).opacity }); }
@@ -159,13 +168,13 @@ const graceState = (key, line) => ev(`(() => { const k = RW.kid('${key}'), r = [
     order: [...document.querySelectorAll('.rail .now > .kids > .kid')].map(k => k.dataset.line), before: !!document.querySelector('.rail .now') && [...document.querySelector('.rail').children].indexOf(document.querySelector('.rail .now')) === 0 }; })()`);
 for (const [name, rm] of [['', false], ['reduced motion: ', true]]) {
   await reduce(rm);
-  await ev(`RW.shellOn(); RW.agentOn(); renderAll()`); await sleep(500);
+  await ev(`RW.shellOn(); RW.agentOn()`); await sleep(500);
   const t0 = Date.now();
-  await ev(`RW.shellDone(); RW.agentDone(); renderAll()`);
+  await ev(`RW.shellDone(); RW.agentDone()`);
   await sleep(1500);
   // a session switch and back mid-grace: neither restarts nor cuts it
-  await ev(`current = KEYS.find(k => k !== TWID); renderAll()`); await sleep(500);
-  await ev(`current = TWID; renderAll()`);
+  await ev(`[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id !== TWID).click()`); await sleep(500);
+  await ev(`[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID).click()`);
   await sleep(4000 - (Date.now() - t0));
   const g = await graceState('tw-ag', 'a:tw-ag'), gs = await graceState('tw-rb', 'bg');
   check(name + 'grace at 4 s: the panel keeps the subagent and the shell where they were, with their final status', g.kid && g.ended && g.marks === 2 && !g.kidLive && gs.kid && gs.ended && gs.marks === 2 && !gs.kidLive && !g.past, JSON.stringify([g, gs]));
@@ -174,7 +183,7 @@ for (const [name, rm] of [['', false], ['reduced motion: ', true]]) {
   await sleep(5600 - (Date.now() - t0));
   const e = await graceState('tw-ag', 'a:tw-ag'), es = await graceState('tw-rb', 'bg');
   check(name + 'after about 5.3 s: gone from the tree and the sidebar, the shell in Past', !e.kid && !es.kid && !e.side && !es.side && es.past, JSON.stringify([e, es]));
-  await ev(`(() => { const s = store.sessions.get(TWID); s.background = s.background.filter(b => b.toolUseId !== 'tw-rb'); s.agents = s.agents.filter(a => a.id !== 'tw-ag'); renderAll(); })()`); await sleep(400);
+  await ev(`(() => { const s = TW_S(); TW_PUT({ t: 'session', id: TWID, background: s.background.filter(b => b.toolUseId !== 'tw-rb'), agents: s.agents.filter(a => a.id !== 'tw-ag') }); })()`); await sleep(400);
 }
 await reduce(false);
 c.print(); c.close();

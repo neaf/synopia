@@ -1,5 +1,8 @@
 // HTTP for app/web/ and the WebSocket on /ws, bound to 127.0.0.1 only.
-// The upgrade checks Host and Origin; the first frame must be the token.
+// The upgrade checks Host and Origin; the first frame must be the token. No routing here: each
+// later frame goes to onMessage (router.ts), and the hello to onAuthed (publisher.ts).
+// A page that doesn't read its socket (asleep, hung) gets no more stream previews once SEND_SOFT bytes
+// wait for it, and is cut off at SEND_HARD; it reconnects and its hello has everything.
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
@@ -10,18 +13,25 @@ import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import type { QuitCheck } from './status.ts';
 
 export const MAX_PAYLOAD = 32 * 1024 * 1024;
 export const AUTH_TIMEOUT_MS = 10_000;
+export const SEND_SOFT = 1024 * 1024;
+export const SEND_HARD = 64 * 1024 * 1024;
+const CLOSE_WAIT_MS = 1000;
 
-export type Client = { send: (msg: object) => void; close: () => void };
+// `buffered`: the bytes sent to it that its socket hasn't taken yet.
+export type Client = { send: (msg: object) => void; close: () => void; buffered: () => number };
 
 export type ServerOptions = {
   port: number;
   token: string;
   webRoot: string;
-  hello: () => object;
-  quitCheck: () => { running: unknown[]; background: unknown[] };
+  // A page's token was taken: its hello goes out (publisher.ts).
+  onAuthed?: (client: Client) => void;
+  // GET /api/quit-check: what Stop All Work and Restart Backend ask with (status.ts quitSummary).
+  quitCheck: () => QuitCheck;
   // GET /api/badge: the Dock badge's count, polled by the shell (R2.6).
   badge?: () => number;
   // POST /api/stop: "Stop All Work". Called once the 200 has gone out.
@@ -31,9 +41,12 @@ export type ServerOptions = {
   // More of GET /api/ping's answer: the daemon's code version.
   ping?: () => object;
   onMessage?: (client: Client, msg: { t: string; [k: string]: unknown }) => void;
-  // GET /api/image?sid&agent&ref: one image of a transcript, decoded (views.ts); 404 when there is none.
-  image?: (sid: string, agent: string | null, ref: string) => { status: number; type?: string; body?: Buffer };
+  // GET /api/image?sid&agent&ref: one image of a transcript, decoded (transcripts.ts); 404 when there is none.
+  image?: (sid: string, agent: string | null, ref: string) => Promise<{ status: number; type?: string; body?: Buffer }>;
   log?: Log;
+  // The backpressure limits, in bytes (tests set small ones).
+  sendSoft?: number;
+  sendHard?: number;
 };
 
 export type Server = { port: number; origin: string; clients: Set<Client>; close: () => Promise<void> };
@@ -47,21 +60,22 @@ const TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
 };
 
-// The page's Content-Security-Policy, sent on every response. Scripts from the page's own files only (no
-// inline script, no eval); the socket and http to this backend's own origin; Google Fonts for the CSS and
-// the font files the page loads; images from /api/image, and pasted ones as data: or object (blob:) URLs. Style attributes stay allowed
-// (style-src-attr): the markup sets positions and marks with them, and they can't run script.
-// index.html repeats it as a meta tag, without the port, for when the header is missing.
+// The page's Content-Security-Policy, sent on every response. Scripts, styles and fonts from the page's
+// own files only (no inline script, no eval; the fonts are bundled in app/web/fonts); the socket and http
+// to this backend's own origin; images from /api/image, and pasted ones as data: or object (blob:) URLs.
+// Style attributes stay allowed (style-src-attr): the markup sets positions and marks with them, and they
+// can't run script. The page is only ever served from here, so index.html has no meta copy.
 export function contentSecurityPolicy(origin: string): string {
   const ws = origin.replace(/^http/, 'ws');
   return [
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' https://fonts.googleapis.com",
+    "style-src 'self'",
     "style-src-attr 'unsafe-inline'",
-    "font-src 'self' https://fonts.gstatic.com",
+    "font-src 'self'",
     "img-src 'self' data: blob:",
     `connect-src 'self' ${origin} ${ws}`,
     "object-src 'none'",
@@ -114,8 +128,26 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
   let host = '';
   let origin = '';
   let csp = '';
+  let closing = false;
+  const soft = opts.sendSoft ?? SEND_SOFT, hard = opts.sendHard ?? SEND_HARD;
 
-  const http = createServer(async (req: IncomingMessage, res: ServerResponse) => {
+  // A request handler that throws answers 500 and is logged; the daemon goes on (NFR-07).
+  const http = createServer((req: IncomingMessage, res: ServerResponse) => {
+    serve(req, res).catch((e) => {
+      log('http.failed', { error: String((e as Error)?.name ?? 'error') });
+      if (!res.headersSent) deny(res, 500);
+      else res.destroy();
+    });
+  });
+  // Socket errors after listen, and requests Node can't parse: logged, never thrown.
+  http.on('error', (e) => log('http.error', { code: (e as NodeJS.ErrnoException).code ?? 'unknown' }));
+  http.on('clientError', (e, socket) => {
+    log('http.clientError', { code: (e as NodeJS.ErrnoException).code ?? 'unknown' });
+    if (socket.writable) socket.end('HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+    else socket.destroy();
+  });
+
+  async function serve(req: IncomingMessage, res: ServerResponse) {
     if (req.headers.host !== host) return deny(res, 403);
     const url = new URL(req.url ?? '/', origin);
     res.setHeader('Cache-Control', 'no-store');
@@ -153,7 +185,7 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
       }
       if (req.method === 'GET' && url.pathname === '/api/image' && opts.image) {
         const q = url.searchParams;
-        const r = opts.image(q.get('sid') ?? '', q.get('agent') || null, q.get('ref') ?? '');
+        const r = await opts.image(q.get('sid') ?? '', q.get('agent') || null, q.get('ref') ?? '');
         if (r.status !== 200 || !r.type || !r.body) return deny(res, r.status === 200 ? 404 : r.status);
         res.writeHead(200, { 'Content-Type': r.type, 'Content-Length': r.body.length, 'Cache-Control': 'private, max-age=3600' });
         res.end(r.body);
@@ -172,12 +204,16 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
     } catch {
       deny(res, 404);
     }
-  });
+  }
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
 
   http.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     const path = (req.url ?? '').split('?')[0];
+    if (closing) { // shutting down: no new page
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
+      return;
+    }
     if (path !== '/ws' || req.headers.host !== host || req.headers.origin !== origin) {
       log('ws.refused', { reason: path !== '/ws' ? 'path' : req.headers.host !== host ? 'host' : 'origin' });
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
@@ -187,14 +223,28 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
   });
 
   function accept(ws: WebSocket) {
-    let authed = false;
+    let authed = false, dropped = 0;
     const client: Client = {
       send(msg) {
-        if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+        if (ws.readyState !== ws.OPEN) return;
+        const waiting = ws.bufferedAmount;
+        if (waiting > hard) {
+          log('ws.slow', { buffered: waiting, dropped });
+          ws.terminate();
+          return;
+        }
+        // a stream preview is only the newest text: the next one, or the record, replaces it
+        if (waiting > soft && (msg as { t?: unknown; text?: unknown }).t === 'stream' && typeof (msg as { text?: unknown }).text === 'string') {
+          if (dropped++ === 0) log('ws.behind', { buffered: waiting });
+          return;
+        }
+        if (waiting <= soft) dropped = 0;
+        ws.send(JSON.stringify(msg));
       },
       close() {
         ws.close();
       },
+      buffered: () => ws.bufferedAmount,
     };
     const timer = setTimeout(() => {
       if (!authed) ws.close(4001, 'auth');
@@ -218,15 +268,19 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
         clearTimeout(timer);
         clients.add(client);
         log('ws.authed', { clients: clients.size });
-        client.send({ t: 'hello', ...opts.hello() });
+        opts.onAuthed?.(client);
         return;
       }
       if (!m || typeof m.t !== 'string') {
         log('ws.badFrame');
         return;
       }
-      if (opts.onMessage) opts.onMessage(client, m as { t: string });
-      else log('ws.unhandled', { t: m.t });
+      if (closing || !opts.onMessage) return;
+      try {
+        opts.onMessage(client, m as { t: string });
+      } catch (e) { // router.ts catches its own; this is the last guard (NFR-07)
+        log('ws.failed', { t: m.t, error: String((e as Error)?.name ?? 'error') });
+      }
     });
     ws.on('close', (code) => {
       clearTimeout(timer);
@@ -253,9 +307,16 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
     port,
     origin,
     clients,
-    close() {
+    // Stops taking pages and frames; each page gets a close frame after what was sent to it (an
+    // action's ack included), and is cut off after CLOSE_WAIT_MS.
+    async close() {
+      closing = true;
+      const open = [...wss.clients];
+      for (const c of open) c.close(1001, 'stopping');
+      const gone = Promise.all(open.map((c) => (c.readyState === c.CLOSED ? null : new Promise((ok) => c.once('close', ok)))));
+      await Promise.race([gone, new Promise((ok) => setTimeout(ok, CLOSE_WAIT_MS).unref())]);
       for (const c of wss.clients) c.terminate();
-      return new Promise((ok) => {
+      await new Promise<void>((ok) => {
         wss.close();
         http.close(() => ok());
         http.closeAllConnections();

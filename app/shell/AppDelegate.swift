@@ -1,13 +1,15 @@
 // The window, finding the backend daemon, Quit and Stop All Work. The app is only UI: ⌘Q, a
-// crash or a kill ends the app and never the daemon, so running work goes on (plan section 2).
+// crash or a kill ends the app and never the daemon, so running work goes on (docs/Daemon files.md).
 import Cocoa
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
   private var window: NSWindow!
   private let frame = WindowFrame()
   private let page = PageView()
   private let backend = Backend()
   private var stoppingAll = false
+  private var asking = false  // a quit-check or its sheet is open
   private var sigterm: DispatchSourceSignal?
 
   func applicationDidFinishLaunching(_ n: Notification) {
@@ -77,16 +79,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
   // ⌘Q quits only the app, without asking: the daemon and its work go on.
 
-  private struct QuitCheck: Decodable {
-    struct Work: Decodable { let kind: String }
-    let running: [String]
-    let background: [Work]
-  }
-
-  /// "Stop All Work…" (⌥⌘Q): when `GET /api/quit-check` lists running turns or background work, an
-  /// NSAlert asks first ("Stop all work? 2 sessions are working and 1 background shell will stop.").
-  /// Then POST /api/stop ends the daemon and its processes, and the app quits once it has exited.
-  /// A failed check doesn't block it.
+  /// "Stop All Work…" (⌥⌘Q): when `GET /api/quit-check` says something runs, an NSAlert asks first
+  /// ("Stop all work? 2 sessions are working and 1 background shell will stop."). Then POST /api/stop
+  /// ends the daemon and its processes, and the app quits once it has exited.
   @objc func stopAllWork(_ sender: Any?) {
     guard !stoppingAll else { return }
     confirmIfRunning(ask: "Stop all work?", button: "Stop All Work") { self.stopAndQuit() }
@@ -101,52 +96,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     confirmIfRunning(ask: "Restart the backend?", button: "Restart Backend") { self.backend.restartDaemon() }
   }
 
-  /// Runs `action` at once when `GET /api/quit-check` lists nothing running (or fails), else after
-  /// an NSAlert on the window ("<ask> 2 sessions are working and 1 background shell will stop.").
+  /// Runs `action` at once when the daemon's quit-check `summary` is empty (nothing runs), else after
+  /// an NSAlert on the window: "<ask> <summary>". A check that fails asks too, since the shell can't
+  /// tell what would stop. One check or sheet at a time: a second press meanwhile does nothing.
   private func confirmIfRunning(ask: String, button: String, _ action: @escaping () -> Void) {
-    guard let r = backend.ready,
-          let url = URL(string: "http://127.0.0.1:\(r.port)/api/quit-check?token=\(r.token)") else { return action() }
-    var req = URLRequest(url: url)
-    req.timeoutInterval = 2
-    URLSession.shared.dataTask(with: req) { data, _, _ in
-      let check = data.flatMap { try? JSONDecoder().decode(QuitCheck.self, from: $0) }
-      DispatchQueue.main.async {
-        guard let check, let text = AppDelegate.stopText(check, ask: ask) else { return action() }
-        let alert = NSAlert()
-        alert.messageText = text
-        alert.addButton(withTitle: button)
-        alert.addButton(withTitle: "Cancel")
-        alert.beginSheetModal(for: self.window) { if $0 == .alertFirstButtonReturn { action() } }
+    guard !asking, window.attachedSheet == nil else { return }
+    guard backend.ready != nil else { return action() }
+    asking = true
+    Task { @MainActor in
+      let check = await backend.quitCheck()
+      if let check, check.summary.isEmpty {
+        asking = false
+        return action()
       }
-    }.resume()
+      let alert = NSAlert()
+      alert.messageText = "\(ask) \(check?.summary ?? "Synopia could not tell what is running.")"
+      alert.addButton(withTitle: button)
+      alert.addButton(withTitle: "Cancel")
+      alert.beginSheetModal(for: window) { answer in
+        self.asking = false
+        if answer == .alertFirstButtonReturn { action() }
+      }
+    }
   }
 
   private func stopAndQuit() {
     stoppingAll = true
     backend.stopDaemon { NSApp.terminate(nil) }
   }
-
-  /// "Stop all work? 2 sessions are working and 1 background shell will stop.", or nil when nothing runs.
-  private static func stopText(_ c: QuitCheck, ask: String) -> String? {
-    func count(_ n: Int, _ one: String, _ many: String) -> String? { n == 0 ? nil : "\(n) \(n == 1 ? one : many)" }
-    let kinds = c.background.map(\.kind)
-    let work = [
-      count(kinds.filter { $0 == "subagent" }.count, "subagent", "subagents"),
-      count(kinds.filter { $0 == "shell" }.count, "background shell", "background shells"),
-      count(kinds.filter { $0 == "monitor" }.count, "monitor", "monitors"),
-    ].compactMap { $0 }
-    let n = c.running.count
-    if n == 0 && work.isEmpty { return nil }
-    let turns = n == 0 ? nil : n == 1 ? "1 session is working" : "\(n) sessions are working"
-    let list = work.count > 1 ? work.dropLast().joined(separator: ", ") + " and " + work.last! : work.first
-    switch (turns, list) {
-    case let (t?, l?): return "\(ask) \(t) and \(l) will stop."
-    case let (t?, nil): return "\(ask) \(t) and will stop."
-    case let (nil, l?): return "\(ask) \(l) will stop."
-    default: return nil
-    }
-  }
 }
+
 
 /// Shown in the window when the backend has exited: its last stderr line and
 /// a way to start it again.

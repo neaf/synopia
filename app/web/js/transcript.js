@@ -1,14 +1,21 @@
-/* Transcript: tool lines, files changed, subagent waves, the items, the status lines and renderConv (split from prototype/app.html). */
+/* Transcript: the session view (requirements R5): its frame, the header, and the log as keyed blocks, as the
+   Claude Code CLI shows a conversation: prompts, Claude's text, tool steps and runs, subagent waves and
+   reports, files changed, the turn's "Worked for" line, the live line, queued and held messages, `!`
+   commands. renderLog patches the blocks by key, so open steps, diffs and folds stay as they are. */
+import { store, current, view, cur, isViewed, selectView, requestsOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs } from "./state.js";
+import { request, act } from "./connection.js";
+import * as ui from "./ui-state.js";
+import { openSteps } from "./ui-state.js";
+import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
+import { md, parseAnswers, parseNotes } from "./md.js";
+import { ind } from "./marks.js";
+import { bgOf, bgState, openBg, setOpenBg, renderRail } from "./rail.js";
+import { thumbsHTML } from "./images.js";
+import { previewClick } from "./preview.js";
+import { renderCard, resetCard, withPending, extAsk } from "./card.js";
+import { mountComposer, modelName, paintBash, unattach, openModelPicker } from "./composer.js";
+
 /* ---------- conversation, rendered like the CLI ---------- */
-function took(ms) {
-  const m = Math.round(ms / 60000);
-  if (m < 1) return `${Math.max(1, Math.round(ms / 1000))}s`;
-  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`;
-}
-/* times follow macOS's 12- or 24-hour setting, which the app passes in (the web view's locale can't see it) */
-const hourOpts = () => typeof window.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: window.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {};
-const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...hourOpts() });
-const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
 /* a foreground Bash or Agent still running: b, b can send it to the background, and the first b marks it (R9) */
 const isFg = t => !!t.fg && t.state === "running";
@@ -24,11 +31,14 @@ function toolLine(t) {
 /* the source the viewer names for a step's images: a Read's file path, otherwise the step as its line reads */
 const imgFrom = t => t.name === "Read" && t.obj ? t.obj : `${toolName(t)}${t.obj ? `(${t.obj})` : ""}`;
 
-/* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
+/* ---------- a step, expanded (R5.6): its command or input, then its result under the drawn corner ----------
    The page has the result's first 20 lines (4 KB at most); "Show all" asks the server for the rest
    (`toolOutput`), which reads it again from the transcript file. Open steps are kept by item id. */
-const openSteps = new Set(), fullOut = new Map();
+const fullOut = new Map();
 let stepAsked = null; // the step whose full result was asked for, until the reply (or a toast)
+/* a toast came instead of a reply (a failed toolOutput), or a new hello (a reply lost with the old socket never comes):
+   "Show all" and "Show N earlier" may ask again (main.js) */
+export function clearAsked() { stepAsked = null; earlierAsked = null; }
 const stepKey = id => `${current}|${view || ""}|${id}`;
 const hasStep = t => !!(t.input || t.out);
 const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
@@ -69,16 +79,16 @@ function stepHTML(t) {
   return runView({
     key: t.id, input: t.input || "", out: o ? (full !== undefined ? full : o.text || "") : null,
     truncatedTotal: o && o.cut && full === undefined ? +o.lines : 0,
-    running, startedAt: t.since || null, note: running && cur()?.driven ? "Output shows when it finishes" : "", stopped: !!(o && o.interrupted),
+    running, startedAt: t.since || null, note: running && cur()?.state.driven ? "Output shows when it finishes" : "", stopped: !!(o && o.interrupted),
   });
 }
 function showAll(id) {
   const key = stepKey(id);
   if (id.startsWith("bang:")) { openBangs.add(key); renderLog(); return; } // a `!` command's output is all on the page
   if (stepAsked === key) return;
-  stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
+  if (request({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id })) stepAsked = key;
 }
-function applyToolOutput(m) {
+export function applyToolOutput(m) {
   const key = `${m.sid}|${m.agent || ""}|${m.toolUseId}`;
   if (stepAsked === key) stepAsked = null;
   fullOut.set(key, String(m.text ?? ""));
@@ -138,14 +148,13 @@ function diffHTML(p) {
   if (p.cut) out.push(`<div class="dgap">⋯ diff cut at 400 lines</div>`);
   return out.join("");
 }
-/* files a browser can show get an "open" link; the live app would open any file with its default app */
-const OPENABLE = /\.(html?|svg|png|jpe?g|gif|webp|pdf)$/i;
+/* every file is a link: a click sends its path to the preview or to `open` (the click handler at the end),
+   so the href is only for the status bar and copying */
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
-const openable = f => absOf(f).startsWith("/");
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
 /* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
    shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
-function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
+export function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
   let fileSeq = 0;
   more = Math.max(0, +more || 0);
   if (!patches.length && !more) return "";
@@ -173,30 +182,17 @@ function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open
 }
 
 /* ---------- subagents ---------- */
-const LOADED = Date.now();
-const BASE = window.EXPORTED_AT || LOADED;
-let NOWISH = Date.now();
-const liveNow = () => Date.now();
-function tookLive(ms) {
-  const t = Math.max(0, Math.floor(ms / 1000)), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
-  return h ? `${h}h ${m}m` : m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
-}
-const live = (startIso, ms) => `<span data-live="${esc(startIso)}">${tookLive(ms)}</span>`;
-let view = null; // null = the session; otherwise an agent id inside the current session
-const agentsOf = s => s.agents || [];
-const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
 const agentByTool = (s, tid) => agentsOf(s).find(a => a.toolUseId === tid);
-const agentMs = a => a.start ? (a.finished ? new Date(a.end) : NOWISH) - new Date(a.start) : 0;
 const agentType = a => a.fork ? "fork" : (a.type || "agent");
 function waveHTML(tools, s) {
   const rows = tools.map(t => ({ t, a: agentByTool(s, t.toolUseId) }));
   // A subagent whose turn ended but whose own background shell or monitor still runs isn't done: it
   // resumes when that work reports, so it reads as running.
   const busy = a => a && (!a.finished || bgOf(s).some(b => b.agentId === a.id && bgState(b) === "running"));
-  const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
+  const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : a.review ? "review" : (a.fork ? "s_fork" : "s_sub");
   // in a wave the name carries the b, b mark (R9); a single line carries it on the whole line
   const nameOf = (t, a, mark = fgMark(t)) => a ? `<button class="alink"${mark} data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span${mark}>${esc(t.obj)}</span>`;
-  const time = a => a ? (busy(a) ? live(a.start, a.finished ? NOWISH - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
+  const time = a => a ? (busy(a) ? live(a.start, a.finished ? nowish - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
     return `<div class="ln agent one"${fgMark(t)}><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a, "")} <span class="adur">${time(a)}</span></div></div>`;
@@ -206,7 +202,7 @@ function waveHTML(tools, s) {
   const forks = rows.every(r => r.a?.fork);
   const parallel = rows.every(r => r.a) && Math.max(...rows.map(r => +new Date(r.a.start))) - t0 < 120000;
   return `<div class="ln agent wave"><span class="g"></span><div><span class="name">${rows.length} ${forks ? "forks" : "subagents"}${parallel ? " in parallel" : ""}</span>
-    <div class="wgrid">${rows.map(({ t, a }, i) => {
+    <div class="wgrid">${rows.map(({ t, a }) => {
       return `${ind(markOf(a))}${nameOf(t, a)}<span class="adur">${time(a)}</span>`;
     }).join("")}</div></div></div>`;
 }
@@ -214,7 +210,7 @@ function waveHTML(tools, s) {
 
 /* The log as keyed blocks: [key, html], one root element each. Keys come from item ids, so renderLog
    can keep the blocks that didn't change and replace the ones that did. */
-function itemsHTML(items, sessionBusy, s) {
+export function itemsHTML(items, sessionBusy, s) {
   const out = []; let run = []; let turnStart = null; let turnKey = null; let turnMs = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
   /* title changes (R5.x) wait for the next block: one between turns goes after the turn's "Worked for" line */
   let titles = [];
@@ -236,7 +232,7 @@ function itemsHTML(items, sessionBusy, s) {
   for (const it of items) {
     /* your answer to a permission or plan card shows as your turn, before the tool it let run (R6.7) */
     if (it.k === "tool" && it.answer) { prompt(esc(it.answer), it.ts, `ans:${it.id}`); lastTs = it.ts; }
-    /* a plan whose process ended before you answered (plan section 7) */
+    /* a plan whose process ended before you answered reads "Not answered (Synopia quit)", as a question does */
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images && !it.imgs?.length ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}${thumbsHTML(it.imgs, current, view, "your message")}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
@@ -252,18 +248,19 @@ function itemsHTML(items, sessionBusy, s) {
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
-      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
+      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(a.review ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
       out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
-      const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
+      /* the transcript's question (a card's ask is always pending with its request, above) */
+      const picked = parseAnswers(it.answer);
       out.push([it.id, `<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`]);
       if (it.state === "pending") { out.push([`na:${it.id}`, notAnswered()]); continue; }
       if (it.state === "answered") {
-        const notes = it.kind ? [] : parseNotes(it.answer); // your note on an answer stays visible (R6.4)
+        const notes = parseNotes(it.answer); // your note on an answer stays visible (R6.4)
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}${notes[i] ? `<span class="dim">, note: ${esc(notes[i])}</span>` : ""}</p>`).join("") : md(it.answer);
         lastTs = it.ts; prompt(txt, it.ts, `ans:${it.id}`); continue;
       }
@@ -300,7 +297,7 @@ const bangLiveOf = s => { const b = s.bang; return b && !s.items.some(i => i.id 
 const bangLiveHTML = s => { const b = bangLiveOf(s); return b ? [[`bang:${b.id}`, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b)]] : []; };
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
-const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
+export const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
 /* messages you sent while the turn runs, oldest first: your prompt's band, dimmed, with the moving
    queued mark, below the live line (what's working began before it), as the CLI shows queued input. Once its prompt item is in, that shows instead. */
 const waitingOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
@@ -317,66 +314,41 @@ function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "") => {
     const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${objOf(t)}` : "")}</span>`;
     const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
-    return `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span>${body}</div>`;
+    return `<div class="ln liveln" data-state="${A ? "green" : s.state.tone}"><span class="g">${ind(mark)}</span>${body}</div>`;
   };
   /* the step named on the live line: the newest step only while it runs. Once it's done (Claude writing,
      thinking, between steps) the line just says Working, rather than naming a finished step */
   const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool"); return last && last.state === "running" ? last : null; };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
-  if (stateOf(s) !== "green") return "";
-  const t = runningStep(s.items);
-  return s.status === "busy" ? line(sessionMarkKey(s), t, "Working", phaseText(s)) : line(sessionMarkKey(s), t, wordOf(s), phaseText(s));
+  if (s.state.light !== "green") return "";
+  return line(s.state.mark, runningStep(s.items), s.state.word, phaseText(s));
 }
 /* what the state means, after its word (status.ts: the source of each) */
 function phaseText(s) {
-  const d = s.statusDetail || {};
-  if (s.status === "compacting") return "Summing up the conversation to free space";
-  if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
-  if (s.status === "stale") return `Nothing for ${age(s.statusAt)}; the session may be gone`;
-  if (s.status === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
-  if (s.status === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
+  const st = s.state.status, d = s.state.detail;
+  if (st === "compacting") return "Summing up the conversation to free space";
+  if (st === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
+  if (st === "stale") return `Nothing for ${age(s.state.since)}; the session may be gone`;
+  if (st === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";
 }
-/* an age that the 1 s timer keeps current */
-const age = ms => `<span data-age="${esc(ms)}">${dur(ms)}</span>`;
-/* a countdown to a time (the rate-limit retry) that the same timer keeps current: "in 38s", then "now" */
-const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
-const until = at => `<span data-until="${esc(at)}">${esc(left(at))}</span>`;
 const queuedText = n => `${n === 1 ? "Your message is" : `${esc(n)} messages are`} queued and ${n === 1 ? "goes" : "go"} to Claude at its next step`;
-function statusLine(s) {
-  const st = stateOf(s);
-  const last = [...s.items].reverse();
-  if (st === "green") {
-    const t = last.find(x => x.k === "tool");
-    return `<div class="status" data-state="green"><b>${ind("work")} Working</b><span>${t ? `${esc(toolName(t))}${objOf(t)}` : ""}</span></div>`;
-  }
-  if (s.status === "signedout" && st !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>${phaseText(s)}</span></div>`;
-  if (st === "red") {
-    const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[pending(s)] || "Claude is waiting for a permission";
-    return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.statusAt)}</span></div>`;
-  }
-  const w = wordOf(s), why = w === "Failed" ? `The last turn failed ${age(s.statusAt)} ago. Send a message to try again` : w === "Stopped" ? "You interrupted it" : `Claude finished ${age(s.statusAt)} ago`;
-  return `<div class="status" data-state="amber"><b>${sessionMark(s)} ${w}</b><span>${why}${bgRunning(s) ? ", background work still running" : ""}</span></div>`;
-}
-
 /* ---------- the session view, rendered per panel: header, log, card (in the dock), rail ---------- */
-const conv = document.getElementById("conv");
-const cur = () => store.sessions.get(current);
-let mounted = null; // "<sid>|<agent id>" of the view on screen
+export const conv = document.getElementById("conv");
 /* Builds the view's frame when the session or the subagent changed (the composer is made here, once
    per view, so data never resets typing, focus or attachments), then renders every panel. */
-function renderConv() {
+export function renderConv() {
   const s = cur();
   if (!s) {
-    mounted = null;
+    setMounted(null);
     conv.innerHTML = `<div class="missing"><p>${store.ui.connected ? "No open sessions." : "Connecting to the Synopia backend…"}</p></div>`;
     return;
   }
-  if (view && !agentById(s, view)) view = null;
+  if (view && !agentById(s, view)) selectView(null);
   const key = `${s.id}|${view || ""}`;
   if (mounted !== key) {
-    uiLeave(); // the draft of the view going away is kept (ui.js)
-    mounted = key;
+    ui.leave(); // the draft of the view going away is kept (ui-state.js)
+    setMounted(key);
     conv.innerHTML = `
     <header class="c-head panel"></header>
     <div class="log panel" id="log"><div class="log-inner"></div></div>
@@ -386,14 +358,14 @@ function renderConv() {
         <span class="g">❯</span><textarea id="msg" rows="1" aria-label="Message"></textarea>
       </div>
     </div></div>`;
-    lastCard = null;
+    resetCard(); // the new dock has no card yet (card.js)
     mountComposer(s);
-    requestView(s.id, view);
-    uiExpectReset(); // its stored scroll goes on once the items are in
+    ui.requestView(s.id, view);
+    ui.expectReset(); // its stored scroll goes on once the items are in
   }
   renderHeader(); renderLog(); renderCard(); renderRail();
 }
-function renderHeader() {
+export function renderHeader() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
   conv.querySelector(".c-head").innerHTML = A
@@ -415,7 +387,7 @@ function logEntries(s, A) {
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   if (hidden > 0) out.push(["earlier", earlierHTML(hidden)]);
-  out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
+  out.push(...itemsHTML(items, A ? !A.finished : s.state.light === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   if (!A) out.push(...sentHTML(s)); // sent while idle: the new turn's prompt, at once, until its record lands
@@ -425,20 +397,20 @@ function logEntries(s, A) {
   return out;
 }
 /* Earlier items: the server sends the page's last 160; the link asks for the 160 before the oldest
-   shown (`earlier`, plan section 5), and they come back as `items` with `prepend`. */
+   shown (`earlier`, R5.12a), and they come back as `items` with `prepend`. */
 const EARLIER = 160;
 let earlierAsked = null; // "<sid>|<agent>|<before>" until its reply, so a second click sends nothing
 const earlierHTML = hidden => `<p class="earlier"><button data-earlier>Show ${Math.min(EARLIER, +hidden)} earlier</button>${hidden > EARLIER ? ` (${+hidden} more)` : ""}</p>`;
-function loadEarlier() {
+export function loadEarlier() {
   const s = cur(); if (!s || !mounted) return false;
   const A = view && agentById(s, view), t = A || s, items = t.items || [];
   if (!items.length || (t.total || 0) <= items.length) return false;
   const key = `${s.id}|${view || ""}|${items[0].id}`;
-  if (earlierAsked !== key) { earlierAsked = key; send({ t: "earlier", sid: s.id, agent: view || null, before: items[0].id }); }
+  if (earlierAsked !== key && request({ t: "earlier", sid: s.id, agent: view || null, before: items[0].id })) earlierAsked = key;
   return true;
 }
 /* Renders the log after a prepend so the block you were reading stays where it was on screen. */
-function renderLogKeepingPlace() {
+export function renderLogKeepingPlace() {
   earlierAsked = null;
   const log = document.getElementById("log"); if (!log) return renderLog();
   const inner = log.querySelector(".log-inner"), top = log.getBoundingClientRect().top;
@@ -452,16 +424,14 @@ function renderLogKeepingPlace() {
   else log.scrollTop = was + log.scrollHeight - height; // the block was regrouped: keep the distance from the end
 }
 /* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
-function renderLog() {
-  const s = cur(); if (!s || !mounted || uiHolding()) return; // a view just mounted waits for its reset (ui.js)
+export function renderLog() {
+  const s = cur(); if (!s || !mounted || ui.holding()) return; // a view just mounted waits for its reset (ui-state.js)
   const log = document.getElementById("log");
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   patchChildren(log.querySelector(".log-inner"), logEntries(s, view && agentById(s, view)));
-  uiAfterLog(); // open diffs and folds stay open (ui.js)
+  ui.afterLog(); // open diffs and folds stay open (ui-state.js)
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
-/* live times tick in place, so they don't count as a change */
-const still = html => html.replace(/(<span data-(?:live|age)="[^"]*">)[^<]*/g, "$1");
 function patchChildren(parent, entries) {
   const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
   const seen = new Set(); let prev = null;
@@ -492,18 +462,9 @@ function carryState(from, to) {
     n.hidden = false; to.querySelector(`[aria-controls="${CSS.escape(d.id)}"]`)?.setAttribute("aria-expanded", "true");
   });
 }
-function renderRail() {
-  const s = cur(); if (!s || !mounted) return;
-  const A = view && agentById(s, view);
-  const old = conv.querySelector(".rail"), html = railHTML(s, A), before = old ? railTw.snap(old) : new Map();
-  if (old && html) old.outerHTML = html; else if (old) old.remove(); else if (html) conv.insertAdjacentHTML("beforeend", html);
-  conv.classList.toggle("no-rail", !hasBackground(s));
-  const rail = conv.querySelector(".rail"); if (rail) railTw.run(rail, before); // its children tween in and out (rail.js)
-}
-
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
@@ -511,11 +472,11 @@ conv.addEventListener("click", e => {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
     e.preventDefault(); e.stopPropagation();
-    view = t.dataset.agent; renderConv();
+    selectView(t.dataset.agent); renderConv();
   }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
-  else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
-  else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) setOpenBg(null); selectView(null); renderConv(); } // leaving a subagent folds its card
+  else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
+  else if (t.dataset.bg) { setOpenBg(openBg === t.dataset.bg ? null : t.dataset.bg); renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") openModelPicker();
 });
@@ -527,10 +488,10 @@ conv.addEventListener("toggle", e => {
   conv.querySelectorAll(`details[data-step="${CSS.escape(d.dataset.step)}"]`).forEach(o => { if (o !== d && o.open !== d.open) o.open = d.open; });
 }, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
-   (plan section 2), so the app and Chrome behave the same */
+   (docs/WKWebView and AppKit.md, "Links and navigation"), so the app and Chrome behave the same */
 document.addEventListener("click", e => {
   const a = e.target.closest && e.target.closest("a[href]"); if (!a) return;
   e.preventDefault();
-  if (a.dataset.path) { if (!previewClick(a, e)) send({ t: "open", path: a.dataset.path }); } // text: the preview (preview.js)
-  else if (/^https?:/i.test(a.getAttribute("href"))) send({ t: "open", url: a.href });
+  if (a.dataset.path) { if (!previewClick(a, e)) request({ t: "open", path: a.dataset.path }); } // text: the preview (preview.js)
+  else if (/^https?:/i.test(a.getAttribute("href"))) request({ t: "open", url: a.href });
 }, true);

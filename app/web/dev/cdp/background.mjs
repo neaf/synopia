@@ -1,4 +1,4 @@
-// b, b (R9): send the running foreground steps to the background, on a made-up fixture with the fake driver.
+// b, b (R9): send the running foreground steps to the background, on a made-up fixture with the scripted SDK.
 // usage: node background.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node background.mjs <url> <state-dir> <claude-dir>
 // Checks: the first b marks the steps that can go (a foreground Bash, a foreground Agent; not a background
@@ -7,14 +7,12 @@
 // doesn't drive; b types in insert mode. Writes background-asking.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records, fresh, keyTable, spySent, writeScript, running } from './helpers.mjs';
 
-const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: the fake driver gives it a status
-const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its status comes from the transcript
-const line = (o) => JSON.stringify(o) + '\n';
-const ts = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString(); // fresh: the turn reads running
-const rec = (sid, o) => line({ cwd: '/tmp/synopia-background', sessionId: sid, ...o });
-const you = (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const tool = (sid, uuid, s, id, name, input) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: Synopia's process runs its turn
+const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its turn runs in another process (the transcript)
+const ts = fresh; // fresh: the turn reads running
+const { rec, you, tool } = records('/tmp/synopia-background');
 
 if (process.argv[2] === 'make') {
   const dir = path.join(process.argv[3], 'projects', '-tmp-synopia-background');
@@ -28,13 +26,9 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${B}.jsonl`),
     you(B, 'b-u1', 0, 'Run the slow tests.')
     + tool(B, 'b-a1', 1, 'toolu_bother', 'Bash', { command: 'sleep 60', description: 'Run the slow tests' }));
-  fs.writeFileSync(path.join(process.argv[3], 'fake-script.json'), JSON.stringify({ about: 'background.mjs: made up', steps: [
-    { at: 0, sid: A, status: 'busy', ago: 60000 },
-    // the CLI registers a foreground step as a task about 2 s in: only then can it go
-    { at: 0, sid: A, task: { toolUseId: 'toolu_bsleep', taskId: 'bsl1' } },
-    { at: 0, sid: A, task: { toolUseId: 'toolu_bfg', taskId: 'abfg1' } },
-    { at: 0, sid: B, task: { toolUseId: 'toolu_bother', taskId: 'bot1' } },
-  ] }));
+  const task = (tool_use_id, task_id) => ({ message: { type: 'system', subtype: 'task_started', tool_use_id, task_id, description: 'made-up' } });
+  // the CLI registers a foreground step as a task about 2 s in: only then can it go
+  writeScript(process.argv[3], 'background.mjs: made up', { [A]: { start: true, steps: [running(60000), task('toolu_bsleep', 'bsl1'), task('toolu_bfg', 'abfg1')] } });
   process.exit(0);
 }
 
@@ -42,16 +36,12 @@ const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
-await c.load(`${url}#${A.slice(0, 8)}`, `current === '${A}' && cur().items.some(i => i.id === 'toolu_bfg') && cur().driven === true`);
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
-const K = {
-  b: () => key('b', { code: 'KeyB', vk: 66 }), l: () => key('l', { code: 'KeyL', vk: 76 }), // x has its own prompt (close.mjs)
-  j: () => key('j', { code: 'KeyJ', vk: 74 }), i: () => key('i', { code: 'KeyI', vk: 73 }),
-  esc: () => key('Escape', { code: 'Escape', vk: 27 }),
-};
+await c.load(`${url}#${A.slice(0, 8)}`, `__synopia.current() === '${A}' && __synopia.cur().items.some(i => i.id === 'toolu_bfg') && __synopia.cur().state.driven === true`);
+const sentOf = await spySent(c);
+const K = keyTable(key); // b, l (x has its own prompt, close.mjs), j, i, esc
 const asking = () => ev(`(() => { const p = document.querySelector('.composer.asking .int-ask'); return p && getComputedStyle(p).display !== 'none' ? p.textContent : null; })()`);
 const marked = () => ev(`document.getElementById('log').classList.contains('bg-asking') ? [...document.querySelectorAll('#log [data-fg]')].map(el => el.textContent.trim().split('\\n')[0]) : []`);
-const sent = () => ev(`__sent.filter(m => m.t === 'background' || m.t === 'interrupt')`);
+const sent = () => sentOf('background', 'interrupt');
 const PROMPT = 'Send to background? b again. Any other key to keep it in front.';
 
 check('starts in normal mode, nothing asked', (await ev('document.body.dataset.mode')) === 'normal' && (await asking()) === null);
@@ -96,13 +86,13 @@ check('Esc then l:the interrupt prompt alone, still nothing sent', (await asking
 
 // the turn ending, or the steps going to the background some other way, cancels it
 await K.b();
-await ev(`onMessage({ t: 'session', id: '${A}', status: 'idle', statusAt: Date.now() })`);
+await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'idle', light: 'amber', tone: 'amber', word: 'Your turn', mark: 'stopped', since: Date.now() } })`);
 check('the turn ending cancels it', (await asking()) === null && (await marked()).length === 0);
 await K.b();
 check('with the turn over, b asks nothing', (await asking()) === null);
-await ev(`onMessage({ t: 'session', id: '${A}', status: 'busy', statusAt: Date.now() })`);
+await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'busy', light: 'green', tone: 'green', word: 'Working', mark: 'work', since: Date.now() } })`);
 await K.b();
-await ev(`onMessage({ t: 'items', sid: '${A}', agent: null, total: cur().total, upsert: cur().items.filter(i => i.fg).map(i => { const { fg, ...rest } = i; return rest; }) })`);
+await ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total, upsert: s.items.filter(i => i.fg).map(i => { const { fg, ...rest } = i; return rest; }) }))(__synopia.cur())`);
 check('the steps no longer foreground: cancelled', (await asking()) === null && (await marked()).length === 0);
 await K.b();
 check('with nothing that can go, b asks nothing', (await asking()) === null && (await sent()).length === 1);
@@ -112,10 +102,11 @@ await K.i(); await K.b();
 check('insert mode: b types', (await ev('document.getElementById("msg").value')) === 'b' && (await asking()) === null);
 await ev('document.getElementById("msg").value = ""'); await K.esc();
 
-// a session Synopia doesn't drive: the first b does nothing
+// a session Synopia doesn't drive: the first b does nothing. Its Bash runs in the other process's
+// foreground (no SDK task of Synopia's marks it `fg`: task_started reaches only the process that runs it)
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`); await ev('document.activeElement.blur()');
-check('the other session: not driven, its Bash runs in the foreground', await c.until(`current === '${B}' && cur().driven === false && cur().items.some(i => i.id === 'toolu_bother' && i.fg && i.state === 'running')`),
-  JSON.stringify(await ev(`({ current, driven: cur()?.driven, items: cur()?.items.map(i => [i.id, i.fg, i.state]) })`)));
+check('the other session: not driven, its Bash runs in the foreground', await c.until(`(s => s?.id === '${B}' && s.state.driven === false && s.items.some(i => i.id === 'toolu_bother' && i.state === 'running') && !s.background.some(b => b.toolUseId === 'toolu_bother'))(__synopia.cur())`),
+  JSON.stringify(await ev(`(s => ({ current: __synopia.current(), driven: s?.state.driven, items: s?.items.map(i => [i.id, i.fg, i.state]), background: s?.background.map(b => b.toolUseId) }))(__synopia.cur())`)));
 await K.b();
 check('not driven: b asks nothing and sends nothing', (await asking()) === null && (await marked()).length === 0 && (await sent()).length === 1);
 await sleep(50);

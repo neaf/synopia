@@ -1,6 +1,6 @@
 // Bash mode (R5.13): `!` in the message box runs a shell command, as in the Claude Code CLI, on a made-up
-// fixture with the fake driver (which runs the command for real through bang.ts and appends the CLI's
-// records to the fixture file, so they land as a real session's do).
+// fixture with the scripted SDK (the command runs for real through bang.ts; the scripted SDK appends the CLI's
+// records Synopia shares with it to the fixture file, so they land as a real session's do).
 // usage: node bang.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node bang.mjs <url> <state-dir> <claude-dir>
 // Checks: `!` as the first character turns the mark into a pink `!` and the placeholder into "Run a shell
@@ -10,15 +10,12 @@
 // ends a `sleep 30` ("Stopped"); a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records, writeScript, terminal } from './helpers.mjs';
 
 const D = 'b4b4b4b4-0000-4000-8000-0000000000d1'; // driven, idle
-const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: another process runs it
+const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: a terminal's Claude Code holds it
 const dirOf = (claude) => path.join(claude, 'projects', '-tmp-synopia-bang');
-const line = (o) => JSON.stringify(o) + '\n';
-const ts = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
-const rec = (sid, o) => line({ cwd: '/tmp/synopia-bang', sessionId: sid, ...o });
-const you = (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const said = (sid, uuid, s, text) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const { rec, you, said } = records('/tmp/synopia-bang');
 
 if (process.argv[2] === 'make') {
   const dir = dirOf(process.argv[3]);
@@ -27,9 +24,9 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${D}.jsonl`), you(D, 'd-u1', 0, 'Read the demo notes.') + said(D, 'd-a1', 1, 'Read them.')
     + you(D, 'd-b1', 2, '<bash-input>ls demo</bash-input>') + you(D, 'd-b2', 2, '<bash-stdout>notes.md\n</bash-stdout><bash-stderr></bash-stderr>'));
   fs.writeFileSync(path.join(dir, `${N}.jsonl`), you(N, 'n-u1', 0, 'Rename the demo folder.') + said(N, 'n-a1', 1, 'Renamed it.'));
-  fs.writeFileSync(path.join(process.argv[3], 'fake-script.json'), JSON.stringify({ about: 'bang.mjs: made up', steps: [
-    { at: 0, sid: D, status: 'idle', ago: 58000 },
-  ] }));
+  writeScript(process.argv[3], 'bang.mjs: made up', { [D]: { start: true, state: { status: 'idle', ago: 58000 } } });
+  terminal(process.argv[3], 90002, N, '/tmp/synopia-bang'); // N: a terminal's Claude Code holds it
+  fs.mkdirSync('/tmp/synopia-bang', { recursive: true }); // the command really runs in the session's folder
   process.exit(0);
 }
 
@@ -38,7 +35,7 @@ const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
 const shot = (name) => c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, name), Buffer.from(r.result.data, 'base64')));
-await c.load(`${url}#${D.slice(0, 8)}`, `current === '${D}' && !!mounted && cur().driven === true && cur().items.length === 3`);
+await c.load(`${url}#${D.slice(0, 8)}`, `__synopia.current() === '${D}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.length === 3`);
 const type = (t) => c.cdp('Input.insertText', { text: t });
 const box = () => ev(`(() => { const ta = document.getElementById('msg'), b = ta.closest('.composer'); return { value: ta.value, mark: b.querySelector(':scope > .g').textContent, bash: b.classList.contains('bash'), ph: ta.placeholder, slash: !document.getElementById('slash').hidden }; })()`);
 const enter = () => key('Enter', { code: 'Enter', vk: 13 });
@@ -78,9 +75,9 @@ await type('echo hi; echo err >&2; exit 3');
 await enter();
 b = await box();
 check('Enter runs it: the box is empty and back to ❯', !b.bash && b.value === '' && b.mark === '❯', JSON.stringify(b));
-const landed = await c.until(`cur().items.some(i => i.k === 'bang' && i.cmd === 'echo hi; echo err >&2; exit 3' && i.sh)`, 8000);
+const landed = await c.until(`__synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'echo hi; echo err >&2; exit 3' && i.sh)`, 8000);
 check('its records land in the transcript', landed);
-await c.until(`!cur().bang || !!cur().bang.landed`, 3000);
+await c.until(`!__synopia.cur().bang || !!__synopia.cur().bang.landed`, 3000);
 await sleep(200);
 const r = await lastBang();
 check('the command on the band with !', r?.mark === '!' && r?.cmd === 'echo hi; echo err >&2; exit 3', JSON.stringify(r));
@@ -97,7 +94,7 @@ await ev(`document.getElementById('msg').focus()`);
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 await type('seq 1 45');
 await enter();
-check('the long one lands', await c.until(`cur().items.some(i => i.k === 'bang' && i.cmd === 'seq 1 45' && i.sh) && document.querySelectorAll('#log .bang').length === ${n0 + 1} && !!document.querySelector('#log [data-full^="bang:"]')`, 8000));
+check('the long one lands', await c.until(`__synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'seq 1 45' && i.sh) && document.querySelectorAll('#log .bang').length === ${n0 + 1} && !!document.querySelector('#log [data-full^="bang:"]')`, 8000));
 const cutText = await ev(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.step-out .out').textContent.split('\\n').length + '|' + document.querySelector('#log [data-full^="bang:"]').textContent`);
 check('20 lines, then "Show all 45 lines"', cutText === '20|Show all 45 lines', cutText);
 await ev(`document.querySelector('#log [data-full^="bang:"]').click()`);
@@ -108,25 +105,25 @@ await ev(`document.getElementById('msg').focus()`);
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 await type('sleep 30');
 await enter();
-check('it runs: "Running, Ns" live, and how to end it', await c.until(`!!cur().bang?.running && /^Running, \\d+s$/.test(document.querySelector('#log .bang .step-out .res.running')?.textContent || '') && /Esc, Esc/.test(document.querySelector('#log .bang .step-out .res.note')?.textContent || '')`, 3000), await ev(`document.querySelector('#log .bang .bang-res')?.textContent`));
+check('it runs: "Running, Ns" live, and how to end it', await c.until(`!!__synopia.cur().bang?.running && /^Running, \\d+s$/.test(document.querySelector('#log .bang .step-out .res.running')?.textContent || '') && /Esc, Esc/.test(document.querySelector('#log .bang .step-out .res.note')?.textContent || '')`, 3000), await ev(`document.querySelector('#log .bang .bang-res')?.textContent`));
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 await type('echo second');
-await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
+await ev('__synopia.spy()');
 await enter();
-check('a second command while one runs: a toast, and it stays in the box', (await ev(`__sent.filter(m => m.t === 'bang').length`)) === 0 && /still running/.test(await ev(`document.getElementById('toast').textContent`)) && (await box()).value === 'echo second');
+check('a second command while one runs: a toast, and it stays in the box', (await ev(`__synopia.sent('bang').length`)) === 0 && /still running/.test(await ev(`document.getElementById('toast').textContent`)) && (await box()).value === 'echo second');
 await shot('bang-running.png');
 await esc(); // insert to normal
 await esc();
 check('Esc, Esc asks "Interrupt?"', await c.until(`!!document.querySelector('.composer.asking') && /Interrupt\\?/.test(document.querySelector('.int-ask').textContent)`, 2000));
 const t0 = Date.now();
 await esc();
-check('the second Esc ends it: Stopped', await c.until(`cur().items.some(i => i.k === 'bang' && i.cmd === 'sleep 30' && i.sh) && /Stopped/.test([...document.querySelectorAll('#log .bang')].pop().textContent)`, 6000), await ev(`[...document.querySelectorAll('#log .bang')].pop().textContent`));
+check('the second Esc ends it: Stopped', await c.until(`__synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'sleep 30' && i.sh) && /Stopped/.test([...document.querySelectorAll('#log .bang')].pop().textContent)`, 6000), await ev(`[...document.querySelectorAll('#log .bang')].pop().textContent`));
 check('it ended at once (SIGTERM), not after 30 s', Date.now() - t0 < 4000);
 await shot('bang-stopped.png');
 
 // a session Synopia doesn't drive: no bash mode
 await ev(`document.querySelector('.row[data-id="${N}"]').click()`);
-await c.until(`current === '${N}' && !!mounted`);
+await c.until(`__synopia.current() === '${N}' && !!__synopia.mounted()`);
 await ev(`(() => { const ta = document.getElementById('msg'); ta.value = ''; ta.focus(); })()`);
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 b = await box();

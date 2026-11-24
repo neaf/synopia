@@ -1,7 +1,0 @@
-{
-  "about": "Script for --fake (src/fake-driver.ts) over the rail fixture: a session whose subagents started their own background shells and monitors (R7.1). Made up. Run: app/dev.sh --fake --claude-dir app/backend/test/fixtures/claude-rail, or app/web/dev/cdp/run.sh rail.",
-  "home": "/Users/fixture",
-  "steps": [
-    { "at": 0, "sid": "66666666-0000-4000-8000-000000000006", "status": "busy", "ago": 60000 }
-  ]
-}
