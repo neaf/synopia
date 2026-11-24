@@ -10,6 +10,21 @@ function dur(ms) {
   const h = Math.floor(m / 60);
   return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d`;
 }
+/* A model id as a name, until the folder's menu names it: "eu.anthropic.claude-opus-5-5[1m]" reads
+   "Claude Opus 5.5 (1M context)". Region and provider prefixes, an ARN's path, a date, a Vertex `@`
+   version and a Bedrock `-v1:0` go; a bare alias ("haiku") reads "Claude Haiku"; anything else stays. */
+function modelLabel(id) {
+  let s = String(id ?? "").trim(); if (!s) return "Default";
+  const big = /\[1m\]$/i.test(s); s = s.replace(/\[1m\]$/i, "");
+  s = s.slice(s.lastIndexOf("/") + 1).replace(/^([a-z]{2,7}\.)*anthropic\./i, "").replace(/^[a-z]{2,7}\.(?=claude-)/i, "")
+    .replace(/@.*$/, "").replace(/-v\d+(:\d+)?$/i, "").replace(/-\d{8}$/, "").replace(/-latest$/i, "");
+  const fam = /^(opus|sonnet|haiku)$/i.test(s) ? [s] : null;
+  const m = fam ? null : /^claude-((?:[a-z]+|\d+)(?:-(?:[a-z]+|\d+))*)$/i.exec(s);
+  if (!fam && !m) return String(id);
+  const parts = fam || m[1].split("-"), word = parts.filter(p => !/^\d+$/.test(p)), num = parts.filter(p => /^\d+$/.test(p));
+  const name = ["Claude", ...word.map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()), ...(num.length ? [num.join(".")] : [])].join(" ");
+  return big ? `${name} (1M context)` : name;
+}
 const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
