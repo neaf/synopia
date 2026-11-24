@@ -9,10 +9,7 @@ const want0 = 7; // sessions in the states fixture
 const c = await connect();
 const { ev, check } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 760, deviceScaleFactor: 2, mobile: false });
-await c.cdp('Page.navigate', { url });
-await sleep(2000);
-for (let i = 0; i < 40 && (await ev(`document.querySelectorAll('#groups .row').length`)) < want0; i++) await sleep(250); // every row in
-await sleep(500);
+await c.load(url, `document.querySelectorAll('#groups .row').length >= ${want0}`); // every row in
 const row = (p) => ev(`(() => { const r = document.querySelector('.row[data-id^="${p}"]'); return r && { state: r.dataset.state, word: r.querySelector('.r-state').textContent.trim(), mark: r.querySelector('.r-side').innerHTML }; })()`);
 const want = [
   ['a1a1', 'green', /^Working, 1 message queued$/, 'mk-0550AE', 'Your message is queued'],

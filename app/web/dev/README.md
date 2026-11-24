@@ -8,6 +8,18 @@ app/dev.sh --fake                 # prints "Open in Chrome: http://127.0.0.1:471
 
 `--fake` serves every session in the backend fixture tree (`app/backend/test/fixtures/claude/projects/`, made up) and plays `app/backend/test/fixtures/claude/fake-script.json`: a question with a multi-select (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), and a session with diffs (`#11111111`). The script also holds the menu (models and slash commands). Pass `--claude-dir <dir>` to use another tree with its own `fake-script.json`. The hooks `?agent=<id>` (open a subagent) and `&open=1` (expand the last diff) still work.
 
+## Page checks over headless Chrome
+
+```sh
+app/web/dev/cdp/run.sh all        # every check, one after the other: a table of check and result, the failures under it
+app/web/dev/cdp/run.sh keys       # one check; the list and what each covers is at the top of run.sh
+app/check.sh --page               # the unit checks, then run.sh all
+```
+
+Each run starts its own headless Chrome (a temp profile, a debugging port Chrome picks) and its own `--fake` backend (a port it picks) on a fresh state folder, so two runs at once, other agents' runs and your open app never share anything. Both stop when the run ends, on a failure or Ctrl-C too. A run prints `N/M pass`, the failures and where its shots are, and exits nonzero on a failure; `run.sh all` keeps each check's full output in the folder it prints. `run.sh all` runs the checks one after the other (about 95 s). Two `run.sh all` at once also pass, but the tween and motion checks sample animation frames, so one Chrome at a time keeps them clear of load.
+
+Writing a check: `connect()` from `cdp.mjs` (it needs `SYNOPIA_CHROME_PORT`, which run.sh sets), then `await c.load(url, extra)` instead of navigating and sleeping. It waits for the page's first `hello`, the sidebar, the current view's first `items`, no UI restore in flight and a visible, focused window, plus your `extra` expression. `c.key()` makes sure the page takes keys (headless Chrome can drop the first one after a load), so a check needs no workaround of its own. Wait with `c.until(expr, ms)`, not a fixed sleep. When two page actions must happen before a server reply, do them in one `ev`.
+
 ## Compare the port with the prototype
 
 ```sh

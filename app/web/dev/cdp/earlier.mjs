@@ -33,9 +33,7 @@ const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
-await c.cdp('Page.navigate', { url: url + `#${SID.slice(0, 8)}` });
-await sleep(1000); await key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
-await sleep(1500);
+await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 const until = async (expr, ms = 4000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 const ids = () => ev(`(() => { const s = cur(), A = view && agentById(s, view); return (A || s).items.map(i => i.id); })()`);
@@ -61,8 +59,8 @@ fs.writeFileSync(path.join(stateDir, 'earlier-link.png'), Buffer.from((await c.c
 await ev(`document.getElementById('log').scrollTop = 0`);
 await ev(`document.getElementById('log').scrollTop = 120`);
 let before = await place();
-await ev(`document.querySelector('#log .earlier button').click()`);
-await ev(`document.querySelector('#log .earlier button').click()`); // a second click before the reply
+// a second click before the reply: both in one evaluate, so the reply can't land between them
+await ev(`(() => { const b = () => document.querySelector('#log .earlier button'); b().click(); b()?.click(); })()`);
 check('a click sends one earlier message, before the oldest id', await until(`cur().items.length === 320`)
   && JSON.stringify(await ev(`__sent.filter(m => m.t === 'earlier')`)) === JSON.stringify([{ t: 'earlier', sid: SID, agent: null, before: 'm440' }]),
   JSON.stringify(await ev(`__sent.filter(m => m.t === 'earlier')`)));

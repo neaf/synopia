@@ -12,7 +12,7 @@ const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check } = c;
 const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
-await c.cdp('Page.navigate', { url: url + '#11111111' });
+await c.load(url + '#11111111', `current?.startsWith('11111111')`);
 check('the tool group shows', await until(`!!document.querySelector('details.fold .body details.step')`));
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 const step = (name) => `[...document.querySelectorAll('details.step')].find(d => d.querySelector('summary').textContent.includes(${JSON.stringify(name)}))`;

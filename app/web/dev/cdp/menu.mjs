@@ -6,9 +6,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
-await c.cdp('Page.navigate', { url });
-await sleep(1000); await c.key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
-await sleep(2000);
+await c.load(url);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 const type = async (t) => { for (const ch of t) await key(ch, { vk: ch.toUpperCase().charCodeAt(0) }); };
 const K = {

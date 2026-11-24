@@ -2,7 +2,11 @@
 # Runs every check: the backend unit tests, a type check of the shell, and a
 # syntax check of the page scripts. Prints one pass or fail line per part, plus
 # the names of failing tests, and exits nonzero if any part fails.
+#   app/check.sh          the fast parts, no Chrome
+#   app/check.sh --page   then every headless page check (app/web/dev/cdp/run.sh all)
 set -uo pipefail
+page=0
+case "${1:-}" in --page) page=1 ;; "") ;; *) echo "usage: app/check.sh [--page]" >&2; exit 2 ;; esac
 app="$(cd "$(dirname "$0")" && pwd)"
 failed=0
 out="$(mktemp "${TMPDIR:-/tmp}/synopia-check.XXXXXX")"
@@ -45,6 +49,17 @@ else
   else
     failed=1
     echo "web: fail (${bad[*]})"
+  fi
+fi
+
+# Page checks: headless Chrome against the fake driver, each in its own Chrome and backend
+if [ $page -eq 1 ]; then
+  if "$app"/web/dev/cdp/run.sh all >"$out" 2>&1; then
+    echo "page: pass ($(grep -c '^[a-z]* *pass ' "$out") checks)"
+  else
+    failed=1
+    echo "page: fail"
+    sed -n '2,$p' "$out" | grep -v ' pass [0-9]*/[0-9]*$'
   fi
 fi
 

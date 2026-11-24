@@ -28,9 +28,7 @@ const tweenOf = (kind) => `(async () => { const s = data.find(s => KEYS.includes
 
 await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
-await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200);
-await c.cdp('Page.navigate', { url: url + '#44444444' });
-await sleep(2500);
+await c.load(url + '#44444444', `current?.startsWith('44444444')`);
 // the one layout tween, a sidebar sub-line (R8.1): finite, height (eased) then opacity (linear), 150 ms each; tween.mjs checks it frame by frame
 const tw = await ev(tweenOf());
 check('sub-line tween: one run of 300 ms, height first (eased), then opacity (linear)', !!tw && tw.duration === 300 && tw.iterations === 1 && tw.kf.length === 3

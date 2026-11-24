@@ -1,5 +1,6 @@
 #!/bin/bash
 # Runs a page check over CDP against the fake driver, in a fresh state folder.
+#   app/web/dev/cdp/run.sh all     every check below, one after the other: a table of check and result, the failures under it
 #   app/web/dev/cdp/run.sh dnd     drop rules (R4.5), then a backend restart and the restored layout
 #   app/web/dev/cdp/run.sh keys    keys and modes (R9)
 #   app/web/dev/cdp/run.sh menu    slash menu and model picker (R5.14, R3.7)
@@ -15,22 +16,72 @@
 #   app/web/dev/cdp/run.sh motion  running marks always move (R8.1), the sub-line tween, reduced motion (R8.5), square marks, marks on the box and gutter (R8.6)
 #   app/web/dev/cdp/run.sh extcard a question and a plan asked in another process: needs you, the read-only card, then answered (R6.8), with shots
 #   app/web/dev/cdp/run.sh restore the exact UI state after a page reload and two backend restarts on the same state folder (R3.9)
-#   app/web/dev/cdp/run.sh motion motion rules and reduced motion (R8.1, R8.5), square marks, marks on the box and gutter (R8.6)
-# Starts headless Chrome on $SYNOPIA_CHROME_PORT (9334) if it isn't up, the backend on $SYNOPIA_CDP_PORT (4791). Prints "N/M pass" and the failures.
+# Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
+# (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
+# included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore)
+name="${1:-}"
+
+if [ "$name" = all ]; then
+  logs="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-all.XXXXXX")"
+  failed=0; fails=""
+  printf '%-8s %s\n' check result
+  for s in "${SUITES[@]}"; do
+    "$here/run.sh" "$s" > "$logs/$s.log" 2>&1; code=$?
+    pass=0; total=0
+    while read -r a b; do pass=$((pass + a)); total=$((total + b)); done < <(sed -n 's/^\([0-9]*\)\/\([0-9]*\) pass$/\1 \2/p' "$logs/$s.log")
+    if [ $code -eq 0 ] && [ "$total" -gt 0 ] && [ "$pass" -eq "$total" ]; then r="pass $pass/$total"
+    else
+      failed=1; r="FAIL $pass/$total"; [ $code -ne 0 ] && [ "$pass" -eq "$total" ] && r="$r (exit $code)"
+      f="$(grep -E '^FAIL|Error|error:' "$logs/$s.log" | head -8)"; [ -n "$f" ] || f="$(tail -5 "$logs/$s.log")"
+      fails="$fails$s:"$'\n'"$(sed 's/^/  /' <<<"$f")"$'\n'
+    fi
+    printf '%-8s %s\n' "$s" "$r"
+  done
+  [ -n "$fails" ] && printf '\n%s' "$fails"
+  echo "logs: $logs"
+  exit $failed
+fi
+case " ${SUITES[*]} " in *" $name "*) ;; *) echo "usage: run.sh all|${SUITES[*]// /|}" >&2; exit 2 ;; esac
+
 fix="$(cd "$here/../../../backend/test/fixtures/claude" && pwd)"
-[ "$1" = states ] && fix="$fix-states"
-[ "$1" = rail ] && fix="$fix-rail"
+[ "$name" = states ] && fix="$fix-states"
+[ "$name" = rail ] && fix="$fix-rail"
 state="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-state.XXXXXX")"
-port="${SYNOPIA_CDP_PORT:-4791}"
-if [ "$1" = earlier ] || [ "$1" = images ]; then fix="$state/claude"; node "$here/$1.mjs" make "$fix" || exit 1; fi
-dry=(); if [ "$1" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
-if [ "$1" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
-curl -s http://127.0.0.1:"${SYNOPIA_CHROME_PORT:-9334}"/json >/dev/null || { "$here/chrome.sh"; sleep 2; }
-start() { "$here/backend.sh" "$port" "$state" --fake --claude-dir "$fix" ${dry[@]+"${dry[@]}"} >/dev/null; }
-stop() { local p; p="$(cat "$state/pid")"; kill "$p" 2>/dev/null; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || break; sleep 0.1; done; }
+profile="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-chrome.XXXXXX")"
+
+# teardown: only this run's backend (its latest pid, after restarts) and this run's Chrome and its helpers
+stopPid() { local p=$1; [ -n "$p" ] || return 0; kill "$p" 2>/dev/null || return 0; for _ in $(seq 50); do kill -0 "$p" 2>/dev/null || return 0; sleep 0.1; done; kill -9 "$p" 2>/dev/null; }
+check=""
+cleanup() {
+  stopPid "$check"
+  stopPid "$(cat "$state/pid" 2>/dev/null)"
+  stopPid "$(cat "$profile/pid" 2>/dev/null)"
+  pkill -9 -f -- "--user-data-dir=$profile" 2>/dev/null
+  rm -rf "$profile"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+if [ "$name" = earlier ] || [ "$name" = images ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
+if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
+
+SYNOPIA_CHROME_PORT="$("$here/chrome.sh" "$profile")" || exit 1
+export SYNOPIA_CHROME_PORT
+port=0 # the backend picks a free port; a restart reuses it
+start() { "$here/backend.sh" "$port" "$state" --fake --claude-dir "$fix" ${dry[@]+"${dry[@]}"} >/dev/null || exit 1; port="$(sed -n 's/^http:\/\/127.0.0.1:\([0-9]*\)\/.*/\1/p' "$state/url")"; }
+stop() { stopPid "$(cat "$state/pid")"; }
 start
-node "$here/$1.mjs" "$(cat "$state/url")" "$state" "$fix"; [ "$1" = menu ] && echo "picker shot: $state/menu-picker.png"; [ "$1" = earlier ] && echo "link shot: $state/earlier-link.png"; [ "$1" = states ] && echo "shots: $state/states-*.png"; [ "$1" = files ] && echo "shot: $state/files-changed.png"; [ "$1" = steps ] && echo "shot: $state/steps.png"; [ "$1" = extcard ] && echo "shots: $state/extcard-*.png"; [ "$1" = preview ] && echo "shots: $state/preview-*.png"; [ "$1" = images ] && echo "shots: $state/images-*.png"; [ "$1" = rail ] && echo "shots: $state/rail-*.png"
-if [ "$1" = dnd ]; then stop; start; node "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart; fi
-stop
+# the check runs as a waited child, so a signal runs the teardown at once (and stops the check too)
+runCheck() { node "$@" & check=$!; wait $check; local c=$?; check=""; return $c; }
+runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
+case $name in
+  menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
+  states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shot: $state/steps.png" ;;
+  extcard|preview|images|rail) echo "shots: $state/$name-*.png" ;;
+esac
+if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
+exit $code
