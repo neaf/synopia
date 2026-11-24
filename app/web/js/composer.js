@@ -109,6 +109,7 @@ function askInBox(box, html) {
 function askInterrupt() {
   const box = conv.querySelector(".dock .composer"); if (!box) return;
   if (bgAsk) dismissBackground(); // the newest prompt replaces the other
+  if (closeAsk) dismissClose();
   interruptAsk = current;
   askInBox(box, `<b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.`);
 }
@@ -126,6 +127,7 @@ function askBackground() {
   const box = conv.querySelector(".dock .composer"), log = document.getElementById("log");
   if (!box || !log || !bgSteps(cur()).length) return false;
   if (interruptAsk) dismissInterrupt();
+  if (closeAsk) dismissClose();
   bgAsk = current;
   askInBox(box, `<b>Send to background?</b> <kbd>b</kbd> again. Any other key to keep it in front.`);
   log.classList.add("bg-asking");
@@ -157,6 +159,31 @@ function syncInterrupt() {
 }
 document.addEventListener("mousedown", () => { if (interruptAsk) dismissInterrupt(); }, true);
 
+/* ---------- x, x: close the session (R3.6, R9); the prompt is the only confirm ---------- */
+let closeAsk = null; // the session id the prompt is for
+/* the first x: the box asks, with what will stop; a session another process drives is only removed from Synopia */
+function askClose() {
+  const s = cur(), box = conv.querySelector(".dock .composer"); if (!s || !box) return false;
+  if (interruptAsk) dismissInterrupt(); // the newest prompt replaces the other
+  if (bgAsk) dismissBackground();
+  closeAsk = current;
+  const stops = s.driven === false ? "" : closeStops(s);
+  askInBox(box, s.driven === false
+    ? `<b>Remove it from Synopia?</b> <kbd>x</kbd> again. Its other process keeps running.`
+    : `<b>Close this session?</b> <kbd>x</kbd> again. Any other key to keep it.${stops ? ` ${esc(stops)}` : ""}`);
+  return true;
+}
+function dismissClose() {
+  closeAsk = null;
+  conv.querySelectorAll(".composer.asking").forEach(b => b.classList.remove("asking"));
+}
+/* the second x: the same `close` the header button sent; the session keeps its place and comes back from the Open list */
+function confirmClose() {
+  const sid = closeAsk; dismissClose();
+  if (sid && sid === current) closeSession(cur());
+}
+document.addEventListener("mousedown", () => { if (closeAsk) dismissClose(); }, true);
+
 /* messages an interrupt cancelled come back to their session's box, before what you typed since */
 const restoredTexts = new Map();
 function restoreTexts(sid, texts) {
@@ -175,7 +202,7 @@ function takeRestored(sid) {
 
 function mountComposer(s) {
   const ta = document.getElementById("msg");
-  interruptAsk = null; bgAsk = null;
+  interruptAsk = null; bgAsk = null; closeAsk = null; // switching sessions or views cancels a prompt
   renderAttachments();
   /* a pick is stored per session (the backend's session message updates the header) and applied to a running process (setModel, the effort through applyFlagSettings) */
   attachSlash(ta, (m, effort) => {

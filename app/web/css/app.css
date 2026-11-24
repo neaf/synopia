@@ -79,6 +79,11 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .c-now { color: var(--ink-2); margin: 0; }
 .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
 .c-meta .mono { color: var(--ink-2); }
+/* the folder's mono span and the subagent view's back link sit inside the line's own height, so the meta
+   line is 16.5px in every view (a button's or a second font's line box would add a fraction) */
+.c-meta { line-height: 16.5px; height: 16.5px; }
+.c-meta .mono, .c-meta .link { line-height: 1; }
+.c-meta .link { font-size: inherit; }
 /* the header keeps one shape in every view (title, Now or status, meta; one line each), so switching
    between the session and a subagent never moves the panels below it */
 .c-head > .c-title, .c-head > .c-now, .c-head > .c-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }

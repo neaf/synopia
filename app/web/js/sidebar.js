@@ -101,20 +101,19 @@ const sideTw = lineTweens({
   place: (r, n, after) => (after || r.querySelector(".r-state")).after(n),
 });
 const tweens = sideTw.tweens, lineSnap = sideTw.snap, tweenLines = sideTw.run;
-/* "Close session": hides it and ends its process. When a turn or background work runs, ask first. */
-function closeSession(s) {
-  if (!s) return;
+/* what closing a session stops: its turn, subagents, shells and monitors, as one sentence ("" when nothing
+   runs); the x, x prompt adds it (composer.js) */
+function closeStops(s) {
   const n = k => bgOf(s).filter(b => !b.agentId && bgState(b) === "running" && b.kind === k).length; // a subagent's own stop with it
   const plural = (c, one, many) => c ? [`${c} ${c === 1 ? one : many}`] : [];
-  const work = [...plural(agentsOf(s).filter(a => !a.finished).length, "subagent", "subagents"),
-    ...plural(n("shell"), "background shell", "background shells"), ...plural(n("monitor"), "monitor", "monitors")];
-  const turn = turnRuns(s);
-  const list = work.length > 1 ? `${work.slice(0, -1).join(", ")} and ${work.at(-1)}` : work[0];
-  if (turn || work.length) {
-    const what = turn && list ? `Claude is working, and ${list} will stop.` : turn ? "Claude is working, and its turn will stop." : `${list} will stop.`;
-    if (!confirm(`Close “${s.title}”? ${what[0].toUpperCase()}${what.slice(1)}`)) return;
-  }
-  send({ t: "close", sid: s.id });
+  const work = [...(turnRuns(s) ? ["Claude's turn"] : []), ...plural(agentsOf(s).filter(a => !a.finished).length, "subagent", "subagents"),
+    ...plural(n("shell"), "shell", "shells"), ...plural(n("monitor"), "monitor", "monitors")];
+  if (!work.length) return "";
+  return `${work.length > 1 ? `${work.slice(0, -1).join(", ")} and ${work.at(-1)}` : work[0]} will stop.`;
+}
+/* x, x: hides the session and ends its process (or, one another process drives, only removes it from Synopia) */
+function closeSession(s) {
+  if (s) send({ t: "close", sid: s.id });
 }
 /* the footer's Open line: the list of past sessions (open-list.js) */
 document.getElementById("open").onclick = () => showOpenList();
