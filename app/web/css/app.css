@@ -1,7 +1,7 @@
 /* Light theme with visible panels. Sizes are 81% of the first draft (two 90% steps). */
 :root {
   /* one speed for every moving mark (R8.1); a monitor only watches, so its sweep is slower */
-  --mark-period: 1.2s; --mark-watch: 2.1s;
+  --mark-period: 1.5s; --mark-watch: 2.6s;
   --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
   --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
   --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
