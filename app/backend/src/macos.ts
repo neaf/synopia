@@ -60,6 +60,17 @@ export function signal(pid: number, sig: NodeJS.Signals): void {
   process.kill(pid, sig);
 }
 
+// Whether any process of a group still lives (signal 0 to the group).
+export function groupAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 // A whole process group (a child started `detached` leads its own); quiet when it is gone.
 export function signalGroup(pid: number, sig: NodeJS.Signals): void {
   try {

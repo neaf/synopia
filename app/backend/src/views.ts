@@ -20,11 +20,14 @@ import { transcriptStatus, QUIET_MS, ASK_STALE_MS } from './status.ts';
 import type { Running } from './status.ts';
 import type { Status, StatusDetail } from './status.ts';
 import { displayPath } from './paths.ts';
+import { resolveModel } from './session.ts';
+import type { ModelChoice } from './session.ts';
+import type { PendingRequest } from './cards.ts';
 
 export type { Status } from './status.ts';
 export const WINDOW = 160;
 
-export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'plan'; since: number; [k: string]: unknown };
+export type { PendingRequest } from './cards.ts';
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   status: Status; statusAt: number; statusDetail: StatusDetail; model: unknown; effort: unknown;
@@ -57,6 +60,7 @@ type Live = {
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   ran: string; // the last Running sent to onRunning
   since: Map<string, number>; // tool use id -> when a running tool started, from the SDK's tool_progress (R5.6)
+  choice: ModelChoice | null; // the model and effort you chose (session.ts)
 };
 
 export type ViewsOptions = {
@@ -74,8 +78,6 @@ export type ViewsOptions = {
   answerOf?: (toolUseId: string) => string | undefined;
   // The plan text an answered plan card showed (state.json `plans`).
   planOf?: (toolUseId: string) => string | undefined;
-  // Slice 5: the model and effort you chose for a session (state.json `models`), shown over the transcript's.
-  choice?: (sid: string) => { model: string; effort?: string | null } | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
   defaultModel?: () => string | undefined;
   // After each message to the pages (the Dock badge recounts from it, debounced).
@@ -121,13 +123,21 @@ export class Views {
     if (this.live.has(id)) return;
     const file = init.path ?? findTranscript(this.opts.claudeDir, id);
     const s: Live = {
-      id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf, titlesOf: () => this.opts.written?.(id)?.history }),
+      id, path: file, cwd: init.cwd ?? '', t: this.transcript(id),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, bang: null, finder: null, working: new Set(), ran: '', since: new Map(),
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, bang: null, finder: null, working: new Set(), ran: '', since: new Map(), choice: null,
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
+    this.read(s, file);
+  }
+
+  private transcript(id: string): Transcript {
+    return new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf, titlesOf: () => this.opts.written?.(id)?.history });
+  }
+
+  private read(s: Live, file: string | null): void {
     if (file) this.attach(s, file);
     else if (this.opts.pollMs !== 0) s.finder = setInterval(() => this.find(s), this.opts.pollMs ?? 1000);
   }
@@ -206,28 +216,29 @@ export class Views {
     this.broadcast({ t: 'removed', id });
   }
 
-  // The session's id changed (a new session's real id from system/init, or a conversation_reset):
-  // it tails the new id's file from the start, keeps its folder and status, moves the pages
-  // viewing it, and sends `session` with `replaces` once.
+  // The session's id changed (a new session's real id from system/init, or a conversation_reset).
+  // The whole record moves (status, cards, held and queued messages, the `!` run, the preview, the
+  // choice, the work seen running); only the reading starts again, on the new id's file from the
+  // start. The pages viewing it move, and `session` goes with `replaces` once.
   rekey(oldId: string, newId: string): void {
     const s = this.live.get(oldId);
     if (!s || this.live.has(newId)) return;
     this.stopOne(s);
     this.live.delete(oldId);
-    this.open(newId, { cwd: s.cwd });
-    const n = this.live.get(newId) as Live;
-    n.status = s.status;
-    n.statusAt = s.statusAt;
-    n.statusDetail = s.statusDetail;
-    // the driver's state moves too: a card still up, the messages held behind it, the preview
-    n.pending = s.pending;
-    n.held = s.held;
-    n.outbox = s.outbox;
-    n.bang = s.bang;
-    n.stream = s.stream;
-    n.since = s.since;
-    const meta = this.metaOf(n);
-    n.sent = JSON.stringify(meta);
+    s.id = newId;
+    s.t = this.transcript(newId);
+    s.path = null;
+    s.tailer = null;
+    s.watcher = null;
+    s.children = new Map();
+    s.needReset = false;
+    s.resetChildren = new Set();
+    s.ran = '';
+    this.live.set(newId, s);
+    this.log('views.rekey', { from: oldId, to: newId });
+    this.read(s, findTranscript(this.opts.claudeDir, newId));
+    const meta = this.metaOf(s);
+    s.sent = JSON.stringify(meta);
     this.broadcast({ t: 'session', replaces: oldId, ...meta });
     for (const [client, sub] of this.liveSubs()) {
       if (sub.sid !== oldId) continue;
@@ -302,7 +313,6 @@ export class Views {
     const t = s.t;
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
     const w = this.opts.written?.(s.id);
-    const ch = this.opts.choice?.(s.id);
     const ran = runningOf(t, s.path);
     const status = s.status ?? transcriptStatus(ran);
     let statusAt = s.statusAt;
@@ -337,8 +347,7 @@ export class Views {
       // it is what makes the session need you: not with a request of ours, nor for an ask our own
       // process left behind (status.ts gives that no waiting, and the page reads "Not answered").
       ask: status === 'waiting' && !s.pending.length ? ran.ask ?? null : null,
-      model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
-      effort: ch ? ch.effort ?? null : effortOf(t.effort),
+      ...resolveModel(s.choice, { model: typeof t.requestedModel === 'string' ? t.requestedModel : null, effort: effortOf(t.effort) }, this.opts.defaultModel?.()),
       outbox: s.outbox.map(({ id, text, images, landed, queued }) => (landed ? { id, text, images, landed, queued } : { id, text, images, queued })),
       bang: s.bang,
     };
@@ -494,6 +503,14 @@ export class Views {
     s.statusDetail = detail;
     // the turn stopped with messages still queued: they go once they've had time to land
     if (!RUNNING.has(status) && s.outbox.some((o) => !o.landed)) this.later(s, OUTBOX_GRACE_MS);
+    this.flush(s);
+  }
+
+  // The model and effort you chose (session.ts), shown over the transcript's.
+  setChoice(sid: string, choice: ModelChoice | null): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.choice = choice;
     this.flush(s);
   }
 

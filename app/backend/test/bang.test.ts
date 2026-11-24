@@ -88,6 +88,43 @@ test('bang: a folder that is gone fails to start', async () => {
   assert.match(r.error ?? '', /couldn't start/);
 });
 
+test('bang: a spawn that throws ends the run after the constructor, never inside it (sessions-sdk#B3)', async () => {
+  let inside = true;
+  let done: BangRun | null = null;
+  new Bang({ id: ID, cmd: 'echo \0x', cwd: tmp(), shell: '/bin/sh', onUpdate: () => {}, onDone: (r) => { assert.equal(inside, false, 'not from the constructor'); done = r; } });
+  inside = false;
+  await new Promise((r) => setTimeout(r, 10));
+  assert.match((done as BangRun | null)?.error ?? '', /couldn't start/);
+});
+
+test('bang: the SIGKILL timer goes once the group is empty (sessions-sdk#B4)', async () => {
+  let bang!: Bang;
+  const done = new Promise<void>((resolve) => {
+    bang = new Bang({ id: ID, cmd: 'sleep 30', cwd: tmp(), shell: '/bin/sh', killAfterMs: 60_000, onUpdate: () => {}, onDone: () => resolve() });
+  });
+  await new Promise((r) => setTimeout(r, 100));
+  bang.kill();
+  await done;
+  assert.equal((bang as unknown as { killTimer: unknown }).killTimer, null, 'no SIGKILL armed for a group id that may be reused');
+});
+
+test('bang: the cap counts code points, never splits a pair, and the cut line names the cap (sessions-sdk#B5)', async () => {
+  const { run: r } = await run(`printf '\\360\\237\\230\\200%.0s' 1 2 3 4 5`, { cap: 3 });
+  assert.equal(r.out, '😀😀😀');
+  assert.equal(r.cut, true);
+  assert.equal(bashOutput({ out: 'x', err: '', cut: true, exit: 0 }, 3), '<bash-stdout>x</bash-stdout><bash-stderr>[Output cut at 3 characters]</bash-stderr>');
+});
+
+test('delivery: a command that cannot spawn toasts, and the daemon goes on (sessions-sdk#B3)', async () => {
+  const { sessions, SID, got, last } = setup();
+  assert.equal(sessions.bang(SID, 'echo \0x').ok, true);
+  await until(() => last()?.bang?.running === false);
+  assert.match(String(got.find((m) => m.t === 'toast')?.text), /couldn't start/);
+  assert.equal(sessions.bang(SID, 'echo again').ok, true, 'the next command runs');
+  await until(() => last()?.bang?.running === false);
+  sessions.stop();
+});
+
 test('bang format: the CLI tags, the exit and cut lines, and back', () => {
   assert.equal(bashInput('ls -la'), '<bash-input>ls -la</bash-input>');
   const text = bashOutput({ out: 'hi\n', err: 'err\n', cut: false, exit: 3 });

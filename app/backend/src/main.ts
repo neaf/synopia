@@ -31,7 +31,7 @@ import {
 } from './daemon.ts';
 import { patchUi, draftImage } from './ui.ts';
 import type { Image } from './sessions.ts';
-import type { CardAnswer } from './answers.ts';
+import type { CardAnswer } from './cards.ts';
 import type { Lock } from './lock.ts';
 import type { Successor } from './daemon.ts';
 import type { BadgeSession } from './badge.ts';
@@ -119,7 +119,6 @@ const views = new Views({
   written: (sid) => store.state.written[sid],
   answerOf: (toolUseId) => store.state.answers[toolUseId],
   planOf: (toolUseId) => store.state.plans[toolUseId],
-  choice: (sid) => sessions.choiceOf(sid),
   defaultModel: () => store.state.settings.model,
   onChange: () => badge?.changed(),
   onRunning: (sid, r) => sessions.runningChanged(sid, r),
@@ -207,12 +206,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
       : [];
     const text = typeof msg.text === 'string' ? msg.text : '', uuid = typeof msg.uuid === 'string' ? msg.uuid : undefined;
-    // sent during a turn: shown pending until it lands (R5.5); not one that waits for a terminal (it stays in the box)
-    const queues = views.queues(sessions.resolve(msg.sid)) && !sessions.terminalHolds(msg.sid);
-    const r = sessions.send(msg.sid, text, images, uuid);
+    const r = sessions.send(msg.sid, text, images, uuid); // shown at once, queued while a turn runs (session.ts)
     if (!r.ok) client.send({ t: 'toast', text: r.error });
-    // shown at once: sent while idle it is the new turn's prompt; sent during a turn it's queued (R5.5)
-    else if (uuid && !sessions.terminalHolds(msg.sid)) views.sent(r.sid, uuid, text, images.length, queues);
   } else if (msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') { // bash mode (R5.13)
     const r = sessions.bang(msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : undefined);
     if (!r.ok) client.send({ t: 'toast', text: r.error });

@@ -1,10 +1,18 @@
-// Needs you (plan section 9): a parked canUseTool request as the page's card reads it, and the
-// card's answer as the SDK's PermissionResult. Pure functions, no state.
-import type { PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+// Needs-you cards (FR-NEED-05..07): canUseTool parks each request here until the card answers it or
+// its signal aborts (an interrupt, the process ending). One Cards per session; several requests at
+// once (parallel subagents) are kept in arrival order, and the card shows the oldest. The answer
+// becomes the SDK's PermissionResult. "Always allow" rules kept for the session are stored in
+// state.json `rules` and passed back as allowedTools on resume; they go when the session closes
+// (Q6), so reopening asks again.
+import type { CanUseTool, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { planApproval } from './sdk.ts';
+import type { Store } from './store.ts';
 
 export type Kind = 'question' | 'permission' | 'plan';
+export type PendingRequest = { id: string; kind: Kind; since: number; [k: string]: unknown };
 export const DENIED = 'Denied by the user';
+export const INTERRUPTED = 'Interrupted by the user';
+const MAX_INPUT_TEXT = 4000; // a Write's content and the like: the card shows the path, not the body
 
 // What the page sends in `answer` (one shape per card):
 //   question    {questions: [{picks: [label…], own?: text, note?: text}]}, one entry per question
@@ -16,6 +24,145 @@ export type CardAnswer = { questions?: QuestionAnswer[]; choice?: unknown; text?
 // The result for canUseTool, and the label your turn shows in the transcript (null when the tool
 // result already says it, as for questions).
 export type Settled = { result: PermissionResult; label: string | null; rules: string[] };
+
+export type Asked = {
+  toolName: string;
+  input: Record<string, unknown>;
+  suggestions: PermissionUpdate[];
+  alwaysAllowed: boolean; // suggestions exist and suppressAlwaysAllowRule isn't set
+  modeBefore: string; // the mode before plan mode, for Approve
+};
+
+type Options = Parameters<CanUseTool>[2];
+type Parked = { request: PendingRequest; asked: Asked; toolUseId: string; resolve: (r: PermissionResult) => void; off: () => void };
+
+export type CardsHooks = {
+  store: Store;
+  sid: () => string; // the session's id now (it changes at init and on a reset)
+  show: (request: PendingRequest) => void; // `pending` with the request
+  clear: (id: string) => void; // `pending` with `cleared`
+  count: (n: number) => void; // the status: needs you while n > 0
+  context: () => { cwd: string; modeBefore: string }; // the session's folder (with ~) and the mode before plan mode
+  // The last request ended by an answer or its own signal (a stopped subagent, a cancelled tool):
+  // messages held behind it may go. Not called from abortAll.
+  drained: () => void;
+  now: () => number;
+};
+
+export class Cards {
+  private list: Parked[] = [];
+  private aborting = false;
+  private hooks: CardsHooks;
+
+  constructor(hooks: CardsHooks) {
+    this.hooks = hooks;
+  }
+
+  get size(): number {
+    return this.list.length;
+  }
+
+  // canUseTool: never returns null; the promise settles when you answer or the signal aborts.
+  park(toolName: string, input: Record<string, unknown>, options: Options): Promise<PermissionResult> {
+    const o = options as Options & Record<string, unknown>;
+    const suggestions = (Array.isArray(options.suggestions) ? options.suggestions : []) as PermissionUpdate[];
+    const ctx = this.hooks.context();
+    const alwaysAllowed = suggestions.length > 0 && !options.suppressAlwaysAllowRule;
+    const request: PendingRequest = {
+      id: options.requestId || options.toolUseID,
+      kind: kindOf(toolName),
+      since: this.hooks.now(),
+      toolName,
+      toolUseId: options.toolUseID,
+      agentId: options.agentID ?? null,
+      input: clipInput(input),
+      cwd: ctx.cwd,
+      description: typeof o.description === 'string' ? o.description : '',
+      title: typeof o.title === 'string' ? o.title : '',
+      decisionReason: typeof o.decisionReason === 'string' ? o.decisionReason : '',
+      defaultToNo: options.defaultToNo === true,
+      suppressAlwaysAllowRule: options.suppressAlwaysAllowRule === true,
+      suggestions,
+      always: alwaysAllowed ? alwaysText(suggestions) : null,
+    };
+    const asked: Asked = { toolName, input, suggestions, alwaysAllowed, modeBefore: ctx.modeBefore };
+    const interrupted: PermissionResult = { behavior: 'deny', message: INTERRUPTED, interrupt: true };
+    return new Promise<PermissionResult>((resolve) => {
+      const signal = options.signal;
+      if (signal?.aborted) { resolve(interrupted); return; }
+      const parked: Parked = { request, asked, toolUseId: options.toolUseID, resolve, off: () => {} };
+      const onAbort = () => this.drop(parked, interrupted);
+      signal?.addEventListener('abort', onAbort, { once: true });
+      parked.off = () => signal?.removeEventListener('abort', onAbort); // answered: the signal keeps no hold on it
+      this.list.push(parked);
+      this.hooks.show(request);
+      this.hooks.count(this.list.length);
+    });
+  }
+
+  // The card's answer: settles the request and stores what it remembers (session rules, the label
+  // your turn shows, the plan the card showed), or says why it can't.
+  answer(id: string, answer: CardAnswer): Settled | { error: string } {
+    const p = this.list.find((x) => x.request.id === id);
+    if (!p) return { error: 'That request is no longer waiting.' };
+    const s = settle(p.asked, answer && typeof answer === 'object' ? answer : {});
+    if ('error' in s) return s;
+    const st = this.hooks.store.state, sid = this.hooks.sid();
+    if (s.rules.length) st.rules[sid] = [...new Set([...(st.rules[sid] ?? []), ...s.rules])];
+    if (s.label) st.answers[p.toolUseId] = s.label;
+    // the plan you answered, as the card showed it (the JSONL's ExitPlanMode input can be older)
+    if (p.asked.toolName === 'ExitPlanMode' && typeof p.asked.input.plan === 'string') st.plans[p.toolUseId] = p.asked.input.plan;
+    this.hooks.store.changed();
+    this.drop(p, s.result);
+    return s;
+  }
+
+  // The session rules "Always allow" stored, for allowedTools at the next start.
+  rules(): string[] | undefined {
+    return this.hooks.store.state.rules[this.hooks.sid()];
+  }
+
+  // Every request ends (an interrupt the CLI didn't signal, the process ending).
+  abortAll(): void {
+    this.aborting = true;
+    try {
+      for (const p of [...this.list]) this.drop(p, { behavior: 'deny', message: INTERRUPTED, interrupt: true });
+    } finally {
+      this.aborting = false;
+    }
+  }
+
+  // The session closes: its requests end and its session rules go (Q6: "for this session").
+  close(): void {
+    this.abortAll();
+    const st = this.hooks.store.state, sid = this.hooks.sid();
+    if (sid in st.rules) {
+      delete st.rules[sid];
+      this.hooks.store.changed();
+    }
+  }
+
+  private drop(p: Parked, result: PermissionResult): void {
+    const i = this.list.indexOf(p);
+    if (i === -1) return;
+    this.list.splice(i, 1);
+    p.off();
+    p.resolve(result);
+    this.hooks.clear(p.request.id);
+    this.hooks.count(this.list.length);
+    if (!this.list.length && !this.aborting) this.hooks.drained();
+  }
+}
+
+function clipInput(input: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(input)) {
+    out[k] = typeof v === 'string' && v.length > MAX_INPUT_TEXT && k !== 'plan' ? v.slice(0, MAX_INPUT_TEXT) + '…' : v;
+  }
+  return out;
+}
+
+// ---------- the answer as a PermissionResult (pure) ----------
 
 export function kindOf(toolName: string): Kind {
   if (toolName === 'AskUserQuestion') return 'question';
@@ -82,14 +229,6 @@ export function alwaysText(suggestions: PermissionUpdate[], home = ''): string {
 export function sessionRules(suggestions: PermissionUpdate[]): string[] {
   return suggestions.flatMap((u) => (u.type === 'addRules' && u.behavior === 'allow' && u.destination === 'session' ? u.rules.map(ruleText) : []));
 }
-
-export type Asked = {
-  toolName: string;
-  input: Record<string, unknown>;
-  suggestions: PermissionUpdate[];
-  alwaysAllowed: boolean; // suggestions exist and suppressAlwaysAllowRule isn't set
-  modeBefore: string; // the mode before plan mode, for Approve
-};
 
 // The card's answer to its canUseTool result, or an error the page shows.
 export function settle(req: Asked, answer: CardAnswer): Settled | { error: string } {

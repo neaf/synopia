@@ -8,7 +8,7 @@
 // without a turn, merged into the next user message that queries).
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { signalGroup } from './macos.ts';
+import { groupAlive, signalGroup } from './macos.ts';
 
 export const BANG_CAP = 30_000;
 export const KILL_AFTER_MS = 3000;
@@ -47,6 +47,7 @@ export class Bang {
   private killTimer: NodeJS.Timeout | null = null;
   private grace: NodeJS.Timeout | null = null;
   private finished = false;
+  private used = 0; // code points kept in out and err together
 
   constructor(opts: BangOptions) {
     this.opts = opts;
@@ -58,7 +59,9 @@ export class Bang {
       // detached: its own process group, so the interrupt reaches what it started and nothing else
       child = spawn(shell, ['-c', opts.cmd], { cwd: opts.cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (e) {
-      this.fail(e);
+      // spawn throws for some arguments (a NUL byte in the command): the caller hears it after this
+      // constructor returns, as for any other end, never from inside it
+      queueMicrotask(() => this.fail(e));
       return;
     }
     this.child = child;
@@ -84,11 +87,17 @@ export class Bang {
     this.killTimer.unref?.();
   }
 
+  // The cap the output is cut at, in characters (code points).
+  get cap(): number {
+    return this.opts.cap ?? BANG_CAP;
+  }
+
   private take(which: 'out' | 'err', d: string): void {
-    const cap = this.opts.cap ?? BANG_CAP;
-    const room = cap - this.run.out.length - this.run.err.length;
+    const room = this.cap - this.used;
     if (room <= 0) { this.run.cut = true; return; }
-    if (d.length > room) { d = d.slice(0, room); this.run.cut = true; }
+    const chars = [...d]; // by code point: a cut never splits a surrogate pair
+    if (chars.length > room) { d = chars.slice(0, room).join(''); this.run.cut = true; }
+    this.used += Math.min(chars.length, room);
     this.run[which] += d;
     if (!this.tick) this.tick = setTimeout(() => { this.tick = null; if (!this.finished) this.opts.onUpdate(this.run); }, this.opts.tickMs ?? BANG_TICK_MS);
   }
@@ -103,6 +112,12 @@ export class Bang {
     if (this.finished) return;
     this.finished = true;
     for (const t of [this.tick, this.grace]) if (t) clearTimeout(t);
+    // The SIGKILL stays armed only while something of the group lives (a child that ignored SIGTERM):
+    // once the group is empty its id can be reused, and that group must get no signal.
+    if (this.killTimer && !(this.child?.pid && groupAlive(this.child.pid))) {
+      clearTimeout(this.killTimer);
+      this.killTimer = null;
+    }
     this.run.running = false;
     this.opts.onDone(this.run);
   }
@@ -114,9 +129,10 @@ export const bashInput = (cmd: string): string => `<bash-input>${cmd}</bash-inpu
 
 // The output record. A cut output, and a non-zero exit (or the interrupt that ended it), end the
 // stderr with a line each, so Claude reads them as the page shows them (parseBashOutput takes them off).
-export function bashOutput(run: Pick<BangRun, 'out' | 'err' | 'cut' | 'exit'> & { interrupted?: boolean }): string {
+// `cap`: the run's cap (Bang.cap).
+export function bashOutput(run: Pick<BangRun, 'out' | 'err' | 'cut' | 'exit'> & { interrupted?: boolean }, cap = BANG_CAP): string {
   const tail: string[] = [];
-  if (run.cut) tail.push(`[Output cut at ${BANG_CAP.toLocaleString('en-US')} characters]`);
+  if (run.cut) tail.push(`[Output cut at ${cap.toLocaleString('en-US')} characters]`);
   if (run.interrupted) tail.push(`Interrupted by the user, exit code ${run.exit ?? '?'}`);
   else if (run.exit !== null && run.exit !== 0) tail.push(`Exit code ${run.exit}`);
   const err = tail.length ? [run.err.replace(/\n$/, ''), ...tail].filter(Boolean).join('\n') : run.err;

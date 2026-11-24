@@ -32,13 +32,13 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 - Cause: the CLI emits them only with `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`. The typings list the message type but not the flag.
 - Workaround: `sdk.ts` sets the flag; `status.ts` falls back to send-to-`result` when no state event comes.
 - Values: `running`, `requires_action` (waiting on `canUseTool`), `idle`.
-- Code: `sdk.ts` `STATE_FLAG`, `buildOptions`; `sessions.ts` `onMessage`. Source: SDK spike row 11 (`spike/FINDINGS.md` at tag `rearch-base`).
+- Code: `sdk.ts` `STATE_FLAG`, `buildOptions`; `session.ts` `onMessage`. Source: SDK spike row 11 (`spike/FINDINGS.md` at tag `rearch-base`).
 
 ## Streaming input and control calls
 
 - `interrupt`, `supportedCommands`, `supportedModels`, `setModel`, `setPermissionMode`, `backgroundTasks` and `applyFlagSettings` work only when `prompt` is an AsyncIterable. Code: `sdk.ts` `QueryLike`, `InputQueue`.
-- `system/init` comes again at the start of every turn, with `session_id`, `capabilities` and the slash commands. Synopia starts a turn in status from it and reads `capabilities`. Code: `sessions.ts` `onMessage`.
-- A process started only with `shouldQuery: false` messages emits `system/init` but no turn and no `result`. Code: `sessions.ts` `onMessage` (`quietOnly`).
+- `system/init` comes again at the start of every turn, with `session_id`, `capabilities` and the slash commands. Synopia starts a turn in status from it and reads `capabilities`. Code: `session.ts` `onMessage`.
+- A process started only with `shouldQuery: false` messages emits `system/init` but no turn and no `result`. Code: `session.ts` `onMessage` (`contextOnly`).
 - `shouldQuery: false` user messages join the transcript without a turn and merge into the next user message that queries (sdk.d.ts 7033). Code: `sdk.ts` `SessionProcess.pushQuiet`.
 - A message pushed during a running tool is queued, then folded into the same turn. Its uuid appears in `user_message_uuids` on the next `system/status` and on the `result`, not on any `assistant` or `stream_event`.
 
@@ -48,7 +48,7 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 - Cause: `Query.interrupt()` is typed without arguments; only the wire field `cancel_queued` shows (sdk.d.ts 5090).
 - Workaround: when `system/init` `capabilities` lists `interrupt_cancel_queued_v1`, call `interrupt({cancelQueued: true})` through a cast. The receipt's `cancelled` uuids map to the texts Synopia pushed (last 100 kept) and go back to the message box. Without the capability: the plain call, and a toast when `still_queued` lists Synopia's messages.
 - Code: `sdk.ts` `QueryLike`, `realSdk` (the one cast), `CANCEL_QUEUED`, `SessionProcess.interrupt`. Test: `sdk.test.ts`. Source: live run S2-2 (CLI 2.1.330).
-- An interrupted turn ends `result/error_during_execution` with `terminal_reason` `aborted_streaming` or `aborted_tools`. The subtype is not a reliable "stopped", so `SessionStatus.interrupted()` forces the turn's result to stopped. Code: `sessions.ts` (`interrupted()`), `status.ts`.
+- An interrupted turn ends `result/error_during_execution` with `terminal_reason` `aborted_streaming` or `aborted_tools`. The subtype is not a reliable "stopped", so `SessionStatus.interrupted()` forces the turn's result to stopped. Code: `session.ts` `interrupt`, `status.ts`.
 
 ### `perTaskStopAffordance`
 
@@ -80,14 +80,14 @@ Source: live run S3-1 (CLI 2.1.330). No test pins the `auto` behaviour.
 - Answer a question with `{behavior: 'allow', updatedInput: {...input, answers: {"<question>": "<label>"}}}`; multi-select picks join with `, `; notes go in `annotations.notes`.
 - Deny gives `tool_result is_error=true` with the message and lists the call in `result.permission_denials`.
 
-Code: `answers.ts`. Test: `answers.test.ts` (partly). Source: live run S3-1, spike rows 6-7.
+Code: `cards.ts`. Test: `cards.test.ts` (partly). Source: live run S3-1, spike rows 6-7.
 
 ### Quirk: plan approval needs an explicit mode
 
 - Symptom: after an approval the session may land in `default` mode.
 - Cause: approving ExitPlanMode does not restore the mode before plan mode.
 - Workaround: the allow result carries `updatedPermissions: [{type: 'setMode', mode: <mode before plan, else auto>, destination: 'session'}]`. A `system/status` with that `permissionMode` follows at once, with no `conversation_reset`.
-- Code: `sdk.ts` `planApproval`, called by `answers.ts` `settle`. Test: `sdk.test.ts`. Source: round-1 SDK edge review B6, typings, live run S3-1.
+- Code: `sdk.ts` `planApproval`, called by `cards.ts` `settle`. Test: `sdk.test.ts`. Source: round-1 SDK edge review B6, typings, live run S3-1.
 
 - A new session started with `permissionMode: 'plan'` reports `permissionMode: 'plan'` in `system/init`. Claude calls `EnterPlanMode` itself when asked (no card under `auto`).
 - On resume the CLI answers a question a quit left open with a `[Tool call interrupted: …]` tool result.
@@ -119,17 +119,17 @@ Source: capture by `spike/dump_menu.mjs` (tag `rearch-base`; `prototype/menu.js`
 
 | Message | Meaning | Code |
 |---|---|---|
-| `system/init` | turn start; `session_id`, `capabilities` | `sessions.ts` 869 |
-| `system/session_state_changed` | `running`, `requires_action`, `idle` (flag needed) | `sessions.ts` 872 |
-| `system/status` | `permissionMode` after an approval; `status: 'compacting' \| 'requesting' \| null` | `sessions.ts` 874, `status.ts` |
+| `system/init` | turn start; `session_id`, `capabilities` | `session.ts` `onMessage` |
+| `system/session_state_changed` | `running`, `requires_action`, `idle` (flag needed) | `session.ts` `onMessage` |
+| `system/status` | `permissionMode` after an approval; `status: 'compacting' \| 'requesting' \| null` | `session.ts` `onMessage`, `status.ts` |
 | `system/compact_boundary` | compaction done | `status.ts` |
 | `system/api_retry` | `error_status: number \| null`, `error`; `rate_limit` or 429 is throttling | `status.ts` 17 |
-| `system/task_started` | `task_id`, `tool_use_id`, `task_type` (`local_bash`, `local_agent`), `is_backgrounded`, `parent_task_id`, `owned_by_subagent`, `run_id` | `sessions.ts` 882 |
+| `system/task_started` | `task_id`, `tool_use_id`, `task_type` (`local_bash`, `local_agent`), `is_backgrounded`, `parent_task_id`, `owned_by_subagent`, `run_id` | `session.ts` `onMessage` |
 | `system/task_updated` | a task's status changed | |
-| `system/task_notification` | a task ended: `status`, `tool_use_id`, `summary`, `output_file`, `usage` | `sessions.ts` 876 |
-| `system/background_tasks_changed` | the list of background tasks | `sessions.ts` 885 |
+| `system/task_notification` | a task ended: `status`, `tool_use_id`, `summary`, `output_file`, `usage` | `session.ts` `onMessage` |
+| `system/background_tasks_changed` | the list of background tasks | `session.ts` `onMessage` |
 | `tool_progress` | elapsed seconds of a running tool, no output | `views.ts` 566-570 |
-| `stream_event` | partial text; `message_start` id equals the assistant `message.id` | `sessions.ts` `StreamPreview` |
+| `stream_event` | partial text; `message_start` id equals the assistant `message.id` | `session.ts` `StreamPreview` |
 | `result` | turn end: `subtype`, `terminal_reason`, `permission_denials`, `user_message_uuids` | `status.ts` |
 
 - Subagent messages carry `parent_tool_use_id` and `agent_id`. Subagent text isn't streamed unless `forwardSubagentText` is set.
@@ -151,7 +151,7 @@ Code: `transcript.ts` `refreshTool` (`fg`). Source: background live run (CLI 2.1
 - `stopTask` with a subagent shell's `task_started` id stopped it (2 then 0 processes by `pgrep`). Monitors were not run.
 - Synopia has no Stop row and does not call `stopTask` (decision Q4, 2026-11-24); the facts above stay for when a key is designed.
 
-Code: `sessions.ts` `onMessage` (`task_notification`). Source: live runs S4 and M1-final.
+Code: `session.ts` `onMessage` (`task_notification`). Source: live runs S4 and M1-final.
 
 ## Sessions: list, resume, fork
 

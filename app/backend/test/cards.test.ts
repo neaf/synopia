@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DENIED, alwaysText, kindOf, sessionRules, settle } from '../src/answers.ts';
-import type { Asked } from '../src/answers.ts';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { getEventListeners } from 'node:events';
+import { Cards, DENIED, alwaysText, kindOf, sessionRules, settle } from '../src/cards.ts';
+import { openStore } from '../src/store.ts';
+import type { Asked } from '../src/cards.ts';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 
 const QUESTIONS = {
@@ -14,14 +19,14 @@ const asked = (toolName: string, input: Record<string, unknown>, extra: Partial<
   toolName, input, suggestions: [], alwaysAllowed: false, modeBefore: 'auto', ...extra,
 });
 
-test('answers: the kind of card per tool', () => {
+test('cards: the kind of card per tool', () => {
   assert.equal(kindOf('AskUserQuestion'), 'question');
   assert.equal(kindOf('ExitPlanMode'), 'plan');
   assert.equal(kindOf('Bash'), 'permission');
   assert.equal(kindOf('mcp__x__y'), 'permission');
 });
 
-test('answers: questions go back as answers keyed by question, multi-select joined with ", ", notes as annotations', () => {
+test('cards: questions go back as answers keyed by question, multi-select joined with ", ", notes as annotations', () => {
   const r = settle(asked('AskUserQuestion', QUESTIONS), { questions: [{ picks: ['Red', 'Blue'] }, { picks: ['Large (Recommended)'], note: 'fits the desk' }] });
   assert.ok(!('error' in r));
   assert.deepEqual(r.result, {
@@ -35,7 +40,7 @@ test('answers: questions go back as answers keyed by question, multi-select join
   assert.equal(r.label, null, 'the tool result shows the answer');
 });
 
-test('answers: "type your own" sends the typed text as the answer, with no note', () => {
+test('cards: "type your own" sends the typed text as the answer, with no note', () => {
   const r = settle(asked('AskUserQuestion', QUESTIONS), { questions: [{ own: '  Green  ', picks: ['Red'], note: 'x' }, { picks: ['Small'] }] });
   assert.ok(!('error' in r));
   const inp = (r.result as { updatedInput: Record<string, unknown> }).updatedInput;
@@ -43,12 +48,12 @@ test('answers: "type your own" sends the typed text as the answer, with no note'
   assert.equal(inp.annotations, undefined);
 });
 
-test('answers: a question left unanswered is refused', () => {
+test('cards: a question left unanswered is refused', () => {
   const r = settle(asked('AskUserQuestion', QUESTIONS), { questions: [{ picks: ['Red'] }] });
   assert.ok('error' in r);
 });
 
-test('answers: permission Allow once, Always allow and Deny', () => {
+test('cards: permission Allow once, Always allow and Deny', () => {
   const input = { command: 'npm test', description: 'Run the tests' };
   const suggestions = [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'localSettings' }] as PermissionUpdate[];
   const req = asked('Bash', input, { suggestions, alwaysAllowed: true });
@@ -77,7 +82,7 @@ test('answers: permission Allow once, Always allow and Deny', () => {
   assert.ok('error' in settle(req, { choice: 'maybe' }));
 });
 
-test('answers: plan Approve returns to the mode before plan mode; Ask for changes denies with the text', () => {
+test('cards: plan Approve returns to the mode before plan mode; Ask for changes denies with the text', () => {
   const input = { plan: '1. Do it', planFilePath: '/tmp/p.md' };
   const ok = settle(asked('ExitPlanMode', input, { modeBefore: 'auto' }), { choice: 'approve' });
   assert.ok(!('error' in ok));
@@ -93,7 +98,7 @@ test('answers: plan Approve returns to the mode before plan mode; Ask for change
   assert.ok('error' in settle(asked('ExitPlanMode', input), { choice: 'changes', text: ' ' }));
 });
 
-test('answers: the Always allow text has one clause per update entry, with where and for how long', () => {
+test('cards: the Always allow text has one clause per update entry, with where and for how long', () => {
   const rule = (destination: string, behavior = 'allow') => ({ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm run test:*' }], behavior, destination }) as PermissionUpdate;
   assert.equal(alwaysText([rule('localSettings')]), 'Always allow Bash(npm run test:*) in this project (.claude/settings.local.json).');
   assert.equal(alwaysText([rule('projectSettings')]), 'Always allow Bash(npm run test:*) in this project (.claude/settings.json).');
@@ -114,11 +119,51 @@ test('answers: the Always allow text has one clause per update entry, with where
   assert.equal(alwaysText([]), '');
 });
 
-test('answers: only allow rules kept for the session are stored as session rules', () => {
+test('cards: only allow rules kept for the session are stored as session rules', () => {
   assert.deepEqual(sessionRules([
     { type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '//tmp/**' }, { toolName: 'WebSearch' }], behavior: 'allow', destination: 'session' },
     { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'ls' }], behavior: 'allow', destination: 'localSettings' },
     { type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'rm' }], behavior: 'deny', destination: 'session' },
     { type: 'setMode', mode: 'acceptEdits', destination: 'session' },
   ]), ['Read(//tmp/**)', 'WebSearch']);
+});
+
+// ---------- the parked requests ----------
+
+function cards() {
+  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-cards-')), { minIntervalMs: 0 });
+  const shown: string[] = [], cleared: string[] = [], counts: number[] = [];
+  let drained = 0;
+  const c = new Cards({
+    store, sid: () => SID, show: (r) => shown.push(r.id), clear: (id) => cleared.push(id), count: (n) => counts.push(n),
+    context: () => ({ cwd: '~/x', modeBefore: 'auto' }), drained: () => drained++, now: () => 1,
+  });
+  return { c, store, shown, cleared, counts, get drained() { return drained; } };
+}
+const SID = '11111111-2222-4333-8444-555555555555';
+const READ_RULE: PermissionUpdate[] = [{ type: 'addRules', rules: [{ toolName: 'Read', ruleContent: '//tmp/**' }], behavior: 'allow', destination: 'session' }];
+const opts = (id: string, signal: AbortSignal, extra: object = {}) => ({ signal, toolUseID: `tu-${id}`, requestId: id, ...extra }) as unknown as Parameters<Cards['park']>[2];
+
+test('cards: an answered request lets go of its abort listener (sessions-sdk#B9)', async () => {
+  const t = cards();
+  const ac = new AbortController();
+  const p = t.c.park('Bash', { command: 'ls' }, opts('rq-1', ac.signal));
+  assert.equal(getEventListeners(ac.signal, 'abort').length, 1);
+  assert.ok(!('error' in t.c.answer('rq-1', { choice: 'once' })));
+  assert.equal((await p).behavior, 'allow');
+  assert.equal(getEventListeners(ac.signal, 'abort').length, 0, 'removed with the answer');
+  assert.equal(t.drained, 1, 'the last card went: held messages may go');
+});
+
+test('cards: Always allow stores the session rules; close ends the requests and forgets the rules (sessions-sdk#B1, Q6)', async () => {
+  const t = cards();
+  void t.c.park('Read', { file_path: '/tmp/a' }, opts('rq-1', new AbortController().signal, { suggestions: READ_RULE }));
+  t.c.answer('rq-1', { choice: 'always' });
+  assert.deepEqual(t.c.rules(), ['Read(//tmp/**)']);
+  const open = t.c.park('Bash', { command: 'ls' }, opts('rq-2', new AbortController().signal));
+  t.c.close();
+  assert.deepEqual(await open, { behavior: 'deny', message: 'Interrupted by the user', interrupt: true });
+  assert.equal(t.c.rules(), undefined);
+  assert.equal(SID in t.store.state.rules, false, 'gone from state.json too');
+  assert.equal(t.drained, 1, 'an abort is no drain');
 });

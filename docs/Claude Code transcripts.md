@@ -58,7 +58,7 @@ Code: `claude-jsonl.ts` `classify`. Source: formats audit X17; shape scan 2026-1
 - Each assistant record holds exactly one content block (841 of 841 in one session, 5,803 of 5,803 in its 94 subagents), with `apiBlockIndex`.
 - The records of one response share `message.id` (1 to 9 records per id). Two records of one id with the same block type are common (two `tool_use`).
 - A thinking block arrives as its own record before the text of the same id.
-- Live, every `stream_event` `message_start` id equals the assistant records' `message.id` (7 of 7), so the stream preview is keyed by message id and block and cleared when a record of that id and block type lands. Code: `sessions.ts` `StreamPreview` (53-102).
+- Live, every `stream_event` `message_start` id equals the assistant records' `message.id` (7 of 7), so the stream preview is keyed by message id and block and cleared when a record of that id and block type lands. Code: `session.ts` `StreamPreview`.
 - An API-error turn writes an assistant record with `isApiErrorMessage`, `error` (string), `failedResponseHadNoToolCall`, `streamCutCause`, `truncatedAfterOutput` and a text block.
 - Synopia keys the latest response by `message.id` (by the record when it has none) and gathers its tool uses over all its records: a question in one record followed by another tool use in the next still waits, and a running Bash followed by a text block still runs. Code: `transcript.ts` `assistant`, `waiting`. Test: `transcript.test.ts` "formats#B1".
 
@@ -167,7 +167,7 @@ Code: `claude-jsonl.ts` `userOf` (`toolUseResult`), `taskNotes`; `transcript.ts`
 - Symptom: a subagent's shell in a Synopia-driven session has no id to stop it by.
 - Cause: an SDK-driven CLI writes no `toolUseResult` in a subagent's records (scratch runs 1 to 3). `unverified` beyond those runs: the live check is cited in code and notes only.
 - Workaround: the id comes from the SDK's `system/task_started` (`task_id`, `tool_use_id`, `task_type: local_bash`, `owned_by_subagent`, `is_backgrounded`), kept over a rewrite. A foreground Bash gets `task_started` about 2 s after it starts; a foreground Agent at once.
-- Code: `sessions.ts` 882-884, `transcript.ts` `taskStarted`, `refreshTool` (`fg`).
+- Code: `session.ts` `onMessage` (`task_started`), `transcript.ts` `taskStarted`, `refreshTool` (`fg`).
 
 ## Shell edits (`bashEditDiff`)
 

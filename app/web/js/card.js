@@ -129,7 +129,7 @@ function qaPick(s, a) {
   else st.picks[st.qi] = [l];
 }
 const answerText = a => a.plainAnswer || "";
-/* The answer goes to the server, which turns it into the canUseTool result (answers.ts): one shape per card. */
+/* The answer goes to the server, which turns it into the canUseTool result (cards.ts): one shape per card. */
 function cardAnswer(st, a) {
   const pick = (st.picks[0] || [])[0], own = st.own[0] || "", after = p => own.startsWith(p + ": ") ? own.slice(p.length + 2) : "";
   if (a.kind === "permission") return pick === "Allow once" ? { choice: "once" } : pick === "Always allow" ? { choice: "always" } : { choice: "deny", text: after("Denied") };

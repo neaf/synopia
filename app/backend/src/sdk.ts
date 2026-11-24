@@ -56,7 +56,7 @@ export type ProcessEvents = {
   onMessage: (m: SDKMessage) => void;
   // The message stream ended: `error` is null for a clean end. `ended` says whether end() or close() asked for it.
   onExit: (error: Error | null, ended: boolean) => void;
-  // Parks the request until its card is answered or its signal aborts (pending.ts). Never null.
+  // Parks the request until its card is answered or its signal aborts (cards.ts). Never null.
   canUseTool: CanUseTool;
   // A message went into the input queue (status.ts counts the ones sent during a turn as queued).
   onPush?: (uuid: string) => void;
@@ -381,17 +381,24 @@ export async function oneShot(query: QueryFn, text: string, options: Options): P
 export type Image = { mediaType: string; data: string; n?: number };
 
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// All images of one message together: base64 makes 20 MB about 27 MB, so the frame stays under the
+// socket's 32 MB cap (server.ts MAX_PAYLOAD), which closes the socket instead of answering.
+export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 export const IMAGE_TYPES = ['image/png', 'image/jpeg'];
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 // Why these images can't be sent, or null. The page sends base64 from a data URL: empty or broken
 // data is refused here, before the CLI would fail the whole message.
 export function imageError(images: Image[]): string | null {
+  let total = 0;
   for (const im of images) {
     if (!IMAGE_TYPES.includes(im.mediaType)) return 'Only PNG and JPEG images can be sent.';
     if (!im.data || im.data.length % 4 !== 0 || !BASE64.test(im.data)) return 'An image is empty or damaged. Paste it again.';
-    if (Buffer.byteLength(im.data, 'base64') > MAX_IMAGE_BYTES) return 'An image is over 5 MB. Send a smaller one.';
+    const bytes = Buffer.byteLength(im.data, 'base64');
+    if (bytes > MAX_IMAGE_BYTES) return 'An image is over 5 MB. Send a smaller one.';
+    total += bytes;
   }
+  if (total > MAX_TOTAL_IMAGE_BYTES) return `These images are ${Math.ceil(total / 1048576)} MB together, over ${MAX_TOTAL_IMAGE_BYTES / 1048576} MB. Send fewer at a time.`;
   return null;
 }
 

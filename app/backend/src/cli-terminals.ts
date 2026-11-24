@@ -115,6 +115,28 @@ export class CliTerminals {
     return best;
   }
 
+  // The start check (session.ts `starting`): that session's files read again and every live pid
+  // verified afresh (start time and ancestry now, not from the store), so a pid file left by a CLI
+  // that died, whose pid another process reused, holds nothing. A probe that fails counts as holding
+  // (one writer). Never rejects.
+  async confirm(sid: string): Promise<Terminal | null> {
+    let best: Terminal | null = null;
+    try {
+      for (const t of this.files((j) => j.sessionId === sid)) {
+        const v = await this.verify(t, true);
+        if (v === false) continue;
+        if (v === null) this.once('terminals.unverified', { pid: t.pid });
+        if (newer(t, best)) best = t;
+      }
+    } catch {
+      this.once('terminals.scanFailed');
+    }
+    if (best) this.held.set(sid, best);
+    else this.held.delete(sid);
+    this.sig = sigOf(this.held);
+    return best;
+  }
+
   // Reads the folder; tells the listeners when the set of terminals or their status changed. One
   // scan at a time: a call during a scan runs one more after it.
   scan(): Promise<void> {

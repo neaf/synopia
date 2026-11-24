@@ -4,7 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Views } from '../src/views.ts';
-import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
+import { Sessions, renameInLayout } from '../src/sessions.ts';
+import { StreamPreview } from '../src/session.ts';
 import { STATE_FLAG } from '../src/sdk.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
 import { openStore, reconcileLayout } from '../src/store.ts';
@@ -38,7 +39,6 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
     claudeDir, clients: () => clients, home: root, pollMs: 0, watch: false,
     onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
     onRunning: (sid, r) => sessions?.runningChanged(sid, r),
-    choice: (sid) => sessions?.choiceOf(sid),
   });
   const q = fakeQuery({ sessions: past });
   sessions = new Sessions({ store, views, sdk: q.sdk, home: root, ...extra });
@@ -690,7 +690,7 @@ test('close: ends the process, sends removed, hides it in its group; reopening p
   assert.equal(t.take('toast').length, 0, 'a close is not a failure');
   assert.equal(typeof st.open[0].closedAt, 'number');
   assert.deepEqual(st.layout.groups[0].ids, ['x', PAST], 'it keeps its place, hidden');
-  assert.equal(t.sessions.has(PAST), false);
+  assert.equal(t.sessions.get(PAST), undefined);
   assert.deepEqual((await t.sessions.listRecent()).map((r) => r.id), [PAST], 'the Open list has it again');
   t.store.flush();
 

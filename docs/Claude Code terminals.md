@@ -57,15 +57,15 @@ Transcript files are in [Claude Code transcripts](Claude%20Code%20transcripts.md
 
 ## Two writers on one transcript
 
-Nothing in the CLI stops two processes from writing one session's JSONL: their records interleave. Source: SDK spike, "Gotchas" (`spike/FINDINGS.md` at tag `rearch-base`). Synopia guards itself: right before it starts a process on a session it reads that session's pid files again (`recheck`), and it yields a session a terminal takes. At `recheck` a live CLI not yet verified counts as holding the session; the next scan corrects that. Code: `cli-terminals.ts` `recheck`. Test: `cli-terminals.test.ts` "recheck reads the files now".
+Nothing in the CLI stops two processes from writing one session's JSONL: their records interleave. Source: SDK spike, "Gotchas" (`spike/FINDINGS.md` at tag `rearch-base`). Synopia guards itself: right before it starts a process on a session it reads that session's pid files again (`recheck`), and it yields a session a terminal takes. At `recheck` a live CLI not yet verified counts as holding the session; the next scan corrects that. A start then waits for `confirm`, which verifies every live pid of that session afresh (start time and ancestry from `ps` now), so a pid file left by a CLI that died, whose pid another process reuses, holds nothing; a `ps` that fails counts as holding. Messages sent meanwhile wait (`starting`); a terminal found there sends them back to the box. Code: `cli-terminals.ts` `recheck`, `confirm`; `session.ts` `start`. Test: `cli-terminals.test.ts` "recheck reads the files now", "confirm"; `session.test.ts` "the start check".
 
 ## Take-over
 
 | Step | What Synopia does | Code |
 |---|---|---|
-| a terminal opens a session Synopia holds | yields at once: interrupt, end its process, show the session read-only (`terminal.took`), about 2 s after the CLI starts | `sessions.ts`, `cli-terminals.ts` `scan` |
-| the terminal's CLI exits | the session is Synopia's again (`terminal.gone`), no process started | `sessions.ts` |
-| you send in Synopia on a terminal-held session | waits until the CLI's `status` is `idle`, then ends it | `sessions.ts` `runTakeover`, `cli-terminals.ts` `end` |
+| a terminal opens a session Synopia holds | yields at once: interrupt, end its process, show the session read-only (`terminal.took`), about 2 s after the CLI starts | `session.ts` `yieldTo`, `cli-terminals.ts` `scan` |
+| the terminal's CLI exits | the session is Synopia's again (`terminal.gone`), no process started | `session.ts` `terminalChanged` |
+| you send in Synopia on a terminal-held session | waits until the CLI's `status` is `idle`, then ends it | `session.ts` `runTakeover`, `cli-terminals.ts` `end` |
 | before the signal | the pid's start time is read afresh: a pid that is no longer that CLI gets no signal (the take-over goes on); a `ps` that fails sends none and the message stays (`terminals.unverified`) | `cli-terminals.ts` `end` |
 | ending the CLI | SIGTERM; SIGINT after 5 s (`SIGINT_MS`); gives up at 10 s (`EXIT_MS`); never SIGKILL | `cli-terminals.ts` `endTerminal` |
 | the note | `Synopia took over this session at HH:MM. To continue here instead: claude --resume <sid>` written to the CLI's tty after it exited, so its last redraw doesn't cover it | `cli-terminals.ts` `takeoverNote`, `endTerminal` |

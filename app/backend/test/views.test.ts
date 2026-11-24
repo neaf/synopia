@@ -469,6 +469,26 @@ test('work: a background shell ending between turns tells the writer, and its li
   assert.deepEqual(ended, [id], 'once');
 });
 
+test('rekey: the work seen running moves with the record, so its end reaches the writer (backend-core#B11)', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000d2', next = 'aaaaaaaa-0000-4000-8000-0000000000d3';
+  const body = you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'sleep 90', description: 'Wait a while', run_in_background: true } }] },
+  });
+  const dir = tempSession(id, body);
+  fs.writeFileSync(path.join(dir, 'projects', '-tmp-x', `${next}.jsonl`), body);
+  const ended: string[] = [];
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: HOME, pollMs: 0, watch: false, onWorkEnded: (sid) => ended.push(sid) });
+  views.open(id);
+  views.check();
+  views.setChoice(id, { model: 'opus', effort: 'high' });
+  views.rekey(id, next);
+  views.taskEnded(next, 'toolu_bg', 'killed', ''); // before the new file's first flush: it reads ended at once
+  assert.deepEqual(ended, [next]);
+  assert.deepEqual([views.meta(next)?.model, views.meta(next)?.effort], ['opus', 'high'], 'the choice moved too');
+  views.stop();
+});
+
 test("work: the SDK's task_started gives a shell its task id when the file has none", () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000d0';
   const dir = tempSession(id, you(1) + line({

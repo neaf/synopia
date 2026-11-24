@@ -112,6 +112,24 @@ test('terminals: recheck reads the files now; an unverified CLI counts until a s
   assert.equal(reg.recheck(SID), null);
 });
 
+test('terminals: confirm (the start check) verifies every live pid afresh; a failed ps holds', async () => {
+  const { reg, write, procs, failing } = setup();
+  procs.set(4242, { start: START, parent: 1 });
+  write(4242);
+  await reg.scan();
+  assert.equal(reg.holder(SID)?.pid, 4242);
+  procs.set(4242, { start: 'Tue Nov 24 11:02:03 2026', parent: 1 }); // the CLI died, its pid reused
+  assert.equal(reg.recheck(SID)?.pid, 4242, 'recheck takes the stored verification');
+  assert.equal(await reg.confirm(SID), null, 'confirm asks ps now: no terminal');
+  assert.equal(reg.holder(SID), null);
+  procs.set(4242, { start: START, parent: 1 });
+  failing.add(4242);
+  assert.equal((await reg.confirm(SID))?.pid, 4242, 'ps failed: one writer, so it holds');
+  failing.delete(4242);
+  procs.delete(4242);
+  assert.equal(await reg.confirm(SID), null, 'gone');
+});
+
 test('terminals: a .key file is never read, and odd names are skipped', async () => {
   const { reg, write, procs, dir } = setup();
   procs.set(4242, { start: START, parent: 1 });
