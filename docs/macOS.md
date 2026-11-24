@@ -84,7 +84,7 @@ Every `ps` call is `/bin/ps -o <field>= -p <pid>` with env `LC_ALL=C TZ=UTC`, ru
 
 ## Jamf Protect
 
-A locally `swiftc`-built app, with only the linker's ad-hoc signature, launched under Jamf Protect without being blocked (one author run, 2026-11-23, `spike/native-shell` at tag `rearch-base`). `unverified` beyond that run: there is no codesign step in `build.sh`, and nothing is downloaded at build time that Jamf could block.
+A locally `swiftc`-built app, with only the linker's ad-hoc signature, launched under Jamf Protect without being blocked (one author run, 2026-11-23; the spike is removed from the repo). `unverified` beyond that run: there is no codesign step in `build.sh`, and nothing is downloaded at build time that Jamf could block.
 
 ## Platform floor
 

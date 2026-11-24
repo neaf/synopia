@@ -1,6 +1,6 @@
 # Agent SDK
 
-How Synopia drives sessions through `@anthropic-ai/claude-agent-sdk` 0.3.330 (bundled CLI 2.1.330), and what the SDK does beyond its typings. Only the documented surface is used: the typings (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`), the docs and live scripted checks. `sdk.ts` is the only module that imports a value from the SDK: session processes, the menu probe, the writer's one-shot call and `listSessions()` all go through it, and it takes `query` and `listSessions` as one injectable pair (tests use `test/support/fake-query.ts`). Auth is the user's Bedrock setup from `~/.claude/settings.json` (AWS SSO). Sources: code, tests, the SDK spike (2026-11-23; `spike/FINDINGS.md` at tag `rearch-base`), and the live runs recorded in `.ai-notes/app/README.md` at tag `rearch-base` "Facts settled" (haiku, scratch folders under `/tmp/synopia-scratch/`, shapes only).
+How Synopia drives sessions through `@anthropic-ai/claude-agent-sdk` 0.3.330 (bundled CLI 2.1.330), and what the SDK does beyond its typings. Only the documented surface is used: the typings (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`), the docs and live scripted checks. `sdk.ts` is the only module that imports a value from the SDK: session processes, the menu probe, the writer's one-shot call and `listSessions()` all go through it, and it takes `query` and `listSessions` as one injectable pair (tests use `test/support/fake-query.ts`). Auth is the user's Bedrock setup from `~/.claude/settings.json` (AWS SSO). Sources: code, tests, the SDK spike (2026-11-23; since removed from the repo), and the live runs recorded in `.ai-notes/app/README.md` at tag `rearch-base` "Facts settled" (haiku, scratch folders under `/tmp/synopia-scratch/`, shapes only).
 
 What the CLI writes to disk is in [Claude Code transcripts](Claude%20Code%20transcripts.md).
 
@@ -24,7 +24,7 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 - Symptom: a session's tools lose PATH and everything else.
 - Cause: `env` is the child's whole environment, not an overlay.
 - Workaround: always spread `process.env` first.
-- Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`. Source: typings; SDK spike (`spike/FINDINGS.md` at tag `rearch-base`).
+- Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`. Source: typings; SDK spike (removed from the repo).
 
 ## State events need an undocumented flag
 
@@ -32,7 +32,7 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 - Cause: the CLI emits them only with `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`. The typings list the message type but not the flag.
 - Workaround: `sdk.ts` sets the flag; `status.ts` falls back to send-to-`result` when no state event comes.
 - Values: `running`, `requires_action` (waiting on `canUseTool`), `idle`.
-- Code: `sdk.ts` `STATE_FLAG`, `buildOptions`; `session.ts` `onMessage`. Source: SDK spike row 11 (`spike/FINDINGS.md` at tag `rearch-base`).
+- Code: `sdk.ts` `STATE_FLAG`, `buildOptions`; `session.ts` `onMessage`. Source: SDK spike row 11 (removed from the repo).
 
 ## Streaming input and control calls
 
@@ -102,7 +102,7 @@ Code: `cards.ts`. Test: `cards.test.ts` (partly). Source: live run S3-1, spike r
 - Symptom: descriptions read `&lt;file&gt;`.
 - Cause: the SDK returns them escaped.
 - Workaround: `unescapeHtml` on descriptions and argument hints.
-- Code: `sdk.ts` `unescapeHtml`. Source: capture (`spike/dump_menu.mjs` at tag `rearch-base`).
+- Code: `sdk.ts` `unescapeHtml`. Source: capture (a spike script, removed from the repo).
 
 ### Command and model list shapes
 
@@ -113,7 +113,7 @@ Code: `cards.ts`. Test: `cards.test.ts` (partly). Source: live run S3-1, spike r
 - Models: effort lists differ per model (one has none, some lack `xhigh`). `default` carries its own description naming the current default. Two models have `(Default)` in the display name. `resolvedModel` lets a transcript's full model id match an alias row.
 - Model ids are Bedrock inference-profile ids: a region prefix (`eu.anthropic.`), an optional date and an optional `-v1:0`. `modelLabel` in `format.js` strips them (tested in `app/web/test/format.test.js`).
 
-Source: capture by `spike/dump_menu.mjs` (tag `rearch-base`; `prototype/menu.js` keeps its shape with invented user skills), live run S5-3.
+Source: capture by a spike script (removed from the repo; `prototype/menu.js` keeps its shape with invented user skills), live run S5-3.
 
 ## Live messages
 
@@ -158,7 +158,7 @@ Code: `session.ts` `onMessage` (`task_notification`). Source: live runs S4 and M
 - `listSessions()` gives `sessionId`, `cwd` (the realpath), `summary`, `customTitle`, `firstPrompt`, `gitBranch`, `lastModified`, `fileSize`. It honours `CLAUDE_CONFIG_DIR` (page checks rely on it). It took 87 ms over this machine's sessions. Code: `sdk.ts` `realSdk.listSessions`, `sessions.ts` `listRecent`. Source: live run S2-1.
 - Map sessions with `listSessions().cwd`; don't build project paths.
 - `options.resume=<id>` appends to the same file with the same id. `forkSession: true` gives a new id in the current cwd's project folder.
-- Resume and fork re-send the whole history: one haiku fork of a large session cost $0.25. `unverified` as a general cost model (one spike run). Source: SDK spike row 3 (`spike/FINDINGS.md` at tag `rearch-base`).
+- Resume and fork re-send the whole history: one haiku fork of a large session cost $0.25. `unverified` as a general cost model (one spike run). Source: SDK spike row 3 (removed from the repo).
 - A CLI can resume an SDK-made session and the other way round (CLI 2.1.323 read a 2.1.330 transcript).
 
 ## The writer's isolated call

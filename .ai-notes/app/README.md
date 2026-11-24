@@ -21,6 +21,6 @@ State on 2026-11-24, after the rearchitecture (branch `rearch`, worktree `~/dev/
 ## What is left
 
 - Before any push: scrub git history up to the rearchitecture's Phase 2 commit (real work data). Ask the user first.
-- Merge `rearch` into `main` once the user agrees; leave tag `rearch-base`.
+- Merge `rearch` into `main` once the user agrees. Done 2026-11-24; history scrubbed, tag `rearch-base` kept (scrubbed) for the upgrade test.
 - Everything else open is in `docs/functional-requirements.md` "Known gaps": three item-level status derivations still in the page (the backend fields they need are listed there), shell behaviours only a real window can show, and low-risk tooling and backend items.
 - Checks in the real window that no automated check covers: the confirm sheets' text, a real ⌘V image, drag and drop with a trackpad, the title bar strip, the bundle swap while the app runs, the slow-daemon view.
