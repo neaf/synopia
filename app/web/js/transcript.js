@@ -142,16 +142,20 @@ const agentMs = a => a.start ? (a.finished ? new Date(a.end) : NOWISH) - new Dat
 const agentType = a => a.fork ? "fork" : (a.type || "agent");
 function waveHTML(tools, s) {
   const rows = tools.map(t => ({ t, a: agentByTool(s, t.toolUseId) }));
-  const markOf = a => !a ? "done" : !a.finished ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
+  // A subagent whose turn ended but whose own background shell or monitor still runs isn't done: it
+  // resumes when that work reports, so it reads as running.
+  const busy = a => a && (!a.finished || bgOf(s).some(b => b.agentId === a.id && bgState(b) === "running"));
+  const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
   const nameOf = (t, a) => a ? `<button class="alink" data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span>${esc(t.obj)}</span>`;
-  const time = a => a ? (a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))) : "";
+  const time = a => a ? (busy(a) ? live(a.start, a.finished ? NOWISH - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
     return `<div class="ln agent one"><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
   }
   // The timeline bar shows only for finished rows: how long each took against the others. A running
   // one has no end yet, so a bar would read as progress toward one; it shows its live time only.
-  const ms = rows.map(r => r.a ? agentMs(r.a) : 0), ended = (r) => r.a?.start && r.a.finished;
+  const ms = rows.map(r => r.a ? agentMs(r.a) : 0), ended = (r) => r.a?.start && !busy(r.a);
+  const allDone = rows.every(r => r.a && !busy(r.a));
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));
   const tEnd = Math.max(...rows.map((r, i) => ended(r) ? +new Date(r.a.start) + ms[i] : 0));
   const span = Math.max(1, tEnd - t0);
@@ -159,9 +163,10 @@ function waveHTML(tools, s) {
   const parallel = rows.every(r => r.a) && Math.max(...rows.map(r => +new Date(r.a.start))) - t0 < 120000;
   return `<div class="ln agent wave"><span class="g"></span><div><span class="name">${rows.length} ${forks ? "forks" : "subagents"}${parallel ? " in parallel" : ""}</span>
     <div class="wgrid">${rows.map(({ t, a }, i) => {
-      const st = !a ? "unknown" : a.finished ? "done" : "running";
+      const st = !a ? "unknown" : busy(a) ? "running" : "done";
       const left = a?.start ? (new Date(a.start) - t0) / span * 100 : 0, width = Math.max(2, ms[i] / span * 100);
-      const bar = st === "done" ? `<span class="bar st-done"><i style="left:${left}%;width:${width}%"></i></span>` : `<span class="bar"></span>`;
+      // bars only once the whole wave is done: next to rows still running a bar compares nothing
+      const bar = allDone ? `<span class="bar st-done"><i style="left:${left}%;width:${width}%"></i></span>` : `<span class="bar"></span>`;
       return `${ind(markOf(a))}${nameOf(t, a)}${bar}<span class="adur">${time(a)}</span>`;
     }).join("")}</div></div></div>`;
 }
