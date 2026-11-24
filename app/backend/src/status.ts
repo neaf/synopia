@@ -30,7 +30,8 @@
 // A card in another process (R6.8, 2026-11-24): with no process of Synopia's, a transcript whose
 // thread (main or a running subagent's) ends on an AskUserQuestion or ExitPlanMode with no result
 // (Transcript.pendingAsk) is needs you, over working; its age counts from the tool_use. It clears
-// when the result lands. An ask our own process left behind (a crash) is not one: "Not answered".
+// when the result lands, or once the transcript has been quiet for ASK_STALE_MS (your turn then).
+// An ask our own process left behind (a crash) is not one: "Not answered".
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.
 // Without CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS (no `session_state_changed` seen yet), a turn
@@ -53,6 +54,9 @@ export const STALE_MS = 15 * 60_000;
 // 30 min: an open turn by the transcript alone, with no tool waiting for its result, that hasn't
 // changed for this long is your turn (its process may have crashed).
 export const QUIET_MS = 30 * 60_000;
+// 12 h: a question or plan in another process's transcript whose files haven't changed for this long
+// is your turn, not needs you: the process that asked is long gone (Transcript.pendingAsk).
+export const ASK_STALE_MS = 12 * 60 * 60_000;
 // What runs by the transcript: subagents and forks, the main turn, and when it last changed (ms),
 // and the question or plan it waits on (null or absent: none).
 export type Running = { agents: number; turn: boolean; lastAt: number; ask?: PendingAsk | null };

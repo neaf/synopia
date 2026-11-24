@@ -107,6 +107,35 @@ test('readImage: the block read again from its line; null when gone or rewritten
   assert.equal(readImage(file, at.span, at.recordId, at.path), null, 'gone');
 });
 
+// Real shapes (facts, 2026-11-24): a Read of an image repeats the base64 in toolUseResult.file (614 of
+// 614 seen); a message with a pasted image sent during a turn is a queued_command whose prompt is blocks.
+test('real shapes: a Read of a PNG, and a queued message with an image, read again from its line', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-images-'));
+  const file = path.join(dir, `${SID}.jsonl`);
+  const data = b64(PNG);
+  fs.writeFileSync(file, line({ type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:01.000Z', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_rd', name: 'Read', input: { file_path: '/tmp/shot.png' } }] } })
+    + line({ type: 'user', uuid: 'r1', timestamp: '2026-11-20T10:00:02.000Z', sourceToolAssistantUUID: 'a1',
+      toolUseResult: { type: 'image', file: { base64: data, type: 'image/png', originalSize: PNG.length, dimensions: { originalWidth: 20, originalHeight: 20, displayWidth: 20, displayHeight: 20 } } },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_rd', content: [img('image/png', data)] }] } })
+    + line({ type: 'attachment', uuid: 'q1', timestamp: '2026-11-20T10:00:03.000Z', isSidechain: false,
+      attachment: { type: 'queued_command', commandMode: 'prompt', prompt: [{ type: 'text', text: 'And this one?' }, img('image/png', data)], imagePasteIds: [1] } }));
+  try {
+    const recs: JsonRecord[] = [];
+    const spans: Span[] = [];
+    new Tailer(file, { onRecords: (r, s) => { recs.push(...r); spans.push(...s); }, pollMs: 0, watch: false }).check();
+    const t = new Transcript();
+    t.pushAll(recs, spans);
+    assert.deepEqual(t.get('toolu_rd')!.imgs, [{ ref: 'r1:0.0', mediaType: 'image/png', w: 20, h: 20 }]);
+    const q = t.get('q1')!;
+    assert.deepEqual([q.k, q.text, q.images, q.imgs], ['you', 'And this one?', 1, [{ ref: 'q1:1', mediaType: 'image/png', w: 20, h: 20 }]]);
+    const at = t.imageAt('q1:1')!;
+    assert.deepEqual(readImage(file, at.span, at.recordId, at.path), { mediaType: 'image/png', data: PNG });
+    assert.ok(!JSON.stringify(t.items).includes(data.slice(0, 40)), 'no base64 in the items');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 const TOKEN = 'b'.repeat(64);
 const base = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-images-web-'));
 fs.writeFileSync(path.join(base, 'index.html'), '<p>index</p>');

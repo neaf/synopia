@@ -14,7 +14,7 @@ import type { Item, PendingAsk } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { transcriptStatus, QUIET_MS } from './status.ts';
+import { transcriptStatus, QUIET_MS, ASK_STALE_MS } from './status.ts';
 import type { Running } from './status.ts';
 import type { Status, StatusDetail } from './status.ts';
 import { displayPath } from './paths.ts';
@@ -274,7 +274,7 @@ export class Views {
   // What runs now by the transcript (nothing when it isn't open): subagents and forks, the main turn.
   running(id: string): Running {
     const s = this.live.get(id);
-    return s ? runningOf(s.t) : { agents: 0, turn: false, lastAt: 0, ask: null };
+    return s ? runningOf(s.t, s.path) : { agents: 0, turn: false, lastAt: 0, ask: null };
   }
 
   private metaOf(s: Live): SessionMeta {
@@ -282,7 +282,7 @@ export class Views {
     const first = t.items.find((i) => i.k === 'you')?.text ?? '';
     const w = this.opts.written?.(s.id);
     const ch = this.opts.choice?.(s.id);
-    const ran = runningOf(t);
+    const ran = runningOf(t, s.path);
     const status = s.status ?? transcriptStatus(ran);
     let statusAt = s.statusAt;
     if (!s.status) {
@@ -504,6 +504,14 @@ export class Views {
     this.flush(s);
   }
 
+  // The SDK's task_started for one of the session's tasks: the task id stopTask takes, by tool use id.
+  taskStarted(sid: string, toolUseId: string, taskId: string): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.t.taskStarted(toolUseId, taskId);
+    this.flush(s);
+  }
+
   // Messages an interrupt cancelled, back to the session's message box.
   restore(sid: string, texts: string[]): void {
     if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });
@@ -546,7 +554,7 @@ export class Views {
       s.sent = key;
       this.broadcast({ t: 'session', ...meta });
     }
-    const ran = runningOf(s.t);
+    const ran = runningOf(s.t, s.path);
     const ranKey = `${ran.agents}:${ran.turn}:${ran.ask?.toolUseId ?? ''}`;
     if (ranKey !== s.ran) {
       s.ran = ranKey;
@@ -600,9 +608,9 @@ export class Views {
 }
 
 // What runs by the transcript: the subagents and forks still running by its rule (shells and
-// monitors aren't counted), and its main turn (Transcript.turnRunning, quiet after QUIET_MS).
-function runningOf(t: Transcript): Running {
-  return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(Date.now(), QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk() };
+// monitors aren't counted), and its main turn (Transcript.turnRunning, quiet after QUIET_MS), and a card it waits on (none after ASK_STALE_MS of quiet).
+function runningOf(t: Transcript, file: string | null): Running {
+  return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(Date.now(), QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk(Date.now(), ASK_STALE_MS, () => mtimeOf(file)) };
 }
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {
