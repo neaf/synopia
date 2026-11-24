@@ -85,7 +85,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - Group headings are not drop targets.
 - R4.6 The dragged copy follows the pointer at 50% opacity, offset 14px to the right, so the target stays visible.
 - R4.7 Double-click a group name to rename it. Empty groups disappear. Rows keep the user's order, with no automatic sorting by state.
-- R4.8 Claude may suggest the first grouping, from shared rare references: the same Notion attack plan, Linear project, GitHub label or worktree. A worktree is a signal, not the rule. From then on the user's layout is authoritative and persists.
+- R4.8 Claude may suggest the first grouping, from shared rare references: the same Notion attack plan, Linear project, GitHub label or worktree. A worktree is a signal, not the rule. From then on the user's layout is authoritative and persists. Experimental, not built; the rationale is in Design notes (section 16).
 - R4.9 Rejected:
   - "Why grouped" explanations: magic must be dependable or adjustable, not explained.
   - Folding.
@@ -194,6 +194,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - No number keys, no h/l, no Tab.
   - J/K still switch sessions.
 - R6.5 Permission prompt: sessions keep the user's permission mode (`auto`), so a permission card appears only when `auto` would ask. A session in plan mode stays in plan mode. The card shows the exact command in a code block, the folder, and Claude's reason. Rows: "Allow once", "Always allow" (says exactly what is remembered and for how long) and "Deny" (type a reason in place, optional).
+  - An "Always allow" rule for this session lasts until the session closes. Closing it (R3.6) clears its rules, so reopening asks again (2026-11-24).
 - R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place).
 - R6.7 Answers appear in the transcript as your turn ("Allow once", "Denied: …", "Changes: …").
 - R6.8 Detection: a session needs you while it has a pending `canUseTool` request: a question, a permission or a plan.
@@ -213,13 +214,13 @@ These requirements come from a day of prototyping against the user's real sessio
 
 - R7.1 A panel to the right of the transcript (under it below 990 px). From the top:
   - "Main conversation", a card like the running ones, tinted by the session's state (green while working, red when it needs you, grey otherwise). Its mark on the left, its state word on the right, and under its name a quiet count: "2 running in the background", or "Nothing running in the background". No separate "Running" heading.
-  - Under it, inset as its children: a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer. The sidebar's 1px tree guides join them (R4.3): a vertical line down from the main card's mark, a tick into each card at its mark's height, a corner on the last. The line runs past an expanded card's Stop row to the last child.
+  - Under it, inset as its children: a card per running item, ordered forks, subagents, shells, monitors, then oldest first. Each card has the kind mark, name, kind word in the kind colour, start time and a live timer. The sidebar's 1px tree guides join them (R4.3): a vertical line down from the main card's mark, a tick into each card at its mark's height, a corner on the last. The line runs past an expanded card to the last child.
   - A card that comes or goes tweens like a sidebar sub-line (R8.1): coming, the height opens, then the card fades in; going, the card fades out, then the height closes. The guides follow the height on every frame. A card whose item finishes stays in its place for 5 s, as in R4.2 (the status and still kind marks, the final duration), then leaves and its line appears in "Past".
   - A subagent's own shells and monitors (in its own transcript) hang under its card, one level deeper, with the same guides. They show only here: not under Main conversation, not in the sidebar's count, not in the main transcript. With no notification they run while their subagent runs; after it, they read as stopped, ended with their subagent. In "Past" they name it: "Resize the images in Build image thumbnails".
   - "To review": items waiting for review (section 10).
   - "Past": one dim line per finished item, newest first, fading out at the bottom edge. Each line shows the status mark, the still kind mark, the name and the duration; failed and timed out are named.
   - The item you're viewing shows it one way, whatever its kind (Main conversation, a subagent or fork card, a Past line): its 1px edge turns ink, and that is its only edge, over any state tint. A Past line gets the edge as a frame on the cards' edges, with its name in ink. Nothing moves or resizes when the selection moves. Hover only shades; keyboard focus is the blue ring.
-- R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. Each running card has a Stop row that stops only that item.
+- R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. A running card has no Stop row: stopping one background item waits for a key design (section 15, Q11).
 - R7.3 Covers forks, subagents (including the `Explore` and `general-purpose` types), background shells (`Bash` with `run_in_background`) and monitors (`Monitor`).
 - R7.4 Rejected:
   - reversed order (running at the bottom)
@@ -286,7 +287,7 @@ These requirements come from a day of prototyping against the user's real sessio
 - R9.2 The only mode indicator is the message box: grey in normal mode, blue ring in insert mode.
 - R9.3 ⌘⇧[ and ⌘⇧] also switch sessions, as in iTerm.
 - R9.4 Interrupt: Esc in normal mode while a turn runs turns the message box into "Interrupt?". A second Esc interrupts. Any other key or click dismisses it. An open in-place field on a card takes Esc first (R6.4).
-  - The interrupt stops only the foreground turn. Background subagents, shells and monitors keep running, as in the CLI; each is stopped with its own Stop row (R7.2).
+  - The interrupt stops only the foreground turn. Background subagents, shells and monitors keep running, as in the CLI (R7.2).
   - Messages still queued at the interrupt go back to the message box.
   - A running `!` command (R5.13) is asked about the same way, and goes first: the second Esc sends SIGTERM to its own process group, then SIGKILL after 3 s, and it shows "Stopped". With a turn also running, the next Esc, Esc stops the turn (2026-11-24).
 - R9.5 Send to background, as Ctrl+B in the CLI: b in normal mode, in a session Synopia drives whose turn runs a foreground Bash command or subagent, marks each such step in the transcript (a 1px blue ring on the selection tint) and turns the message box into "Send to background? b again. Any other key to keep it in front." A second b sends them all to the background. Any other key, a click or the turn ending dismisses it.
@@ -310,6 +311,7 @@ These requirements come from a day of prototyping against the user's real sessio
 
 - Light theme, with visible panels: header, transcript, message box, background work. The canvas is `#EDEFF2` and the panels are white.
 - UI font: Atkinson Hyperlegible Next. Transcript: JetBrains Mono NL.
+  - Both fonts ship with the app in `app/web` (both OFL). The page loads no font from the network, so offline and blocked runs keep the transcript grid (2026-11-24).
 - Sizes are 81% of the first draft (two 90% steps); the transcript is 12px.
 - Colours: GitHub-like on light.
   - red `#CF222E`: needs you only
@@ -328,7 +330,7 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 12. Data the app relies on
 
-Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_transcripts.py`):
+Verified in the spike and in live scripted runs. Details, sources and quirks: [Claude Code transcripts](Claude%20Code%20transcripts.md), [Claude Code terminals](Claude%20Code%20terminals.md), [Agent SDK](Agent%20SDK.md).
 - Open sessions: Synopia's own list of the sessions it holds open, kept across restarts. Past sessions for the "Open session" list come from the SDK's `listSessions()`. Terminals come from `~/.claude/sessions/<pid>.json` (undocumented, read by one module, R3.2).
 - Transcripts: `~/.claude/projects/<encoded-cwd>/<id>.jsonl`.
   - Subagents: `<id>/subagents/agent-<aid>.jsonl` plus `.meta.json` (agentType, isFork, description, toolUseId, spawnDepth, finished).
@@ -338,7 +340,7 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
   - Reports: subagent reports arrive as `isMeta` user messages from `agent-message from="<aid>"`.
 - SDK:
   - It lists, resumes and forks sessions.
-  - It takes images, `canUseTool` (permissions, AskUserQuestion with `updatedInput.answers`), `supportedCommands()`, `supportedModels()`, `setModel()`, `interrupt()`, `stopTask()` and streaming input.
+  - It takes images, `canUseTool` (permissions, AskUserQuestion with `updatedInput.answers`), `supportedCommands()`, `supportedModels()`, `setModel()`, `interrupt()` and streaming input.
   - The transcript is read from the JSONL; the SDK stream carries control and live state.
   - Subagent task events are available.
   - Session state events need `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`, which is undocumented.
@@ -352,7 +354,7 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 ## 13. Icon and favicon
 
 - Option B, "Paper": a light paper tile with the agent mark (pale green orbit, dark green arc on top, solid core).
-  - Files: `prototype/icon/icon.svg`, `icon-small.svg` (16 to 64px, with more contrast) and `favicon.svg`.
+  - Files: `app/web/icon/icon.svg`, `icon-small.svg` (16 to 64px, with more contrast) and `favicon.svg`. `app/web/icon` is the only icon folder; the build and `prototype/app.html` read it.
   - Icons are still, since motion means running.
 - The `.icns` file is built locally from the icon, with the tools that ship with macOS.
 
@@ -360,3 +362,72 @@ Verified in the spike (`spike/FINDINGS.md`) and the prototype export (`export_tr
 
 - The sidebar banner for signed out ("2 sessions are blocked. Run aws sso login") from the status storyboard: the row and the status line show it, the banner isn't built.
 - Plan rate limits (five-hour and weekly): the SDK documents them as unavailable on Bedrock, so only retries on throttling show.
+
+## 15. Decisions
+
+The author's answers to the design questions (chat, 2026-11-23 and 2026-11-24), numbered as asked. A later answer supersedes an earlier one where it says so.
+
+- Q2 Open and closed: Synopia keeps its list of open session ids across restarts and shows their transcripts; the session's process starts on the first message. Close marks a session closed and hides it (R3.6).
+- Q3 Claude-written content: model calls are free (work machine). Titles and the Now line are Claude-written and kept current. No drift detection and no "Split into a new session" (R3.8). The first-grouping suggestion (R4.8) is deferred.
+- Q4 Transcript source: one reader tails every open session's JSONL and subagent files by byte offset, for terminal-held and Synopia-held sessions alike. The SDK stream carries only control and live state (pending `canUseTool`, `session_state_changed`, partial text).
+- Q5 Transport: the backend listens on 127.0.0.1 on a random port and checks a per-start token, Host and Origin; the shell loads `http://127.0.0.1:<port>/?token=…` in a WKWebView over one WebSocket. The shell keeps the window, menus, keys, opening files and links, and the backend's lifetime. The page also runs in a browser for checks.
+- Q6 Permission mode: keep the user's settings (`auto`), so a permission card appears only when `auto` would ask. Questions and plans come through `canUseTool`. Plan-mode sessions stay in plan mode (R6.5).
+- Q7 New session: a clean, empty session, no dialog, no worktree; the first prompt sets the tone and Claude names it. Its folder is a stored setting that defaults to the folder of the most recent session, or `~` when there is none (2026-11-24).
+- Q8 Stopping a turn: Esc, Esc in normal mode; messages still queued at the interrupt go back to the message box (R9.4).
+- Q11 Interrupt and background work: as in the CLI, Esc, Esc stops only the foreground turn; background subagents, shells and monitors keep running (`perTaskStopAffordance: true`). The per-item Stop row is dropped until a key is designed (2026-11-24), so Synopia sends no `stopTask`.
+- Q12 Terminal take-over, automatic both ways (supersedes Q1, Q9 and Q10): a terminal that opens a session Synopia holds takes it, and Synopia shows it read-only until the CLI exits. A send in Synopia on a terminal-held session waits until the CLI is idle, leaves a note on its terminal, ends it (SIGTERM, SIGINT at most, never SIGKILL) and resumes; while busy or waiting the box keeps the message ("Waiting for the terminal to finish…") and any edit or Esc cancels. One writer always (R3.2, R3.10).
+
+Rearchitecture decisions (2026-11-24):
+- Real work data stays out of the tree: fixtures, storyboards and captured menus hold invented data only.
+- The storyboards stay as design history; this document wins where they differ (R6.4, R8.3).
+- Shell edits come only from `bashEditDiff` (flag setting plus a git repo); outside a git repo no shell-edit rows show, with no git-status fallback.
+- "Always allow" rules for a session clear when it closes (R6.5).
+- One window and one page per daemon; `restore` and toasts go to the page that acted.
+- The fonts are bundled (R11).
+- An action taken while disconnected (answer, layout, reviewed, close, interrupt) is refused with a toast and local state stays as it was; UI state and layout are sent again on reconnect.
+- Future, out of the rearchitecture's scope and not to be blocked by it: the signed-out banner (section 14), FR-SES-15, FR-SIDE-06, FR-STAT-06.
+
+## 16. Design notes
+
+Why the rejected options lost, so they don't come back. The storyboards (`prototype/kind-storyboard.html`, `status-storyboard.html`, `needs-you-storyboard.html`) hold the full mock-ups; marks were judged at the sizes the app uses (64, 40, 30, 11 and 9 px; needs-you frames at 1440 by 1000 px). The storyboards load their fonts from Google Fonts when opened, so offline they show fallback type.
+
+Status marks (R8.2, R8.7):
+- Needs you is the seesaw: two stripes shrink and grow from the middle in turn, so the outline changes and you notice it at 12 px, while the middle stays put and still reads as a pause sign. It is the only up-and-down motion. Rejected: a level meter (reads as audio playing, the opposite of paused); escalator stripes (at 12 px each stripe is 3 px wide and the motion turns into shimmer); sliding stripes (a 1 px move is too small to catch from the corner of the eye); a turning pause sign (turning means working, and on its side it reads as an equals sign); the turning red square (turning means working).
+- One needs-you mark for questions, permissions and plans: a dot for a question disappears into the stripes at 12 px, and a second or third animation is too close to the seesaw at real size; the row's words say which kind it is.
+- Working is one arc for thinking and tools: two arcs for tools look the same at 12 px and swapping would flicker; speed alone is hard to judge in passing.
+- Queued message: an arc with a dot beside it is twice as wide and shifts the title; a plain arc lets you forget a message waits.
+- Compacting: a plain arc makes a long compaction look like a stuck tool.
+- Rate limited: a turning hourglass reads as a blob at 12 px and its turning looks like the arc; a countdown ring jumps back when it starts over, which breaks the always-moving rule.
+- Signed out: stripes on five blocked sessions look like five questions you would open one by one; a lock names the cause, and one banner says what to run (the banner is not built, section 14).
+- Your turn: a prompt caret reads as an arrow or a link at 12 px; an amber ring is close to the closed ring; a dot with a small arc is twice as wide and the arc says working.
+- For review: a blue flag blurs into a blob at 12 px and flags often mean a problem; a blue ring with a check is close to Done from a distance.
+- Done: a check in a ring reads as a button.
+- Stopped by you: a grey outline square is taken by Timed out.
+- Failed: a marching outline draws the eye, but motion means busy or waiting, and failed is neither; it is too loud for a past row.
+- Stale: a grey dashed ring is too close to the rate-limited dashes.
+- Closed: no mark makes the row look like it is still loading.
+- Starting: a grey arc differs from Working by colour only, which breaks the shape rule.
+- Background marks: a slow arc for monitors differs from a subagent by speed only; keeping the arc for a stuck subagent hides that it needs you; no mark on past rows leaves failures to colour alone; an amber filled square for timed out differs from Failed and Stopped by colour only.
+
+Kind marks (R8.3, R8.7):
+- Subagent: a person glyph is gone at 9 px (a small spark becomes a dot); a bubble head can't hold its dots at 9 px.
+- Fork: a two-arc spinner says nothing about forking, only its colour does; two dots parting are just two dots on a ring when still.
+- Shell: chevrons marching look like fast forward; scrolling output lines merge into a grey patch at 9 px; a turning bar alone reads like a generic spinner. Nothing blinks: the cursor moves instead of switching on and off.
+- Monitor: an eye's pupil moves by a pixel at 9 px, and the eye shape thins out; the radar sweep stays.
+
+Needs-you card (R6.4, R6.9), from the problems the first card had:
+- The question was shown twice: the transcript repeated it, then the card showed it again with other numbers.
+- The turn looked finished: "Files changed" and "Worked for …, done" came after the open question.
+- The status said nothing specific: it hid that there were two questions and how many were answered.
+- Six bordered boxes of equal weight made the card about 560 px tall, with every question open at once.
+- Numbers like "2.1" suggested a chord, but number keys reached only the first question.
+
+Session list (R3.8, R4.9): the first prototype showed one dark card per session with "Your move", "Mark as handled", "Copy resume" and a drift prompt ("Topic changed to …, Move it there"). Cards and drift detection were rejected: the sidebar list replaces the cards, and the user keeps one session per topic.
+
+First grouping (R4.8), from the grouping experiment:
+- References come only from what the user typed (user records, not tool results or meta records): document links (Notion, Linear), ticket ids, PR numbers, GitHub labels, notes folders, worktree folders (`repo.worktree-name`), and hand-offs from another session's subagent.
+- Each kind has a weight: a hand-off 3.0, a worktree 1.2, a document link or label 1.0, a Linear issue or notes folder 0.8, a PR 0.6, a ticket id 0.5.
+- Rarity decides: a reference counts by `log(n / sessions citing it)`, and one cited by more than max(3, a quarter of the sessions), such as `main` or a PR everyone cites, counts zero.
+- Two sessions join when their shared references score at least 4.0 (weight × rarity × `log(1 + fewer mentions)`); a hand-off always joins the receiving session to the subagent's parent. Groups are transitive.
+- A group is offered only with two or more sessions, one of them touched in the last 14 days.
+- The experiment listed the strongest shared references as the reason for each group; the UI shows no "why grouped" (R4.9).
