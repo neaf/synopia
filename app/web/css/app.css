@@ -178,12 +178,12 @@ details.step > summary::-webkit-details-marker { display: none; }
 .add { color: var(--green); } .del { color: var(--red); } .new { color: var(--ink-3); }
 .diff { grid-column: 1 / -1; min-width: 0; margin: 3.5px 0 9px 3ch; border: 1px solid var(--line); border-radius: 5.5px; overflow: hidden; }
 .diff[hidden] { display: none; }
-.dl { display: grid; grid-template-columns: 6ch 2ch minmax(0, 1fr); white-space: pre-wrap; overflow-wrap: anywhere; }
-.dl .no { color: var(--faint); text-align: right; padding-right: 1ch; user-select: none; background: var(--sub); }
+.dl { display: grid; grid-template-columns: calc(var(--dn, 4ch) + 2ch) 2ch minmax(0, 1fr); /* the digits plus 1ch each side */ white-space: pre-wrap; overflow-wrap: anywhere; }
+.dl .no { color: var(--faint); text-align: right; padding: 0 1ch; user-select: none; background: var(--sub); }
 .dl.a { background: var(--add-bg); } .dl.a .no { background: #CCFFD8; } .dl.a .sg { color: var(--green); }
 .dl.d { background: var(--del-bg); } .dl.d .no { background: #FFD7D5; } .dl.d .sg { color: var(--red); }
 .dl.c { color: var(--ink-2); }
-.dgap { color: var(--faint); padding-left: 7ch; background: var(--sub); }
+.dgap { color: var(--faint); padding-left: calc(var(--dn, 4ch) + 3ch); background: var(--sub); }
 
 /* message panel: status bar on top, input below */
 .dock { padding: 0; overflow: visible; }

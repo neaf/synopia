@@ -69,6 +69,12 @@ function splitPath(f) {
   const m = f.match(/^(~\/dev\/[^/]+\/\.claude\/worktrees\/[^/]+)\/(.*)$/) || f.match(/^(~\/dev\/[^/]+)\/(.*)$/) || f.match(/^(~\/\.claude\/[^/]+(?:\/[^/]+)?)\/([^/]+)$/) || f.match(/^(.*)\/([^/]+)$/);
   return m ? [m[1], m[2]] : ["", f];
 }
+/* the digits of the largest line number in these patches, so the diff's number column fits them */
+function diffDigits(ps) {
+  let max = 1;
+  for (const p of ps) for (const h of p.hunks || []) max = Math.max(max, (h.o || 0) + h.lines.length, (h.n || 0) + h.lines.length);
+  return String(max).length;
+}
 function diffHTML(p) {
   const out = [];
   p.hunks.forEach((h, hi) => {
@@ -110,7 +116,7 @@ function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open
       const id = esc(`diff-${key}-${fileSeq++}`), diffs = f.list.filter(p => !p.bare);
       body += `<div class="frow"><span class="lcorner" aria-hidden="true"></span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
         ${diffs.length ? `<button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
-        <div class="diff" id="${id}" hidden>${diffs.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>` : `<span></span></div>`}`;
+        <div class="diff" id="${id}" style="--dn:${diffDigits(diffs)}ch" hidden>${diffs.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>` : `<span></span></div>`}`;
     }
     body += `</div>`;
   }
