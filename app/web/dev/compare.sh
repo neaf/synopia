@@ -11,7 +11,7 @@ APP=$(dirname "$WEB")
 ROOT=$(dirname "$APP")
 OUT=${1:-/tmp/synopia-compare}
 PORT=${SYNOPIA_COMPARE_PORT:-4718}
-CHROME=${CHROME:-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"}
+CHROME=$("$DEV/chrome-bin.sh")
 FIXTURE="$APP/backend/test/fixtures/claude"
 
 rm -rf "$OUT"
