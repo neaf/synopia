@@ -25,9 +25,18 @@ A test can pass variables to an app it launches only through `open --env NAME=va
 
 ## `ps`
 
-- `ps -o tty=` gives `ttysNNN`, `??` when the process has no terminal. Code: `registry.ts` `ttyDevice` (273-276). Test: `registry.test.ts` 151, 181.
-- `ps -o lstart=` depends on locale and zone and pads single-digit days; run it with `LC_ALL=C TZ=UTC`. See [Daemon files](Daemon%20files.md#quirk-process-start-strings).
-- `execFileSync('/bin/ps')` blocks the event loop up to its 2 s timeout per call. Code: `registry.ts` `ps` (35-43), `daemon.ts` `procStart`.
+Every `ps` call is `/bin/ps -o <field>= -p <pid>` with env `LC_ALL=C TZ=UTC`, run async with a 2 s timeout, so it never blocks the event loop. Code: `macos.ts` `ps`. Test: `macos.test.ts`.
+
+| Outcome | `ps` does | `macos.ts` gives |
+|---|---|---|
+| the process exists | exit 0, the field on stdout | the text, trimmed |
+| no such process | exit 1, nothing on stdout | `''` (`parentOf`: 0) |
+| timeout, spawn error, any other exit | killed, or no output | `null`: unknown, ask again later |
+
+- `ps -o tty=` gives `ttysNNN`, `??` when the process has no terminal. Code: `macos.ts` `ttyOf`; `cli-terminals.ts` `ttyDevice`. Test: `cli-terminals.test.ts` "takeoverNote and ttyDevice".
+- `ps -o lstart=` depends on locale and zone and pads single-digit days (`Wed Nov  4 …`); run it with `LC_ALL=C TZ=UTC`. `procStart` keeps the text as printed; `sameStart` compares two with runs of spaces squashed. See [Daemon files](Daemon%20files.md#quirk-process-start-strings). Test: `macos.test.ts` "a single-digit day padded".
+- Liveness is `kill(pid, 0)`: alive when it succeeds or fails with `EPERM` (another user's process). Code: `macos.ts` `alive`.
+- A child spawned `detached` leads its own process group; `signalGroup` signals the whole group (`kill(-pid)`), so grandchildren end too. Code: `macos.ts` `signalGroup`; users `bang.ts`, `login-env.ts`.
 
 ## Real paths
 
@@ -40,8 +49,8 @@ A test can pass variables to an app it launches only through `open --env NAME=va
 
 - Symptom: an appended line or a new subagent file is missed.
 - Cause: on macOS `fs.watch` (FSEvents) can merge or drop events, and it arms asynchronously, so a change right after `watch()` can be lost.
-- Workaround: every watcher has a poll beside it (tailer, subagent watcher, pid-file registry every 2 s).
-- Code: `tail.ts` 1-3; `registry.ts` `watchDir`, `POLL_MS`. Test: `tail.test.ts` 110-112.
+- Workaround: every watcher has a poll beside it (tailer, subagent watcher, pid-file scan every 2 s).
+- Code: `tail.ts` 1-3; `cli-terminals.ts` `watchDir`, `POLL_MS`. Test: `tail.test.ts` 110-112.
 
 ## Opening files: `/usr/bin/open`
 

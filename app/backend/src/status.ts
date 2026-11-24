@@ -33,7 +33,7 @@
 // when the result lands, or once the transcript has been quiet for ASK_STALE_MS (your turn then).
 // An ask our own process left behind (a crash) is not one: "Not answered".
 // A terminal (R3.2, 2026-11-24): `detail.terminal` is the pid of the terminal's Claude Code that holds
-// the session (registry.ts), whatever the status, and `detail.takeover` says a message of yours waits
+// the session (cli-terminals.ts), whatever the status, and `detail.takeover` says a message of yours waits
 // for it (`waiting`: it runs a turn or waits on you) or is taking it back (`taking`).
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.

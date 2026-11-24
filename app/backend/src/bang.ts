@@ -8,6 +8,7 @@
 // without a turn, merged into the next user message that queries).
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { signalGroup } from './macos.ts';
 
 export const BANG_CAP = 30_000;
 export const KILL_AFTER_MS = 3000;
@@ -104,14 +105,6 @@ export class Bang {
     for (const t of [this.tick, this.grace]) if (t) clearTimeout(t);
     this.run.running = false;
     this.opts.onDone(this.run);
-  }
-}
-
-function signalGroup(pid: number, sig: NodeJS.Signals): void {
-  try {
-    process.kill(-pid, sig);
-  } catch {
-    /* already gone */
   }
 }
 

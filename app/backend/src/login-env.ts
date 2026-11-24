@@ -9,6 +9,7 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Log } from './log.ts';
+import { signalGroup } from './macos.ts';
 
 export const LOGIN_ENV_TIMEOUT_MS = 5000;
 // Set once merged, so a successor daemon (which inherits it) doesn't ask again.
@@ -76,7 +77,7 @@ const captureShell: Capture = (shell, timeoutMs) => new Promise((done) => {
   let finished = false;
   const end = (out: string | null) => { if (!finished) { finished = true; clearTimeout(timer); done(out); } };
   const timer = setTimeout(() => {
-    try { process.kill(-(child.pid as number), 'SIGKILL'); } catch { /* gone */ }
+    signalGroup(child.pid as number, 'SIGKILL');
     end(null);
   }, timeoutMs);
   child.stdout?.on('data', (b: Buffer) => chunks.push(b));

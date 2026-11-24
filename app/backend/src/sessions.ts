@@ -5,7 +5,7 @@
 // on its next message. Statuses come from status.ts and are stored with their age.
 // The Open list comes from the SDK's listSessions(); opening a past session adds it to the open
 // list, and it resumes on its first message.
-// A terminal (R3.2, 2026-11-24, registry.ts): one writer per session. When a terminal's Claude Code
+// A terminal (FR-SES-09, FR-SES-10, cli-terminals.ts): one writer per session. When a terminal's Claude Code
 // takes a session Synopia holds, Synopia yields (interrupts its turn, ends its process) and the session
 // is read-only until that CLI exits. A message you send meanwhile takes it back: at once when the CLI
 // is idle (re-checked right before), else once it is; any edit or Esc cancels. No process starts while
@@ -20,8 +20,8 @@ import { SessionProcess } from './driver.ts';
 import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
 import { SessionStatus, restored } from './status.ts';
 import type { Running, StatusEntry, Takeover } from './status.ts';
-import type { Terminal } from './registry.ts';
-import { takeoverNote } from './registry.ts';
+import type { Terminal } from './cli-terminals.ts';
+import { takeoverNote } from './cli-terminals.ts';
 import { NeedsYou } from './pending.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
@@ -123,10 +123,10 @@ type Active = {
   takeover: { content: Content; uuid: string; text: string; state: Takeover } | null; // your message that takes it back
 };
 
-// What Sessions needs from registry.ts (tests pass a fake).
+// What Sessions needs from cli-terminals.ts (tests pass a fake).
 export type TerminalSource = {
   holder(sid: string): Terminal | null;
-  recheck(sid: string): Terminal | null; // fresh, right before acting
+  recheck(sid: string): Terminal | null; // the files again, right before acting
   onChange(fn: () => void): void;
   end(t: Terminal, note: string, sid: string): Promise<boolean>; // the CLI ended and its transcript settled
 };
@@ -151,7 +151,7 @@ export type SessionsOptions = {
   onWaiting?: (sid: string) => void;
   // Slice 5: a running process pushed a new command list (commands_changed).
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
-  // The terminals that hold sessions (registry.ts); none without it.
+  // The terminals that hold sessions (cli-terminals.ts); none without it.
   registry?: TerminalSource;
 };
 

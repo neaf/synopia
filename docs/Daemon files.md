@@ -33,14 +33,14 @@ The files the Node daemon and the Swift shell share, and the rules each side fol
 
 - Written to `daemon.json.<pid>.tmp` (0600) and renamed into place once the server listens, so a reader never sees half of it. Removed at start (the lock is ours, so a file left there is stale) and at stop, only while it still names this pid.
 - A missing, malformed or stale file means no daemon.
-- Code: `daemon.ts` 18-62, `isLive` (90-93); `Backend.swift` `live` (146-155).
+- Code: `daemon.ts` `parseDaemonInfo`, `writeDaemonInfo`, `removeDaemonInfo`, `isLive` (async); `Backend.swift` `live` (146-155).
 
 ### Quirk: process start strings
 
 - Symptom: a reused pid passes for the daemon, or a live daemon reads stale.
 - Cause: `ps -o lstart=` output depends on locale and zone, and pads a single-digit day with spaces (`Nov  4`).
 - Workaround: both sides run `/bin/ps -o lstart= -p <pid>` with env `LC_ALL=C TZ=UTC` and compare strings. Format: `^\w{3} \w{3} +\d+ \d\d:\d\d:\d\d \d{4}$`.
-- Code: `daemon.ts` `procStart` (68-76), `Backend.swift` `procStart` (172-185). Test: `daemon.test.ts` 63.
+- Code: `macos.ts` `procStart` (as printed, not squashed), `daemon.ts` `ownStart` (asks up to three times; `''` when `ps` never answers, and the app then reads the file as stale), `Backend.swift` `procStart` (172-185). Test: `daemon.test.ts` "a stale daemon.json is not live", `macos.test.ts`.
 
 ## Lock
 

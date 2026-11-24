@@ -6,9 +6,10 @@
 // its own code at start, and hands over to a new daemon once the checkout's code differs and
 // nothing runs (or at once on "Restart Backend Now…").
 import { chmodSync, closeSync, copyFileSync, openSync, readdirSync, readFileSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
+import { alive, procStart } from './macos.ts';
 
 export const DAEMON_FILE = 'daemon.json';
 export const DAEMON_LOG = 'daemon.log';
@@ -62,36 +63,26 @@ export function removeDaemonInfo(stateDir: string, pid?: number): void {
   }
 }
 
-// A process's start time as `ps -o lstart=` prints it in the C locale and UTC
-// ("Tue Nov 24 10:00:00 2026"), or '' when there is no such process. The app runs the same
-// command, so the two compare as strings, and a reused pid never passes for the daemon.
-export function procStart(pid: number): string {
-  try {
-    return execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
-      env: { LC_ALL: 'C', TZ: 'UTC' }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000,
-    }).trim();
-  } catch {
-    return '';
-  }
-}
+export type Probe = { alive: (pid: number) => boolean; startOf: (pid: number) => Promise<string | null> };
+const realProbe: Probe = { alive, startOf: (pid) => procStart(pid) };
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
-  }
-}
-
-export type Probe = { alive: (pid: number) => boolean; startOf: (pid: number) => string };
-const realProbe: Probe = { alive, startOf: procStart };
-
-// Whether daemon.json still names a running daemon: its pid runs and started when the file says.
-// A missing, malformed or stale file is false. (The app also asks GET /api/ping with the token.)
-export function isLive(info: DaemonInfo | null, probe: Probe = realProbe): boolean {
+// Whether daemon.json still names a running daemon: its pid runs and started when the file says
+// (`ps -o lstart=` as printed: the app compares the same string, docs/Daemon files.md#quirk-process-start-strings).
+// A missing, malformed or stale file is false, and so is a start `ps` couldn't give.
+// (The app also asks GET /api/ping with the token.)
+export async function isLive(info: DaemonInfo | null, probe: Probe = realProbe): Promise<boolean> {
   if (!info || !probe.alive(info.pid)) return false;
-  return info.procStart !== '' && probe.startOf(info.pid) === info.procStart;
+  return info.procStart !== '' && (await probe.startOf(info.pid)) === info.procStart;
+}
+
+// This daemon's start time for daemon.json: `ps` asked up to three times, '' when it never answers
+// (the app then reads the file as stale).
+export async function ownStart(pid = process.pid, startOf: (pid: number) => Promise<string | null> = (p) => procStart(p)): Promise<string> {
+  for (let i = 0; i < 3; i++) {
+    const s = await startOf(pid);
+    if (s !== null) return s;
+  }
+  return '';
 }
 
 // Copy and truncate, as logrotate's copytruncate: the daemon's stdout and stderr are the file

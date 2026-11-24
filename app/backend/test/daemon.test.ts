@@ -7,10 +7,11 @@ import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import {
-  IdleExit, UpdateCheck, codeHash, isLive, parseDaemonInfo, procStart, readDaemonInfo, removeDaemonInfo, rotateLog, successorArgs,
+  IdleExit, UpdateCheck, codeHash, isLive, ownStart, parseDaemonInfo, readDaemonInfo, removeDaemonInfo, rotateLog, successorArgs,
   writeDaemonInfo,
 } from '../src/daemon.ts';
 import type { DaemonInfo } from '../src/daemon.ts';
+import { procStart } from '../src/macos.ts';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'synopia-daemon-'));
 const MAIN = new URL('../src/main.ts', import.meta.url).pathname;
@@ -47,20 +48,28 @@ test('daemon.json is written atomically with mode 0600 and removed only by its o
   assert.equal(existsSync(join(dir, 'daemon.json')), false);
 });
 
-test('a stale daemon.json is not live: dead pid, reused pid, or no recorded start', () => {
-  const probe = (alive: boolean, start: string) => ({ alive: () => alive, startOf: () => start });
+test('a stale daemon.json is not live: dead pid, reused pid, or no recorded start', async () => {
+  const probe = (alive: boolean, start: string | null) => ({ alive: () => alive, startOf: async () => start });
   const i = info();
-  assert.equal(isLive(i, probe(true, i.procStart)), true);
-  assert.equal(isLive(i, probe(false, i.procStart)), false, 'dead pid');
-  assert.equal(isLive(i, probe(true, 'Wed Nov 25 09:00:00 2026')), false, 'pid reused by another process');
-  assert.equal(isLive(info({ procStart: '' }), probe(true, '')), false);
-  assert.equal(isLive(null), false);
+  assert.equal(await isLive(i, probe(true, i.procStart)), true);
+  assert.equal(await isLive(i, probe(false, i.procStart)), false, 'dead pid');
+  assert.equal(await isLive(i, probe(true, 'Wed Nov 25 09:00:00 2026')), false, 'pid reused by another process');
+  assert.equal(await isLive(i, probe(true, null)), false, 'ps failed');
+  assert.equal(await isLive(info({ procStart: '' }), probe(true, '')), false);
+  assert.equal(await isLive(null), false);
   // The real probe: this process is live under its own start time, a finished one isn't.
-  assert.equal(isLive(info({ pid: process.pid, procStart: procStart(process.pid) })), true);
+  assert.equal(await isLive(info({ pid: process.pid, procStart: await ownStart() })), true);
   const dead = spawnSync(process.execPath, ['-e', '0']).pid!;
-  assert.equal(procStart(dead), '');
-  assert.equal(isLive(info({ pid: dead })), false);
-  assert.match(procStart(process.pid), /^\w{3} \w{3} +\d+ \d\d:\d\d:\d\d \d{4}$/);
+  assert.equal(await isLive(info({ pid: dead })), false);
+  assert.match(await ownStart(), /^\w{3} \w{3} +\d+ \d\d:\d\d:\d\d \d{4}$/);
+  assert.equal(await procStart(process.pid), await ownStart(), 'as printed, not squashed: the app compares the string');
+});
+
+test("ownStart: asks ps again after a failure, '' when it never answers", async () => {
+  let n = 0;
+  assert.equal(await ownStart(1, async () => (++n < 3 ? null : 'Tue Nov 24 10:00:00 2026')), 'Tue Nov 24 10:00:00 2026');
+  assert.equal(n, 3);
+  assert.equal(await ownStart(1, async () => null), '');
 });
 
 test('idle exit: only after the timeout with no page and nothing running', () => {
@@ -183,7 +192,7 @@ test('the daemon writes daemon.json, answers ping and badge, and ends on POST /a
   assert.equal(i.pid, d.pid);
   assert.equal(statSync(dir).mode & 0o777, 0o700);
   assert.equal(statSync(join(dir, 'daemon.json')).mode & 0o777, 0o600);
-  assert.equal(isLive(i), true);
+  assert.equal(await isLive(i), true);
   const api = (p: string, init?: RequestInit) => fetch(`http://127.0.0.1:${i.port}/api/${p}?token=${i.token}`, init);
   assert.deepEqual(await (await api('ping')).json(), { ok: true, pid: d.pid, code: i.code });
   assert.equal(i.code, codeHash(new URL('..', import.meta.url).pathname), 'the code it runs');
@@ -224,7 +233,7 @@ test('a stale daemon.json is replaced by the next daemon', async () => {
   writeDaemonInfo(dir, info({ pid: spawnSync(process.execPath, ['-e', '0']).pid! }));
   const d = daemon(dir);
   const i = await waitFor(() => { const r = readDaemonInfo(dir); return r?.pid === d.pid ? r : null; });
-  assert.equal(isLive(i), true);
+  assert.equal(await isLive(i), true);
   d.kill('SIGTERM');
   await once(d, 'exit');
 });
@@ -252,7 +261,7 @@ test('POST /api/restart hands over to a new daemon on the same state folder', as
     const again = await hello(n);
     assert.deepEqual((again.hello.ui as { openList: unknown }).openList, { filter: 'handover' });
     again.ws.close();
-    assert.equal(isLive(n), true);
+    assert.equal(await isLive(n), true);
     assert.notEqual(n.token, i.token);
     assert.equal(n.code, i.code);
     assert.equal(readFileSync(join(dir, 'backend.lock'), 'utf8'), String(n.pid), 'the new daemon holds the lock');
@@ -261,7 +270,10 @@ test('POST /api/restart hands over to a new daemon on the same state folder', as
     assert.match(lines, /backend\.stop reason=restart/);
     assert.match(readFileSync(join(dir, 'daemon.log'), 'utf8'), /Synopia backend: stop \(restart\)\n$/, 'the shell reads this line');
     assert.equal((await fetch(`http://127.0.0.1:${n.port}/api/stop?token=${n.token}`, { method: 'POST' })).status, 200);
-    await waitFor(() => !isLive(n));
+    for (const end = Date.now() + 15_000; await isLive(n);) {
+      if (Date.now() > end) throw new Error('timed out');
+      await new Promise((ok) => setTimeout(ok, 50));
+    }
   } finally {
     try { process.kill(n.pid, 'SIGKILL'); } catch { /* gone */ }
   }

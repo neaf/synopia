@@ -5,6 +5,7 @@
 // backend can't read it between the create and the write and take it as stale.
 import { writeFileSync, linkSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { alive } from './macos.ts';
 
 export type Lock = { path: string; release: () => void };
 
@@ -13,16 +14,6 @@ export class LockedError extends Error {
   constructor(path: string, pid: number) {
     super(`Another Synopia backend (pid ${pid}) holds ${path}`);
     this.pid = pid;
-  }
-}
-
-function alive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (e) {
-    return (e as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 

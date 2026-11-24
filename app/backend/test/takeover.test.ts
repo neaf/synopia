@@ -1,5 +1,5 @@
 // The terminal take-over (R3.2, 2026-11-24): Synopia yields to a terminal, and takes a session
-// back from one, with a fake registry and a fake CLI.
+// back from one, with fake terminals (cli-terminals.ts) and a fake CLI.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import { Views } from '../src/views.ts';
 import { Sessions } from '../src/sessions.ts';
 import type { TerminalSource } from '../src/sessions.ts';
 import type { QueryFn } from '../src/driver.ts';
-import type { Terminal } from '../src/registry.ts';
+import type { Terminal } from '../src/cli-terminals.ts';
 import { openStore } from '../src/store.ts';
 import type { Client } from '../src/server.ts';
 import type { Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -80,7 +80,7 @@ function fakeRegistry(events: string[]) {
   };
   return r;
 }
-const term = (status: string, pid = 54166): Terminal => ({ pid, sessionId: SID, cwd: '/tmp/x', status, statusUpdatedAt: 1 });
+const term = (status: string, pid = 54166): Terminal => ({ pid, sessionId: SID, procStart: 'Tue Nov 24 10:02:03 2026', cwd: '/tmp/x', status, statusUpdatedAt: 1 });
 
 function setup(opts: { terminal?: Terminal | null; past?: SDKSessionInfo[] } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-takeover-'));

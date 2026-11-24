@@ -17,7 +17,7 @@ import { startServer } from './server.ts';
 import { Views } from './views.ts';
 import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
-import { Registry } from './registry.ts';
+import { CliTerminals } from './cli-terminals.ts';
 import { openTarget } from './open.ts';
 import { loadBat, previewFile, themeOf } from './preview.ts';
 import { loadLoginEnv } from './login-env.ts';
@@ -26,7 +26,7 @@ import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
 import { Badge, badgeCount } from './badge.ts';
 import {
-  DAEMON_LOG, IDLE_EXIT_MS, IdleExit, UPDATE_READ_MS, UpdateCheck, awaitHandover, codeHash, procStart, removeDaemonInfo, rotateLog,
+  DAEMON_LOG, IDLE_EXIT_MS, IdleExit, UPDATE_READ_MS, UpdateCheck, awaitHandover, codeHash, ownStart, removeDaemonInfo, rotateLog,
   startSuccessor, writeDaemonInfo,
 } from './daemon.ts';
 import { patchUi, draftImage } from './ui.ts';
@@ -139,8 +139,8 @@ const writer = fake ? null : new Writer({
     work: (sid) => views.work(sid),
   },
 });
-// R3.2: the terminals that hold sessions, from the CLI's pid files (registry.ts).
-const registry = fake ? null : new Registry({ dir: join(claudeDir, 'sessions'), log });
+// FR-SES-08: the terminals that hold sessions, from the CLI's pid files (cli-terminals.ts).
+const registry = fake ? null : new CliTerminals({ dir: join(claudeDir, 'sessions'), log });
 if (!fake) {
   sessions = new Sessions({
     store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined, registry: registry ?? undefined,
@@ -333,7 +333,7 @@ process.on('SIGUSR2', () => {
 // in slices, tail.ts), so the window isn't blank until every file is parsed. The daemon's stdout
 // is daemon.log, so the token goes only to daemon.json (0600); dev.sh reads it from stdout.
 if (flags['no-parent']) process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
-writeDaemonInfo(stateDir, { pid: process.pid, procStart: procStart(process.pid), port: (server as Server).port, token, version: VERSION, code: CODE });
+writeDaemonInfo(stateDir, { pid: process.pid, procStart: await ownStart(), port: (server as Server).port, token, version: VERSION, code: CODE });
 log('daemon.ready', { port: (server as Server).port, code: CODE });
 if (fake) fake.start(claudeDir);
 else {
