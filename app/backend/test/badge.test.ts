@@ -123,7 +123,8 @@ test('badge: a question or plan another process asks counts, with its ask for th
   views.setStatus(P, 'waiting');
   assert.equal(views.meta(P)?.ask, null, 'a request of ours is the card: no read-only one');
   const file = path.join(dir, 'projects', '-tmp-ext', `${Q}.jsonl`);
-  fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid: 'x1-u3', timestamp: '2026-11-24T09:02:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_xask1', content: 'User has answered your questions: "Which release channel should the checklist target?"="Beta". You can now continue.' }] } }) + '\n');
+  // dated now: a turn quiet for STALE_MS (status.ts) reads as ended, so a fixed date fails once it is 15 minutes old
+  fs.appendFileSync(file, JSON.stringify({ type: 'user', uuid: 'x1-u3', timestamp: new Date().toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_xask1', content: 'User has answered your questions: "Which release channel should the checklist target?"="Beta". You can now continue.' }] } }) + '\n');
   views.check();
   assert.deepEqual([views.meta(Q)?.status, views.meta(Q)?.ask], ['busy', null], 'answered there: the turn goes on');
   assert.equal(count(), 1);
