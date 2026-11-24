@@ -1,6 +1,6 @@
 // The background panel's tree (R7.1) on the rail fixture: Main conversation with its running children, a
 // subagent's own shells and monitors one level deeper, guides on every mark, the corner on each last child,
-// the guide past an expanded Stop row, Past naming the subagent, and none of them on the main side.
+// opening a subagent moving nothing, Past naming the subagent, and none of them on the main side.
 // usage: run.sh rail (or node rail.mjs <url> <state-dir>); writes rail-tree.png and rail-open.png
 import { writeFileSync } from 'node:fs';
 import { connect, sleep } from './cdp.mjs';
@@ -36,16 +36,13 @@ check("every guide runs under its parent's mark and its tick meets the card", t.
 check('the last child of each level ends in a corner, the others in a tick', t.every((x) => x.corner), JSON.stringify(t));
 check('the main card counts its direct children', (await ev(`document.querySelector('.main-row .m').textContent`)) === '2 running in the background');
 await shot('rail-tree');
-// expand the subagent to its Stop row: its children's guide runs past the row, all still aligned
+// a click on the subagent card opens its transcript and expands nothing: the panel doesn't move
+const before = await tree();
 await ev(`document.querySelector('.rail .card[data-agent="bbbb0001"]').click()`);
 await sleep(400);
-check('the subagent card shows its Stop row', await ev(`!!document.querySelector('.kid.parent > .bw-detail .bw-stop')`));
-const gap = await ev(`(() => { const d = document.querySelector('.kid.parent > .bw-detail'), r = d.getBoundingClientRect(), s = getComputedStyle(d, '::before');
-  const card = d.previousElementSibling.getBoundingClientRect(), next = d.nextElementSibling.querySelector('.kid > .tg').getBoundingClientRect();
-  return { top: Math.abs(r.y + parseFloat(s.top) - card.bottom), bottom: Math.abs(r.bottom - parseFloat(s.bottom) - next.y), x: r.x + parseFloat(s.left) }; })()`);
+check('a subagent card has no Stop row and no expansion', await ev(`!document.querySelector('.bw-stop') && !document.querySelector('.kid.parent > .bw-detail')`));
 t = await tree();
-check('the guide runs from the subagent card past its Stop row to its first child', gap.top < 1 && gap.bottom < 1, JSON.stringify(gap));
-check('with the Stop row open, ticks and guides stay aligned', t.length === 4 && t.every((x) => x.tick < 1 && x.x < 1 && x.corner), JSON.stringify(t));
+check('opening a subagent moves nothing in the tree (within 1 px)', t.length === before.length && t.every((x, i) => x.name === before[i].name && Math.abs(x.top - before[i].top) < 1), JSON.stringify([before.map(x => x.top), t.map(x => x.top)]));
 await shot('rail-open');
 // Past names the subagent; nothing of the subagent's on the main side
 const past = await ev(`[...document.querySelectorAll('.rail .pr .n')].map(n => n.textContent)`);

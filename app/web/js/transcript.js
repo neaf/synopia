@@ -296,13 +296,12 @@ function renderHeader() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && agentById(s, view);
   conv.querySelector(".c-head").innerHTML = A
-    ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
-        <h2 class="c-title">${esc(A.description)}</h2>
+    ? `<h2 class="c-title" title="${esc(A.description)}">${esc(A.description)}</h2>
         <p class="c-now">${A.finished ? `${A.stopped ? "Stopped" : "Finished"}, ${took(agentMs(A))}` : `Running, ${live(A.start, agentMs(A))}`}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
-        <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>
+        <p class="c-meta">Subagent of <button class="link" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button>. Its report goes back to that session.</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
-    : `<h2 class="c-title">${esc(s.title)}</h2>
-        ${isEmpty(s) || !s.now ? "" : `<p class="c-now">Now: ${esc(s.now)}</p>`}
+    : `<h2 class="c-title" title="${esc(s.title)}">${esc(s.title)}</h2>
+        <p class="c-now"${s.now ? ` title="${esc(s.now)}"` : ""}>${isEmpty(s) || !s.now ? "&nbsp;" : `Now: ${esc(s.now)}`}</p>
         <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button><button class="btn" data-close>Close session</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
