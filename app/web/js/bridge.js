@@ -46,7 +46,7 @@ function onMessage(m) {
       if (!had && wantNew && m.id.startsWith("new-")) { wantNew = false; current = m.id; view = null; mode = "insert"; renderAll(); break; }
       if (wantOpen === m.id) { wantOpen = null; current = m.id; view = null; renderAll(); break; } // opened from the Open list
       if (!current) pickCurrent();
-      syncInterrupt(); syncBackground(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
+      syncInterrupt(); syncBackground(); syncTakeover(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
       if (!had || !mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
       break;

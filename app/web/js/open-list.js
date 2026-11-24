@@ -60,7 +60,7 @@ function drawOpenList() {
     return;
   }
   box.innerHTML = rows.map((r, i) => `<div class="ol-it" role="option" data-i="${i}" aria-selected="${i === sel}">
-      <span class="n">${esc(r.title)}</span><span class="f">${esc(r.cwd)}</span><span class="a">${olAgo(r.lastModified)}</span></div>`).join("");
+      <span class="n"><span class="t">${esc(r.title)}</span>${r.terminal ? `<span class="term" title="pid ${esc(r.terminal)}">Open in a terminal</span>` : ""}</span><span class="f">${esc(r.cwd)}</span><span class="a">${olAgo(r.lastModified)}</span></div>`).join("");
   box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
 }
 /* "2 h ago": one unit is enough to tell sessions apart */
