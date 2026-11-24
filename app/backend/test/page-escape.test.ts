@@ -45,6 +45,9 @@ test('markdown still renders links, code and bold', () => {
     '<p>Read <code>a&lt;b</code> and <b>this</b>: <a href="https://example.com/a?b=1&amp;c=2" target="_blank" rel="noreferrer">https://example.com/a?b=1&amp;c=2</a>.</p>');
   assert.equal(md('[the docs](https://example.com/x)'), '<p><a href="https://example.com/x" target="_blank" rel="noreferrer">the docs</a></p>');
   assert.equal(md('`https://example.com/in-code`'), '<p><code><a href="https://example.com/in-code" target="_blank" rel="noreferrer">https://example.com/in-code</a></code></p>');
+  // bold holding code spans, as Claude writes "**`b`, `b`:** sends …"
+  assert.equal(md('**`b`, `b`:** sends'), '<p><b><code>b</code>, <code>b</code>:</b> sends</p>');
+  assert.equal(md('**see `a<b`**'), '<p><b>see <code>a&lt;b</code></b></p>');
 });
 
 test('markdown: a single newline is a line break, a blank line a paragraph, as in the CLI', () => {

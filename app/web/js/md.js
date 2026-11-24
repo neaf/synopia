@@ -35,7 +35,8 @@ function md(src) {
   const inline = s => {
     const keep = [], put = html => `\u0001${keep.push(html) - 1}\u0001`;
     const link = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noreferrer">${text}</a>`;
-    const bold = t => t.replace(/\*\*([^*\u0001]+)\*\*/g, "<b>$1</b>");
+    // bold may hold whole cut-out parts (code spans, links): each \u0001N\u0001 is a finished element
+    const bold = t => t.replace(/\*\*((?:[^*\u0001]|\u0001\d+\u0001)+)\*\*/g, "<b>$1</b>");
     /* bare URLs become links too, in code spans as well (as the prototype does); trailing punctuation stays outside */
     const bare = t => t.replace(/(^|[\s(>])(https?:\/\/[^\s<\u0001]+?)([.,;:!?)]*(?=\s|<|\u0001|$))/g, (m, pre, url, tail) => `${pre}${link(unesc(url), url)}${tail}`);
     const raw = (s || "").replace(/\u0001/g, "")
