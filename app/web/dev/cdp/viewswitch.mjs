@@ -15,6 +15,8 @@ execFileSync('node', [path.join(here, 'earlier.mjs'), 'make', claude]);
 const port = String(+(process.env.SYNOPIA_CDP_PORT || 4791) + 1);
 const url = execFileSync(path.join(here, 'backend.sh'), [port, path.join(own, 'state'), '--fake', '--claude-dir', claude]).toString().trim();
 
+const stopOwn = () => { try { process.kill(+fs.readFileSync(path.join(own, 'state', 'pid'), 'utf8')); } catch {} };
+process.on('exit', stopOwn); // its backend goes with the check, a failed connect too
 const { connect, sleep } = await import('./cdp.mjs');
 const c = await connect();
 const { ev, check } = c;
@@ -56,5 +58,4 @@ try {
 } finally {
   c.print();
   c.close();
-  try { process.kill(+fs.readFileSync(path.join(own, 'state', 'pid'), 'utf8')); } catch {}
 }
