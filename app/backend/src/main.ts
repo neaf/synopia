@@ -19,6 +19,7 @@ import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
 import { openTarget } from './open.ts';
 import { loadBat, previewFile, themeOf } from './preview.ts';
+import { loadLoginEnv } from './login-env.ts';
 import { displayPath } from './paths.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
@@ -93,6 +94,10 @@ try {
 }
 
 log('backend.start', { pid: process.pid, fake: flags.fake, daemon: !flags['no-parent'] });
+// The user's login PATH and its kin (login-env.ts), before anything spawns: an app started from
+// the Dock gives the daemon launchd's short PATH, and every session's tools need the real one.
+// Not under --fake (no sessions run), nor in a successor (it inherits the merged environment).
+if (!flags.fake) await loadLoginEnv({ log });
 removeDaemonInfo(stateDir); // the lock is ours, so a daemon.json left there is stale
 const store = openStore(stateDir, { log });
 const token = randomBytes(32).toString('hex');
