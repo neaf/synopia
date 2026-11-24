@@ -16,7 +16,7 @@ const fgMark = t => isFg(t) ? " data-fg" : "";
 function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
+    : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
   return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
@@ -32,18 +32,50 @@ let stepAsked = null; // the step whose full result was asked for, until the rep
 const stepKey = id => `${current}|${view || ""}|${id}`;
 const hasStep = t => !!(t.input || t.out);
 const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
+/* One run, expanded: a tool step (R5.6, running or finished) and a `!` command share it.
+   runView({ key, input, desc, out, err, truncatedTotal, running, startedAt, note, exit, stopped })
+     key            the id "Show all" asks the server for (`toolOutput`, data-full)
+     input, desc    the command or input on top, and a quiet description over it ("" for none)
+     out, err       the output and stderr so far (null: none yet; "" when finished: "No output")
+     truncatedTotal the full line count when out is the first 20 lines (0: not cut)
+     running        a live "Running, 42s" (from startedAt, ISO or ms; plain "Running" without it)
+     note           a quiet line under the running one, such as "Output shows when it finishes"
+     exit, stopped  "Exit code N" when non-zero, "Stopped" when interrupted
+   The result rows sit under the drawn guide: the first carries the corner, the rest align with it. */
+function runView({ key = "", input = "", desc = "", out = null, err = "", truncatedTotal = 0, running = false, startedAt = null, note = "", exit = null, stopped = false } = {}) {
+  const rows = [], row = (html, cls = "") => rows.push([html, cls]);
+  if (out) row(`<span class="out">${esc(out)}</span>`);
+  if (err) row(`<span class="out err">${esc(err)}</span>`);
+  const more = truncatedTotal ? `<p class="earlier more"><button data-full="${esc(key)}">Show all ${+truncatedTotal} lines</button></p>` : "";
+  const after = [];
+  if (running) {
+    const at = startedAt === null || startedAt === undefined || startedAt === "" ? null : new Date(startedAt);
+    after.push([`<span class="run">Running${at && !isNaN(at) ? `, ${live(at.toISOString(), Date.now() - at)}` : ""}</span>`, "running"]);
+    if (note) after.push([`<span class="note">${esc(note)}</span>`, "note"]);
+  } else {
+    if (out === "" && !err) row(`<span>No output</span>`);
+    if (stopped) after.push([`<span>Stopped</span>`, ""]);
+    else if (exit !== null && exit !== undefined && +exit !== 0) after.push([`<span>Exit code ${esc(exit)}</span>`, "failed"]);
+  }
+  const all = [...rows, ...after];
+  const res = ([html, cls], i) => `<div class="res${cls ? ` ${cls}` : ""}">${i === 0 ? `<span class="lcorner" aria-hidden="true"></span>` : "<span></span>"}${html}</div>`;
+  const head = `${desc ? `<div class="desc">${esc(desc)}</div>` : ""}${input ? `<div class="cmd">${esc(input)}</div>` : ""}`;
+  return `<div class="step-out${running ? " running" : ""}">${head}${rows.map(res).join("")}${more}${after.map((r, i) => res(r, rows.length + i)).join("")}</div>`;
+}
 function stepHTML(t) {
-  const o = t.out, full = fullOut.get(stepKey(t.id));
-  const text = full !== undefined ? full : o ? o.text : "";
-  const cmd = t.input ? `<div class="cmd">${esc(t.input)}</div>` : "";
-  const res = !o ? "" : text ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span class="out">${esc(text)}</span></div>`
-    : `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>No output</span></div>`;
-  const more = o && o.cut && full === undefined ? `<p class="earlier more"><button data-full="${esc(t.id)}">Show all ${+o.lines} lines</button></p>` : "";
-  const stop = o && o.interrupted ? `<div class="res"><span></span><span>Interrupted</span></div>` : "";
-  return `<div class="step-out">${cmd}${res}${more}${stop}</div>`;
+  const o = t.out, full = fullOut.get(stepKey(t.id)), running = t.state === "running" && !o;
+  /* the SDK's tool_progress carries only the elapsed time (sdk.d.ts SDKToolProgressMessage), so a
+     driven session's step says its output comes at the end; a session Synopia doesn't drive has no progress */
+  return runView({
+    key: t.id, input: t.input || "", out: o ? (full !== undefined ? full : o.text || "") : null,
+    truncatedTotal: o && o.cut && full === undefined ? +o.lines : 0,
+    running, startedAt: t.since || null, note: running && cur()?.driven ? "Output shows when it finishes" : "", stopped: !!(o && o.interrupted),
+  });
 }
 function showAll(id) {
-  const key = stepKey(id); if (stepAsked === key) return;
+  const key = stepKey(id);
+  if (id.startsWith("bang:")) { openBangs.add(key); renderLog(); return; } // a `!` command's output is all on the page
+  if (stepAsked === key) return;
   stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
 }
 function applyToolOutput(m) {
@@ -234,41 +266,25 @@ function itemsHTML(items, sessionBusy, s) {
   putTitles();
   return out;
 }
-/* ---------- a command's run: input, output under the drawn guide, the 20-line cut, running or its end ----------
-   The shared view of a running or finished command (bash mode now; the running-steps work brings the same
-   for expanded running steps, branch `live-steps`, and this stand-in gives way to its runView then).
-   `input`: the command on top (null when a band above shows it); `out`/`err`: the text so far, stderr apart by
-   its 1px rule and the red ink; `running` with `startedAt` (ISO): "Running, 42s" kept live by the 1 s timer;
-   `exit`: a number (non-zero noted as failed) or "stopped"; `truncatedTotal`: the line count when only a
-   preview is on the page (else the cut is local); `key`: what keeps "Show all" open over redraws. */
-const RUN_LINES = 20, openRuns = new Set();
-function runView({ input, desc, out, err, running, startedAt, exit, truncatedTotal, key }) {
-  const lines = t => t ? String(t).replace(/\n$/, "").split("\n") : [];
-  const o = lines(out), e = lines(err), all = truncatedTotal || o.length + e.length;
-  const open = openRuns.has(key) || all <= RUN_LINES;
-  const so = open ? o : o.slice(0, RUN_LINES), se = open ? e : e.slice(0, Math.max(0, RUN_LINES - o.length));
-  const body = (so.length ? `<span class="out">${esc(so.join("\n"))}</span>` : "") + (se.length ? `<span class="out err" title="stderr">${esc(se.join("\n"))}</span>` : "");
-  const cmd = input ? `<div class="cmd">${esc(input)}</div>` : "";
-  const what = desc ? `<div class="res"><span></span><span>${esc(desc)}</span></div>` : "";
-  const res = body ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><div class="run-out">${body}</div></div>`
-    : running ? "" : `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>No output</span></div>`;
-  const more = !open ? `<p class="earlier more"><button data-run-all="${esc(key)}">Show all ${+all} lines</button></p>` : "";
-  const end = running ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span class="run-live">${ind("k_shell")}Running, ${live(startedAt, Date.now() - new Date(startedAt))}</span></div>`
-    : exit === "stopped" ? `<div class="res"><span></span><span>Stopped</span></div>`
-    : exit ? `<div class="res failed"><span></span><span>Exit code ${esc(exit)}</span></div>` : "";
-  return `<div class="step-out run-view">${cmd}${what}${res}${more}${end}</div>`;
-}
-function showAllRun(key) { openRuns.add(key); renderLog(); }
-
 /* ---------- bash mode (R5.13): a `!` command, as the CLI shows it ----------
    The command on the prompt band with `!` for `❯`, then the run under it (runView). The same for a command
    run from Synopia (while it runs and until its records land: the session's `bang`) or recorded by the CLI. */
+/* Its whole output is on the page (30,000 characters at most), so the 20-line cut is made here, and "Show all"
+   (data-full, key `bang:<id>`) opens it in place instead of asking the server (showAll). */
+const BANG_LINES = 20, openBangs = new Set();
+const bangKey = id => `bang:${id}`;
 function bangHTML(id, cmd, sh, run) {
-  const exit = run?.interrupted || sh?.interrupted ? "stopped" : sh?.exit ?? null;
-  const view = runView({ input: null, desc: null, out: sh?.out, err: sh?.err, running: Boolean(run?.running), startedAt: run ? new Date(run.at).toISOString() : null, exit, truncatedTotal: null, key: `${current}|bang|${id}` });
-  const cut = sh?.cut ? `<div class="res"><span></span><span>Output cut at 30,000 characters</span></div>` : "";
+  const lines = t => t ? String(t).replace(/\n$/, "").split("\n") : [];
+  const o = lines(sh?.out), e = lines(sh?.err), total = o.length + e.length;
+  const cut = total > BANG_LINES && !openBangs.has(stepKey(bangKey(id)));
+  const out = !sh ? null : cut ? o.slice(0, BANG_LINES).join("\n") : o.join("\n");
+  const err = cut ? e.slice(0, Math.max(0, BANG_LINES - o.length)).join("\n") : e.join("\n");
+  const running = Boolean(run?.running);
+  const view = runView({ key: bangKey(id), input: "", desc: "", out: running && !out ? null : out ?? "", err, truncatedTotal: cut ? total : 0, running, startedAt: run ? run.at : null,
+    note: running ? "Esc, Esc to end it" : "", exit: sh?.exit ?? run?.exit ?? null, stopped: Boolean(run?.interrupted || sh?.interrupted) });
+  const capped = sh?.cut ? `<div class="res"><span></span><span>Output cut at 30,000 characters</span></div>` : "";
   const note = run?.error ? `<div class="res failed"><span></span><span>${esc(run.error)}</span></div>` : "";
-  return `<div class="bang" data-bang="${esc(id)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(cmd)}</div></div><div class="bang-res">${view}${cut}${note}</div></div>`;
+  return `<div class="bang" data-bang="${esc(id)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(cmd)}</div></div><div class="bang-res">${view}${capped}${note}</div></div>`;
 }
 /* the command that runs or just ran, until its records are in the transcript */
 const bangLiveOf = s => { const b = s.bang; return b && !s.items.some(i => i.id === (b.landed || b.id) && i.k === "bang" && i.sh) ? b : null; };
@@ -277,13 +293,23 @@ const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div cl
 /* messages sent while a card waits: held behind it, sent once you answer */
 const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
 /* messages you sent while the turn runs, oldest first: your prompt's band, dimmed, with the moving
-   queued mark, just above the live line, where each lands. Once its prompt item is in, that shows instead. */
-const queuedOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
+   queued mark, below the live line (what's working began before it), as the CLI shows queued input. Once its prompt item is in, that shows instead. */
+const waitingOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
+const queuedOf = s => waitingOf(s).filter(q => q.queued !== false);
+/* a message sent while idle shows at once as your normal prompt, until its own record replaces it */
+const sentHTML = s => waitingOf(s).filter(q => q.queued === false).map(q => [`q:${q.id}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(q.text || "")}${q.images ? `<p class="img dim">[${q.images} image${q.images > 1 ? "s" : ""}]</p>` : ""}</div></div>`]);
 const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt queued"><span class="g">❯</span><div class="md">${q.images ? `<p class="img">[${q.images} pasted image${q.images > 1 ? "s" : ""}]</p>` : ""}${md(q.text)}<p class="qlabel">${ind("queued")}Queued, goes to Claude at its next step</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
-   compacting, rate limited or no updates instead, and say a message you sent is queued. */
+   compacting, rate limited or no updates instead, and say a message you sent is queued. When it names
+   the newest step and that step runs, a click expands it: the same open state as the step's own line
+   (openSteps, by item id), so opening either opens both (R5.6). */
+const liveStep = t => !!t && t.state === "running" && hasStep(t) && !(t.name === "Agent" || t.name === "Task");
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => {
+    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span>`;
+    const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
+    return `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span>${body}</div>`;
+  };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   if (stateOf(s) !== "green") return "";
   const t = [...s.items].reverse().find(x => x.k === "tool");
@@ -380,9 +406,10 @@ function logEntries(s, A) {
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
-  if (!A) out.push(...queuedHTML(s));
+  if (!A) out.push(...sentHTML(s)); // sent while idle: the new turn's prompt, at once, until its record lands
   if (!A) out.push(...bangLiveHTML(s));
   out.push(["live", liveLine(s, A)]);
+  if (!A) out.push(...queuedHTML(s)); // below the live line: what's working began before you sent it (the author, 2026-11-24)
   return out;
 }
 /* Earlier items: the server sends the page's last 160; the link asks for the 160 before the oldest
@@ -464,11 +491,10 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-run-all], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
-  else if (t.dataset.runAll) showAllRun(t.dataset.runAll); // a run's whole output, already on the page (runView)
   else if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
@@ -485,6 +511,8 @@ conv.addEventListener("click", e => {
 conv.addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset || !d.dataset.step) return;
   if (d.open) openSteps.add(stepKey(d.dataset.step)); else openSteps.delete(stepKey(d.dataset.step));
+  // a running step and the live line naming it are one step: both follow
+  conv.querySelectorAll(`details[data-step="${CSS.escape(d.dataset.step)}"]`).forEach(o => { if (o !== d && o.open !== d.open) o.open = d.open; });
 }, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
    (plan section 2), so the app and Chrome behave the same */

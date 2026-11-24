@@ -128,6 +128,12 @@ details.step > summary::-webkit-details-marker { display: none; }
 .step-out .cmd { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .step-out .earlier.more { margin: 0 0 0 3ch; }
+/* runView: a quiet description over the command, stderr in red, the running row's note fainter; an open
+   running step shows "Running, 42s" in its body, so its line's own "Running" row steps aside */
+.step-out .desc { color: var(--ink-3); }
+.step-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; } /* shape as well as colour: a 1px rule at its edge */
+.step-out .res.note { color: var(--faint); }
+details.step[open] > summary .res.run { display: none; }
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
@@ -135,18 +141,13 @@ details.step > summary::-webkit-details-marker { display: none; }
    Claude takes it in, the text dimmed, a quiet label with the moving queued mark */
 .prompt.queued { background: none; border-left-style: dashed; }
 /* bash mode (R5.13): the command on the prompt band, `!` and its edge in the bash pink; the output under the
-   guide as a step's result; stderr apart by a 1px rule at its edge and the red ink, the exit as a failed line */
+   guide through runView, as a step's result */
 .bang { margin: 0 0 11px; }
 .prompt.bang-cmd { border-left-color: var(--bash); margin-bottom: 2px; }
 .prompt.bang-cmd > .g { color: var(--bash); font-weight: 700; }
 .prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .bang-res { padding-left: 2ch; color: var(--ink-3); }
 .bang-res > .step-out { margin: 0; }
-/* a run (runView): its output as a step's result, stderr apart by a 1px rule at its edge and the red ink */
-.run-out { display: grid; min-width: 0; }
-.run-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
-.run-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; }
-.run-live { display: inline-flex; align-items: center; gap: .6ch; }
 .prompt.queued > .g, .prompt.queued .md { color: var(--ink-3); }
 .prompt.queued .qlabel { display: flex; align-items: center; gap: .6ch; margin: -.5em 0 0; color: var(--ink-3); }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
@@ -288,7 +289,7 @@ button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px
 .int-ask { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
 /* in ink, not red: red is kept for needs you (and the failed square), and interrupting is neither */
 .int-ask b { color: var(--ink); font-weight: 700; }
-.composer.asking .int-ask { display: block; }
+.composer.asking .int-ask { display: block; align-self: start; } /* on the first line beside ❯, not centred in the three-line box */
 .composer.asking textarea, .composer.asking .attach { visibility: hidden; }
 body[data-mode] .composer.asking > .g { color: var(--ink); }
 /* a terminal holds the session (R3.2): one quiet line where your message would go, gone once you type; under a

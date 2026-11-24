@@ -887,6 +887,9 @@ export class Sessions {
       const ids = (m.tasks as { task_id?: unknown; ambient?: unknown }[]).filter((t) => t && typeof t.task_id === 'string' && t.ambient !== true).map((t) => t.task_id as string);
       this.log('driver.bgTasks', { sid: a.id, n: ids.length });
       this.views.backgroundTasks(a.id, ids);
+    } else if (m.type === 'tool_progress' && typeof m.tool_use_id === 'string' && typeof m.elapsed_time_seconds === 'number') {
+      // A running tool's elapsed time, no output (sdk.d.ts SDKToolProgressMessage): its expanded step's timer (R5.6).
+      this.views.toolProgress(a.id, m.tool_use_id, m.elapsed_time_seconds);
     } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
       this.opts.onCommands?.(a.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {

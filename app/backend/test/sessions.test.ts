@@ -847,6 +847,28 @@ function backgroundSetup() {
   return { ...t, BGS, file, rec };
 }
 
+test("tool_progress: a driven session's running step gets its start from the elapsed time (R5.6)", async () => {
+  const t = backgroundSetup();
+  const { BGS } = t;
+  await t.sessions.openSession(BGS);
+  t.views.check();
+  t.views.view(t.c, BGS, null);
+  t.sessions.send(BGS, 'go');
+  await tick();
+  const call = t.q.calls[0];
+  emit(call, init(BGS));
+  await tick();
+  t.take();
+  const before = Date.now();
+  emit(call, { type: 'tool_progress', tool_use_id: 'toolu_sl', tool_name: 'Bash', parent_tool_use_id: null, elapsed_time_seconds: 12, uuid: 'u-tp1', session_id: BGS });
+  await tick();
+  const ups = t.take('items').flatMap((m) => m.upsert as { id: string; since?: string }[]);
+  const since = Date.parse(ups.find((i) => i.id === 'toolu_sl')?.since ?? '');
+  assert.ok(since >= before - 12_000 && since <= Date.now() - 12_000, 'now minus 12 s');
+  t.sessions.stop();
+  t.views.stop();
+});
+
 test('background: b, b calls backgroundTasks; background_tasks_changed shows the steps as background work at once, once', async () => {
   const t = backgroundSetup();
   const { BGS } = t;

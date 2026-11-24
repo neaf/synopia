@@ -44,10 +44,10 @@ const box = () => ev(`(() => { const ta = document.getElementById('msg'), b = ta
 const enter = () => key('Enter', { code: 'Enter', vk: 13 });
 const esc = () => key('Escape', { code: 'Escape', vk: 27 });
 const bangs = () => ev(`[...document.querySelectorAll('#log .bang')].length`);
-const lastBang = () => ev(`(() => { const b = [...document.querySelectorAll('#log .bang')].pop(); if (!b) return null; return { mark: b.querySelector('.bang-cmd .g').textContent, cmd: b.querySelector('.bang-cmd .cmd').textContent, out: [...b.querySelectorAll('.run-out .out:not(.err)')].map(x => x.textContent).join(''), err: [...b.querySelectorAll('.run-out .out.err')].map(x => x.textContent).join(''), text: b.querySelector('.bang-res').textContent, failed: !!b.querySelector('.res.failed') }; })()`);
+const lastBang = () => ev(`(() => { const b = [...document.querySelectorAll('#log .bang')].pop(); if (!b) return null; return { mark: b.querySelector('.bang-cmd .g').textContent, cmd: b.querySelector('.bang-cmd .cmd').textContent, out: [...b.querySelectorAll('.step-out .out:not(.err)')].map(x => x.textContent).join(''), err: [...b.querySelectorAll('.step-out .out.err')].map(x => x.textContent).join(''), text: b.querySelector('.bang-res').textContent, failed: !!b.querySelector('.res.failed') }; })()`);
 
 // the CLI-recorded command reads as bash mode
-const cli = await ev(`(() => { const b = document.querySelector('#log .bang[data-bang="d-b1"]'); return b ? b.querySelector('.bang-cmd .g').textContent + '|' + b.querySelector('.bang-cmd .cmd').textContent + '|' + b.querySelector('.run-out .out').textContent : null; })()`);
+const cli = await ev(`(() => { const b = document.querySelector('#log .bang[data-bang="d-b1"]'); return b ? b.querySelector('.bang-cmd .g').textContent + '|' + b.querySelector('.bang-cmd .cmd').textContent + '|' + b.querySelector('.step-out .out').textContent : null; })()`);
 check('a command the CLI recorded shows as bash mode: ! on the band, its output under it', cli === '!|ls demo|notes.md', String(cli));
 
 // entering and leaving the mode
@@ -86,7 +86,7 @@ const r = await lastBang();
 check('the command on the band with !', r?.mark === '!' && r?.cmd === 'echo hi; echo err >&2; exit 3', JSON.stringify(r));
 check('stdout, and stderr apart', r?.out === 'hi' && r?.err === 'err', JSON.stringify(r));
 check('the non-zero exit is noted', r?.failed && /Exit code 3/.test(r?.text ?? ''), JSON.stringify(r));
-check('stderr has its own shape (a 1px rule), not only its colour', await ev(`(() => { const e = [...document.querySelectorAll('#log .bang .run-out .out.err')].pop(); const st = getComputedStyle(e); return st.borderLeftWidth === '1px' && st.borderLeftStyle === 'solid'; })()`));
+check('stderr has its own shape (a 1px rule), not only its colour', await ev(`(() => { const e = [...document.querySelectorAll('#log .bang .step-out .out.err')].pop(); const st = getComputedStyle(e); return st.borderLeftWidth === '1px' && st.borderLeftStyle === 'solid'; })()`));
 check('shown once (the live run gave way to the item)', (await ev(`[...document.querySelectorAll('#log .bang')].filter(x => x.querySelector('.bang-cmd .cmd').textContent === 'echo hi; echo err >&2; exit 3').length`)) === 1);
 check('no ALL CAPS', await ev(`[...document.querySelectorAll('#log .bang *')].every(x => getComputedStyle(x).textTransform === 'none')`));
 await shot('bang-exit.png');
@@ -97,20 +97,18 @@ await ev(`document.getElementById('msg').focus()`);
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 await type('seq 1 45');
 await enter();
-check('the long one lands', await c.until(`cur().items.some(i => i.k === 'bang' && i.cmd === 'seq 1 45' && i.sh) && document.querySelectorAll('#log .bang').length === ${n0 + 1} && !!document.querySelector('#log [data-run-all]')`, 8000));
-const cutText = await ev(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.run-out .out').textContent.split('\\n').length + '|' + document.querySelector('#log [data-run-all]').textContent`);
+check('the long one lands', await c.until(`cur().items.some(i => i.k === 'bang' && i.cmd === 'seq 1 45' && i.sh) && document.querySelectorAll('#log .bang').length === ${n0 + 1} && !!document.querySelector('#log [data-full^="bang:"]')`, 8000));
+const cutText = await ev(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.step-out .out').textContent.split('\\n').length + '|' + document.querySelector('#log [data-full^="bang:"]').textContent`);
 check('20 lines, then "Show all 45 lines"', cutText === '20|Show all 45 lines', cutText);
-await ev(`document.querySelector('#log [data-run-all]').click()`);
-check('Show all shows the 45', await c.until(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.run-out .out').textContent.split('\\n').length === 45 && !document.querySelector('#log [data-run-all]')`));
+await ev(`document.querySelector('#log [data-full^="bang:"]').click()`);
+check('Show all shows the 45', await c.until(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.step-out .out').textContent.split('\\n').length === 45 && !document.querySelector('#log [data-full^="bang:"]')`));
 
 // Esc, Esc ends a sleep 30; one at a time
 await ev(`document.getElementById('msg').focus()`);
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 await type('sleep 30');
 await enter();
-check('it runs: "Running" with the moving shell mark', await c.until(`!!cur().bang?.running && !!document.querySelector('#log .bang .run-live')`, 3000));
-const anim = await ev(`(() => { const r = document.querySelector('#log .run-live .ind .rbar') || document.querySelector('#log .run-live .ind *'); if (!r) return 'no mark'; const a = document.querySelector('#log .run-live .ind').getAnimations({ subtree: true })[0]; return a ? a.playState + ' ' + (a.effect?.getComputedTiming().iterations) : 'still'; })()`);
-check('the running mark moves, without end', anim === 'running Infinity', anim);
+check('it runs: "Running, Ns" live, and how to end it', await c.until(`!!cur().bang?.running && /^Running, \\d+s$/.test(document.querySelector('#log .bang .step-out .res.running')?.textContent || '') && /Esc, Esc/.test(document.querySelector('#log .bang .step-out .res.note')?.textContent || '')`, 3000), await ev(`document.querySelector('#log .bang .bang-res')?.textContent`));
 await key('!', { code: 'Digit1', shift: true, vk: 49 });
 await type('echo second');
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);

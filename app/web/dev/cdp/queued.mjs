@@ -2,7 +2,7 @@
 // usage: node queued.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node queued.mjs <url> <state-dir> <claude-dir>
 // Checks: two messages sent during a turn show in order as dimmed prompt bands with "Queued" and the
-// moving queued mark, between the last step and the live line, which no longer says "queued"; the
+// moving queued mark, below the live line, which no longer says "queued"; the
 // first lands (its prompt record appended to the fixture file) and turns into the normal prompt in its
 // place, with no duplicate; Esc, Esc interrupts, the second disappears and its text is back in the box.
 // A message sent while nothing runs isn't queued. Writes queued-two.png and queued-landed.png.
@@ -49,8 +49,8 @@ await sendText(FIRST);
 await sendText(SECOND);
 check('two queued bands show', await c.until(`document.querySelectorAll('#log .prompt.queued').length === 2`), String(await queuedRows()));
 const o1 = await order();
-check('in the order sent, after the last prompt and just above the live line',
-  JSON.stringify(o1.slice(-3)) === JSON.stringify(['q:Also check the demo notes when you are done.', 'q:And then rename the demo folder.', 'live']), JSON.stringify(o1));
+check('in the order sent, below the live line',
+  JSON.stringify(o1.slice(-3)) === JSON.stringify(['live', 'q:Also check the demo notes when you are done.', 'q:And then rename the demo folder.']), JSON.stringify(o1));
 check('the band is the prompt band (❯, markdown rendered) with a quiet Queued label',
   await ev(`(() => { const q = document.querySelector('#log .prompt.queued'); return q.querySelector('.g').textContent === '❯' && !!q.querySelector('.md b') && q.querySelector('.qlabel').textContent === 'Queued, goes to Claude at its next step'; })()`));
 check('no ALL CAPS in the label', await ev(`getComputedStyle(document.querySelector('#log .qlabel')).textTransform === 'none'`));
@@ -69,7 +69,7 @@ fs.appendFileSync(file, rec(A, { type: 'attachment', uuid: 'q-land1', timestamp:
 check('the first landed: one queued band left', await c.until(`document.querySelectorAll('#log .prompt.queued').length === 1 && cur().items.some(i => i.id === 'q-land1')`, 8000), String(await queuedRows()));
 const o2 = await order();
 check('it became the normal prompt in its place, once, the second still queued below it',
-  JSON.stringify(o2.slice(-3)) === JSON.stringify(['you:Also check the demo notes when you are done.', 'q:And then rename the demo folder.', 'live'])
+  JSON.stringify(o2.slice(-3)) === JSON.stringify(['you:Also check the demo notes when you are done.', 'live', 'q:And then rename the demo folder.'])
   && o2.filter((x) => x.includes('Also check')).length === 1, JSON.stringify(o2));
 // never both at once, never neither: watch every log change from here while the backend drops it
 await ev(`(() => { window.__seen = []; const f = () => { const n = [...document.querySelectorAll('#log .prompt')].filter(p => /Also check/.test(p.textContent)).length; __seen.push(n); };
@@ -85,11 +85,14 @@ check('interrupted: no queued band left', await c.until(`document.querySelectorA
 check('its text is back in the message box', await c.until(`document.getElementById('msg').value === ${JSON.stringify(SECOND)}`), await ev(`document.getElementById('msg').value`));
 check('the landed prompt stays', (await order()).filter((x) => x === 'you:Also check the demo notes when you are done.').length === 1);
 
-// nothing runs: a message isn't queued
+// nothing runs: a message isn't queued, but shows at once as the new turn's prompt
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`);
 await c.until(`current === '${B}' && !!mounted`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 await sendText('Read them again.');
 await sleep(400);
-check('idle session: sent, nothing shows queued', (await ev(`__sent.filter(m => m.t === 'send').length`)) === 1 && (await queuedRows()) === 0 && (await ev(`cur().outbox.length`)) === 0);
+check('idle session: sent, nothing shows queued, the prompt shows at once undimmed', (await ev(`__sent.filter(m => m.t === 'send').length`)) === 1 && (await queuedRows()) === 0
+  && (await ev(`cur().outbox.length === 1 && cur().outbox[0].queued === false`))
+  && (await ev(`[...document.querySelectorAll('#log .prompt')].some(p => p.textContent.includes('Read them again.') && !p.classList.contains('queued'))`)));
+
 c.print(); c.close();
