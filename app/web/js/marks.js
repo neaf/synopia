@@ -95,3 +95,24 @@ function bgMarkKey(x) {
   P.s_fork = ['', '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="4.4" stroke="var(--mk-E2D6F8)" stroke-width="1.4"/><circle cx="2.9" cy="2.9" r="1.6" fill="var(--mk-8250DF)"/><circle cx="9.1" cy="2.9" r="1.6" fill="var(--mk-8250DF)"/></svg>'];
   P.s_shell = ['', '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 3.2 5 6 1.8 8.8" stroke="var(--mk-0B7A82)" stroke-width="1.8"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="var(--mk-0B7A82)" stroke-width="1.9"/></svg>'];
   P.s_mon = ['', '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="4.8" stroke="var(--mk-0E6BA8)" stroke-width="1.4"/><line x1="6" y1="6" x2="6" y2="2.6" stroke="var(--mk-0E6BA8)" stroke-width="1.6"/></svg>'];
+
+/* Every running mark keeps its phase when the page rebuilds it. A re-render (the sidebar's innerHTML,
+   a panel redraw) makes new elements, and a new element's CSS animation starts from zero, so the marks
+   jumped back every few seconds. Pinning each mark animation's startTime to the document timeline's
+   origin makes its phase depend only on the clock: a rebuilt mark continues exactly where it was, and
+   all marks turn in step. Only mark animations (.ind and the spinner) are touched; layout tweens keep
+   their own timing. */
+function syncMarks() {
+  for (const a of document.getAnimations()) {
+    const t = a.effect && a.effect.target;
+    if (!(a instanceof CSSAnimation) || !t || !t.closest || !t.closest(".ind, .spinner")) continue;
+    if (a.startTime !== 0) a.startTime = 0;
+  }
+}
+let syncQueued = false;
+new MutationObserver(() => {
+  if (syncQueued) return;
+  syncQueued = true;
+  requestAnimationFrame(() => { syncQueued = false; syncMarks(); });
+}).observe(document.documentElement, { childList: true, subtree: true });
+document.addEventListener("animationstart", () => syncMarks(), true); // a mark created any other way, too
