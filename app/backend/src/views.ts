@@ -341,7 +341,7 @@ export class Views {
   }
 
   // For the writer: the background work that runs now, and what ended since your last message,
-  // one line each ("shell “npm test”: running"). Empty without any.
+  // one line each ("shell “npm test”: running"), then the cards waiting on you. Empty without any.
   work(id: string): string[] | undefined {
     const s = this.live.get(id);
     if (!s) return undefined;
@@ -356,6 +356,20 @@ export class Views {
     for (const a of s.t.agents()) {
       if (!a.running && !recent(a.end)) continue;
       out.push(`${a.fork ? 'fork' : 'subagent'} “${a.description.slice(0, 80)}”: ${a.running ? 'running' : a.stopped ? 'stopped' : 'finished'}`);
+    }
+    // the cards waiting on you, ours or the one another process asks (R6.8), so the Now line says so
+    const cut = (v: unknown) => String(v ?? '').split('\n')[0].slice(0, 80);
+    for (const r of s.pending) {
+      const input = (r.input && typeof r.input === 'object' ? r.input : {}) as Record<string, unknown>;
+      const qs = Array.isArray(input.questions) ? input.questions as { question?: unknown }[] : [];
+      out.push(r.kind === 'question' ? `card waiting for you: question “${cut(qs[0]?.question)}”${qs.length > 1 ? ` and ${qs.length - 1} more` : ''}`
+        : r.kind === 'plan' ? 'card waiting for you: approve the plan or ask for changes'
+          : `card waiting for you: allow ${cut(r.toolName)} “${cut(input.description || input.command || input.file_path || r.title)}”`);
+    }
+    const ask = s.pending.length ? null : this.metaOf(s).ask;
+    if (ask) {
+      out.push(ask.kind === 'plan' ? 'card waiting for you: approve the plan or ask for changes'
+        : `card waiting for you: question “${cut(ask.qs?.[0]?.q)}”${(ask.qs?.length ?? 0) > 1 ? ` and ${ask.qs!.length - 1} more` : ''}`);
     }
     return out;
   }

@@ -68,7 +68,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const REAL = '11111111-2222-4333-8444-555555555555';
 const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
-function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number } = {}) {
+function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void } = {}) {
   const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const claudeDir = path.join(root, 'claude');
   const stateDir = path.join(root, 'state');
@@ -332,6 +332,40 @@ test('needs you: canUseTool parks requests in arrival order, the status is needs
   assert.deepEqual((rb as { updatedInput: Record<string, unknown> }).updatedInput.answers, { 'Which?': 'B' });
   assert.equal(t.take('session').at(-1)?.status, 'busy');
   assert.equal(t.sessions.answer(REAL, 'rq-2', { choice: 'once' }).ok, false, 'an answered request is gone');
+});
+
+test('needs you: a card appearing or answered tells the writer, and the work lines name it', async () => {
+  const waits: string[] = [];
+  const t = setup(undefined, [], { onWaiting: (sid) => waits.push(sid) });
+  const ph = t.sessions.newSession();
+  t.sessions.send(ph, 'go');
+  emit(t.q.calls[0], init(REAL));
+  await tick();
+  const canUseTool = t.q.calls[0].options.canUseTool as CanUseTool;
+  assert.deepEqual(waits, []);
+  const a = askOpts('1'), b = askOpts('2');
+  void canUseTool('Bash', { command: 'npm test', description: 'Run the tests' }, a.o);
+  await tick();
+  assert.deepEqual(waits, [REAL]);
+  assert.deepEqual(t.views.work(REAL), ['card waiting for you: allow Bash “Run the tests”']);
+  void canUseTool('AskUserQuestion', { questions: [{ question: 'Which?', header: 'Pick', options: [{ label: 'A' }], multiSelect: false }, { question: 'And?', header: 'B', options: [{ label: 'C' }], multiSelect: false }] }, b.o);
+  await tick();
+  assert.equal(waits.length, 2);
+  assert.deepEqual(t.views.work(REAL), ['card waiting for you: allow Bash “Run the tests”', 'card waiting for you: question “Which?” and 1 more']);
+  t.sessions.answer(REAL, 'rq-1', { choice: 'once' });
+  await tick();
+  assert.equal(waits.length, 3, 'answered');
+  b.ctl.abort();
+  await tick();
+  assert.equal(waits.length, 4, 'dropped by its signal');
+  assert.deepEqual(t.views.work(REAL), []);
+  // A question another process asks (R6.8): once when it appears, not again while it stays, once when it ends.
+  const ran = (ask: string | null) => ({ agents: 0, turn: false, lastAt: 0, ask: ask ? { kind: 'question' as const, toolUseId: ask, agentId: null, since: 1 } : null });
+  t.sessions.runningChanged(REAL, ran('toolu_x'));
+  t.sessions.runningChanged(REAL, ran('toolu_x'));
+  assert.equal(waits.length, 5);
+  t.sessions.runningChanged(REAL, ran(null));
+  assert.equal(waits.length, 6);
 });
 
 test('needs you: a request ends when its signal aborts, on interrupt and when the process ends', async () => {

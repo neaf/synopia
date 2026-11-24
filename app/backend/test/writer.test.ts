@@ -221,6 +221,31 @@ test('a background item ending writes again after the debounce, with the work as
   store.close();
 });
 
+test('a card appearing or answered writes again after the debounce, with the card in the work lines', async () => {
+  const dir = tmp('synopia-writer-');
+  const store = openStore(dir);
+  const q = fakeQuery(good);
+  const { src } = source(turns3);
+  let work = ['card waiting for you: question “Which layout?”'];
+  const w = new Writer({ store, source: { ...src, work: () => work }, stateDir: dir, queryFn: q.fn, debounceMs: 30 });
+  w.waitingChanged('s1');
+  await wait(80);
+  assert.equal(q.calls.length, 1);
+  assert.match(q.calls[0].prompt, /<work>\ncard waiting for you: question “Which layout\?”\n<\/work>/);
+  work = [];
+  w.turnEnded('s1');
+  await wait(10);
+  w.waitingChanged('s1'); // answered within the turn's debounce: one call
+  await wait(80);
+  assert.equal(q.calls.length, 2);
+  assert.ok(!q.calls[1].prompt.includes('<work>'));
+  w.waitingChanged('gone');
+  await wait(80);
+  assert.equal(q.calls.length, 2, 'a closed session is not written');
+  w.stop();
+  store.close();
+});
+
 test('stop aborts the running call, and nothing is written from it (L8)', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);

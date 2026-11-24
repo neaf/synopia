@@ -123,6 +123,7 @@ if (!fake) {
     store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined,
     onTurnEnded: (sid) => writer?.turnEnded(sid),
     onOpened: (sid) => writer?.opened(sid),
+    onWaiting: (sid) => writer?.waitingChanged(sid),
     onCommands: (sid, commands) => {
       const folder = views.meta(sid)?.cwd;
       if (folder) menus?.commandsChanged(folder, commands);

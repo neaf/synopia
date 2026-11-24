@@ -429,6 +429,26 @@ test('subagents: read from the folder scan; a finished, quiet one only now and t
   views.stop();
 });
 
+test('work: a question or plan another process asks is a work line until answered (R6.8)', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-ext-'));
+  fs.cpSync(path.join(import.meta.dirname, 'fixtures', 'claude-ext'), dir, { recursive: true });
+  const Q = 'e1e1e1e1-0000-4000-8000-00000000000a', P = 'e2e2e2e2-0000-4000-8000-00000000000b';
+  const asks: string[] = [];
+  const views = new Views({ claudeDir: dir, clients: () => new Set(), home: HOME, pollMs: 0, watch: false, onRunning: (sid, r) => asks.push(`${sid}:${r.ask?.toolUseId ?? ''}`) });
+  views.open(Q);
+  views.open(P);
+  views.check();
+  assert.deepEqual(views.work(Q), ['card waiting for you: question “Which release channel should the checklist target?” and 1 more']);
+  assert.deepEqual(views.work(P), ['card waiting for you: approve the plan or ask for changes']);
+  assert.ok(asks.includes(`${Q}:toolu_xask1`));
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-ext', `${Q}.jsonl`), JSON.stringify({ type: 'user', uuid: 'x1-u3', timestamp: '2026-11-24T09:02:00.000Z', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_xask1', content: 'answered' }] } }) + '\n');
+  views.check();
+  assert.deepEqual(views.work(Q), []);
+  assert.equal(asks.at(-1), `${Q}:`, 'the ask ending reaches onRunning (sessions tells the writer)');
+  views.stop();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
 test('work: a background shell ending between turns tells the writer, and its line says so', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000cf';
   const dir = tempSession(id, you(1) + line({
