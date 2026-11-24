@@ -261,6 +261,7 @@ These requirements come from a day of prototyping against the user's real sessio
 - R9.1 Vim-like modes:
   - Normal mode is the default:
     - J/K: next or previous session.
+    - Ctrl+J/Ctrl+K: next or previous conversation inside the session: Main conversation, then its subagents and forks in the background panel's order (running, then past), wrapping.
     - j/k: scroll the transcript, or move the card cursor while a card waits.
     - g/G: top or bottom of the transcript; g at the top loads earlier items (R5.12a).
     - i/a: insert.

@@ -41,7 +41,7 @@ export async function connect(port = +process.env.SYNOPIA_CHROME_PORT) {
   // headless Chrome can drop the first key after a load: before the first key on each document, send a
   // no-op Shift until the page sees one
   const raw = async (k, opts = {}) => {
-    const mod = (opts.meta ? 4 : 0) | (opts.shift ? 8 : 0);
+    const mod = (opts.alt ? 1 : 0) | (opts.ctrl ? 2 : 0) | (opts.meta ? 4 : 0) | (opts.shift ? 8 : 0);
     const text = k.length === 1 && !opts.meta ? k : undefined;
     const base = { key: k, code: opts.code, modifiers: mod, windowsVirtualKeyCode: opts.vk, nativeVirtualKeyCode: opts.vk };
     await cdp('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, text });

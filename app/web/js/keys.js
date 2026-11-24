@@ -62,4 +62,22 @@ document.addEventListener("keydown", e => {
   if (openListShown() || drag?.started) return; // the Open list and a drag keep the session behind them
   stepSession(e.code === "BracketRight" ? 1 : -1);
 });
+/* Ctrl+J / Ctrl+K: the next or previous conversation inside the session: Main conversation, then its subagents
+   and forks in the panel's order (running ones, forks first, oldest first; then past ones, newest first). Wraps.
+   Normal mode only, so Ctrl+K never fights a text field. */
+function stepView(step) {
+  const s = cur(); if (!s) return;
+  const as = agentsOf(s), run = as.filter(a => !a.finished), past = as.filter(a => a.finished);
+  run.sort((p, q) => ((q.fork ? 1 : 0) - (p.fork ? 1 : 0)) || (new Date(p.start) - new Date(q.start)));
+  past.sort((p, q) => new Date(q.end || q.start) - new Date(p.end || p.start));
+  const order = [null, ...run.map(a => a.id), ...past.map(a => a.id)];
+  if (order.length < 2) return;
+  const i = Math.max(0, order.indexOf(view || null));
+  view = order[(i + step + order.length) % order.length]; renderConv();
+}
+document.addEventListener("keydown", e => {
+  if (!e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || (e.key !== "j" && e.key !== "k")) return;
+  if (mode === "insert" || /INPUT|TEXTAREA|SELECT/.test(e.target.tagName) || openListShown() || drag?.started) return;
+  e.preventDefault(); stepView(e.key === "j" ? 1 : -1);
+});
 function renderAll() { renderSide(); renderConv(); paintMode(); if (mode === "insert") (document.getElementById("qa-own") || document.getElementById("msg"))?.focus(); }
