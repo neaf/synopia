@@ -418,7 +418,7 @@ conv.addEventListener("click", e => {
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
-  else if (t.dataset.unattach) { attachments.splice(+t.dataset.unattach, 1); renderAttachments(); }
+  else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") openModelPicker();
 });
 /* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */

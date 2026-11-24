@@ -143,7 +143,7 @@ test('sessions: two sends before init go to one process, in order', async () => 
   const { sessions, q } = setup();
   const ph = sessions.newSession();
   sessions.send(ph, 'one', [], '0e9b7f1c-0000-4000-8000-000000000001');
-  sessions.send(ph, 'two', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }], '0e9b7f1c-0000-4000-8000-000000000002');
+  sessions.send(ph, 'two [Image #1]', [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64'), n: 1 }], '0e9b7f1c-0000-4000-8000-000000000002');
   await tick();
   assert.equal(q.calls.length, 1);
   const inputs = q.calls[0].inputs;
@@ -151,7 +151,7 @@ test('sessions: two sends before init go to one process, in order', async () => 
   assert.equal(inputs[0].message.content, 'one');
   assert.equal(inputs[0].uuid, '0e9b7f1c-0000-4000-8000-000000000001');
   const blocks = inputs[1].message.content as { type: string }[];
-  assert.deepEqual(blocks.map((b) => b.type), ['image', 'text']);
+  assert.deepEqual(blocks.map((b) => b.type), ['text', 'image'], 'as the CLI sends a pasted image: the text, then the image');
   assert.equal(inputs[1].uuid, '0e9b7f1c-0000-4000-8000-000000000002');
 
   emit(q.calls[0], init(REAL));

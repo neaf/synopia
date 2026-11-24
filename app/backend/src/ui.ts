@@ -15,7 +15,7 @@ const TEXT_MAX = 1024 * 1024; // a draft's text
 const LIST_MAX = 2000;
 
 export type Anchor = { id: string; off: number } | { bottom: true };
-export type DraftImage = { id: string; mediaType: string; size: number };
+export type DraftImage = { id: string; mediaType: string; size: number; n?: number }; // n: its [Image #n] tag in the text
 export type Draft = { text: string; cursor: [number, number]; images: DraftImage[] };
 export type UiSession = {
   scroll?: Record<string, Anchor>; // per view: "" for the main conversation, else the agent id
@@ -97,7 +97,7 @@ function draftOf(v: unknown): Draft | undefined {
   const c = Array.isArray(v.cursor) && num(v.cursor[0]) && num(v.cursor[1]) ? [v.cursor[0], v.cursor[1]] as [number, number] : [v.text.length, v.text.length] as [number, number];
   const images = Array.isArray(v.images)
     ? v.images.filter((im): im is DraftImage => isObj(im) && str(im.id) && IMAGE_ID.test(im.id) && str(im.mediaType) && im.mediaType in EXT)
-      .map((im) => ({ id: im.id, mediaType: im.mediaType, size: num(im.size) ? im.size : 0 }))
+      .map((im) => ({ id: im.id, mediaType: im.mediaType, size: num(im.size) ? im.size : 0, ...(num(im.n) && Number.isInteger(im.n) && im.n > 0 ? { n: im.n } : {}) }))
     : [];
   return { text: v.text, cursor: c, images };
 }
@@ -185,7 +185,7 @@ function writeImages(store: Store, sid: string, d: Draft, was: Draft | undefined
   let total = 0;
   for (const im of d.images) {
     const old = had.get(im.id);
-    if (old) { kept.push(old); total += old.size; continue; }
+    if (old) { kept.push(im.n ? { ...old, n: im.n } : old); total += old.size; continue; }
     const data = (rawImages.find((x) => isObj(x) && x.id === im.id) as Record<string, unknown> | undefined)?.data;
     if (typeof data !== 'string') continue; // listed without its bytes and not stored: nothing to keep
     const bytes = Buffer.from(data, 'base64');
@@ -199,7 +199,7 @@ function writeImages(store: Store, sid: string, d: Draft, was: Draft | undefined
       continue;
     }
     total += bytes.length;
-    kept.push({ id: im.id, mediaType: im.mediaType, size: bytes.length });
+    kept.push({ id: im.id, mediaType: im.mediaType, size: bytes.length, ...(im.n ? { n: im.n } : {}) });
   }
   return kept;
 }
