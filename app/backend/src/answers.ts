@@ -1,6 +1,7 @@
 // Needs you (plan section 9): a parked canUseTool request as the page's card reads it, and the
 // card's answer as the SDK's PermissionResult. Pure functions, no state.
 import type { PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import { planApproval } from './sdk.ts';
 
 export type Kind = 'question' | 'permission' | 'plan';
 export const DENIED = 'Denied by the user';
@@ -98,9 +99,8 @@ export function settle(req: Asked, answer: CardAnswer): Settled | { error: strin
   const text = str(answer.text);
   if (kind === 'plan') {
     if (choice === 'approve') {
-      const mode = (req.modeBefore || 'auto') as 'auto';
       return {
-        result: { behavior: 'allow', updatedInput: req.input, updatedPermissions: [{ type: 'setMode', mode, destination: 'session' }], decisionClassification: 'user_temporary' },
+        result: { behavior: 'allow', updatedInput: req.input, updatedPermissions: planApproval(req.modeBefore), decisionClassification: 'user_temporary' },
         label: 'Approved', rules: [],
       };
     }

@@ -1,67 +1,31 @@
-// The slash menu and the model list (plan sections 3 and 5): supportedCommands() and
-// supportedModels(), per folder. They come from the session's running process when it has
-// one; otherwise from a cache filled once per folder by an idle query() with no prompt, which
-// makes no model call (it runs the folder's SessionStart hooks, which is accepted). A page gets
-// `menu` for a folder the first time it views a session there (once per connection);
-// `hello` carries the cache.
+// The slash menu and the model list (plan sections 3 and 5), per folder. They come from the
+// session's running process when it has one; otherwise from a cache filled once per folder by
+// sdk.ts's idle probe, which makes no model call but runs the folder's SessionStart hooks. A failed
+// probe waits before the next try, longer after each failure, so views don't re-run the hooks each
+// time. A page gets `menu` for a folder the first time it views a session there (once per
+// connection); `hello` carries the cache.
 import fs from 'node:fs';
-import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';
-import type { ModelInfo, Options, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { probeMenu, readMenu, realSdk, toCommands } from './sdk.ts';
+import type { FolderMenu, MenuModel, MenuSource, Sdk } from './sdk.ts';
 
-export type MenuCommand = { name: string; description: string; hint: string };
-export type MenuModel = { value: string; resolved: string | null; name: string; description: string; effort: string[] };
-export type FolderMenu = { commands: MenuCommand[]; models: MenuModel[] };
-// What the menu reads from a query: the running process's, or the idle one's.
-export type MenuSource = { supportedCommands(): Promise<SlashCommand[]>; supportedModels(): Promise<ModelInfo[]> };
-export type IdleQuery = MenuSource & { close(): void };
-export type IdleQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => IdleQuery;
+export type { FolderMenu, MenuCommand, MenuModel, MenuSource } from './sdk.ts';
 
-export const IDLE_TIMEOUT_MS = 30_000;
-
-// The descriptions come HTML-escaped: `&lt;file&gt;` (docs/Agent SDK.md, "Quirk: command descriptions come HTML-escaped").
-export function unescapeHtml(s: string): string {
-  return s.replace(/&(lt|gt|quot|#39|apos|amp);/g, (_, e: string) => ({ lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'", amp: '&' })[e] as string);
-}
-
-// One row per name, sorted by the page; a row Claude Code marks as its own wins a shared name,
-// as /name runs that one. Names starting `__` are internal and left out.
-export function toCommands(list: SlashCommand[]): MenuCommand[] {
-  const byName = new Map<string, SlashCommand>();
-  for (const c of list) {
-    if (!c || typeof c.name !== 'string' || !c.name || c.name.startsWith('__')) continue;
-    const had = byName.get(c.name);
-    if (!had || (c.builtin && !had.builtin)) byName.set(c.name, c);
-  }
-  return [...byName.values()].map((c) => ({
-    name: c.name, description: unescapeHtml(c.description || ''), hint: unescapeHtml(c.argumentHint || ''),
-  }));
-}
-
-export function toModels(list: ModelInfo[]): MenuModel[] {
-  return list.filter((m) => m && typeof m.value === 'string').map((m) => ({
-    value: m.value, resolved: m.resolvedModel ?? null, name: m.displayName || m.value,
-    description: unescapeHtml(m.description || ''), effort: [...(m.supportedEffortLevels ?? [])],
-  }));
-}
-
-export async function readMenu(src: MenuSource): Promise<FolderMenu> {
-  const [commands, models] = await Promise.all([src.supportedCommands(), src.supportedModels()]);
-  return { commands: toCommands(commands ?? []), models: toModels(models ?? []) };
-}
-
-// A prompt that never yields: the process starts, answers control calls and makes no model call.
-function idlePrompt(stop: Promise<void>): AsyncIterable<SDKUserMessage> {
-  return { async *[Symbol.asyncIterator]() { await stop; } };
-}
+export const PROCESS_TIMEOUT_MS = 10_000; // a running process answers at once; a hung control call ends here
+export const RETRY_MS = 60_000; // the wait after a failed probe, doubled per failure in a row
+export const RETRY_MAX_MS = 30 * 60_000;
 
 export type MenusOptions = {
   clients: () => Set<Client>;
   log?: Log;
-  queryFn?: IdleQueryFn; // tests inject a fake; the default is the SDK's query
-  timeoutMs?: number;
+  sdk?: Pick<Sdk, 'query'>; // tests inject a fake; the default is the SDK
+  timeoutMs?: number; // the idle probe's (sdk.ts PROBE_TIMEOUT_MS)
+  processTimeoutMs?: number;
+  retryMs?: number;
+  now?: () => number;
   // The last model list of each folder, kept across launches, so `hello` names a session's
   // model ("Haiku 5.5") before the folder's menu is read again.
   cacheFile?: string;
@@ -90,15 +54,18 @@ function loadModels(file: string): Map<string, MenuModel[]> {
 export class Menus {
   private opts: MenusOptions;
   private log: Log;
+  private now: () => number;
   private cache = new Map<string, FolderMenu>(); // by the folder as the page shows it (`~/…`)
   private loading = new Map<string, Promise<FolderMenu | null>>();
+  private failed = new Map<string, { at: number; n: number }>(); // failed probes in a row, by folder
   private sentTo = new WeakMap<Client, Set<string>>();
-  private aborts = new Set<AbortController>(); // the idle queries running, aborted at quit
+  private aborts = new Set<AbortController>(); // the idle probes running, aborted at quit
   private seed: Map<string, MenuModel[]>; // the model lists of the last launch (cacheFile)
 
   constructor(opts: MenusOptions) {
     this.opts = opts;
     this.log = opts.log ?? nullLog;
+    this.now = opts.now ?? Date.now;
     this.seed = opts.cacheFile ? loadModels(opts.cacheFile) : new Map();
   }
 
@@ -116,7 +83,7 @@ export class Menus {
     }
   }
 
-  // Quit: the idle queries still reading end with the backend.
+  // Quit: the idle probes still reading end with the backend.
   stop(): void {
     for (const ac of this.aborts) ac.abort();
     this.aborts.clear();
@@ -130,19 +97,15 @@ export class Menus {
     return { ...Object.fromEntries(seeded), ...Object.fromEntries(this.cache) };
   }
 
-  get(folder: string): FolderMenu | undefined {
-    return this.cache.get(folder);
-  }
-
   // A page views a session in `folder` (`abs` is the absolute path). With a running process the
   // menu comes from it (and refreshes the folder's); else from the cache, filled once by an idle
-  // query. The page gets `menu` when it hasn't got this folder's yet, or when it changed.
+  // probe. The page gets `menu` when it hasn't got this folder's yet, or when it changed.
   async viewed(client: Client, folder: string, abs: string, proc: MenuSource | null): Promise<void> {
     if (proc) {
       try {
-        this.put(folder, await readMenu(proc));
-      } catch {
-        this.log('menu.processFailed', {});
+        this.put(folder, await readMenu(proc, this.opts.processTimeoutMs ?? PROCESS_TIMEOUT_MS));
+      } catch (e) {
+        this.log('menu.processFailed', { error: (e as Error)?.message === 'timeout' ? 'timeout' : 'error' });
       }
     }
     if (!this.cache.has(folder)) await this.fill(folder, abs);
@@ -165,6 +128,7 @@ export class Menus {
   private put(folder: string, m: FolderMenu): void {
     const old = this.cache.get(folder);
     this.cache.set(folder, m);
+    this.failed.delete(folder);
     if (JSON.stringify(old?.models) !== JSON.stringify(m.models)) this.save();
     if (!old || JSON.stringify(old) === JSON.stringify(m)) return;
     for (const c of this.opts.clients()) {
@@ -172,13 +136,22 @@ export class Menus {
     }
   }
 
-  // One idle query per folder at a time; a failure leaves the cache empty, so the next view tries again.
+  // One idle probe per folder at a time. A failure leaves the cache empty; the next view tries
+  // again once the wait after it has passed.
   private fill(folder: string, abs: string): Promise<FolderMenu | null> {
     const busy = this.loading.get(folder);
     if (busy) return busy;
+    const f = this.failed.get(folder);
+    if (f && this.now() - f.at < Math.min((this.opts.retryMs ?? RETRY_MS) * 2 ** (f.n - 1), RETRY_MAX_MS)) return Promise.resolve(null);
     const p = this.idle(abs).then((m) => {
+      if (m === undefined) {
+        const n = (this.failed.get(folder)?.n ?? 0) + 1;
+        this.failed.set(folder, { at: this.now(), n });
+        return null;
+      }
       if (m && !this.cache.has(folder)) {
         this.cache.set(folder, m);
+        this.failed.delete(folder);
         this.save();
       }
       return m;
@@ -187,32 +160,22 @@ export class Menus {
     return p;
   }
 
-  private async idle(abs: string): Promise<FolderMenu | null> {
+  // The folder's menu, null when there is no folder (no probe ran), undefined when the probe failed.
+  private async idle(abs: string): Promise<FolderMenu | null | undefined> {
     if (!isDir(abs)) return null;
-    let release = () => {};
-    const stop = new Promise<void>((r) => (release = r));
-    const started = Date.now();
-    let q: IdleQuery | null = null;
-    let timer: NodeJS.Timeout | undefined;
+    const started = this.now();
     const ac = new AbortController();
     this.aborts.add(ac);
     try {
-      q = (this.opts.queryFn ?? (sdkQuery as unknown as IdleQueryFn))({ prompt: idlePrompt(stop), options: { cwd: abs, abortController: ac } });
-      const timeout = new Promise<never>((_, rej) => {
-        timer = setTimeout(() => rej(new Error('timeout')), this.opts.timeoutMs ?? IDLE_TIMEOUT_MS);
-      });
-      const aborted = new Promise<never>((_, rej) => ac.signal.addEventListener('abort', () => rej(new Error('aborted')), { once: true }));
-      const m = await Promise.race([readMenu(q), timeout, aborted]);
-      this.log('menu.idle', { ms: Date.now() - started, commands: m.commands.length, models: m.models.length });
+      const m = await probeMenu((this.opts.sdk ?? realSdk).query, abs, { timeoutMs: this.opts.timeoutMs, abortController: ac });
+      this.log('menu.idle', { ms: this.now() - started, commands: m.commands.length, models: m.models.length });
       return m;
     } catch (e) {
-      this.log('menu.idleFailed', { error: (e as Error)?.message === 'timeout' ? 'timeout' : 'error' });
-      return null;
+      const why = (e as Error)?.message;
+      this.log('menu.idleFailed', { error: why === 'timeout' || why === 'aborted' ? why : 'error' });
+      return undefined;
     } finally {
       this.aborts.delete(ac);
-      clearTimeout(timer);
-      release();
-      try { q?.close(); } catch { /* already gone */ }
     }
   }
 }

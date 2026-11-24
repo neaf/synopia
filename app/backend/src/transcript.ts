@@ -328,7 +328,7 @@ class ReadState {
   bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
   fgBash = new Map<string, Pick<Background, 'description' | 'command' | 'timeout' | 'start'>>(); // foreground Bash uses, in case one moves to the background
   notes = new Map<string, Note>();
-  taskIds: Map<string, string>; // tool_use id -> the task id stopTask takes
+  taskIds: Map<string, string>; // tool_use id -> the SDK task id (background_tasks_changed lists these)
   reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
   bg = new Map<string, Background>();
   changed = new Set<string>();
@@ -765,7 +765,7 @@ export class Transcript {
     this.refreshTool(tid);
   }
 
-  // A task started, as the SDK's task_started says: its task id for stopTask, and for a foreground
+  // A task started, as the SDK's task_started says: its task id (background_tasks_changed lists these), and for a foreground
   // Bash or Agent the sign that b, b can move it (docs/Claude Code
   // transcripts.md#quirk-subagent-shells-have-no-task-id-in-sdk-sessions).
   taskStarted(tid: string, task: string): void {

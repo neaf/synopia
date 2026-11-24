@@ -304,13 +304,18 @@ const which = (data) => Object.keys(B64).find((k) => B64[k] === data) || '?';
 check('Enter sends the text with its tags and the tagged images as base64 with their numbers, not the untagged one',
   sent.length === 1 && sent[0].text === '[Image #5] left right [Image #4]' && JSON.stringify(sent[0].images.map((i) => [i.mediaType, i.n, which(i.data)])) === JSON.stringify([['image/png', 4, 'b'], ['image/png', 5, 'c']]),
   JSON.stringify(sent.map((m) => ({ text: m.text, images: m.images.map((i) => [i.mediaType, i.n, which(i.data)]) }))));
-// the blocks the backend makes of that message (content.ts): one text block with the tags, then the images in tag order
+// the blocks the backend makes of that message (sdk.ts userContent): one text block with the tags, then the images in tag order
 const { execFileSync } = await import('node:child_process');
 const { pathToFileURL } = await import('node:url');
-const contentTs = pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../backend/src/content.ts')).href;
+const contentTs = pathToFileURL(path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../backend/src/sdk.ts')).href;
+// the message goes through a file: a large stdin pipe can read EAGAIN while the child loads sdk.ts
+const { tmpdir } = await import('node:os');
+const msgFile = path.join(fs.mkdtempSync(path.join(tmpdir(), 'synopia-images-')), 'sent.json');
+fs.writeFileSync(msgFile, JSON.stringify(sent[0] || { text: '', images: [] }));
 const blocks = JSON.parse(execFileSync(process.execPath, ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', '--input-type=module', '-e',
-  `import { userContent } from ${JSON.stringify(contentTs)}; import fs from 'node:fs'; const m = JSON.parse(fs.readFileSync(0, 'utf8')); process.stdout.write(JSON.stringify(userContent(m.text, m.images)));`],
-{ input: JSON.stringify(sent[0] || { text: '', images: [] }) }).toString());
+  `import { userContent } from ${JSON.stringify(contentTs)}; import fs from 'node:fs'; const m = JSON.parse(fs.readFileSync(process.argv[1], 'utf8')); process.stdout.write(JSON.stringify(userContent(m.text, m.images)));`, msgFile],
+{ stdio: ['ignore', 'pipe', 'pipe'] }).toString());
+fs.rmSync(path.dirname(msgFile), { recursive: true, force: true });
 const shape = Array.isArray(blocks) ? blocks.map((b) => b.type === 'text' ? `text:${b.text}` : `image:${which(b.source.data)}`) : [blocks];
 check('the send\'s blocks: the text with its tags, then #5\'s image, then #4\'s', JSON.stringify(shape) === JSON.stringify(['text:[Image #5] left right [Image #4]', 'image:c', 'image:b']), JSON.stringify(shape));
 check('the box is empty after sending', await ev(`document.querySelectorAll('.composer .attach .thumb').length === 0 && __synopia.attachments().length === 0`));

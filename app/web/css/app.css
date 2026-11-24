@@ -361,7 +361,6 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .card .d { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 2; }
 .bw-detail { margin: 0 12.5px 7px; font-size: 11px; color: var(--ink-2); }
 .bw-detail code { display: block; font-family: var(--mono); font-size: 10.5px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 3.5px; padding: 3.5px 5.5px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3.5px; }
-/* the Stop row of an expanded Running card: quiet, with the still grey square it leaves behind */
 /* the main conversation is a card like the running ones; what runs in the background hangs under it as a tree,
    drawn like the sidebar's groups (R4.3): a 1px guide down from the main card's mark, a tick into each child, a corner on the last */
 .main-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
@@ -384,7 +383,7 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .kid .kid > .tg { left: 48px; }
 .kid .kid > .card { margin-left: 59px; width: calc(100% - 66px); }
 .kid .kid > .bw-detail { margin-left: 64.5px; }
-/* a parent's Stop row moves in beside its children's guide, which runs past it */
+/* a parent's detail line moves in beside its children's guide, which runs past it */
 .kid.parent > .bw-detail { position: relative; margin-left: 64.5px; }
 .kid.parent > .bw-detail::before { content: ""; position: absolute; left: -16.5px; top: -5.5px; bottom: -1.5px; border-left: 1px solid var(--guide); }
 /* a child coming or going (rail.js railTw) clips to its tweened height; its guide is inside, so it follows */

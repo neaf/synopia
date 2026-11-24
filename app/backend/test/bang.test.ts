@@ -11,9 +11,9 @@ import { Transcript } from '../src/transcript.ts';
 import { Views } from '../src/views.ts';
 import { Sessions } from '../src/sessions.ts';
 import { openStore } from '../src/store.ts';
-import type { QueryFn } from '../src/driver.ts';
+import { emit, fakeQuery } from './support/fake-query.ts';
 import type { Client } from '../src/server.ts';
-import type { SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-bang-')));
 const ID = '0b0b0b0b-1111-4222-8333-444444444444';
@@ -117,23 +117,6 @@ test('transcript: the CLI records of bash mode make one bang item, no prompt and
 });
 
 // ---------- the delivery: two shouldQuery:false user messages in the CLI's format ----------
-function channel<T>() {
-  const buf: T[] = [];
-  let wake: (() => void) | null = null;
-  let done = false;
-  return {
-    push(m: T) { buf.push(m); wake?.(); wake = null; },
-    end() { done = true; wake?.(); wake = null; },
-    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
-      while (true) {
-        while (buf.length) yield buf.shift() as T;
-        if (done) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-  };
-}
-
 function setup() {
   const root = tmp();
   const claudeDir = path.join(root, 'claude');
@@ -147,22 +130,16 @@ function setup() {
   store.state.open.push({ id: SID, cwd, openedAt: 1, closedAt: null });
   const views = new Views({ claudeDir, clients: () => new Set([c]), home: root, pollMs: 0, watch: false });
   const inputs: SDKUserMessage[] = [];
-  const outs: ReturnType<typeof channel<SDKMessage>>[] = [];
-  const fn: QueryFn = ({ prompt }) => {
-    const out = channel<SDKMessage>();
-    outs.push(out);
-    void (async () => { for await (const m of prompt) inputs.push(m); })();
-    return Object.assign(out, { close: () => out.end(), interrupt: async () => ({ still_queued: [] }) });
-  };
-  const sessions = new Sessions({ store, views, queryFn: fn, listFn: async () => [], home: root });
+  const q = fakeQuery({ onInput: (_, m) => { inputs.push(m); } });
+  const sessions = new Sessions({ store, views, sdk: q.sdk, home: root });
   sessions.start();
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { status: string; bang: (BangRun & { landed?: string }) | null } | undefined;
-  return { sessions, SID, cwd, inputs, outs, got, last };
+  return { sessions, SID, cwd, inputs, q, got, last };
 }
 const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 
 test('delivery: the command and its output go as shouldQuery:false user messages, and no turn starts', async () => {
-  const { sessions, SID, inputs, outs, last } = setup();
+  const { sessions, SID, inputs, q, last } = setup();
   const r = sessions.bang(SID, 'echo hi; echo err >&2; exit 3', ID);
   assert.equal(r.ok, true);
   assert.equal(last()?.bang?.running, true, 'the page sees it running');
@@ -174,7 +151,7 @@ test('delivery: the command and its output go as shouldQuery:false user messages
   assert.equal(inputs[0].uuid, ID, 'the input record carries the run id, so it lands in place');
   assert.deepEqual({ ...last()?.bang, at: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0 });
   // A process started only for this: its init starts no turn.
-  outs[0].push({ type: 'system', subtype: 'init', session_id: SID } as unknown as SDKMessage);
+  emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
   await new Promise((r) => setTimeout(r, 20));
   assert.notEqual(last()?.status, 'busy');
   // The next message goes as usual and starts the turn.

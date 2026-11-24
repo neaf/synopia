@@ -8,48 +8,15 @@ import path from 'node:path';
 import { Views } from '../src/views.ts';
 import { Sessions } from '../src/sessions.ts';
 import type { TerminalSource } from '../src/sessions.ts';
-import type { QueryFn } from '../src/driver.ts';
+import { fakeQuery } from './support/fake-query.ts';
 import type { Terminal } from '../src/cli-terminals.ts';
 import { openStore } from '../src/store.ts';
 import type { Client } from '../src/server.ts';
-import type { Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { SDKMessage, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 type Msg = { t: string; [k: string]: unknown };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 const SID = '11111111-2222-4333-8444-555555555555';
-
-function channel<T>() {
-  const buf: T[] = [];
-  let wake: (() => void) | null = null;
-  let done = false;
-  return {
-    push(m: T) { buf.push(m); wake?.(); wake = null; },
-    end() { done = true; wake?.(); wake = null; },
-    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
-      while (true) {
-        while (buf.length) yield buf.shift() as T;
-        if (done) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-  };
-}
-type Call = { options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean; interrupts: number };
-function fakeQuery(events: string[]) {
-  const calls: Call[] = [];
-  const fn: QueryFn = ({ prompt, options }) => {
-    const out = channel<SDKMessage>();
-    const call: Call = { options, inputs: [], out, closed: false, interrupts: 0 };
-    calls.push(call);
-    events.push('start');
-    void (async () => { for await (const m of prompt) call.inputs.push(m); out.end(); })();
-    return Object.assign(out, {
-      close: () => { call.closed = true; events.push('close'); out.end(); },
-      interrupt: async () => { call.interrupts++; events.push('interrupt'); return { still_queued: [] }; },
-    });
-  };
-  return { calls, fn };
-}
 
 // A registry whose terminals the test sets. `fresh` answers the last check before acting.
 function fakeRegistry(events: string[]) {
@@ -94,10 +61,10 @@ function setup(opts: { terminal?: Terminal | null; past?: SDKSessionInfo[] } = {
   store.state.open.push({ id: SID, cwd, openedAt: 1, closedAt: null });
   const views = new Views({ claudeDir, clients: () => new Set([c]), home: root, pollMs: 0, watch: false });
   const events: string[] = [];
-  const q = fakeQuery(events);
+  const q = fakeQuery({ events, sessions: opts.past });
   const reg = fakeRegistry(events);
   if (opts.terminal) reg.set(opts.terminal);
-  const sessions = new Sessions({ store, views, queryFn: q.fn, listFn: async () => opts.past ?? [], home: root, registry: reg.source });
+  const sessions = new Sessions({ store, views, sdk: q.sdk, home: root, registry: reg.source });
   sessions.start();
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { status: string; statusDetail: Record<string, unknown> } | undefined;
   const take = (t: string) => { const out = got.filter((m) => m.t === t); got.length = 0; return out; };

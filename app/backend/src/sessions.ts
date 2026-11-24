@@ -14,10 +14,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
-import type { ListSessionsOptions, SDKSessionInfo, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
-import { SessionProcess } from './driver.ts';
-import type { Content, InterruptResult, QueryFn, StartOptions } from './driver.ts';
+import type { SDKSessionInfo, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import { SessionProcess, imageError, realSdk, userContent } from './sdk.ts';
+import type { Content, Image, InterruptResult, MenuSource, Sdk, StartOptions } from './sdk.ts';
 import { SessionStatus, restored } from './status.ts';
 import type { Running, StatusEntry, Takeover } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
@@ -31,22 +30,17 @@ import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
 import { pruneUi, rekeyUi } from './ui.ts';
-import { userContent } from './content.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
 import type { BangRun } from './bang.ts';
-import type { Image } from './content.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
-export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-export const IMAGE_TYPES = ['image/png', 'image/jpeg'];
 const STREAM_MS = 50; // at most one stream preview per this many ms and session
 const YIELD_INTERRUPT_MS = 3000; // a yield waits this long for the interrupt before it ends the process
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export const RECENT = 50;
-export type ListFn = (opts?: ListSessionsOptions) => Promise<SDKSessionInfo[]>;
 export type Recent = { id: string; title: string; cwd: string; lastModified: number; terminal?: number };
-export type { Image } from './content.ts';
+export type { Image } from './sdk.ts';
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
 // The streaming preview (plan section 7): text deltas of the main conversation, per message id
@@ -139,8 +133,7 @@ export type SessionsOptions = {
   store: Store;
   views: Views;
   log?: Log;
-  queryFn?: QueryFn; // tests inject a fake; the default is the SDK's query
-  listFn?: ListFn; // the same for listSessions
+  sdk?: Sdk; // tests inject a fake query and listSessions; the default is the SDK
   home?: string;
   now?: () => number;
   idleMs?: number;
@@ -221,7 +214,7 @@ export class Sessions {
   // resume, so it isn't listed.
   async listRecent(filter = ''): Promise<Recent[]> {
     const q = filter.trim().toLowerCase();
-    const all = await (this.opts.listFn ?? sdkListSessions)();
+    const all = await (this.opts.sdk ?? realSdk).listSessions();
     const out: Recent[] = [];
     for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
       // Only an id that is open itself: after a /clear the old id is an alias of the new one, but
@@ -274,10 +267,8 @@ export class Sessions {
   send(sid: string, text: string, images: Image[] = [], uuid?: string): SendResult {
     const a = this.live.get(this.resolve(sid));
     if (!a) return { ok: false, error: "That session isn't open any more." };
-    for (const im of images) {
-      if (!IMAGE_TYPES.includes(im.mediaType)) return { ok: false, error: 'Only PNG and JPEG images can be sent.' };
-      if (Buffer.byteLength(im.data, 'base64') > MAX_IMAGE_BYTES) return { ok: false, error: 'An image is over 5 MB. Send a smaller one.' };
-    }
+    const bad = imageError(images);
+    if (bad) return { ok: false, error: bad };
     const content: Content = userContent(text, images); // the text, then the images whose tags it holds
     if (typeof content === 'string' && !text.trim()) return { ok: false, error: 'Nothing to send.' };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
@@ -585,7 +576,7 @@ export class Sessions {
     return this.live.get(this.resolve(sid))?.cwd;
   }
 
-  menuSource(sid: string): ReturnType<SessionProcess['menuSource']> {
+  menuSource(sid: string): MenuSource | null {
     return this.live.get(this.resolve(sid))?.proc?.menuSource() ?? null;
   }
 
@@ -621,21 +612,6 @@ export class Sessions {
       this.log('driver.setModelFailed', { sid: a.id });
       return { ok: false, error: `Synopia stored the model, but Claude didn't take it now: ${String((e as Error)?.message ?? e).slice(0, 200)}. It applies when the session starts again.` };
     }
-    return { ok: true, sid: a.id };
-  }
-
-  // Slice 4: the Stop row. Background work lives inside the session's process, so with no
-  // process there is nothing left to stop.
-  async stopTask(sid: string, taskId: string): Promise<SendResult> {
-    const a = this.live.get(this.resolve(sid));
-    if (!a) return { ok: false, error: "That session isn't open any more." };
-    if (!a.proc) return { ok: false, error: 'Nothing to stop: it ended with its session’s process.' };
-    try {
-      await a.proc.stopTask(taskId);
-    } catch {
-      return { ok: false, error: 'Synopia could not stop it. It may have finished already.' };
-    }
-    this.log('sessions.stopTask', { sid: a.id, taskId });
     return { ok: true, sid: a.id };
   }
 
@@ -829,7 +805,7 @@ export class Sessions {
         this.log('driver.ask', { sid: a.id, tool: name, agent: Boolean(o.agentID) });
         return a.needs.park(name, input, o);
       },
-    }, this.opts.queryFn);
+    }, (this.opts.sdk ?? realSdk).query);
     a.proc = proc;
     this.feedRunning(a); // our process drives it now: the transcript's open turn is ours
     this.log('driver.start', { sid: a.id, resume: Boolean(start.resume), model: start.model ?? null, plan: Boolean(start.plan) });
@@ -876,8 +852,8 @@ export class Sessions {
     } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {
       this.log('driver.mode', { sid: a.id, mode: m.permissionMode }); // after a plan approval (S3-1: back to auto), or a model switch
     } else if (m.type === 'system' && m.subtype === 'task_notification' && typeof m.tool_use_id === 'string') {
-      // A task ended (stopTask emits one with status `stopped`). The CLI writes its notification to
-      // the JSONL only when a turn runs, so between turns this is the only sign that it ended.
+      // A task ended. The CLI writes its notification to the JSONL only when a turn runs, so
+      // between turns this is the only sign that it ended (docs/Agent SDK.md, "Task notifications").
       this.log('driver.task', { sid: a.id, status: String(m.status) });
       this.views.taskEnded(a.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
     } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {

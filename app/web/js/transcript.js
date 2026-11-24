@@ -503,7 +503,7 @@ function renderRail() {
 
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-stop], [data-unattach], #model-label");
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
@@ -513,7 +513,7 @@ conv.addEventListener("click", e => {
     e.preventDefault(); e.stopPropagation();
     view = t.dataset.agent; renderConv();
   }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card and its Stop row
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card
   else if (t.dataset.reviewed) { e.stopPropagation(); reviewed.add(t.dataset.reviewed); send({ t: "reviewed", agentId: t.dataset.reviewed }); renderAll(); }
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)

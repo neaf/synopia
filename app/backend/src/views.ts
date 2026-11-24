@@ -548,7 +548,7 @@ export class Views {
     this.flush(s);
   }
 
-  // The SDK's task_started for one of the session's tasks: the task id stopTask takes, by tool use id.
+  // The SDK's task_started for one of the session's tasks: its task id by tool use id, matched against background_tasks_changed.
   taskStarted(sid: string, toolUseId: string, taskId: string): void {
     const s = this.live.get(sid);
     if (!s) return;

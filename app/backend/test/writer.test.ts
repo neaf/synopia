@@ -4,30 +4,27 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  Writer, buildPrompt, parseReply, limit, writerOptions, MAX_PROMPT_TEXT, MAX_TITLE, MAX_NOW,
+  Writer, buildPrompt, parseReply, limit, MAX_PROMPT_TEXT, MAX_TITLE, MAX_NOW, SYSTEM_PROMPT,
 } from '../src/writer.ts';
-import type { Turn, WriterQueryFn, WriterSource } from '../src/writer.ts';
+import type { Turn, WriterSource } from '../src/writer.ts';
+import { writerOptions } from '../src/sdk.ts';
+import { emit, fakeQuery, result } from './support/fake-query.ts';
 import { openStore } from '../src/store.ts';
 import { Views } from '../src/views.ts';
 import { Sessions } from '../src/sessions.ts';
-import type { QueryFn } from '../src/driver.ts';
 import type { Client } from '../src/server.ts';
-import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const tmp = (p: string) => fs.mkdtempSync(path.join(os.tmpdir(), p));
 const line = (o: object) => JSON.stringify(o) + '\n';
 
-// A fake one-shot query: records the options and the prompt text, and replies with `reply`.
-function fakeQuery(reply: () => string) {
-  const calls: { options: Options; prompt: string }[] = [];
-  const fn: WriterQueryFn = ({ prompt, options }) => (async function* () {
-    let text = '';
-    for await (const m of prompt as AsyncIterable<SDKUserMessage>) text += String(m.message.content);
-    calls.push({ options, prompt: text });
-    yield { type: 'result', subtype: 'success', result: reply() } as unknown as SDKMessage;
-  })();
-  return { calls, fn };
+// The shared fake as a one-shot call: replies to the prompt with `reply`; `calls` has each call's options and prompt text.
+function writerFake(reply: () => string) {
+  const q = fakeQuery({ onInput: (c) => emit(c, result(reply())) });
+  return {
+    sdk: q.sdk,
+    get calls() { return q.calls.map((c) => ({ options: c.options, prompt: String(c.inputs[0]?.message.content ?? '') })); },
+  };
 }
 
 function source(turns: Turn[], title = 'New session') {
@@ -88,7 +85,7 @@ test('limits: a title of 60 characters and a Now line of 90, on one line', () =>
 });
 
 test('options: no tools, no MCP, no hooks, its own prompt, no saved session, its own folder', () => {
-  const o = writerOptions('haiku', '/state/writer');
+  const o = writerOptions('haiku', '/state/writer', SYSTEM_PROMPT);
   assert.equal(o.model, 'haiku');
   assert.equal(o.maxTurns, 1);
   assert.deepEqual(o.tools, []);
@@ -107,9 +104,9 @@ test('options: no tools, no MCP, no hooks, its own prompt, no saved session, its
 test('debounce: several results in a row make one call, after the quiet period', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
-  const q = fakeQuery(good);
+  const q = writerFake(good);
   const { src, changed } = source(turns3);
-  const w = new Writer({ store, source: src, stateDir: dir, queryFn: q.fn, debounceMs: 30 });
+  const w = new Writer({ store, source: src, stateDir: dir, sdk: q.sdk, debounceMs: 30 });
   w.turnEnded('s1');
   await wait(10);
   w.turnEnded('s1');
@@ -135,9 +132,9 @@ test('a bad reply is ignored and keeps the text written before', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
   store.state.written.s1 = { title: 'Kept', now: 'Kept now', at: 1 };
-  const q = fakeQuery(() => 'I cannot do that.');
+  const q = writerFake(() => 'I cannot do that.');
   const { src, changed } = source(turns3);
-  const w = new Writer({ store, source: src, stateDir: dir, queryFn: q.fn, debounceMs: 5 });
+  const w = new Writer({ store, source: src, stateDir: dir, sdk: q.sdk, debounceMs: 5 });
   w.turnEnded('s1');
   await wait(40);
   assert.equal(q.calls.length, 1);
@@ -147,20 +144,37 @@ test('a bad reply is ignored and keeps the text written before', async () => {
   store.close();
 });
 
+test('an error result is logged as a failed call, not as a bad reply (sessions-sdk#B11)', async () => {
+  const dir = tmp('synopia-writer-');
+  const store = openStore(dir);
+  store.state.written.s1 = { title: 'Kept', now: 'Kept now', at: 1 };
+  const logs: [string, unknown][] = [];
+  const q = fakeQuery({ onInput: (c) => { emit(c, { type: 'assistant', error: 'authentication_failed', message: { content: [] } }); emit(c, result('', 'error_during_execution')); } });
+  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, sdk: q.sdk, debounceMs: 5, log: (e, f) => logs.push([e, f]) });
+  w.turnEnded('s1');
+  await wait(40);
+  const failed = logs.find(([e]) => e === 'writer.failed')?.[1] as Record<string, unknown> | undefined;
+  assert.deepEqual([failed?.result, failed?.error], ['error_during_execution', 'authentication_failed']);
+  assert.equal(logs.some(([e]) => e === 'writer.done'), false);
+  assert.deepEqual(store.state.written.s1, { title: 'Kept', now: 'Kept now', at: 1 });
+  w.stop();
+  store.close();
+});
+
 test('on open: written once when nothing is stored, not when text is', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
   store.state.written.has = { title: 'T', now: 'N', at: 1 };
-  const q = fakeQuery(good);
+  const q = writerFake(good);
   const { src } = source(turns3);
-  const w = new Writer({ store, source: src, stateDir: dir, queryFn: q.fn, debounceMs: 5 });
+  const w = new Writer({ store, source: src, stateDir: dir, sdk: q.sdk, debounceMs: 5 });
   w.opened('has');
   w.opened('none');
   await wait(40);
   assert.equal(q.calls.length, 1);
   assert.ok(store.state.written.none);
   // an empty session or a closed one isn't written
-  const empty = new Writer({ store, source: source([]).src, stateDir: dir, queryFn: q.fn, debounceMs: 5 });
+  const empty = new Writer({ store, source: source([]).src, stateDir: dir, sdk: q.sdk, debounceMs: 5 });
   empty.turnEnded('e');
   w.turnEnded('gone');
   await wait(40);
@@ -175,12 +189,12 @@ test('a turn that ends during a call writes again afterwards', async () => {
   const store = openStore(dir);
   let release: () => void = () => {};
   const calls: string[] = [];
-  const fn: WriterQueryFn = () => (async function* () {
+  const q = fakeQuery({ onInput: async (c) => {
     calls.push('call');
     await new Promise<void>((r) => (release = r));
-    yield { type: 'result', subtype: 'success', result: good() } as unknown as SDKMessage;
-  })();
-  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, queryFn: fn, debounceMs: 5 });
+    emit(c, result(good()));
+  } });
+  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, sdk: q.sdk, debounceMs: 5 });
   w.turnEnded('s1');
   await wait(20);
   assert.equal(calls.length, 1);
@@ -199,10 +213,10 @@ test('a turn that ends during a call writes again afterwards', async () => {
 test('a background item ending writes again after the debounce, with the work as it is now', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
-  const q = fakeQuery(good);
+  const q = writerFake(good);
   const { src } = source(turns3);
   let work = ['shell “npm test”: running'];
-  const w = new Writer({ store, source: { ...src, work: () => work }, stateDir: dir, queryFn: q.fn, debounceMs: 30 });
+  const w = new Writer({ store, source: { ...src, work: () => work }, stateDir: dir, sdk: q.sdk, debounceMs: 30 });
   w.turnEnded('s1');
   await wait(10);
   work = ['shell “npm test”: killed'];
@@ -224,10 +238,10 @@ test('a background item ending writes again after the debounce, with the work as
 test('a card appearing or answered writes again after the debounce, with the card in the work lines', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
-  const q = fakeQuery(good);
+  const q = writerFake(good);
   const { src } = source(turns3);
   let work = ['card waiting for you: question “Which layout?”'];
-  const w = new Writer({ store, source: { ...src, work: () => work }, stateDir: dir, queryFn: q.fn, debounceMs: 30 });
+  const w = new Writer({ store, source: { ...src, work: () => work }, stateDir: dir, sdk: q.sdk, debounceMs: 30 });
   w.waitingChanged('s1');
   await wait(80);
   assert.equal(q.calls.length, 1);
@@ -250,12 +264,9 @@ test('stop aborts the running call, and nothing is written from it (L8)', async 
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);
   let signal: AbortSignal | undefined;
-  const fn: WriterQueryFn = ({ options }) => (async function* () {
-    signal = options.abortController?.signal;
-    await new Promise<void>((_, rej) => signal?.addEventListener('abort', () => rej(new Error('aborted')), { once: true }));
-    yield { type: 'result', subtype: 'success', result: good() } as unknown as SDKMessage;
-  })();
-  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, queryFn: fn, debounceMs: 5 });
+  // never replies; the abort ends the fake's stream with an error
+  const q = fakeQuery({ onInput: (c) => { signal = c.options.abortController?.signal; return new Promise<void>(() => {}); } });
+  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, sdk: q.sdk, debounceMs: 5 });
   w.turnEnded('s1');
   await wait(20);
   assert.equal(signal?.aborted, false);
@@ -316,29 +327,14 @@ test('triggers: a result calls onTurnEnded, a start calls onOpened', async () =>
   const views = new Views({ claudeDir: tmp('synopia-writer-claude-'), clients: () => new Set(), pollMs: 0, watch: false });
   const ended: string[] = [];
   const opened: string[] = [];
-  let out: ((m: object) => void) | null = null;
-  const queryFn: QueryFn = ({ prompt }) => {
-    const buf: object[] = [];
-    let wake: (() => void) | null = null;
-    out = (m) => { buf.push(m); wake?.(); };
-    void (async () => { for await (const _ of prompt) { /* drain */ } })();
-    return {
-      async *[Symbol.asyncIterator]() {
-        while (true) {
-          while (buf.length) yield buf.shift() as SDKMessage;
-          await new Promise<void>((r) => (wake = r));
-        }
-      },
-      close: () => {},
-    };
-  };
-  const sessions = new Sessions({ store, views, queryFn, onTurnEnded: (s) => ended.push(s), onOpened: (s) => opened.push(s) });
+  const q = fakeQuery();
+  const sessions = new Sessions({ store, views, sdk: q.sdk, onTurnEnded: (s) => ended.push(s), onOpened: (s) => opened.push(s) });
   sessions.start();
   assert.deepEqual(opened, [id]);
   sessions.send(id, 'hello');
   await wait(5);
-  (out as unknown as (m: object) => void)({ type: 'system', subtype: 'init', session_id: id, uuid: 'u' });
-  (out as unknown as (m: object) => void)({ type: 'result', subtype: 'success', is_error: false, result: 'done', uuid: 'r' });
+  emit(q.calls[0], { type: 'system', subtype: 'init', session_id: id, uuid: 'u' });
+  emit(q.calls[0], { type: 'result', subtype: 'success', is_error: false, result: 'done', uuid: 'r' });
   await wait(5);
   assert.deepEqual(ended, [id]);
   sessions.stop();

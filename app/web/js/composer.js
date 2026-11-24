@@ -276,7 +276,7 @@ function mountComposer(s) {
       const m = /^data:(image\/(?:png|jpeg));base64,(.*)$/.exec(a.data);
       if (!m) { toast("Only PNG and JPEG images can be sent. Remove the others first."); return; }
       if (m[2].length * 3 / 4 > 5 * 1024 * 1024) { toast("An image is over 5 MB. Remove it, or paste a smaller one."); return; }
-      images.push({ mediaType: m[1], data: m[2], n: a.n }); // the backend sends the text, then these in tag order (content.ts)
+      images.push({ mediaType: m[1], data: m[2], n: a.n }); // the backend sends the text, then these in tag order (sdk.ts userContent)
     }
     if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your message is still in the box."); return; }
     if (termPid(cur()) || takeoverWait?.sid === s.id) { takeBack(s, ta, images); return; } // the box keeps it until the session is back

@@ -1,6 +1,6 @@
 # Agent SDK
 
-How Synopia drives sessions through `@anthropic-ai/claude-agent-sdk` 0.3.330 (bundled CLI 2.1.330), and what the SDK does beyond its typings. Only the documented surface is used: the typings (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`), the docs and live scripted checks. `driver.ts` is the only module that imports `query`; `menu.ts` and `writer.ts` start their own short queries. Auth is the user's Bedrock setup from `~/.claude/settings.json` (AWS SSO). Sources: code, tests, the SDK spike (2026-11-23; `spike/FINDINGS.md` at tag `rearch-base`), and the live runs recorded in `.ai-notes/app/README.md` "Facts settled" (haiku, scratch folders under `/tmp/synopia-scratch/`, shapes only).
+How Synopia drives sessions through `@anthropic-ai/claude-agent-sdk` 0.3.330 (bundled CLI 2.1.330), and what the SDK does beyond its typings. Only the documented surface is used: the typings (`node_modules/@anthropic-ai/claude-agent-sdk/sdk.d.ts`), the docs and live scripted checks. `sdk.ts` is the only module that imports a value from the SDK: session processes, the menu probe, the writer's one-shot call and `listSessions()` all go through it, and it takes `query` and `listSessions` as one injectable pair (tests use `test/support/fake-query.ts`). Auth is the user's Bedrock setup from `~/.claude/settings.json` (AWS SSO). Sources: code, tests, the SDK spike (2026-11-23; `spike/FINDINGS.md` at tag `rearch-base`), and the live runs recorded in `.ai-notes/app/README.md` "Facts settled" (haiku, scratch folders under `/tmp/synopia-scratch/`, shapes only).
 
 What the CLI writes to disk is in [Claude Code transcripts](Claude%20Code%20transcripts.md).
 
@@ -17,29 +17,29 @@ What the CLI writes to disk is in [Claude Code transcripts](Claude%20Code%20tran
 | `permissionMode` | unset, `plan` for a plan session | the user's `auto` applies |
 | `resume`, `model`, `effort`, `allowedTools` | per session | |
 
-Code: `driver.ts` `buildOptions` (80-102).
+Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 
 ### Quirk: `options.env` replaces the environment
 
 - Symptom: a session's tools lose PATH and everything else.
 - Cause: `env` is the child's whole environment, not an overlay.
 - Workaround: always spread `process.env` first.
-- Code: `driver.ts` 94. Source: typings; SDK spike (`spike/FINDINGS.md` at tag `rearch-base`).
+- Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`. Source: typings; SDK spike (`spike/FINDINGS.md` at tag `rearch-base`).
 
 ## State events need an undocumented flag
 
 - Symptom: no `system/session_state_changed` messages.
 - Cause: the CLI emits them only with `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS=1`. The typings list the message type but not the flag.
-- Workaround: `driver.ts` sets the flag; `status.ts` falls back to send-to-`result` when no state event comes.
+- Workaround: `sdk.ts` sets the flag; `status.ts` falls back to send-to-`result` when no state event comes.
 - Values: `running`, `requires_action` (waiting on `canUseTool`), `idle`.
-- Code: `driver.ts` `STATE_FLAG` (23), 94; `sessions.ts` 872. Source: SDK spike row 11 (`spike/FINDINGS.md` at tag `rearch-base`).
+- Code: `sdk.ts` `STATE_FLAG`, `buildOptions`; `sessions.ts` `onMessage`. Source: SDK spike row 11 (`spike/FINDINGS.md` at tag `rearch-base`).
 
 ## Streaming input and control calls
 
-- `interrupt`, `supportedCommands`, `supportedModels`, `setModel`, `setPermissionMode`, `stopTask`, `backgroundTasks` and `applyFlagSettings` work only when `prompt` is an AsyncIterable. Code: `driver.ts` `QueryLike` (10-19).
-- `system/init` comes again at the start of every turn, with `session_id`, `capabilities` and the slash commands. Synopia starts a turn in status from it and reads `capabilities`. Code: `sessions.ts` 869-872.
-- A process started only with `shouldQuery: false` messages emits `system/init` but no turn and no `result`. Code: `sessions.ts` 872 (`quietOnly`).
-- `shouldQuery: false` user messages join the transcript without a turn and merge into the next user message that queries (sdk.d.ts 7033). Code: `driver.ts` `pushQuiet` (132-137).
+- `interrupt`, `supportedCommands`, `supportedModels`, `setModel`, `setPermissionMode`, `backgroundTasks` and `applyFlagSettings` work only when `prompt` is an AsyncIterable. Code: `sdk.ts` `QueryLike`, `InputQueue`.
+- `system/init` comes again at the start of every turn, with `session_id`, `capabilities` and the slash commands. Synopia starts a turn in status from it and reads `capabilities`. Code: `sessions.ts` `onMessage`.
+- A process started only with `shouldQuery: false` messages emits `system/init` but no turn and no `result`. Code: `sessions.ts` `onMessage` (`quietOnly`).
+- `shouldQuery: false` user messages join the transcript without a turn and merge into the next user message that queries (sdk.d.ts 7033). Code: `sdk.ts` `SessionProcess.pushQuiet`.
 - A message pushed during a running tool is queued, then folded into the same turn. Its uuid appears in `user_message_uuids` on the next `system/status` and on the `result`, not on any `assistant` or `stream_event`.
 
 ### Quirk: `interrupt()` takes no argument in the typings
@@ -47,16 +47,16 @@ Code: `driver.ts` `buildOptions` (80-102).
 - Symptom: a plain `interrupt()` leaves queued messages; they run after the abort as their own turn (spike row 10, `still_queued: [uuid]`).
 - Cause: `Query.interrupt()` is typed without arguments; only the wire field `cancel_queued` shows (sdk.d.ts 5090).
 - Workaround: when `system/init` `capabilities` lists `interrupt_cancel_queued_v1`, call `interrupt({cancelQueued: true})` through a cast. The receipt's `cancelled` uuids map to the texts Synopia pushed (last 100 kept) and go back to the message box. Without the capability: the plain call, and a toast when `still_queued` lists Synopia's messages.
-- Code: `driver.ts` 8-12, `CANCEL_QUEUED` (25), `interrupt` (139-146). Source: live run S2-2 (CLI 2.1.330).
+- Code: `sdk.ts` `QueryLike`, `realSdk` (the one cast), `CANCEL_QUEUED`, `SessionProcess.interrupt`. Test: `sdk.test.ts`. Source: live run S2-2 (CLI 2.1.330).
 - An interrupted turn ends `result/error_during_execution` with `terminal_reason` `aborted_streaming` or `aborted_tools`. The subtype is not a reliable "stopped", so `SessionStatus.interrupted()` forces the turn's result to stopped. Code: `sessions.ts` (`interrupted()`), `status.ts`.
 
 ### `perTaskStopAffordance`
 
-With `perTaskStopAffordance: true` an interrupt stops only the foreground turn; background subagents and shells keep running (a background `sleep 90` survived, live run S2-2). Without it an interrupt kills them. Source: sdk.d.ts 1929-1948. Code: `driver.ts` 92.
+With `perTaskStopAffordance: true` an interrupt stops only the foreground turn; background subagents and shells keep running (a background `sleep 90` survived, live run S2-2). Without it an interrupt kills them. Source: sdk.d.ts 1929-1948. Code: `sdk.ts` `buildOptions`.
 
 ## Permissions under `auto`
 
-- With `permissionMode` unset the user's `defaultMode` (`auto`) applies. Code: `driver.ts` 83-84.
+- With `permissionMode` unset the user's `defaultMode` (`auto`) applies. Code: `sdk.ts` `buildOptions`.
 - Under `auto`, `canUseTool` fires only when auto would ask. AskUserQuestion and ExitPlanMode always reach it. Bash (curl, `rm -rf` in /tmp), Edit, Write and Read outside the folder were auto-approved. Read-only Bash and `Agent` never reach it.
 - Under `auto`, Bash and Edit reach `canUseTool` only through a `permissions.ask` rule, and then with no `suggestions` (no "Always allow" row).
 - With `defaultMode: default` (folder settings or `permissionMode: 'default'`) they ask with suggestions.
@@ -87,14 +87,14 @@ Code: `answers.ts`. Test: `answers.test.ts` (partly). Source: live run S3-1, spi
 - Symptom: after an approval the session may land in `default` mode.
 - Cause: approving ExitPlanMode does not restore the mode before plan mode.
 - Workaround: the allow result carries `updatedPermissions: [{type: 'setMode', mode: <mode before plan, else auto>, destination: 'session'}]`. A `system/status` with that `permissionMode` follows at once, with no `conversation_reset`.
-- Code: `answers.ts` 100-106. Source: round-1 SDK edge review B6, typings, live run S3-1.
+- Code: `sdk.ts` `planApproval`, called by `answers.ts` `settle`. Test: `sdk.test.ts`. Source: round-1 SDK edge review B6, typings, live run S3-1.
 
 - A new session started with `permissionMode: 'plan'` reports `permissionMode: 'plan'` in `system/init`. Claude calls `EnterPlanMode` itself when asked (no card under `auto`).
 - On resume the CLI answers a question a quit left open with a `[Tool call interrupted: …]` tool result.
 
 ## Menu: commands and models
 
-- `supportedCommands()` and `supportedModels()` need a running `query()`. For a folder with no running process, `menu.ts` starts one idle query whose prompt never yields: the process starts, answers the control calls and makes no model call. It took 5.6 s and gave 57 commands and 11 models. It runs SessionStart hooks. Timeout 30 s; closed once read. Code: `menu.ts` `idlePrompt` (55-58), `IDLE_TIMEOUT_MS` (22).
+- `supportedCommands()` and `supportedModels()` need a running `query()`. For a folder with no running process, `sdk.ts` `probeMenu` starts one idle query whose prompt never yields: the process starts, answers the control calls and makes no model call. It took 5.6 s and gave 57 commands and 11 models. It runs SessionStart hooks. Timeout 30 s; closed once read. After a failed probe `menu.ts` waits 1 min before the next, doubled per failure in a row up to 30 min, so views don't re-run the hooks each time. A running process's menu calls time out after 10 s, then the probe or the cache answers. Code: `sdk.ts` `probeMenu`, `readMenu`, `PROBE_TIMEOUT_MS`; `menu.ts` `RETRY_MS`, `PROCESS_TIMEOUT_MS`. Test: `menu.test.ts`.
 - `commands_changed` replaces the commands.
 
 ### Quirk: command descriptions come HTML-escaped
@@ -102,12 +102,12 @@ Code: `answers.ts`. Test: `answers.test.ts` (partly). Source: live run S3-1, spi
 - Symptom: descriptions read `&lt;file&gt;`.
 - Cause: the SDK returns them escaped.
 - Workaround: `unescapeHtml` on descriptions and argument hints.
-- Code: `menu.ts` 25-27. Source: capture (`spike/dump_menu.mjs` at tag `rearch-base`).
+- Code: `sdk.ts` `unescapeHtml`. Source: capture (`spike/dump_menu.mjs` at tag `rearch-base`).
 
 ### Command and model list shapes
 
-- Names starting `__` are internal (`__remote-workflow`); both the backend and the page drop them. Code: `menu.ts` `toCommands` (34), `composer.js` 8.
-- `workflow-launch-exec` appears in the list but runs server-side only; it stays in the list.
+- Names starting `__` are internal (`__remote-workflow`); both the backend and the page drop them. Code: `sdk.ts` `toCommands`, `composer.js` 8.
+- `workflow-launch-exec` appears in the list but runs server-side only, so it does nothing in a session Synopia drives; `sdk.ts` `toCommands` drops it. Whether the live list still carries it is `unverified` (seen in the capture).
 - One name can appear twice; the `builtin` row wins, as `/name` runs that one.
 - Description suffixes: skills end with `(user)`, plugin skills start with `(<plugin-name>)`, workflows end with `(dynamic workflow)`, a removed built-in reads `(removed)`.
 - Models: effort lists differ per model (one has none, some lack `xhigh`). `default` carries its own description naming the current default. Two models have `(Default)` in the display name. `resolvedModel` lets a transcript's full model id match an alias row.
@@ -143,19 +143,19 @@ Source: capture by `spike/dump_menu.mjs` (tag `rearch-base`; `prototype/menu.js`
 
 Code: `transcript.ts` `refreshTool` (`fg`). Source: background live run (CLI 2.1.330).
 
-### stopTask and task notifications
+### Task notifications
 
 - `stopTask(taskId)` emits `system/task_notification` with `status: 'stopped'` and the task's `tool_use_id` at once, also between turns.
 - The JSONL gets its `<status>killed</status>` notification only when a turn runs next. A task ended between turns is kept in memory only; the JSONL's notification or the process-end mark covers a restart.
 - A resumed process emits `stopped` notifications for the shells the previous process left behind.
 - `stopTask` with a subagent shell's `task_started` id stopped it (2 then 0 processes by `pgrep`). Monitors were not run.
-- The page has no Stop row, so nothing sends `stopTask` (decision Q4, 2026-11-24).
+- Synopia has no Stop row and does not call `stopTask` (decision Q4, 2026-11-24); the facts above stay for when a key is designed.
 
-Code: `sessions.ts` 874-878. Source: live runs S4 and M1-final.
+Code: `sessions.ts` `onMessage` (`task_notification`). Source: live runs S4 and M1-final.
 
 ## Sessions: list, resume, fork
 
-- `listSessions()` gives `sessionId`, `cwd` (the realpath), `summary`, `customTitle`, `firstPrompt`, `gitBranch`, `lastModified`, `fileSize`. It honours `CLAUDE_CONFIG_DIR` (page checks rely on it). It took 87 ms over this machine's sessions. Code: `sessions.ts` 225-265. Source: live run S2-1.
+- `listSessions()` gives `sessionId`, `cwd` (the realpath), `summary`, `customTitle`, `firstPrompt`, `gitBranch`, `lastModified`, `fileSize`. It honours `CLAUDE_CONFIG_DIR` (page checks rely on it). It took 87 ms over this machine's sessions. Code: `sdk.ts` `realSdk.listSessions`, `sessions.ts` `listRecent`. Source: live run S2-1.
 - Map sessions with `listSessions().cwd`; don't build project paths.
 - `options.resume=<id>` appends to the same file with the same id. `forkSession: true` gives a new id in the current cwd's project folder.
 - Resume and fork re-send the whole history: one haiku fork of a large session cost $0.25. `unverified` as a general cost model (one spike run). Source: SDK spike row 3 (`spike/FINDINGS.md` at tag `rearch-base`).
@@ -167,8 +167,9 @@ Titles and the Now line come from a one-turn query that can't act and writes not
 `maxTurns: 1`, `tools: []`, `mcpServers: {}`, `strictMcpConfig: true`, `permissionMode: 'dontAsk'`, `settings: {disableAllHooks: true}`, `verbatimPrompts: true`, `persistSession: false`, cwd `<state>/writer`.
 - `persistSession: false` and the private cwd keep the call out of `~/.claude/projects`.
 - Whether `disableAllHooks` in flag settings is honoured for managed hooks is `unverified`; `includeHookEvents: true` logs any hook that still runs (`writer.done hooks=`).
+- A result other than `success`, or a `success` with `is_error`, is a failed call: `writer.failed` logs the subtype and the last `assistant.error`, apart from `writer.done ok:false` (a reply that isn't the JSON asked for).
 
-Code: `writer.ts` `writerOptions` (128-144), 259.
+Code: `sdk.ts` `writerOptions`, `oneShot`; `writer.ts` `write`. Test: `sdk.test.ts`, `writer.test.ts`.
 
 ## Errors and Bedrock
 

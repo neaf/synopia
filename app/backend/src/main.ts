@@ -234,8 +234,6 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);
     store.changed();
     badge?.changed();
-  } else if (sessions && msg.t === 'stopTask' && typeof msg.sid === 'string' && typeof msg.taskId === 'string') {
-    void sessions.stopTask(msg.sid, msg.taskId).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (sessions && msg.t === 'background' && typeof msg.sid === 'string') { // b, b (R9): a toast only when nothing moved
     void sessions.background(msg.sid).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (msg.t === 'open') {

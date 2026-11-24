@@ -177,7 +177,7 @@ Code: `claude-jsonl.ts` `userOf` (`toolUseResult`), `taskNotes`; `transcript.ts`
 - Outside a git repo Synopia shows no shell-edit rows (decision Q3, 2026-11-24).
 - `staleReadFileStateHint` (string) flags a command that changed a file Claude had Read; only `sed -i` was recognised.
 
-Code: `driver.ts` `buildOptions` (85-93), `claude-jsonl.ts` `bashEditOf`, `transcript.ts` `bashPatchesOf`. Source: `.ai-notes/app/README.md` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
+Code: `sdk.ts` `buildOptions`, `claude-jsonl.ts` `bashEditOf`, `transcript.ts` `bashPatchesOf`. Source: `.ai-notes/app/README.md` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
 
 ## Plans
 

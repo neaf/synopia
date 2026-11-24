@@ -5,70 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { Views } from '../src/views.ts';
 import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
-import { STATE_FLAG } from '../src/driver.ts';
-import type { QueryFn } from '../src/driver.ts';
+import { STATE_FLAG } from '../src/sdk.ts';
+import { emit, fakeQuery } from './support/fake-query.ts';
 import { openStore, reconcileLayout } from '../src/store.ts';
 import { patchUi } from '../src/ui.ts';
 import type { Client } from '../src/server.ts';
-import type { CanUseTool, Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 type Msg = { t: string; [k: string]: unknown };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 
-// An async-iterable channel: the fake CLI's output.
-function channel<T>() {
-  const buf: T[] = [];
-  let wake: (() => void) | null = null;
-  let done = false;
-  let fail: Error | null = null;
-  return {
-    push(m: T) { buf.push(m); wake?.(); wake = null; },
-    end(err?: Error) { done = true; fail = err ?? null; wake?.(); wake = null; },
-    async *[Symbol.asyncIterator](): AsyncGenerator<T> {
-      while (true) {
-        while (buf.length) yield buf.shift() as T;
-        if (fail) throw fail;
-        if (done) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-  };
-}
-
-type Call = {
-  options: Options; inputs: SDKUserMessage[]; out: ReturnType<typeof channel<SDKMessage>>; closed: boolean;
-  interrupts: unknown[]; reply: { still_queued: string[]; cancelled?: string[] } | undefined;
-  controls: [string, unknown][]; // slice 5: setModel and applyFlagSettings calls
-  exitDelay?: number; // ms between the input closing and the process ending (L1)
-  background?: boolean | Error; // what backgroundTasks() returns or throws (default true)
-};
-function fakeQuery() {
-  const calls: Call[] = [];
-  const fn: QueryFn = ({ prompt, options }) => {
-    const out = channel<SDKMessage>();
-    const call: Call = { options, inputs: [], out, closed: false, interrupts: [], reply: { still_queued: [] }, controls: [] };
-    calls.push(call);
-    void (async () => {
-      for await (const m of prompt) call.inputs.push(m);
-      if (call.exitDelay) await new Promise((r) => setTimeout(r, call.exitDelay));
-      out.end(); // the input closed: the process ends after its turn
-    })();
-    return Object.assign(out, {
-      close: () => { call.closed = true; out.end(); },
-      interrupt: async (req?: unknown) => { call.interrupts.push(req); return call.reply; },
-      setModel: async (m?: string) => { call.controls.push(['setModel', m]); },
-      applyFlagSettings: async (x: unknown) => { call.controls.push(['applyFlagSettings', x]); },
-      backgroundTasks: async (id?: string) => {
-        call.controls.push(['backgroundTasks', id]);
-        if (call.background instanceof Error) throw call.background;
-        return call.background ?? true;
-      },
-    });
-  };
-  return { calls, fn };
-}
-
-const emit = (c: Call, m: object) => c.out.push(m as SDKMessage);
 const init = (id: string) => ({ type: 'system', subtype: 'init', session_id: id, uuid: 'u-init' });
 const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_reason: 'completed' };
 const REAL = '11111111-2222-4333-8444-555555555555';
@@ -94,8 +40,8 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
     onRunning: (sid, r) => sessions?.runningChanged(sid, r),
     choice: (sid) => sessions?.choiceOf(sid),
   });
-  const q = fakeQuery();
-  sessions = new Sessions({ store, views, queryFn: q.fn, listFn: async () => past, home: root, ...extra });
+  const q = fakeQuery({ sessions: past });
+  sessions = new Sessions({ store, views, sdk: q.sdk, home: root, ...extra });
   const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
   return { root, claudeDir, cwd, c, store, views, sessions, q, take };
 }
@@ -168,6 +114,7 @@ test('sessions: images over 5 MB or not PNG/JPEG are refused', () => {
   const big = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
   assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/png', data: big }]).ok, false);
   assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/gif', data: 'R0lG' }]).ok, false);
+  assert.equal(sessions.send(ph, 'x', [{ mediaType: 'image/png', data: '' }]).ok, false, 'empty image data is refused (formats#B9)');
   assert.equal(q.calls.length, 0);
 });
 
