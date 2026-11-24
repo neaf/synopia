@@ -232,6 +232,10 @@ function itemsHTML(items, sessionBusy, s) {
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
 const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
+/* messages you sent while the turn runs, oldest first: your prompt's band, dimmed, with the moving
+   queued mark, just above the live line, where each lands. Once its prompt item is in, that shows instead. */
+const queuedOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
+const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt queued"><span class="g">❯</span><div class="md">${q.images ? `<p class="img">[${q.images} pasted image${q.images > 1 ? "s" : ""}]</p>` : ""}${md(q.text)}<p class="qlabel">${ind("queued")}Queued, goes to Claude at its next step</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
    compacting, rate limited or no updates instead, and say a message you sent is queued. */
 function liveLine(s, A) {
@@ -248,7 +252,7 @@ function phaseText(s) {
   if (s.status === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
   if (s.status === "stale") return `Nothing for ${age(s.statusAt)}; the session may be gone`;
   if (s.status === "signedout") return "Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message";
-  if (s.status === "busy" && d.queued) return queuedText(d.queued);
+  if (s.status === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";
 }
 /* an age that the 1 s timer keeps current */
@@ -332,6 +336,7 @@ function logEntries(s, A) {
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
+  if (!A) out.push(...queuedHTML(s));
   out.push(["live", liveLine(s, A)]);
   return out;
 }

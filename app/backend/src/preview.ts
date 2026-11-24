@@ -182,8 +182,12 @@ export function ansiToHtml(input: string, theme: Theme = 'light'): string {
 export type Bat = { file: string; langs: Map<string, string> } | null;
 export type RunBat = (file: string, args: string[], input: string, done: (err: Error | null, out: string) => void) => void;
 
+// COLORTERM=truecolor always: bat's colours (24-bit, which ansiToHtml maps exactly) don't depend on
+// the environment the daemon started in.
+export const batEnv = (env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv => ({ ...env, COLORTERM: 'truecolor' });
+
 const runBat: RunBat = (file, args, input, done) => {
-  const child = execFile(file, args, { shell: false, timeout: BAT_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024, encoding: 'utf8' },
+  const child = execFile(file, args, { shell: false, timeout: BAT_TIMEOUT_MS, maxBuffer: 256 * 1024 * 1024, encoding: 'utf8', env: batEnv() },
     (err, stdout) => done(err, String(stdout)));
   child.stdin?.on('error', () => {}); // bat gone early: its exit reports it
   child.stdin?.end(input);

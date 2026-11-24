@@ -42,7 +42,7 @@ const interrupted = s => { const l = s.items.findLast(i => i.k !== "title"); // 
 const bgRunning = s => agentsOf(s).some(a => !a.finished) || bgOf(s).some(b => bgState(b) === "running");
 
 /* Applying server messages (bridge.js calls these). Each returns the parts to render. */
-const blankSession = id => ({ id, title: "", now: "", cwd: "", prs: [], status: "idle", statusAt: Date.now(), items: [], total: 0, agents: [], background: [], stream: null });
+const blankSession = id => ({ id, title: "", now: "", cwd: "", prs: [], status: "idle", statusAt: Date.now(), items: [], total: 0, agents: [], background: [], stream: null, outbox: [] });
 function upsertById(list, upsert, keep) {
   const at = new Map(list.map((x, i) => [x.id ?? x.toolUseId, i]));
   for (const x of upsert) {

@@ -26,8 +26,16 @@ export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'pl
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   status: Status; statusAt: number; statusDetail: StatusDetail; model: unknown; effort: unknown;
-  ask: PendingAsk | null;
+  ask: PendingAsk | null; outbox: QueuedMessage[];
 };
+// A message you sent while a turn ran, shown pending at the end of the transcript until it lands.
+// `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
+export type QueuedMessage = { id: string; text: string; images: number; landed?: string };
+type Outbox = QueuedMessage & { at: number };
+const RUNNING = new Set<Status>(['busy', 'retrying', 'compacting']);
+// A queued message that hasn't landed by this long after the turn stopped running is dropped (it
+// landed in a form the match missed, or it is gone).
+export const OUTBOX_GRACE_MS = 5000;
 
 type Sub = { sid: string; agent: string | null; from: number };
 type Child = { t: Transcript; tailer: Tailer; calm: number; skip: number }; // calm: scans with nothing new
@@ -38,6 +46,7 @@ type Live = {
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
   status: Status | null; statusAt: number; statusDetail: StatusDetail; stream: string | null; pending: PendingRequest[]; held: string[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
+  outbox: Outbox[]; outboxTimer: NodeJS.Timeout | null;
   finder: NodeJS.Timeout | null;
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   ran: string; // the last Running sent to onRunning
@@ -108,7 +117,7 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf, titlesOf: () => this.opts.written?.(id)?.history }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, finder: null, working: new Set(), ran: '',
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, finder: null, working: new Set(), ran: '',
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
@@ -206,6 +215,7 @@ export class Views {
     // the driver's state moves too: a card still up, the messages held behind it, the preview
     n.pending = s.pending;
     n.held = s.held;
+    n.outbox = s.outbox;
     n.stream = s.stream;
     const meta = this.metaOf(n);
     n.sent = JSON.stringify(meta);
@@ -250,6 +260,8 @@ export class Views {
   private stopOne(s: Live): void {
     if (s.finder) clearInterval(s.finder);
     s.finder = null;
+    if (s.outboxTimer) clearTimeout(s.outboxTimer);
+    s.outboxTimer = null;
     s.tailer?.stop();
     s.watcher?.stop();
     for (const c of s.children.values()) c.tailer.stop();
@@ -317,6 +329,7 @@ export class Views {
       ask: status === 'waiting' && !s.pending.length ? ran.ask ?? null : null,
       model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
+      outbox: s.outbox.map(({ id, text, images, landed }) => (landed ? { id, text, images, landed } : { id, text, images })),
     };
   }
 
@@ -467,6 +480,8 @@ export class Views {
     s.status = status;
     s.statusAt = at;
     s.statusDetail = detail;
+    // the turn stopped with messages still queued: they go once they've had time to land
+    if (!RUNNING.has(status) && s.outbox.some((o) => !o.landed)) this.later(s, OUTBOX_GRACE_MS);
     this.flush(s);
   }
 
@@ -538,9 +553,62 @@ export class Views {
     this.flush(s);
   }
 
-  // Messages an interrupt cancelled, back to the session's message box.
+  // Messages an interrupt cancelled, back to the session's message box (and out of the outbox).
   restore(sid: string, texts: string[]): void {
-    if (this.live.has(sid)) this.broadcast({ t: 'restore', sid, texts });
+    const s = this.live.get(sid);
+    if (!s) return;
+    let gone = false;
+    for (const text of texts) {
+      const i = s.outbox.findIndex((o) => !o.landed && o.text === text);
+      if (i >= 0) { s.outbox.splice(i, 1); gone = true; }
+    }
+    if (gone) this.flush(s);
+    this.broadcast({ t: 'restore', sid, texts });
+  }
+
+  // Whether a turn runs that a message sent now would queue behind.
+  queues(sid: string): boolean {
+    const s = this.live.get(sid);
+    return Boolean(s?.status && RUNNING.has(s.status));
+  }
+
+  // A message the driver took while a turn ran (main.ts, the fake driver): it is queued, and the
+  // page shows it pending (R5.5) until its prompt lands in the transcript. Not one held behind a card.
+  sent(sid: string, uuid: string, text: string, images = 0): void {
+    const s = this.live.get(sid);
+    if (!s || s.pending.length || s.held.includes(text)) return;
+    if (s.outbox.some((o) => o.id === uuid)) return;
+    s.outbox.push({ id: uuid, text, images, at: Date.now() });
+    this.flush(s);
+  }
+
+  // Before each flush: drops the messages that landed in an earlier flush (the page has their
+  // prompt by now), then matches the new prompt items to the queued ones, oldest first, by uuid or
+  // by text (a message sent during a turn lands as a `queued_command` record of its own uuid).
+  private settleOutbox(s: Live, changed: string[]): void {
+    if (!s.outbox.length) return;
+    s.outbox = s.outbox.filter((o) => !o.landed);
+    if (!changed.length || !s.outbox.length) return;
+    const ids = new Set(changed);
+    for (const it of s.t.items.slice(-changed.length - 8)) {
+      if (!ids.has(it.id) || it.k !== 'you' || s.outbox.some((q) => q.landed === it.id)) continue;
+      const o = s.outbox.find((q) => !q.landed && (q.id === it.id || landsAs(q, it)));
+      if (o) o.landed = it.id;
+    }
+    if (s.outbox.some((o) => o.landed)) this.later(s, 1000);
+  }
+
+  // A flush after `ms`, once: landed messages leave, and unlanded ones after the grace.
+  private later(s: Live, ms: number): void {
+    if (s.outboxTimer) clearTimeout(s.outboxTimer);
+    s.outboxTimer = setTimeout(() => {
+      s.outboxTimer = null;
+      if (s.status && RUNNING.has(s.status)) { this.flush(s); return; }
+      if (Date.now() - s.statusAt >= OUTBOX_GRACE_MS - 50) s.outbox = s.outbox.filter((o) => o.landed);
+      this.flush(s);
+      if (s.outbox.length) this.later(s, OUTBOX_GRACE_MS);
+    }, ms);
+    s.outboxTimer.unref?.();
   }
 
   private transcriptOf(sid: string, agent: string | null): Transcript | null {
@@ -576,6 +644,7 @@ export class Views {
     s.queued = false;
     if (this.live.get(s.id) !== s) return;
     const ch = s.t.takeChanges();
+    this.settleOutbox(s, ch.items);
     const meta = this.metaOf(s);
     const key = JSON.stringify(meta);
     if (key !== s.sent) {
@@ -639,6 +708,15 @@ export class Views {
 // monitors aren't counted), and its main turn (Transcript.turnRunning, quiet after QUIET_MS), and a card it waits on (none after ASK_STALE_MS of quiet).
 function runningOf(t: Transcript, file: string | null): Running {
   return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(Date.now(), QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk(Date.now(), ASK_STALE_MS, () => mtimeOf(file)) };
+}
+
+// Whether a prompt item is a queued message: written no earlier than it was sent (2 s of clock
+// slack), with its text (the transcript cuts a long one) or, for images alone, no text.
+function landsAs(q: Outbox, it: Item): boolean {
+  const ts = it.ts ? Date.parse(it.ts) : NaN;
+  if (ts < q.at - 2000) return false;
+  const text = (it.text ?? '').replace(/\n\n\[cut: message continues\]$/, '').trim(), sent = q.text.trim();
+  return text ? sent === text || (sent.startsWith(text) && it.text !== text) : q.images > 0 && !sent && Boolean(it.images);
 }
 
 function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: string[]) => void): void {
