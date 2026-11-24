@@ -11,6 +11,8 @@ import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { alwaysText } from './answers.ts';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
+import { randomUUID } from 'node:crypto';
+import { Bang, bashInput, bashOutput } from './bang.ts';
 
 export type FakeStep = {
   at: number; // ms after start
@@ -67,6 +69,8 @@ export class FakeDriver {
   private script: FakeScript;
   private log: Log;
   private timers = new Set<NodeJS.Timeout>();
+  private files = new Map<string, string>(); // session id -> its fixture file
+  private bangs = new Map<string, Bang>(); // the `!` command that runs, per session
 
   constructor(views: Views, script: FakeScript, opts: { log?: Log } = {}) {
     this.views = views;
@@ -76,7 +80,10 @@ export class FakeDriver {
 
   // Opens every fixture session, then plays the script on timers.
   start(claudeDir: string): this {
-    for (const s of fixtureSessions(claudeDir)) this.views.open(s.id, { path: s.path });
+    for (const s of fixtureSessions(claudeDir)) {
+      this.files.set(s.id, s.path);
+      this.views.open(s.id, { path: s.path });
+    }
     for (const step of this.script.steps) this.later(step.at, () => this.apply(step));
     this.log('fake.start', { sessions: this.views.ids().length, steps: this.script.steps.length });
     return this;
@@ -90,6 +97,7 @@ export class FakeDriver {
   stop(): void {
     for (const t of this.timers) clearTimeout(t);
     this.timers.clear();
+    for (const b of this.bangs.values()) b.kill();
   }
 
   // The menu for `hello`, one entry per session folder.
@@ -118,7 +126,15 @@ export class FakeDriver {
   // Page messages the fake answers: an answer settles its request and the session works for a
   // while. A message sent while a session works is queued (shown pending until a prompt record
   // with its text lands in the fixture file), and an interrupt sends the queued ones back to the box.
-  onMessage(_client: Client, msg: { t: string; [k: string]: unknown }): boolean {
+  onMessage(client: Client, msg: { t: string; [k: string]: unknown }): boolean {
+    if (msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') {
+      this.bang(client, msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : randomUUID());
+      return true;
+    }
+    if (msg.t === 'interrupt' && typeof msg.sid === 'string' && this.bangs.get(msg.sid)?.run.running) {
+      this.bangs.get(msg.sid)?.kill();
+      return true;
+    }
     if (msg.t === 'send' && typeof msg.sid === 'string' && typeof msg.uuid === 'string' && this.views.queues(msg.sid)) {
       this.views.sent(msg.sid, msg.uuid, typeof msg.text === 'string' ? msg.text : '', Array.isArray(msg.images) ? msg.images.length : 0);
       this.recount(msg.sid);
@@ -136,6 +152,27 @@ export class FakeDriver {
     this.views.setStatus(sid, 'busy');
     this.later(3000, () => this.views.setStatus(sid, 'idle'));
     return true;
+  }
+
+  // Bash mode (R5.13): the command really runs (bang.ts) in the fixture's home, and its records are
+  // appended to the fixture file as the CLI would write them, so they land like a real session's.
+  private bang(client: Client, sid: string, cmd: string, uuid: string): void {
+    const file = this.files.get(sid);
+    if (!file) return;
+    if (this.bangs.get(sid)?.run.running) { client.send({ t: 'toast', text: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' }); return; }
+    const cwd = this.script.home && fs.existsSync(this.script.home) ? this.script.home : path.dirname(file);
+    const b: Bang = new Bang({
+      id: uuid, cmd, cwd,
+      onUpdate: (run) => this.views.setBang(sid, run),
+      onDone: (run) => {
+        const at = new Date().toISOString();
+        const rec = (id: string, text: string) => JSON.stringify({ type: 'user', uuid: id, timestamp: at, sessionId: sid, message: { role: 'user', content: text } });
+        fs.appendFileSync(file, rec(uuid, bashInput(run.cmd)) + '\n' + rec(randomUUID(), bashOutput(run)) + '\n');
+        this.views.setBang(sid, run);
+      },
+    });
+    this.bangs.set(sid, b);
+    this.views.setBang(sid, b.run);
   }
 
   // The session's queued messages that haven't landed.

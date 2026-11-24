@@ -11,6 +11,7 @@ import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord } from './tail.ts';
 import { Transcript, findTranscript, sessionDirOf, readResult, readImage, IMAGE_TYPES } from './transcript.ts';
 import type { Item, PendingAsk } from './transcript.ts';
+import type { BangRun } from './bang.ts';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -26,8 +27,11 @@ export type PendingRequest = { id: string; kind: 'question' | 'permission' | 'pl
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   status: Status; statusAt: number; statusDetail: StatusDetail; model: unknown; effort: unknown;
-  ask: PendingAsk | null; outbox: QueuedMessage[];
+  ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null;
 };
+// Bash mode (R5.13): the `!` command that runs, or ran, shown at the end of the transcript until
+// its records land. `landed`: the id of the bash item it became; the page shows that item instead.
+export type ShownBang = BangRun & { landed?: string };
 // A message you sent while a turn ran, shown pending at the end of the transcript until it lands.
 // `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
 export type QueuedMessage = { id: string; text: string; images: number; landed?: string };
@@ -47,6 +51,7 @@ type Live = {
   status: Status | null; statusAt: number; statusDetail: StatusDetail; stream: string | null; pending: PendingRequest[]; held: string[];
   sent: string; needReset: boolean; resetChildren: Set<string>; queued: boolean;
   outbox: Outbox[]; outboxTimer: NodeJS.Timeout | null;
+  bang: ShownBang | null;
   finder: NodeJS.Timeout | null;
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   ran: string; // the last Running sent to onRunning
@@ -117,7 +122,7 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf, titlesOf: () => this.opts.written?.(id)?.history }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, finder: null, working: new Set(), ran: '',
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, bang: null, finder: null, working: new Set(), ran: '',
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
@@ -216,6 +221,7 @@ export class Views {
     n.pending = s.pending;
     n.held = s.held;
     n.outbox = s.outbox;
+    n.bang = s.bang;
     n.stream = s.stream;
     const meta = this.metaOf(n);
     n.sent = JSON.stringify(meta);
@@ -330,6 +336,7 @@ export class Views {
       model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
       outbox: s.outbox.map(({ id, text, images, landed }) => (landed ? { id, text, images, landed } : { id, text, images })),
+      bang: s.bang,
     };
   }
 
@@ -582,6 +589,29 @@ export class Views {
     this.flush(s);
   }
 
+  // Bash mode: the `!` command's run, while it runs and until its records land (sessions.ts).
+  setBang(sid: string, run: BangRun): void {
+    const s = this.live.get(sid);
+    if (!s) return;
+    s.bang = { ...run };
+    this.settleBang(s, s.t.items.slice(-8).map((it) => it.id)); // its records may be in already
+    this.flush(s);
+  }
+
+  // A run that landed in an earlier flush goes (the page has its item by now); a finished one lands
+  // as the bash item of its uuid, or of its command written no earlier than it started.
+  private settleBang(s: Live, changed: string[]): void {
+    const b = s.bang;
+    if (!b || b.running) return;
+    if (b.landed && !changed.includes(b.landed)) { s.bang = null; return; }
+    const ids = new Set(changed);
+    for (const it of s.t.items.slice(-changed.length - 8)) {
+      if (!ids.has(it.id) || it.k !== 'bang' || !it.sh) continue;
+      const ts = it.ts ? Date.parse(it.ts) : NaN;
+      if (it.id === b.id || (it.cmd === b.cmd && !(ts < b.at - 2000))) { b.landed = it.id; return; }
+    }
+  }
+
   // Before each flush: drops the messages that landed in an earlier flush (the page has their
   // prompt by now), then matches the new prompt items to the queued ones, oldest first, by uuid or
   // by text (a message sent during a turn lands as a `queued_command` record of its own uuid).
@@ -645,6 +675,7 @@ export class Views {
     if (this.live.get(s.id) !== s) return;
     const ch = s.t.takeChanges();
     this.settleOutbox(s, ch.items);
+    this.settleBang(s, ch.items);
     const meta = this.metaOf(s);
     const key = JSON.stringify(meta);
     if (key !== s.sent) {

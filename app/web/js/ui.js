@@ -90,7 +90,7 @@ function uiTakeTyping(key) { if (!uiTyping || uiTyping.key !== key) return null;
 function uiLeave() {
   if (!mounted) return;
   const sid = mounted.slice(0, mounted.indexOf("|")), ta = document.getElementById("msg");
-  if (ta) uiDrafts.set(sid, { text: ta.value, cursor: [ta.selectionStart, ta.selectionEnd], atts: attachments.slice() });
+  if (ta) uiDrafts.set(sid, { text: boxValue(ta), cursor: [ta.selectionStart, ta.selectionEnd], atts: attachments.slice() });
 }
 function uiEnterComposer(s, ta) {
   const d = uiDrafts.get(s.id); uiDrafts.delete(s.id); // on screen, the box itself is the draft
@@ -208,7 +208,7 @@ function uiTop() {
 /* one session's fields; `fresh` collects the pasted images to send with their bytes */
 function uiSessionNow(sid, fresh) {
   const u = uiS[sid], live = mounted && mounted.startsWith(sid + "|") && document.getElementById("msg");
-  const d = live ? { text: live.value, cursor: [live.selectionStart, live.selectionEnd], atts: attachments } : uiDrafts.get(sid);
+  const d = live ? { text: boxValue(live), cursor: [live.selectionStart, live.selectionEnd], atts: attachments } : uiDrafts.get(sid);
   const images = d ? d.atts.filter(a => a.id && (uiStored.has(a.id) || a.data)).map(a => ({ id: a.id, mediaType: a.mediaType, n: a.n })) : [];
   if (d) for (const a of d.atts) if (a.id && !uiStored.has(a.id) && a.data) fresh.push(a);
   const steps = [...openSteps].filter(k => k.startsWith(sid + "|")).map(k => k.slice(sid.length + 1));

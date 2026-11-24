@@ -223,6 +223,9 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     const r = sessions.send(msg.sid, text, images, uuid);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
     else if (queues && uuid) views.sent(r.sid, uuid, text, images.length);
+  } else if (sessions && msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') { // bash mode (R5.13)
+    const r = sessions.bang(msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : undefined);
+    if (!r.ok) client.send({ t: 'toast', text: r.error });
   } else if (sessions && msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
