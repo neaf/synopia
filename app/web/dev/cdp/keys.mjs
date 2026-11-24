@@ -4,9 +4,7 @@ import { connect, sleep } from './cdp.mjs';
 const [url] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, key } = c;
-await c.cdp('Page.navigate', { url });
-await sleep(1000); await c.key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
-await sleep(2000);
+await c.load(url);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 const K = {
   J: () => key('J', { shift: true, code: 'KeyJ', vk: 74 }), Kk: () => key('K', { shift: true, code: 'KeyK', vk: 75 }),

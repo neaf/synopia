@@ -21,7 +21,7 @@ const PREVIEW = path.join(repo, 'app/backend/src/open.ts');
 // a small viewport, so session 1's log scrolls
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 480, deviceScaleFactor: 1, mobile: false });
 let url = url0;
-const load = async () => { await c.cdp('Page.navigate', { url }); return until(`typeof store !== 'undefined' && store.ui.connected && !!document.getElementById('msg')`); };
+const load = () => c.load(url);
 const goTo = async (sid) => { await ev(`document.querySelector('.side .row[data-id="${sid}"]').click()`); return until(`current === '${sid}' && mounted === '${sid}|' && !uiRestoring && cur().items.length > 0`); };
 const anchor = () => ev(`JSON.stringify(uiAnchor(document.getElementById('log')))`);
 const near = (a, b) => { const x = JSON.parse(a), y = JSON.parse(b); return !x.bottom && x.id === y.id && Math.abs(x.off - y.off) <= 2; };

@@ -45,9 +45,7 @@ const { bin, html } = extra(claudeDir);
 const c = await connect();
 const { ev, check, key } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
-await c.cdp('Page.navigate', { url: url + `#${SID.slice(0, 8)}` });
-await sleep(1000); await key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
-await sleep(1500);
+await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 const until = async (expr, ms = 4000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 const logText = () => fs.readFileSync(path.join(stateDir, 'backend.log'), 'utf8');

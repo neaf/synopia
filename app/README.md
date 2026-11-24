@@ -20,8 +20,10 @@ app/dev.sh --fake                 # the fake driver over the fixture tree, no mo
 ## Check it
 
 ```sh
-app/check.sh                      # backend tests, shell type check, page script syntax: one line per part
-app/web/dev/cdp/run.sh keys       # page checks over headless Chrome on the fake driver (also dnd, menu)
+app/check.sh                      # backend tests, shell type check, page script syntax: one line per part (no Chrome)
+app/check.sh --page               # the same, then every page check (run.sh all)
+app/web/dev/cdp/run.sh all        # every page check over headless Chrome on the fake driver: a table, failures under it
+app/web/dev/cdp/run.sh keys       # one page check (the list is at the top of run.sh)
 app/web/dev/compare.sh            # screenshots of the page next to the prototype
 ```
 

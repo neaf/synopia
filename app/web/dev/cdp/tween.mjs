@@ -20,8 +20,7 @@ const sample = async (change, key, ms) => { await c.cdp('Page.bringToFront');
 const reduce = (on) => c.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: on ? 'reduce' : 'no-preference' }] });
 await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
-await c.cdp('Page.navigate', { url });
-await sleep(2500);
+await c.load(url);
 
 // a group of two sessions, the first one under test
 const setup = await ev(`(() => {

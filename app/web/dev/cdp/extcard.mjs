@@ -35,10 +35,7 @@ const open = async (sid) => { await ev(`document.querySelector('.row[data-id^="$
 const row = (sid) => ev(`(() => { const r = document.querySelector('.row[data-id^="${sid.slice(0, 8)}"]'); return r && { state: r.dataset.state, word: r.querySelector('.r-state').textContent.trim() }; })()`);
 
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 2, mobile: false });
-await c.cdp('Page.navigate', { url });
-await sleep(1000); await key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
-await until(`document.querySelectorAll('#groups .row').length >= 3`);
-await sleep(500);
+await c.load(url, `document.querySelectorAll('#groups .row').length >= 3`);
 
 // 1. the question: needs you over working, aged from its tool_use
 for (const sid of [Q, P]) {

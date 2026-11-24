@@ -1,5 +1,16 @@
 #!/bin/bash
-# headless Chrome with CDP on $SYNOPIA_CHROME_PORT (default 9334), one profile per port
-cp="${SYNOPIA_CHROME_PORT:-9334}"
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port="$cp" --user-data-dir="${TMPDIR:-/tmp}/synopia-cdp-chrome-$cp" --window-size=1280,820 --no-first-run --no-default-browser-check about:blank > "${TMPDIR:-/tmp}/synopia-cdp-chrome-$cp.out" 2>&1 &
-echo $! > "${TMPDIR:-/tmp}/synopia-cdp-chrome-$cp.pid"
+# usage: chrome.sh <profile-dir>; starts headless Chrome with its own profile and a remote-debugging port
+# Chrome picks itself (port 0), waits until it answers, writes <profile-dir>/pid and prints the port.
+dir=$1; mkdir -p "$dir"; rm -f "$dir/DevToolsActivePort"
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless=new --remote-debugging-port=0 --user-data-dir="$dir" \
+  --window-size=1280,820 --no-first-run --no-default-browser-check --disable-background-timer-throttling \
+  --disable-backgrounding-occluded-windows --disable-renderer-backgrounding \
+  about:blank > "$dir/out" 2>&1 &
+echo $! > "$dir/pid"
+for _ in $(seq 150); do
+  port=$(head -1 "$dir/DevToolsActivePort" 2>/dev/null)
+  [ -n "$port" ] && curl -sf "http://127.0.0.1:$port/json/version" >/dev/null && { echo "$port"; exit 0; }
+  kill -0 "$(cat "$dir/pid")" 2>/dev/null || break
+  sleep 0.1
+done
+echo "chrome.sh: Chrome did not start (see $dir/out)" >&2; exit 1

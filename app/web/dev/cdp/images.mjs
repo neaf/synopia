@@ -60,8 +60,7 @@ const c = await connect();
 const { ev, check, key, mouse } = c;
 await c.cdp('Page.enable');
 const { identifier } = await c.cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__csp = []; document.addEventListener('securitypolicyviolation', e => __csp.push(e.violatedDirective + ' ' + e.blockedURI));` }).then((r) => r.result);
-await c.cdp('Page.navigate', { url: url + `#${SID.slice(0, 8)}` });
-await sleep(1000); await key('Shift', { vk: 16 }); // headless Chrome drops the first key after a load
+await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
 const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 const shot = async (name, clip) => fs.writeFileSync(path.join(stateDir, `images-${name}.png`), Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) })).result.data, 'base64'));
 const near = (a, b) => Math.abs(a - b) < 0.6;
