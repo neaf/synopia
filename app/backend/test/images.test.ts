@@ -51,6 +51,8 @@ test('imageSize: PNG, GIF, the three WebP headers and JPEG, from the base64 pref
   assert.equal(imageSize('image/png', b64(Buffer.from('not a png at all, really not'))), null);
   assert.equal(imageSize('image/png', 'iVBORw0KGgo='), null, 'too short');
   assert.equal(imageSize('image/svg+xml', b64(png(4, 4))), null);
+  assert.deepEqual(imageSize('image/png', b64(jpeg)), { w: 400, h: 100 }, 'a JPEG labelled PNG: by its bytes');
+  assert.deepEqual(imageSize('image/gif', b64(png(900, 300))), { w: 900, h: 300 }, 'a PNG labelled GIF');
 });
 
 test('refs: a prompt with images and a tool result with an image, no bytes kept', () => {

@@ -36,6 +36,23 @@ const base = { cwd: '/tmp/synopia-images', sessionId: SID };
 const tool = (uuid, s, id, name, input) => line({ ...base, type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
 const result = (uuid, s, id, content) => line({ ...base, type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
 
+const read = (id, f, w, h, type = 'image/png') => [id, 'Read', { file_path: `/tmp/synopia-images/${f}` }, [img(type, png(w, h))]];
+// [tool id, name, input, result]; the 900x300 one is labelled a GIF, so the backend can't read its size
+// from the header and the page learns it from the image itself
+const RUN = [
+  ['toolu_e1', 'Edit', { file_path: '/tmp/synopia-images/app.css', old_string: 'a', new_string: 'b' }, 'The file has been updated.'],
+  read('toolu_r1', 'home.png', 800, 400),
+  ['toolu_b1', 'Bash', { command: 'ls /tmp/synopia-images', description: 'List the screens' }, 'home.png'],
+  read('toolu_r2', 'settings.png', 2400, 1600),
+  read('toolu_r3', 'icon.png', 30, 24),
+  ['toolu_s1', 'mcp__browser__screenshot', {}, [{ type: 'text', text: 'Screenshot taken' }, img('image/png', png(1600, 200)), img('image/png', png(500, 500))]],
+  read('toolu_r4', 'banner.gif', 900, 300, 'image/gif'),
+  read('toolu_r5', 'phone.png', 300, 900),
+];
+// the run's images in order: w, h, the source the viewer names
+const RUN_IMGS = [[800, 400, '/tmp/synopia-images/home.png'], [2400, 1600, '/tmp/synopia-images/settings.png'], [30, 24, '/tmp/synopia-images/icon.png'],
+  [1600, 200, 'browser(screenshot)'], [500, 500, 'browser(screenshot)'], [900, 300, '/tmp/synopia-images/banner.gif'], [300, 900, '/tmp/synopia-images/phone.png']];
+
 if (process.argv[2] === 'make') {
   const dir = path.join(process.argv[3], 'projects', '-tmp-synopia-images');
   fs.mkdirSync(dir, { recursive: true });
@@ -50,7 +67,13 @@ if (process.argv[2] === 'make') {
     + result('r4', 8, 'toolu_shot', [{ type: 'text', text: 'Screenshot taken' }, img('image/png', png(640, 400)), img('image/png', png(120, 90))])
     + line({ ...base, type: 'assistant', uuid: 'a5', timestamp: ts(9), message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } })
     + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 9000, timestamp: ts(10) })
-    + line({ ...base, type: 'user', uuid: 'u2', timestamp: ts(20), message: { role: 'user', content: [img('image/svg+xml', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')), { type: 'text', text: 'And a drawing that is not served.' }] } }));
+    + line({ ...base, type: 'user', uuid: 'u2', timestamp: ts(20), message: { role: 'user', content: [img('image/svg+xml', Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')), { type: 'text', text: 'And a drawing that is not served.' }] } })
+    + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: ts(21) })
+    // a collapsed run of eight steps with seven images from five of them (R5.12b: one row for the run)
+    + line({ ...base, type: 'user', uuid: 'u3', timestamp: ts(30), message: { role: 'user', content: [{ type: 'text', text: 'Check every screen of the made-up app.' }] } })
+    + RUN.map(([id, name, input, content], k) => tool(`ra${k}`, 31 + 2 * k, id, name, input) + result(`rr${k}`, 32 + 2 * k, id, content)).join('')
+    + line({ ...base, type: 'assistant', uuid: 'a9', timestamp: ts(50), message: { role: 'assistant', content: [{ type: 'text', text: 'All seven screens look right.' }] } })
+    + line({ ...base, type: 'system', subtype: 'turn_duration', durationMs: 20000, timestamp: ts(51) }));
   process.exit(0);
 }
 
@@ -86,6 +109,24 @@ check('a 415 type is a quiet tile', await until(`!!document.querySelector('.prom
 await ev(`(() => { const s = cur(); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-missing', k: 'you', ts: '2026-11-20T10:01:00.000Z', text: 'An image whose file was rewritten', images: 1, imgs: [{ ref: 'nope:0', mediaType: 'image/png', w: 400, h: 100 }] }], total: s.total + 1 }); })()`);
 check('a 404 is the same tile, the image\'s shape', await until(`(() => { const t = document.querySelector('[data-key="you:u-missing"] .thumb.gone'); return !!t && Math.abs(t.getBoundingClientRect().width - ${4 * H + 2}) < 1; })()`));
 
+// the collapsed run: all seven images in one wrapping row under the run's line, the shapes as soon as known
+const RUN_ROW = `[...document.querySelectorAll('.ln.tool')].find(l => l.querySelector('details.fold') && l.textContent.includes('read 5 files'))`;
+const early = await ev(`(() => { const b = ${RUN_ROW}; return b ? [...b.querySelectorAll('.thumb')].map(t => t.style.getPropertyValue('--iw') + 'x' + t.style.getPropertyValue('--ih')).join() : 'no run'; })()`);
+check('the run\'s sizes come from the backend where the header says (the GIF-labelled PNG by its bytes)', /^800x400,2400x1600,30x24,1600x200,500x500,900x300,300x900$/.test(early), early);
+check('the run\'s images load', await until(`(() => { const b = ${RUN_ROW}; return !!b && [...b.querySelectorAll('.thumb img')].length === 7 && [...b.querySelectorAll('.thumb img')].every(i => i.complete && i.naturalWidth > 0); })()`, 10000));
+await sleep(100);
+const run = await ev(`(() => { const b = ${RUN_ROW}, rows = b.querySelectorAll('.thumbs'), fold = b.querySelector('details.fold');
+  return { rows: rows.length, direct: rows.length === 1 && rows[0].parentElement === b, closed: !fold.open, below: rows[0].getBoundingClientRect().top >= fold.getBoundingClientRect().bottom - 0.5,
+    imgs: [...rows[0].querySelectorAll('.thumb img')].map(i => { const r = i.getBoundingClientRect(), cs = getComputedStyle(i); return { w: +parseFloat(cs.width).toFixed(1), h: +parseFloat(cs.height).toFixed(1), top: Math.round(r.top), left: Math.round(r.left) }; }) }; })()`);
+check('a collapsed run with 7 images from 5 steps is one row, a child of the run, below its closed line', run.rows === 1 && run.direct && run.closed && run.below, JSON.stringify(run));
+const want = RUN_IMGS.map(([w, h]) => { const th = Math.min(h, H); return [Math.min(320, th * w / h), th]; });
+check('each run image is at most 3 lines high, the width from its aspect ratio, 320px at most, small ones not scaled up', run.imgs.length === 7 && run.imgs.every((s, k) => near(s.w, want[k][0]) && near(s.h, want[k][1])), JSON.stringify({ got: run.imgs, want }));
+check('the row runs side by side and wraps: the second image is on the first\'s line', run.imgs.length > 1 && run.imgs[1].top === run.imgs[0].top && run.imgs[1].left > run.imgs[0].left, JSON.stringify(run.imgs.slice(0, 2)));
+console.log(`  run row: ${run.imgs.map((s) => `${s.w}x${s.h}`).join(', ')}`);
+await ev(`${RUN_ROW}.scrollIntoView({ block: 'center' })`);
+await sleep(150);
+await shot('run-row', await ev(`(() => { const r = ${RUN_ROW}.getBoundingClientRect(); return { x: r.left - 30, y: r.top - 8, width: Math.min(1000, r.width + 38), height: r.height + 16 }; })()`));
+
 // the endpoint, from the page
 const hdr = await ev(`(async () => { const src = document.querySelector('.prompt .thumb').dataset.fullSrc; const r = await fetch(src); const n = await fetch(src.replace(/token=[^&]*/, 'token=x')); const s = await fetch(src.replace(/ref=[^&]*/, 'ref=u2%3A0')); return [r.status, r.headers.get('content-type'), r.headers.get('cache-control'), r.headers.get('x-content-type-options'), n.status, s.status].join(); })()`);
 check('the endpoint: png, private cache, nosniff; 403 without the token; 415 for svg', hdr === '200,image/png,private, max-age=3600,nosniff,403,415', hdr);
@@ -98,33 +139,94 @@ await shot('transcript', area);
 // the viewer
 const centre = (sel, i = 0) => ev(`(() => { const r = document.querySelectorAll(${JSON.stringify(sel)})[${i}].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`);
 const click = async ([x, y]) => { await mouse('mouseMoved', x, y); await mouse('mousePressed', x, y); await mouse('mouseReleased', x, y); await sleep(150); };
+const VN = `(document.querySelector('.viewer .v-n')?.textContent || '')`, VFROM = `(document.querySelector('.viewer .v-from')?.textContent || '')`;
+const VIMG = `document.querySelector('.viewer .v-stage img')`, VST = `document.querySelector('.viewer .v-stage')`;
+const loaded = () => until(`${VIMG}.complete && ${VIMG}.naturalWidth > 0`);
 const modeBefore = await ev(`document.body.dataset.mode`), sessionBefore = await ev(`current`);
+await ev(`document.getElementById('log').scrollTop = 0`); await sleep(100);
 await click(await centre('.prompt .thumbs .thumb'));
-check('a click opens the viewer on that image', await ev(`!!document.querySelector('.viewer') && document.querySelector('.viewer img').getAttribute('src') === document.querySelectorAll('.prompt .thumb')[0].dataset.fullSrc`));
-check('the viewer says 1 of 3', await ev(`document.querySelector('.viewer figcaption').textContent.startsWith('1 of 3.')`));
-await until(`document.querySelector('.viewer img').complete`);
-check('a small image shows at its real size', await ev(`(() => { const r = document.querySelector('.viewer img').getBoundingClientRect(); return Math.round(r.width) === 402 && Math.round(r.height) === 102; })()`));
-await shot('viewer');
+check('a click opens the viewer on that image', await ev(`!!document.querySelector('.viewer') && ${VIMG}.getAttribute('src') === document.querySelectorAll('.prompt .thumb')[0].dataset.fullSrc`));
+check('the viewer says 1 of 3, from your message', (await ev(VN)) === '1 of 3' && (await ev(VFROM)) === 'your message', await ev(`document.querySelector('.viewer .v-foot').textContent`));
+check('the viewer clears the title bar', await ev(`getComputedStyle(document.querySelector('.viewer')).top === getComputedStyle(document.documentElement).getPropertyValue('--titlebar').trim()`));
+await loaded();
+check('a small image shows at its real size, not scaled up, and has no 100% toggle', await ev(`(() => { const r = ${VIMG}.getBoundingClientRect(); return Math.round(r.width) === 402 && Math.round(r.height) === 102 && !document.querySelector('.viewer').classList.contains('zoomable') && !document.querySelector('.viewer .v-foot').textContent.includes('actual size'); })()`));
+await click(await centre('.viewer .v-stage img'));
+check('a click on a small image changes nothing', await ev(`!!document.querySelector('.viewer') && !document.querySelector('.viewer.full') && Math.round(${VIMG}.getBoundingClientRect().width) === 402`));
 await key('ArrowRight', { code: 'ArrowRight', vk: 39 });
 await key('ArrowRight', { code: 'ArrowRight', vk: 39 });
-await until(`document.querySelector('.viewer img').complete`);
-check('→ moves to the third', await ev(`document.querySelector('.viewer figcaption').textContent.startsWith('3 of 3.')`));
-check('a wide image is fit to the window', await ev(`(() => { const r = document.querySelector('.viewer img').getBoundingClientRect(); const i = document.querySelector('.viewer img'); return r.right <= innerWidth && r.left >= 0 && r.width > 1000 && Math.abs(i.clientWidth / i.clientHeight - 30) < 0.5; })()`));
-await shot('viewer-wide');
+await loaded();
+check('→ moves to the third', (await ev(VN)) === '3 of 3');
+check('a wide image is fit to the window', await ev(`(() => { const i = ${VIMG}, r = i.getBoundingClientRect(); return r.right <= innerWidth && r.left >= 0 && r.width > 1000 && Math.abs(i.clientWidth / i.clientHeight - 30) < 0.5; })()`));
 await key('ArrowRight', { code: 'ArrowRight', vk: 39 });
-check('→ stops at the last', await ev(`document.querySelector('.viewer figcaption').textContent.startsWith('3 of 3.')`));
+check('→ stops at the last', (await ev(VN)) === '3 of 3');
 await key('ArrowLeft', { code: 'ArrowLeft', vk: 37 });
-check('← moves back', await ev(`document.querySelector('.viewer figcaption').textContent.startsWith('2 of 3.')`));
+check('← moves back', (await ev(VN)) === '2 of 3');
 await key('J', { shift: true, vk: 74 });
 await key('i', { vk: 73 });
 check('keys stay in the viewer: no session switch, no mode change', (await ev(`current`)) === sessionBefore && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`!!document.querySelector('.viewer')`)));
 await key('Escape', { code: 'Escape', vk: 27 });
 check('Esc closes it, the mode as before', (await ev(`!document.querySelector('.viewer')`)) && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`interruptAsk === null`)));
 await click(await centre('.ln.tool > .thumbs .thumb', 2));
-check('a tool\'s viewer has its own images: 2 of 2', await ev(`document.querySelector('.viewer figcaption')?.textContent.startsWith('2 of 2.')`));
+check('a tool\'s viewer has its own images: 2 of 2', (await ev(VN)) === '2 of 2');
 await click([20, 400]);
 check('a click outside closes it', await ev(`!document.querySelector('.viewer')`));
 check('the transcript beneath did not take that click', (await ev(`current`)) === sessionBefore);
+
+// the run's set: all seven, its sources, then fit, 100% and panning on the 2400x1600 one
+await ev(`${RUN_ROW}.scrollIntoView({ block: 'center' })`); await sleep(150);
+await click(await ev(`(() => { const r = ${RUN_ROW}.querySelectorAll('.thumb')[0].getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2]; })()`));
+const seen = [];
+for (let k = 0; k < 7; k++) {
+  seen.push(`${await ev(VN)}|${await ev(VFROM)}`);
+  await key(k % 2 ? 'j' : 'ArrowRight', k % 2 ? { vk: 74 } : { code: 'ArrowRight', vk: 39 });
+}
+const wantSeen = RUN_IMGS.map(([, , from], k) => `${k + 1} of 7|${from}`);
+check('a run\'s thumbnail steps through all 7 of the run (→ and j), with the count and each source', JSON.stringify(seen) === JSON.stringify(wantSeen), JSON.stringify(seen));
+check('it stops at the 7th', (await ev(VN)) === '7 of 7');
+for (let k = 0; k < 5; k++) await key(k % 2 ? 'ArrowLeft' : 'k', k % 2 ? { code: 'ArrowLeft', vk: 37 } : { vk: 75 });
+check('← and k step back: 2 of 7', (await ev(VN)) === '2 of 7');
+await loaded();
+const fit = await ev(`(() => { const i = ${VIMG}, r = i.getBoundingClientRect(), s = ${VST}; return { w: r.width, h: r.height, l: r.left, t: r.top, r: r.right, b: r.bottom, sw: s.scrollWidth, cw: s.clientWidth, vw: innerWidth, vh: innerHeight }; })()`);
+check('the 2400x1600 opens fit to the window, aspect kept, nothing to scroll', fit.w < 2400 && fit.r <= fit.vw && fit.b <= fit.vh && Math.abs(fit.w / fit.h - 1.5) < 0.01 && fit.sw <= fit.cw, JSON.stringify(fit));
+check('the footer at fit: ← → or j k, z for actual size, Esc', await ev(`(() => { const t = document.querySelector('.viewer .v-foot .hint').textContent; return t.includes('← → or j k other images') && t.includes('z actual size') && t.includes('Esc close') && !t.includes('pan'); })()`), await ev(`document.querySelector('.viewer .v-foot .hint').textContent`));
+await shot('viewer-fit');
+// click at a point a quarter in from the left and top: that image point stays under the pointer
+const px = fit.l + fit.w / 4, py = fit.t + fit.h / 4;
+const fx = (px - fit.l - 1) / (fit.w - 2), fy = (py - fit.t - 1) / (fit.h - 2);
+await click([px, py]);
+const full = await ev(`(() => { const i = ${VIMG}, r = i.getBoundingClientRect(), s = ${VST}; return { cw: i.clientWidth, ch: i.clientHeight, x: r.left + 1 + ${fx} * i.clientWidth, y: r.top + 1 + ${fy} * i.clientHeight, sl: s.scrollLeft, st: s.scrollTop, full: document.querySelector('.viewer').classList.contains('full'), cursor: getComputedStyle(i).cursor }; })()`);
+check('a click goes to 100%: one image pixel per CSS pixel', full.full && full.cw === 2400 && full.ch === 1600, JSON.stringify(full));
+check('the clicked point stays under the pointer', Math.abs(full.x - px) < 2 && Math.abs(full.y - py) < 2, JSON.stringify({ full, px, py }));
+check('at 100% the cursor is grab and the footer says pan and fit', full.cursor === 'grab' && await ev(`(() => { const t = document.querySelector('.viewer .v-foot .hint').textContent; return t.includes('drag or ← ↑ ↓ → pan') && t.includes('z fit to window') && t.includes('j k other images') && !t.includes('or j k'); })()`));
+await shot('viewer-full');
+// drag: press, move up-left by 200, 150, let go
+const [dx0, dy0] = [640, 400];
+await mouse('mouseMoved', dx0, dy0); await mouse('mousePressed', dx0, dy0);
+for (let k = 1; k <= 5; k++) { await mouse('mouseMoved', dx0 - 40 * k, dy0 - 30 * k); await sleep(20); }
+const grabbing = await ev(`getComputedStyle(${VIMG}).cursor`);
+await mouse('mouseReleased', dx0 - 200, dy0 - 150); await sleep(150);
+const dragged = await ev(`(() => { const s = ${VST}; return { sl: s.scrollLeft, st: s.scrollTop, full: document.querySelector('.viewer.full') !== null, open: !!document.querySelector('.viewer') }; })()`);
+check('a drag pans: scrollLeft and scrollTop grow by the drag', Math.abs(dragged.sl - full.sl - 200) < 2 && Math.abs(dragged.st - full.st - 150) < 2, JSON.stringify({ before: full, after: dragged }));
+check('the cursor is grabbing while dragging, and the drag is no click', grabbing === 'grabbing' && dragged.full && dragged.open, JSON.stringify({ grabbing, dragged }));
+await c.cdp('Input.dispatchMouseEvent', { type: 'mouseWheel', x: 640, y: 400, deltaX: 0, deltaY: 120 }); await sleep(200);
+check('the wheel scrolls it', (await ev(`${VST}.scrollTop`)) > dragged.st);
+const before = await ev(`${VST}.scrollLeft`);
+await key('ArrowRight', { code: 'ArrowRight', vk: 39 });
+check('at 100%, → pans instead of changing image', (await ev(`${VST}.scrollLeft`)) > before && (await ev(VN)) === '2 of 7');
+await key('z', { vk: 90 });
+check('z goes back to fit', await ev(`(() => { const r = ${VIMG}.getBoundingClientRect(); return !document.querySelector('.viewer.full') && Math.abs(r.width - ${fit.w}) < 1 && ${VST}.scrollLeft === 0; })()`));
+await key('0', { vk: 48, code: 'Digit0' });
+check('0 goes to 100% too', await ev(`!!document.querySelector('.viewer.full') && ${VIMG}.clientWidth === 2400`));
+await key('j', { vk: 74 });
+check('j at 100% changes image, which opens at fit', (await ev(VN)) === '3 of 7' && await ev(`!document.querySelector('.viewer.full')`));
+await loaded();
+check('the 30x24 one is not scaled up', await ev(`(() => { const r = ${VIMG}.getBoundingClientRect(); return Math.round(r.width) === 32 && Math.round(r.height) === 26; })()`));
+await key('Escape', { code: 'Escape', vk: 27 });
+check('Esc closes the run\'s viewer', await ev(`!document.querySelector('.viewer')`));
+
+// a size the item doesn't carry: the thumbnail takes the image's shape from the image itself
+await ev(`(() => { const s = cur(); onMessage({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'u-unsized', k: 'you', ts: '2026-11-20T10:02:00.000Z', text: 'An image the backend gave no size for', images: 1, imgs: [{ ref: 'rr1:0.0', mediaType: 'image/png' }] }], total: s.total + 1 }); })()`);
+check('an image with no size in the item gets its shape, not a square', await until(`(() => { const i = document.querySelector('[data-key="you:u-unsized"] .thumb.sized img'); if (!i) return false; const cs = getComputedStyle(i); return Math.abs(parseFloat(cs.width) - ${2 * H}) < 0.6 && Math.abs(parseFloat(cs.height) - ${H}) < 0.6; })()`));
 
 // the composer: paste two images, remove one with its ✕, send
 await ev(`document.getElementById('msg').focus()`);

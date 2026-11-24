@@ -75,7 +75,7 @@ function uiAfterRender() {
     send({ t: "preview", path: u.preview.path });
   }
   if (u.viewer && Array.isArray(u.viewer.srcs) && u.viewer.srcs.length)
-    showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0);
+    showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0, Array.isArray(u.viewer.froms) ? u.viewer.froms.map(String) : []);
 }
 /* preview.js, once the asked file is shown: its find query, then its scroll */
 function uiPreviewRestored(r) {
@@ -201,7 +201,7 @@ function uiTop() {
     current, view: view || null, mode, openBg: openBg || null,
     openList: openListShown() ? { filter: openList.filter } : null,
     preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
-    viewer: viewer ? (srcs => srcs.length ? { srcs, i: Math.max(0, srcs.indexOf(viewer.srcs[viewer.i])) } : null)(viewer.srcs.filter(s => s.startsWith("/api/image?")).map(s => s.replace(/([?&])token=[^&]*&?/, "$1"))) : null,
+    viewer: viewer ? (keep => keep.length ? { srcs: keep.map(k => viewer.srcs[k].replace(/([?&])token=[^&]*&?/, "$1")), froms: keep.map(k => viewer.froms[k] || ""), i: Math.max(0, keep.indexOf(viewer.i)) } : null)(viewer.srcs.map((s, k) => k).filter(k => viewer.srcs[k].startsWith("/api/image?"))) : null,
   };
 }
 /* one session's fields; `fresh` collects the pasted images to send with their bytes */

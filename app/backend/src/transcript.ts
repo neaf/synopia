@@ -225,8 +225,18 @@ const JPEG_SCAN = 64 * 1024; // how far into a JPEG to look for its size (EXIF c
 const sized = (w: number, h: number) => (w > 0 && h > 0 ? { w, h } : null);
 
 // Width and height from the first bytes of a PNG, GIF, WebP or JPEG, given as base64; null when the
-// header doesn't say within the first bytes. Decodes a prefix only, never the whole image.
+// header doesn't say within the first bytes. Decodes a prefix only, never the whole image. The declared
+// type goes first, then the other served types: a record can label a JPEG a PNG, and the browser goes
+// by the bytes, so this still gives the thumbnail its shape before it loads.
 export function imageSize(mediaType: string, b64: string): { w: number; h: number } | null {
+  if (!IMAGE_TYPES.includes(mediaType)) return null;
+  for (const t of [mediaType, ...IMAGE_TYPES.filter((x) => x !== mediaType)]) {
+    const size = sizeAs(t, b64);
+    if (size) return size;
+  }
+  return null;
+}
+function sizeAs(mediaType: string, b64: string): { w: number; h: number } | null {
   const head = (n: number) => Buffer.from(b64.slice(0, Math.ceil(n / 3) * 4), 'base64');
   try {
     if (mediaType === 'image/png') {
