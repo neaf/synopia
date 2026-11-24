@@ -56,14 +56,14 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
 test('session: idle, running, ending at the idle end, idle at the exit, then running again', async () => {
   const t = setup({ idleMs: 30 });
   assert.equal(t.s().phase, 'idle');
-  t.sessions.send(SID, 'one');
+  t.sessions.get(SID)!.send('one');
   assert.equal(t.s().phase, 'running');
   emit(t.q.calls[0], RESULT);
   await tick(60);
   assert.equal(t.q.calls[0].out.ended, true, 'the idle end closed its input');
   await tick();
   assert.equal(t.s().phase, 'idle');
-  t.sessions.send(SID, 'two');
+  t.sessions.get(SID)!.send('two');
   assert.equal(t.s().phase, 'running');
   assert.equal(t.q.calls.length, 2);
   assert.equal(t.q.calls[1].options.resume, SID);
@@ -72,8 +72,8 @@ test('session: idle, running, ending at the idle end, idle at the exit, then run
 
 test('session: the start check runs first; messages wait in starting, then go in order (FR-SES-11)', async () => {
   const t = setup({ confirm: true });
-  assert.equal(t.sessions.send(SID, 'one').ok, true);
-  assert.equal(t.sessions.send(SID, 'two').ok, true);
+  assert.equal(t.sessions.get(SID)!.send('one').ok, true);
+  assert.equal(t.sessions.get(SID)!.send('two').ok, true);
   assert.equal(t.s().phase, 'starting');
   assert.equal(t.q.calls.length, 0, 'no process before the check answers');
   t.checks[0](null);
@@ -88,7 +88,7 @@ test('session: the start check runs first; messages wait in starting, then go in
 test('session: a terminal the start check finds keeps the messages in the box, read-only, with a toast', async () => {
   const t = setup({ confirm: true });
   t.take('restore');
-  t.sessions.send(SID, 'hello');
+  t.sessions.get(SID)!.send('hello');
   t.checks[0](term(4321));
   await tick();
   assert.equal(t.q.calls.length, 0, 'one writer: no process');
@@ -100,7 +100,7 @@ test('session: a terminal the start check finds keeps the messages in the box, r
 
 test('session: a close while the start check runs starts nothing', async () => {
   const t = setup({ confirm: true });
-  t.sessions.send(SID, 'hello');
+  t.sessions.get(SID)!.send('hello');
   t.sessions.close(SID);
   t.checks[0](null);
   await tick();
@@ -109,12 +109,12 @@ test('session: a close while the start check runs starts nothing', async () => {
 
 test('session: after quit a process exit runs nothing: no toast, no next process (sessions-sdk#B10)', async () => {
   const t = setup({ idleMs: 30 });
-  t.sessions.send(SID, 'one');
+  t.sessions.get(SID)!.send('one');
   t.q.calls[0].exitDelay = 50; // the process takes a while to go after its input closes
   emit(t.q.calls[0], RESULT);
   await tick(45);
   assert.equal(t.s().phase, 'ending');
-  t.sessions.send(SID, 'for the next process');
+  t.sessions.get(SID)!.send('for the next process');
   t.take('toast');
   t.sessions.stop();
   await tick(80);
@@ -125,7 +125,7 @@ test('session: after quit a process exit runs nothing: no toast, no next process
 
 test('session: an id swap onto another open session is refused, logged and toasted (sessions-sdk#B6)', async () => {
   const t = setup({ open: [SID, OTHER] });
-  t.sessions.send(SID, 'hello');
+  t.sessions.get(SID)!.send('hello');
   emit(t.q.calls[0], { type: 'conversation_reset', new_conversation_id: OTHER });
   await tick();
   assert.ok(t.logs.includes('sessions.swapRefused'));
@@ -142,7 +142,7 @@ test('session: images over 20 MB together are refused with a reason, below the 3
   assert.equal(imageError(five.slice(0, 4)), null, '18 MB is fine');
   assert.match(String(imageError(five)), /23 MB together, over 20 MB/);
   const t = setup();
-  const r = t.sessions.send(SID, 'look', five);
+  const r = t.sessions.get(SID)!.send('look', five);
   assert.equal(r.ok, false);
   assert.equal(t.q.calls.length, 0);
 });
@@ -158,7 +158,7 @@ test('model: one resolver for the header and the process', () => {
 test('close: the session rules go, so a reopened session asks again (sessions-sdk#B1, Q6)', async () => {
   const t = setup();
   t.store.state.rules[SID] = ['Read(//tmp/**)'];
-  t.sessions.send(SID, 'hello');
+  t.sessions.get(SID)!.send('hello');
   assert.deepEqual(t.q.calls[0].options.allowedTools, ['Read(//tmp/**)'], 'for this session');
   t.sessions.close(SID);
   assert.equal(SID in t.store.state.rules, false);

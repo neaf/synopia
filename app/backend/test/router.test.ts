@@ -1,12 +1,16 @@
-// The page's frames through a real daemon's socket (main.ts onMessage), on the fixture tree under the scripted SDK:
-// what each one changes, as the next hello or a reply shows it, and the log line of one it ignores.
-// A characterization of the dispatch as it is.
+// The page's frames through a real daemon's socket (router.ts), on the fixture tree under the scripted SDK:
+// what each one changes, as the next hello or a reply shows it, the ack of an action, and the log line of
+// one it ignores. Then the router alone, on stand-ins: a handler that throws, and a stop with an action
+// still running.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { startDaemon, connectPage, waitFor, scripted, tmp, api } from './daemon-harness.ts';
 import type { Daemon } from './daemon-harness.ts';
+import { Router, FAILED, STOPPING, UNREADABLE } from '../src/router.ts';
+import type { RouterOptions } from '../src/router.ts';
+import type { Client } from '../src/server.ts';
 
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S3 = '33333333-0000-4000-8000-000000000003';
 const S4 = '44444444-0000-4000-8000-000000000004', S5 = '55555555-0000-4000-8000-000000000005';
@@ -94,13 +98,19 @@ test('preview: a text file comes back as a preview frame; a missing one is a toa
   const at = p.frames.length;
   p.send({ t: 'preview', path: join(tmp('router'), 'gone.txt') });
   assert.match(String((await p.next('toast', () => true, 5000, at)).text), /no longer exists/);
+  // not text: opened as `open` would, and the page hears so (seams#B8)
+  const pdf = join(tmp('router'), 'report.pdf');
+  writeFileSync(pdf, '%PDF-1.4\n');
+  p.send({ t: 'preview', path: pdf });
+  assert.deepEqual(await p.next('preview', (m) => m.path === pdf), { t: 'preview', path: pdf, opened: true });
+  await logged(/ preview\.open/);
   await p.close();
 });
 
 test('a frame of an unknown type is logged and ignored; one without a type is a bad frame', async () => {
   const p = await connectPage(d.info);
   p.send({ t: 'bogus', x: 1 });
-  await logged(/ ws\.ignored t=bogus/);
+  await logged(/ router\.unknown t=bogus/);
   p.send({ x: 1 });
   p.ws.send('not json');
   await waitFor(() => (d.log().match(/ ws\.badFrame/g) || []).length >= 2, 5000, 'two ws.badFrame lines');
@@ -108,4 +118,69 @@ test('a frame of an unknown type is logged and ignored; one without a type is a 
   p.send({ t: 'view', sid: S1, agent: null });
   assert.equal((await p.next('items')).sid, S1);
   await p.close();
+});
+
+test('actions: one ack each, to the page that sent it, with the error when not done; none without an id', async () => {
+  const p = await connectPage(d.info), q = await connectPage(d.info);
+  p.send({ t: 'close', id: 'c1', sid: 'not-a-session' });
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'c1'), { t: 'ack', id: 'c1', ok: false, error: "That session isn't open any more." });
+  p.send({ t: 'reviewed', id: 'r1', agentId: 'no-such-agent' });
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'r1'), { t: 'ack', id: 'r1', ok: true });
+  p.send({ t: 'answer', id: 'a1', sid: S2 }); // no requestId
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'a1'), { t: 'ack', id: 'a1', ok: false, error: UNREADABLE });
+  await logged(/ router\.invalid t=answer problem="?answer\.requestId missing/);
+  p.send({ t: 'setModel', id: 'm1', sid: S1, model: 'default' }); // async: acked once done
+  assert.equal((await p.next('ack', (m) => m.id === 'm1')).ok, true);
+  const at = p.frames.length;
+  p.send({ t: 'close', sid: 'not-a-session' }); // no id: no ack
+  p.send({ t: 'reviewed', id: 'r2', agentId: 'no-such-agent' });
+  await p.next('ack', (m) => m.id === 'r2', 5000, at);
+  assert.deepEqual(p.frames.slice(at).filter((m) => m.t === 'ack').map((m) => m.id), ['r2']);
+  assert.equal(q.frames.some((m) => m.t === 'ack'), false, 'only the page that acted');
+  await p.close(); await q.close();
+});
+
+// ---------- the router alone ----------
+
+type Sent = { to: Client; msg: Record<string, unknown> };
+function standIn(session: Record<string, unknown>) {
+  const sent: Sent[] = [], lines: string[] = [];
+  const opts = {
+    sessions: { resolve: (id: string) => id, get: (id: string) => (id === 'S' ? session : undefined) },
+    publisher: { reply: (to: Client, msg: Record<string, unknown>) => sent.push({ to, msg }), toast: () => {} },
+    log: (event: string, fields?: object) => lines.push(`${event} ${JSON.stringify(fields ?? {})}`),
+  } as unknown as RouterOptions;
+  const page = { send: () => {}, close: () => {}, buffered: () => 0 } as Client;
+  return { router: new Router(opts), sent, lines, page, acks: () => sent.map((s) => s.msg) };
+}
+
+test('router: a handler that throws acks ok:false and is logged; the next frame is served (NFR-07)', () => {
+  const r = standIn({ send: () => { throw new TypeError('boom'); }, cancelTakeover: () => ({ ok: true, sid: 'S' }) });
+  r.router.handle(r.page, { t: 'send', id: 'x1', sid: 'S', text: 'hi' });
+  r.router.handle(r.page, { t: 'cancelTakeover', id: 'x2', sid: 'S' });
+  assert.deepEqual(r.acks(), [{ t: 'ack', id: 'x1', ok: false, error: FAILED }, { t: 'ack', id: 'x2', ok: true }]);
+  assert.match(r.lines[0], /^router\.failed .*"t":"send".*"error":"TypeError"/);
+});
+
+test('router: an async action that rejects acks ok:false; one without an id is only logged', async () => {
+  const r = standIn({ background: () => Promise.reject(new RangeError('no')) });
+  r.router.handle(r.page, { t: 'background', id: 'b1', sid: 'S' });
+  r.router.handle(r.page, { t: 'background', sid: 'S' });
+  await new Promise((ok) => setTimeout(ok, 10));
+  assert.deepEqual(r.acks(), [{ t: 'ack', id: 'b1', ok: false, error: FAILED }]);
+  assert.equal(r.lines.filter((l) => l.startsWith('router.failed')).length, 2);
+});
+
+test('router: stop acks an action still running at once, and refuses every later one (seams#B5)', async () => {
+  let finish: (v: unknown) => void = () => {};
+  const r = standIn({ setModel: () => new Promise((ok) => { finish = ok; }) });
+  r.router.handle(r.page, { t: 'setModel', id: 'm1', sid: 'S', model: 'x' });
+  assert.deepEqual(r.acks(), []);
+  r.router.stop();
+  assert.deepEqual(r.acks(), [{ t: 'ack', id: 'm1', ok: false, error: STOPPING }]);
+  finish({ ok: true, sid: 'S' });
+  await new Promise((ok) => setTimeout(ok, 10));
+  r.router.handle(r.page, { t: 'close', id: 'c1', sid: 'S' });
+  r.router.handle(r.page, { t: 'view', sid: 'S' });
+  assert.deepEqual(r.acks(), [{ t: 'ack', id: 'm1', ok: false, error: STOPPING }, { t: 'ack', id: 'c1', ok: false, error: STOPPING }], 'acked once, and the later one refused');
 });

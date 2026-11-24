@@ -513,7 +513,7 @@ conv.addEventListener("click", e => {
     selectView(t.dataset.agent); renderConv();
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; selectView(null); renderConv(); } // leaving a subagent folds its card
-  else if (t.dataset.reviewed) { e.stopPropagation(); send({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
+  else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") openModelPicker();

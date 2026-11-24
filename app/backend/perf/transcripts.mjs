@@ -117,7 +117,7 @@ for (let i = 0; i < top.length; i++) {
   }
   const reachable = rec.sessions.some((x) => x.id === id);
   t0 = performance.now();
-  send({ t: 'openSession', id });
+  send({ t: 'openSession', sid: id });
   try { await wait((m) => m.t === 'session' && m.id === id, 30000); } catch { console.log(`${i + 1}\tnot opened (reachable=${reachable})`); continue; }
   }
   lastAt.delete(k);

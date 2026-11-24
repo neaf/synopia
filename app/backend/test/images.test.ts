@@ -145,7 +145,7 @@ fs.writeFileSync(path.join(base, 'index.html'), '<p>index</p>');
 const s = session();
 const transcripts = new Transcripts({ claudeDir: s.dir, home: '/Users/fixture', pollMs: 0, watch: false });
 transcripts.open(SID);
-const server = await startServer({ port: 0, token: TOKEN, webRoot: base, hello: () => ({}), quitCheck: () => ({ running: [], background: [] }), image: (sid, agent, ref) => transcripts.image(sid, agent, ref) });
+const server = await startServer({ port: 0, token: TOKEN, webRoot: base, quitCheck: () => ({ running: [], background: [] }), image: (sid, agent, ref) => transcripts.image(sid, agent, ref) });
 after(() => { transcripts.stop(); return server.close(); });
 
 type Res = { status: number; headers: Record<string, unknown>; body: Buffer };

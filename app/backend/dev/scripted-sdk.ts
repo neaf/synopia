@@ -355,8 +355,9 @@ function writer(env: Scripted): QueryLike {
 
 // ---------- the whole ----------
 
-// What the scripted sessions need from Sessions (main.ts passes it once Sessions has started).
-export type ScriptTarget = { startIdle(sid: string): boolean; send(sid: string, text: string): unknown };
+// What the scripted sessions need from Sessions (main.ts passes it once Sessions has started): an
+// open session by id, to start its process or to send it a message.
+export type ScriptTarget = { get(sid: string): { startIdle(): boolean; send(text: string): unknown } | undefined };
 
 export class Scripted {
   readonly script: Script;
@@ -414,7 +415,7 @@ export class Scripted {
   attach(target: ScriptTarget): void {
     this.target = target;
     let n = 0;
-    for (const [sid, s] of Object.entries(this.script.sessions)) if (s.start && target.startIdle(sid)) n++;
+    for (const [sid, s] of Object.entries(this.script.sessions)) if (s.start && target.get(sid)?.startIdle()) n++;
     this.log('scripted.start', { sessions: Object.keys(this.script.sessions).length, started: n });
   }
 
@@ -444,7 +445,7 @@ export class Scripted {
   }
 
   send(sid: string, text: string): void {
-    this.target?.send(sid, text);
+    this.target?.get(sid)?.send(text);
   }
 
   // The session's transcript: the fixture's, or a new one in the CLI's folder for its cwd.

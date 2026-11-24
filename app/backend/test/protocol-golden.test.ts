@@ -1,6 +1,7 @@
 // The server's frames on the fixture tree, through a real daemon's socket, equal the recorded ones in
-// test/golden/: hello, items (a session and a subagent), session, pending (a request and a clear) and
-// agents. A characterization of the protocol as it is: a change to a frame shows here first.
+// test/golden/: hello, items (a session and a subagent), session, pending (a request and a clear),
+// agents, and the menu a hello carries once a folder's menu is read. Every frame the page got fits the
+// shared schema (app/web/js/protocol.js), with no field it doesn't name.
 // SYNOPIA_GOLDEN=update rewrites the files (then read the diff).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,16 +9,18 @@ import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path';
 import { startDaemon, connectPage, fixtureCopy, scripted } from './daemon-harness.ts';
 import type { Msg } from './daemon-harness.ts';
+import { SERVER, VERSION, problem } from '../../web/js/protocol.js';
 
 const GOLDEN = new URL('./golden/', import.meta.url).pathname;
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S4 = '44444444-0000-4000-8000-000000000004';
 const AGENT = 'aaaa0001', LATE = 'aaaa0005';
 
-// Clock-relative values (a status's or a request's start, set by the script's `ago` or the run's clock) and the temp
-// folder are the only parts that differ between runs.
+// Clock-relative values (a status's or a request's start, set by the script's `ago` or the run's clock), the temp
+// folder and the daemon's code hash are the only parts that differ between runs.
 function normal(m: Msg, claudeDir: string): unknown {
   const walk = (v: unknown, key: string): unknown => {
     if (typeof v === 'number' && (key === 'statusAt' || key === 'since')) return '<time>';
+    if (typeof v === 'string' && key === 'code') return '<code>';
     if (typeof v === 'string') return v.split(claudeDir).join('<claude>');
     if (Array.isArray(v)) return v.map((x) => walk(x, ''));
     if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
@@ -72,4 +75,18 @@ test('protocol: the fixture tree\'s frames equal the goldens', async (t) => {
     message: { role: 'assistant', content: [{ type: 'text', text: 'Done now.' }] },
   }) + '\n');
   golden('agents', n(await p.next('agents', (m) => m.sid === S4, 10_000, at)));
+
+  // the menu of S1's folder, from its process: the next page's hello carries it (models, effort, commands)
+  at = p.frames.length;
+  p.send({ t: 'view', sid: S1, agent: null });
+  const menu = await p.next('menu', () => true, 10_000, at);
+  const q = await connectPage(d.info);
+  t.after(() => q.close());
+  const cached = (q.hello.menu as Record<string, unknown>)[menu.cwd as string];
+  assert.deepEqual(cached, { commands: menu.commands, models: menu.models });
+  golden('hello-menu', n(q.hello.menu as Msg));
+
+  assert.equal(p.hello.v, VERSION);
+  for (const m of [...p.frames, q.hello]) assert.equal(problem(SERVER, m, true), null, JSON.stringify(m).slice(0, 300));
+  for (const s of p.hello.sessions as object[]) assert.equal(problem(SERVER, { t: 'session', ...s }, true), null, 'a hello session is a session frame');
 });

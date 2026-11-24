@@ -598,7 +598,7 @@ test('toolOutput: the full result read again from its line, also after the file 
   assert.equal(item.input, 'seq 30');
   assert.deepEqual(item.out, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true });
   assert.equal(publisher.toolOutput(c, id, null, 'toolu_o'), true);
-  assert.deepEqual(c.take(), [{ t: 'toolOutput', sid: id, agent: null, toolUseId: 'toolu_o', text: out, truncated: false }]);
+  assert.deepEqual(c.take(), [{ t: 'toolOutput', sid: id, agent: null, toolUseId: 'toolu_o', text: out }]);
   fs.appendFileSync(file, you(4) + you(5));
   transcripts.poll();
   c.take();
@@ -678,15 +678,15 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root });
   const tick = () => new Promise((r) => setTimeout(r, 5));
   const ph = sessions.newSession();
-  sessions.send(ph, 'count slowly', [], '0e9b7f1c-0000-4000-8000-0000000000a1', a);
+  sessions.get(ph)!.send('count slowly', [], '0e9b7f1c-0000-4000-8000-0000000000a1', a);
   await tick();
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: REAL, uuid: 'u-init', capabilities: ['interrupt_cancel_queued_v1'] });
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'running', uuid: 'u-s', session_id: REAL });
   await tick();
   const outbox = () => (publisher.meta(REAL)?.outbox ?? []).map((m) => `${m.text}${m.landed ? `@${m.landed}` : ''}${m.queued ? '' : ' (not queued)'}`);
-  sessions.send(REAL, 'First, **then**', [], U1, a);
-  sessions.send(REAL, 'Second', [], U2, a);
-  sessions.send(REAL, 'Second', [], U2, a);
+  sessions.get(REAL)!.send('First, **then**', [], U1, a);
+  sessions.get(REAL)!.send('Second', [], U2, a);
+  sessions.get(REAL)!.send('Second', [], U2, a);
   assert.deepEqual(outbox().filter((m) => !m.endsWith('(not queued)')), ['First, **then**', 'Second'], 'shown at once, queued while the turn runs, one per uuid');
   publisher.view(a, REAL, null);
   a.take();
@@ -704,7 +704,7 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   a.take();
   b.take();
   q.calls[0].reply = { still_queued: [], cancelled: [U2] };
-  await sessions.interrupt(REAL, a);
+  await sessions.get(REAL)!.interrupt(a);
   assert.ok(!outbox().includes('Second'), 'the cancelled message leaves the outbox');
   assert.deepEqual([a.take('restore').map((m) => m.texts), b.take('restore').length], [[['Second']], 0], 'back in the box of the page that interrupted');
   sessions.stop();

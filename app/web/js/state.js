@@ -4,7 +4,7 @@
    light, tone, word, mark, stopped, needsYou, review, driven. The page decides no status itself.
    This module is the only writer of `current` (the session shown) and `view` (the subagent shown in it,
    null for the main conversation): everything else calls select() or selectView(). */
-export const store = { sessions: new Map(), layout: null, menu: {}, settings: {}, pending: new Map(), ui: { connected: false } };
+export const store = { sessions: new Map(), layout: null, menu: {}, pending: new Map(), ui: { connected: false } };
 /* every session in the server's order, the same objects as in store.sessions */
 export let data = [];
 export let current = null;
@@ -54,7 +54,7 @@ export function applyHello(m) {
   store.sessions = new Map(m.sessions.map(s => [s.id, { ...blankSession(s.id), ...s }]));
   for (const s of store.sessions.values()) s.agents.forEach(a => { a.items ||= []; });
   store.layout = m.layout && (m.layout.groups.length || m.layout.others.length) ? m.layout : null;
-  store.menu = m.menu || {}; store.settings = m.settings || {};
+  store.menu = m.menu || {};
   store.pending = new Map();
   for (const p of m.pending || []) applyPending({ sid: p.sid, request: p.request });
   syncData();

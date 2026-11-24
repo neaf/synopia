@@ -4,7 +4,7 @@
 import { publish, classic as C } from "./legacy.js";
 import * as state from "./state.js";
 import { store, isCurrent, isViewed } from "./state.js";
-import { connect, send, hooks, TOKEN } from "./connection.js";
+import { connect, send, act, sync, takeUnsent, hooks, TOKEN } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { installTestApi } from "./test-api.js";
 
@@ -23,6 +23,9 @@ function render(...parts) {
 function onMessage(m) {
   switch (m.t) {
     case "hello": {
+      /* a layout change the socket was down for: kept over the stored one, and sent now (requirements Q9) */
+      const mine = takeUnsent("layout");
+      if (mine) { m = { ...m, layout: mine.layout }; sync("layout", mine); }
       state.applyHello(m); ui.applyHello(m.ui); C.layout = null; state.pickCurrent(); // the stored ui state first: no default view flashes
       showUpdate(m.update);
       /* a reconnect onto the view on screen: it keeps its log until its reset comes, so the log never blanks
@@ -127,7 +130,7 @@ publish({
   store: () => state.store, data: () => state.data, current: () => state.current, view: () => state.view,
   cur: () => state.cur, requestsOf: () => state.requestsOf, isViewed: () => state.isViewed,
   select: () => state.select, selectView: () => state.selectView,
-  send: () => send, TOKEN: () => TOKEN, render: () => render,
+  send: () => send, act: () => act, sync: () => sync, TOKEN: () => TOKEN, render: () => render,
   requestView: () => ui.requestView, uiChanged: () => ui.changed, uiFlush: () => ui.flush,
   uiPreviewRestored: () => ui.previewRestored, uiTakeTyping: () => ui.takeTyping, uiLeave: () => ui.leave,
   uiEnterComposer: () => ui.enterComposer, uiHeld: () => ui.held, uiExpectReset: () => ui.expectReset,
@@ -149,4 +152,5 @@ connect({
   open: () => state.setConnected(true),
   close: () => state.setConnected(false),
   refused: () => C.toast("The page's token was refused. Open Synopia again."),
+  toast: text => C.toast(text),
 });

@@ -18,6 +18,7 @@ import { displayPath } from './paths.ts';
 import { resolveModel } from './session.ts';
 import type { ModelChoice, QueuedMessage, ShownBang } from './session.ts';
 import type { PendingRequest } from './cards.ts';
+import { VERSION } from '../../web/js/protocol.js';
 
 export { WINDOW } from './transcripts.ts';
 export const RECHECK_MS = 60_000;
@@ -56,6 +57,9 @@ export type PublisherOptions = {
   // A background shell, monitor or subagent of the session stopped running.
   onWorkEnded?: (sid: string) => void;
 };
+
+// What `hello` carries besides the sessions and their cards (main.ts gathers it).
+export type Hello = { code: string; layout: unknown; menu: unknown; ui: unknown; update: boolean };
 
 type Sub = { sid: string; agent: string | null; from: number };
 type Pub = {
@@ -108,9 +112,15 @@ export class Publisher {
     for (const c of this.opts.clients()) c.send(msg);
   }
 
-  // A reply to the page that asked (`recent`, `preview`, `menu`, ...).
+  // A reply to the page that asked (`recent`, `preview`, `menu`, an action's `ack`, ...).
   reply(client: Client, msg: object): void {
     client.send(msg);
+  }
+
+  // The first frame a page gets once its token is taken (server.ts): everything it shows, with the
+  // protocol version (a page of another version reloads) and the daemon's code hash.
+  hello(client: Client, rest: Hello): void {
+    client.send({ t: 'hello', v: VERSION, code: rest.code, sessions: this.sessions(), pending: this.pending(), layout: rest.layout, menu: rest.menu, ui: rest.ui, update: rest.update });
   }
 
   // A toast to the page that acted, or to every page when none did or it is gone (backend-core#B8).
@@ -255,7 +265,7 @@ export class Publisher {
       client.send({ t: 'toast', text: "Synopia couldn't read that result again: the transcript file is gone or was rewritten." });
       return false;
     }
-    client.send({ t: 'toolOutput', sid, agent: agent || null, toolUseId, text, truncated: false });
+    client.send({ t: 'toolOutput', sid, agent: agent || null, toolUseId, text });
     return true;
   }
 

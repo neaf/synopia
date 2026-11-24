@@ -136,10 +136,15 @@ function cardAnswer(st, a) {
   if (a.kind === "plan") return pick === "Approve" ? { choice: "approve" } : { choice: "changes", text: after("Changes") };
   return { questions: a.qs.map((q, qi) => ({ picks: st.picks[qi] || [], own: (st.own[qi] || "").trim(), note: (st.notes || {})[qi] || "" })) };
 }
+/* the picks stay until the backend acks the answer: refused while disconnected, or not taken, the card
+   keeps them for another Enter (requirements Q9) */
 function answerAsk(s, a) {
-  const st = qs(s, a);
-  send({ t: "answer", sid: s.id, requestId: a.id, answer: cardAnswer(st, a) });
-  delete qstate[askKey(s, a)];
+  const st = qs(s, a), key = askKey(s, a);
+  const sent = act({ t: "answer", sid: s.id, requestId: a.id, answer: cardAnswer(st, a) }, {
+    done: ok => { if (ok && qstate[key] === st) delete qstate[key]; },
+    refused: "Not connected to the Synopia backend, so the answer wasn't sent. Your picks are kept.",
+  });
+  if (!sent) return;
   mode = "normal"; paintMode();
 }
 /* normal-mode keys while a question waits; returns true when handled */

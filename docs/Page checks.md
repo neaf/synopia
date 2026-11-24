@@ -126,7 +126,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `spy()` | starts recording, dropping what an earlier `spy()` recorded |
 | `sent(...types)` | frames the page sent since `spy()`, of those types (all with none) |
 | `received(...types)` | frames from the server since `spy()`, before the page applied them |
-| `inject(msg)` | hands `msg` to the page's message handler, as if the server sent it |
+| `inject(msg)` | hands `msg` to the page's message handler, as if the server sent it, past the schema check and the version check of `connection.js` |
 | `anchor()` | the log's scroll anchor: `{id, off}` (an item block's key and the pixels into it) or `{bottom: true}` |
 | `from(sid, agent)` | the oldest item id that view had loaded (sent with `view`), or null |
 | `attachments()` | the message box's pasted images: `{id, n, mediaType, url, data}`, `data` null until read |
@@ -141,11 +141,11 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `redraw()` | re-renders the transcript with every block replaced |
 | `resetTweens()` | the sidebar forgets its sub-line tweens, so the next render is a fresh one |
 
-- Nothing is recorded until `spy()`; in use the API costs a null check per frame. While spying, `connection.js` hands each frame to `tap.sent` in `send` and to `tap.got` before the message handler.
+- Nothing is recorded until `spy()`; in use the API costs a null check per frame. While spying, `connection.js` hands each frame to `tap.sent` in `send` and to `tap.got` before the schema check, so `received("ack")` holds the acks. An action is recorded with its `id` (`connection.js` `act`); one refused while the socket is down is not sent, so not recorded.
 - No suite reads a page global. State goes in by `inject` (a server message) or `serverSend` (stored before a load), actions by the DOM: a click, a key, a `pagehide` event (`ui-state.js` flushes the UI state on it).
 - Switch views the way a user does: click `#conv [data-agent="<id>"]` for a subagent, `#conv [data-back]` for the main conversation, a `#groups .row` for a session.
 - Open things as a user does: `#open` for the Open list, `#theme` for the theme (Alt-click follows the system), a clicked `a[data-path]` for the file preview and a clicked `.thumb[data-full-src]` for the image viewer. Both are document-level click handlers (`transcript.js`, `images.js`), so a link or thumbnail the check adds works too.
-- The protocol has no message that drops a background entry or a subagent. `tween` and `motion` inject a `session` message with the shorter list; `applySession` copies every field it gets (`state.js`).
+- The protocol has no message that drops a background entry or a subagent. `tween` and `motion` inject a `session` message with the shorter list: `inject` skips the schema check, and `applySession` copies every field it gets (`state.js`).
 
 ## Backend tests
 

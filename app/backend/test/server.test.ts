@@ -4,10 +4,11 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { request } from 'node:http';
+import { connect as tcp } from 'node:net';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
 import { startServer, MAX_PAYLOAD } from '../src/server.ts';
-import type { Server } from '../src/server.ts';
+import type { Client, Server } from '../src/server.ts';
 
 const TOKEN = 'a'.repeat(64);
 const base = mkdtempSync(join(tmpdir(), 'synopia-server-'));
@@ -21,13 +22,19 @@ writeFileSync(join(webRoot, 'fonts', 'a.ttf'), 'true');
 writeFileSync(join(base, 'secret.txt'), 'SECRET');
 
 let server: Server;
+const lines: string[] = [];
+const SOFT = 64 * 1024, HARD = 1024 * 1024;
 before(async () => {
   server = await startServer({
     port: 0,
     token: TOKEN,
     webRoot,
-    hello: () => ({ sessions: [], layout: { groups: [], others: [] }, reviewed: ['r1'], menu: {}, settings: { writerModel: 'haiku' }, pending: [] }),
+    onAuthed: (c) => c.send({ t: 'hello', sessions: [] }),
     quitCheck: () => ({ running: [], background: [] }),
+    onMessage: (c, m) => { if (m.t === 'throw') throw new Error('boom'); c.send({ t: 'echo', of: m.t }); },
+    log: (event, fields) => lines.push(`${event} ${JSON.stringify(fields ?? {})}`),
+    sendSoft: SOFT,
+    sendHard: HARD,
   });
 });
 after(() => server.close());
@@ -183,19 +190,77 @@ test('a first frame that is not auth closes the socket', async () => {
   assert.equal(await closeCode(ws), 4001);
 });
 
-test('hello after auth', async () => {
-  const ws = connect();
+// an authenticated page whose frames are collected
+async function page() {
+  const ws = connect(), got: { t: string; [k: string]: unknown }[] = [];
+  ws.on('message', (d) => got.push(JSON.parse(String(d))));
   await once(ws, 'open');
   ws.send(JSON.stringify({ t: 'auth', token: TOKEN }));
-  const [data] = await once(ws, 'message');
-  const hello = JSON.parse(String(data));
-  assert.equal(hello.t, 'hello');
-  assert.deepEqual(hello.sessions, []);
-  assert.deepEqual(hello.pending, []);
-  assert.deepEqual(hello.reviewed, ['r1']);
-  assert.deepEqual(hello.layout, { groups: [], others: [] });
-  assert.equal(hello.settings.writerModel, 'haiku');
+  await waitUntil(() => got.length > 0);
+  return { ws, got, client: [...server.clients].at(-1) as Client };
+}
+async function waitUntil(ok: () => boolean, ms = 5000) {
+  const end = Date.now() + ms;
+  while (!ok()) {
+    if (Date.now() > end) throw new Error('timed out');
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+test('after auth the hello comes from onAuthed (publisher.ts), then each frame goes to onMessage', async () => {
+  const { ws, got } = await page();
+  assert.deepEqual(got[0], { t: 'hello', sessions: [] });
+  ws.send(JSON.stringify({ t: 'view' }));
+  await waitUntil(() => got.length === 2);
+  assert.deepEqual(got[1], { t: 'echo', of: 'view' });
   ws.close();
+});
+
+test('a handler that throws is logged, and the socket and server go on (NFR-07)', async () => {
+  const { ws, got } = await page();
+  ws.send(JSON.stringify({ t: 'throw' }));
+  ws.send(JSON.stringify({ t: 'after' }));
+  await waitUntil(() => got.some((m) => m.of === 'after'));
+  assert.ok(lines.some((l) => l.startsWith('ws.failed') && l.includes('"t":"throw"')), lines.join('\n'));
+  ws.close();
+});
+
+test('a page that doesn\'t read: stream previews are dropped past the soft limit, other frames kept, and it is cut off past the hard one (backend-core#B6)', async () => {
+  const { ws, got, client } = await page();
+  (ws as unknown as { _socket: { pause(): void; resume(): void } })._socket.pause();
+  const big = 'x'.repeat(16 * 1024);
+  for (let i = 0; i < 4000 && client.buffered() <= SOFT; i++) client.send({ t: 'toast', text: big });
+  assert.ok(client.buffered() > SOFT, `buffered ${client.buffered()}`);
+  client.send({ t: 'stream', sid: 's', text: 'dropped' });
+  client.send({ t: 'stream', sid: 's', clear: true });
+  client.send({ t: 'toast', text: 'kept' });
+  (ws as unknown as { _socket: { resume(): void } })._socket.resume();
+  await waitUntil(() => got.some((m) => m.text === 'kept'));
+  assert.equal(got.some((m) => m.t === 'stream' && m.text === 'dropped'), false, 'the preview text went');
+  assert.equal(got.some((m) => m.t === 'stream' && m.clear === true), true, 'the clear did not');
+  assert.ok(lines.some((l) => l.startsWith('ws.behind')));
+  // past the hard limit the page is cut off (it reconnects, and its hello has everything)
+  (ws as unknown as { _socket: { pause(): void } })._socket.pause();
+  const closed = once(ws, 'close');
+  for (let i = 0; i < 4000 && ws.readyState === ws.OPEN && server.clients.has(client); i++) {
+    client.send({ t: 'toast', text: big });
+    if (client.buffered() > HARD) { client.send({ t: 'toast', text: 'one more' }); break; }
+  }
+  (ws as unknown as { _socket: { resume(): void } })._socket.resume();
+  await closed;
+  assert.ok(lines.some((l) => l.startsWith('ws.slow')), lines.join('\n'));
+});
+
+test('a request Node can\'t parse gets 400 and a log line; the server goes on (backend-core#B7)', async () => {
+  const sock = tcp(server.port, '127.0.0.1');
+  await once(sock, 'connect');
+  let reply = '';
+  sock.on('data', (d) => (reply += d));
+  sock.write('NOT HTTP AT ALL\r\n\r\n');
+  await once(sock, 'close');
+  assert.match(reply, /^HTTP\/1\.1 400 /);
+  assert.ok(lines.some((l) => l.startsWith('http.clientError')));
+  assert.equal((await get('/')).status, 200);
 });
 
 test('an oversized frame closes the socket', async () => {
@@ -214,4 +279,27 @@ test('an oversized frame before auth closes the socket', async () => {
   const done = closeCode(ws);
   ws.send(Buffer.alloc(MAX_PAYLOAD + 1, 0x20));
   assert.equal(await done, 1009);
+});
+
+test('close: a page gets what was sent to it, then a close frame; a frame after it reaches nothing (seams#B5)', async () => {
+  const seen: string[] = [];
+  const s2 = await startServer({
+    port: 0, token: TOKEN, webRoot, quitCheck: () => ({ running: [], background: [] }),
+    onAuthed: (c) => c.send({ t: 'hello' }),
+    onMessage: (_c, m) => { seen.push(m.t); },
+  });
+  const ws = new WebSocket(`ws://127.0.0.1:${s2.port}/ws`, { origin: s2.origin });
+  const got: string[] = [];
+  ws.on('message', (d) => got.push(JSON.parse(String(d)).t));
+  await once(ws, 'open');
+  ws.send(JSON.stringify({ t: 'auth', token: TOKEN }));
+  await waitUntil(() => got.length === 1);
+  const closed = closeCode(ws);
+  for (const c of s2.clients) c.send({ t: 'ack' });
+  const stopping = s2.close();
+  ws.send(JSON.stringify({ t: 'late' }));
+  await stopping;
+  assert.equal(await closed, 1001);
+  assert.deepEqual(got, ['hello', 'ack']);
+  assert.deepEqual(seen, []);
 });

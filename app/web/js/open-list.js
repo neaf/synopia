@@ -70,7 +70,8 @@ function olAgo(ms) {
 }
 function pickRecent(i) {
   const r = openList.rows[i]; if (!r) return;
-  wantOpen = r.id; send({ t: "openSession", id: r.id }); hideOpenList();
+  if (!act({ t: "openSession", sid: r.id }, { done: ok => { if (!ok && wantOpen === r.id) wantOpen = null; } })) return; // the list stays, to try again
+  wantOpen = r.id; hideOpenList();
 }
 /* its keys come first while it is shown; the rest type into the filter */
 document.addEventListener("keydown", e => {

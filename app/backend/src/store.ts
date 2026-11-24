@@ -239,3 +239,27 @@ export function openStore(stateDir: string, opts: { log?: Log; minIntervalMs?: n
   };
   return store;
 }
+
+// "Mark reviewed" (R10.2): the marks in state.json `reviewed`, with a set to look them up.
+export class ReviewedMarks {
+  private store: Store;
+  private set: Set<string>;
+
+  constructor(store: Store) {
+    this.store = store;
+    this.set = new Set(store.state.reviewed);
+  }
+
+  has(agentId: string): boolean {
+    return this.set.has(agentId);
+  }
+
+  // Stores the mark; false when it was there already. The oldest go past REVIEWED_MAX.
+  mark(agentId: string): boolean {
+    if (this.set.has(agentId)) return false;
+    this.store.state.reviewed = [...this.store.state.reviewed, agentId].slice(-REVIEWED_MAX);
+    this.set = new Set(this.store.state.reviewed);
+    this.store.changed();
+    return true;
+  }
+}

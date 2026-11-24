@@ -2,7 +2,8 @@
 // close, and the ids the page holds. A new session is a placeholder (`new-…`) until system/init
 // gives its real id; a conversation_reset moves a session to a new id. Both swaps keep an alias, so
 // a late `send` or `view` with an old id reaches the session, and `rekey` moves the whole record.
-// One session's process, cards, bash mode and take-over are session.ts.
+// One session's process, cards, bash mode and take-over are session.ts; the router reaches it through
+// `get(id)`, which follows the aliases.
 // The Open list comes from the SDK's listSessions(); opening a past session adds it to the open
 // list, and it resumes on its first message.
 import os from 'node:os';
@@ -10,12 +11,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { SDKSessionInfo, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { realSdk } from './sdk.ts';
-import type { Image, MenuSource, Sdk } from './sdk.ts';
+import type { Sdk } from './sdk.ts';
 import { restored } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import { IDLE_MS, Session, UUID } from './session.ts';
-import type { By, ModelChoice, SendResult, TerminalSource } from './session.ts';
-import type { CardAnswer } from './cards.ts';
+import type { SendResult, TerminalSource } from './session.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Publisher } from './publisher.ts';
 import { newSessionFolder } from './store.ts';
@@ -208,53 +208,6 @@ export class Sessions {
   stop(): void {
     for (const s of this.live.values()) s.stop();
     this.store.flush();
-  }
-
-  // ---------- one session's actions (session.ts), by any id the page holds ----------
-
-  send(sid: string, text: string, images: Image[] = [], uuid?: string, by: By = null): SendResult {
-    return this.get(sid)?.send(text, images, uuid, by) ?? gone;
-  }
-
-  bang(sid: string, cmd: string, uuid?: string, by: By = null): SendResult {
-    return this.get(sid)?.runBang(cmd, uuid, by) ?? gone;
-  }
-
-  answer(sid: string, requestId: string, answer: CardAnswer): SendResult {
-    return this.get(sid)?.answer(requestId, answer) ?? gone;
-  }
-
-  async interrupt(sid: string, by: By = null): Promise<void> {
-    await this.get(sid)?.interrupt(by);
-  }
-
-  async setModel(sid: string, model: string, effort: string | null): Promise<SendResult> {
-    return (await this.get(sid)?.setModel(model, effort)) ?? gone;
-  }
-
-  async background(sid: string): Promise<SendResult> {
-    return (await this.get(sid)?.background()) ?? gone;
-  }
-
-  cancelTakeover(sid: string): SendResult {
-    return this.get(sid)?.cancelTakeover() ?? gone;
-  }
-
-  terminalHolds(sid: string): boolean {
-    return this.get(sid)?.terminalHolds ?? false;
-  }
-
-  startIdle(sid: string): boolean {
-    return this.get(sid)?.startIdle() ?? false;
-  }
-
-  // The folder (absolute) and the running process's menu, for menu.ts.
-  cwdOf(sid: string): string | undefined {
-    return this.get(sid)?.cwd;
-  }
-
-  menuSource(sid: string): MenuSource | null {
-    return this.get(sid)?.menuSource() ?? null;
   }
 
   // From the transcripts: what runs by the transcript changed, and an assistant record landed.

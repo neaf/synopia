@@ -76,7 +76,7 @@ function setup(opts: { terminal?: Terminal | null; past?: SDKSessionInfo[] } = {
 test('takeover: an idle terminal: the last check, the end (with the note), then the resume and the message', async () => {
   const { sessions, q, reg, events, last } = setup({ terminal: term('idle') });
   assert.equal(last()?.state.detail.terminal, 54166, 'read-only, with its pid');
-  assert.equal(sessions.send(SID, 'hello').ok, true);
+  assert.equal(sessions.get(SID)!.send('hello').ok, true);
   await tick();
   assert.deepEqual(events, ['recheck', 'end', 'recheck', 'start'], 'checked again right before acting, and before the start');
   assert.match(reg.ends[0].note, new RegExp(`^Synopia took over this session at \\d\\d:\\d\\d\\. To continue here instead: claude --resume ${SID}\\n$`));
@@ -91,12 +91,12 @@ test('takeover: an idle terminal: the last check, the end (with the note), then 
 
 test('takeover: a busy terminal: the message waits, and goes once it is idle', async () => {
   const { sessions, q, reg, last } = setup({ terminal: term('busy') });
-  assert.equal(sessions.send(SID, 'first').ok, true);
+  assert.equal(sessions.get(SID)!.send('first').ok, true);
   assert.equal(last()?.state.detail.takeover, 'waiting');
   reg.set(term('waiting'));
   await tick();
   assert.equal(reg.ends.length, 0, 'not while it waits on you');
-  assert.equal(sessions.send(SID, 'second').ok, true, 'a newer message replaces it');
+  assert.equal(sessions.get(SID)!.send('second').ok, true, 'a newer message replaces it');
   reg.set(term('idle'));
   await tick();
   assert.equal(reg.ends.length, 1);
@@ -106,8 +106,8 @@ test('takeover: a busy terminal: the message waits, and goes once it is idle', a
 
 test('takeover: an edit or Esc cancels the wait', async () => {
   const { sessions, q, reg, last } = setup({ terminal: term('busy') });
-  sessions.send(SID, 'hello');
-  sessions.cancelTakeover(SID);
+  sessions.get(SID)!.send('hello');
+  sessions.get(SID)!.cancelTakeover();
   assert.equal(last()?.state.detail.takeover, undefined);
   assert.equal(last()?.state.detail.terminal, 54166);
   reg.set(term('idle'));
@@ -119,7 +119,7 @@ test('takeover: an edit or Esc cancels the wait', async () => {
 test('takeover: the race: the CLI is busy at the last check, so it waits again', async () => {
   const { sessions, q, reg, last } = setup({ terminal: term('idle') });
   reg.fresh = () => term('busy');
-  sessions.send(SID, 'hello');
+  sessions.get(SID)!.send('hello');
   await tick();
   assert.equal(reg.ends.length, 0, 'never ended');
   assert.equal(last()?.state.detail.takeover, 'waiting');
@@ -134,7 +134,7 @@ test("takeover: a CLI that won't exit keeps your message in the box, with a toas
   const { sessions, q, reg, last, take } = setup({ terminal: term('idle') });
   reg.endOk = false;
   take('toast');
-  sessions.send(SID, 'hello');
+  sessions.get(SID)!.send('hello');
   await tick();
   assert.equal(q.calls.length, 0);
   assert.equal(last()?.state.detail.takeover, undefined);
@@ -144,7 +144,7 @@ test("takeover: a CLI that won't exit keeps your message in the box, with a toas
 
 test('takeover: the CLI exits by itself while the message waits: it goes', async () => {
   const { sessions, q, reg } = setup({ terminal: term('busy') });
-  sessions.send(SID, 'hello');
+  sessions.get(SID)!.send('hello');
   reg.set(null);
   await tick();
   assert.equal(reg.ends.length, 0, 'nothing to end');
@@ -154,7 +154,7 @@ test('takeover: the CLI exits by itself while the message waits: it goes', async
 
 test('yield: a terminal appears: the turn is interrupted, the process ends, read-only, then Synopia’s again', async () => {
   const { sessions, q, reg, events, last } = setup();
-  sessions.send(SID, 'working');
+  sessions.get(SID)!.send('working');
   await tick();
   assert.equal(q.calls.length, 1);
   events.length = 0;
@@ -164,9 +164,9 @@ test('yield: a terminal appears: the turn is interrupted, the process ends, read
   assert.equal(last()?.state.detail.terminal, 54166);
   assert.notEqual(last()?.state.status, 'failed', 'a yield is no failure');
   // while it holds the session, a message waits instead of reaching a process
-  sessions.send(SID, 'mine');
+  sessions.get(SID)!.send('mine');
   assert.equal(q.calls.length, 1);
-  sessions.cancelTakeover(SID);
+  sessions.get(SID)!.cancelTakeover();
   reg.set(null);
   await tick();
   assert.equal(last()?.state.detail.terminal, undefined, 'its own again');
@@ -175,7 +175,7 @@ test('yield: a terminal appears: the turn is interrupted, the process ends, read
 
 test('yield: an idle process just ends (no interrupt)', async () => {
   const { sessions, q, reg, events } = setup();
-  sessions.send(SID, 'x');
+  sessions.get(SID)!.send('x');
   await tick();
   q.calls[0].out.push({ type: 'result', subtype: 'success', is_error: false } as unknown as SDKMessage);
   await tick();
@@ -189,7 +189,7 @@ test('one writer: a start the last check refuses keeps the message', async () =>
   const { sessions, q, reg, take } = setup();
   reg.fresh = () => term('busy', 777); // the scan hadn't seen it yet
   take('restore');
-  const r = sessions.send(SID, 'hello');
+  const r = sessions.get(SID)!.send('hello');
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /terminal holds this session \(pid 777\)/);
   assert.equal(q.calls.length, 0);

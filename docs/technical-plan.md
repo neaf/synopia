@@ -181,13 +181,15 @@ Node 22.13 with TypeScript run by `--experimental-strip-types`. There's no build
 
 ## 5. Protocol
 
-One WebSocket, JSON text frames, `{t: "<type>", …}`. The first frame from the page must be `{t:"auth", token}`. The server keeps all state, so the page can reload at any time and get a full `hello`.
+One WebSocket, JSON text frames, `{t: "<type>", …}`. The first frame from the page must be `{t:"auth", token}`. The server keeps all state, so the page can reload at any time and get a full `hello`. `app/web/js/protocol.js` is the schema, shared by the page and the backend: every type and field, and the protocol version. The page checks each server frame against it and drops one that doesn't fit; the backend's router checks each page frame.
+
+Actions (`send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession`, `openSession`, `cancelTakeover`, `setModel`, `reviewed`) carry an `id`; the backend answers each with one `ack` to the page that sent it, `ok: false` with the `error` the page shows when it wasn't done (a handler that throws included; the daemon goes on). While the socket is down the page sends no action: it says so in a toast and keeps what it had (card picks, the message box); the layout waits and goes once the socket is back, the `ui` state goes whole after the next `hello`. While the daemon stops it acks every action `ok: false` ("Synopia is restarting").
 
 Server to page:
 
 | Type | Fields | When |
 |---|---|---|
-| `hello` | `sessions[]` (meta and status, no items), `layout`, `reviewed[]`, `menu`, `settings`, `pending[]`, `ui` (section 11) | after `auth` |
+| `hello` | `v` (the protocol version: a page with another one reloads), `code` (the daemon's code hash), `sessions[]` (meta and status, no items), `pending[]`, `layout`, `menu`, `ui` (section 11), `update` | after `auth` |
 | `session` | `id`, `replaces` (the placeholder id, once), and the changed fields: `title`, `now`, `cwd`, `prs`, `state` (`status.ts` `sessionState`: `status`, `since`, `detail`, `light`, `tone`, `word`, `mark`, `stopped`, `needsYou`, `review` count, `driven`; the page decides no status itself), `model`, `effort`, `bang` (bash mode, R5.13: the `!` command that runs or just ran, `{id, cmd, out, err, cut, running, exit, interrupted, at, error?, landed?}`, streamed at most every 100 ms; `landed` is the bash item it became, and the next flush drops it) | on change |
 | `removed` | `id` | closed |
 | `items` | `sid`, `agent` (null for the main conversation), `upsert[]` (items with `id`), `total`, `reset`, `prepend` | after a tail read; `reset` on first view and after a file is rewritten; `prepend` in reply to `earlier`, with the items before the oldest shown, oldest first |
@@ -195,18 +197,20 @@ Server to page:
 | `background` | `sid`, `upsert[]` | launch or notification |
 | `pending` | `sid`, `request` (`{id, kind: question\|permission\|plan, agentId, since, …}`) or `cleared: id` | canUseTool parked or settled |
 | `stream` | `sid`, `text` (the partial reply so far), or `clear` | while a reply is written |
-| `recent` | `sessions[]` (`id`, `title`, `cwd`, `lastModified`) | reply to `listRecent` |
-| `preview` | `path`, `display` (with `~`), `lang`, `html` (bat's GitHub colours as escaped `<span style>` runs, one line per `\n`), `lines`, `truncated` (past 5,000 lines or 2 MB), `size` | reply to `preview` |
+| `recent` | `filter`, `sessions[]` (`id`, `title`, `cwd`, `lastModified`), `error` when the list couldn't be read | reply to `listRecent` |
+| `preview` | `path`, `display` (with `~`), `lang`, `html` (bat's GitHub colours as escaped `<span style>` runs, one line per `\n`), `lines`, `truncated` (past 5,000 lines or 2 MB), `size`; or `path`, `opened: true` for a file the backend opened instead | reply to `preview` |
 | `menu` | `cwd`, `commands[]`, `models[]` | first view of a folder |
 | `restore` | `sid`, `texts[]` | messages cancelled by an interrupt, back to the message box |
-| `toolOutput` | `sid`, `agent`, `toolUseId`, `text` (the tool's full result), `truncated: false` | reply to `toolOutput`; a `toast` instead when the file is gone or was rewritten |
+| `toolOutput` | `sid`, `agent`, `toolUseId`, `text` (the tool's full result) | reply to `toolOutput`; a `toast` instead when the file is gone or was rewritten |
 | `toast` | `text` | failures you must see |
+| `update` | `pending` | an update of the daemon waits for the running work |
+| `ack` | `id`, `ok`, `error` | an action is done, or not |
 
 Page to server:
 
 | Type | Fields | Effect |
 |---|---|---|
-| `view` | `sid`, `agent` | subscribes to items for that session or subagent and gets `items` with `reset` |
+| `view` | `sid`, `agent`, `from` (the oldest item the page had loaded) | subscribes to items for that session or subagent and gets `items` with `reset` |
 | `earlier` | `sid`, `agent`, `before` (the oldest item id shown) | gets the 160 items before it as `items` with `prepend`; nothing when it isn't the viewed conversation or `before` is gone |
 | `toolOutput` | `sid`, `agent`, `toolUseId` | gets the tool's full result, read again from its record's line in the JSONL (items carry only a preview) |
 | `send` | `sid`, `text`, `images[]` (base64 PNG or JPEG, at most 5 MB each), `uuid` | pushes to the session's input, starting `query()` when none runs |
@@ -215,16 +219,16 @@ Page to server:
 | `interrupt` | `sid` | interrupts the turn |
 | `newSession` | none | creates an empty session in the new-session folder (R3.3) |
 | `listRecent` | `filter` | asks for the Open list |
-| `openSession` | `id` | adds a past session to the open list |
+| `openSession` | `sid` | adds a past session to the open list |
 | `close` | `sid` | marks it closed and ends its process |
 | `setModel` | `sid`, `model`, `effort` | stored, and applied when the process runs |
-| `stopTask` | `sid`, `taskId` | stops one background subagent, shell or monitor |
+| `cancelTakeover` | `sid` | the message waiting for a terminal no longer waits |
 | `background` | `sid` | b, b (R9.5): `Query.backgroundTasks()` on the session's process sends every foreground Bash and subagent in flight to the background; `toast` only when nothing could go (no process, a false return, or background tasks turned off) |
 | `layout` | `layout` | replaces the stored layout |
 | `ui` | `patch` | merged into the stored ui state (section 11); a draft image refused by the caps gets `toast` |
 | `reviewed` | `agentId` | adds a reviewed mark |
 | `open` | `path` or `url` | opens a file or an `https?` URL |
-| `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does; a bad path gets `toast` |
+| `preview` | `path` | a text or source file (the `open` checks, a document or source extension or none, no NUL in the first 8 KB) gets `preview`; anything else is opened as `open` does and gets `preview` with `opened`; a bad path gets `toast` |
 
 HTTP, on the same origin, every request with `?token=` (403 without it):
 

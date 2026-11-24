@@ -62,7 +62,7 @@ document.addEventListener("keydown", e => {
 function toast(t) { const el = document.getElementById("toast"); el.textContent = t; el.classList.add("show"); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove("show"), 3600); }
 /* New session: the backend adds an empty one in its folder; main.js shows it when it arrives */
 let wantNew = false;
-document.getElementById("new").onclick = () => { wantNew = true; send({ t: "newSession" }); };
+document.getElementById("new").onclick = () => { if (act({ t: "newSession" }, { done: ok => { if (!ok) wantNew = false; } })) wantNew = true; };
 /* Cmd+Shift+[ and ] move to the previous / next session, like tabs in iTerm (works once Synopia runs in its own app window) */
 document.addEventListener("keydown", e => {
   if (!(e.metaKey && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight"))) return;

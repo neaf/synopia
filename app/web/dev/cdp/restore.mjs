@@ -3,7 +3,8 @@
 // Sets up: session 1 scrolled mid-way with a tool group and a step open, a diff open, a draft with its
 // cursor and a pasted image; session 2's card half answered; session 4's subagent view on screen with the
 // file preview open, scrolled, with a find query. Then: a reload, a backend restart (stop, start on the same
-// state folder), a second restart in insert mode, and a send that removes the draft's files.
+// state folder), a second restart in insert mode, and a send that removes the draft's files. Last, the card
+// answered while the backend is down: refused with a toast, its picks kept, and answered once it is back.
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -31,9 +32,15 @@ const near = (a, b) => { const x = JSON.parse(a), y = JSON.parse(b); return !x.b
 const flush = async () => { await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(300); };
 async function restart() {
   await flush();
+  await stopBackend();
+  startBackend();
+}
+async function stopBackend(signal = 'SIGTERM') {
   const pid = +fs.readFileSync(path.join(stateDir, 'pid'), 'utf8');
-  process.kill(pid, 'SIGTERM');
+  process.kill(pid, signal);
   for (let i = 0; i < 50; i++) { try { process.kill(pid, 0); await sleep(100); } catch { break; } }
+}
+function startBackend() {
   const port = new URL(url0).port;
   execFileSync(path.join(here, 'backend.sh'), [port, stateDir, '--claude-dir', claudeDir, '--sdk-script', path.join(claudeDir, 'sdk-script.json')], { stdio: ['ignore', 'pipe', 'inherit'] });
   url = fs.readFileSync(path.join(stateDir, 'url'), 'utf8').trim();
@@ -159,6 +166,23 @@ check('after the reset the log shows the same blocks', recon?.after === true, JS
 await ev(`(() => { document.getElementById('open').click(); const i = document.getElementById('ol-filter'); i.value = 'demo'; i.dispatchEvent(new Event('input')); })()`);
 await flush();
 check('the Open list comes back with its filter', await load() && await wait(`__synopia.openList().shown && document.getElementById('ol-filter').value === 'demo' && __synopia.openList().filter === 'demo'`));
+
+// ---------- the card answered while the backend is down (web-ui#B1, requirements Q9) ----------
+check('4: session 2 shows its card', await goTo(S2) && await wait(`!!document.querySelector('#qa-send')`));
+const card2 = await card();
+await stopBackend('SIGKILL'); // a crash: a stop would clear the card's request on the way out
+check('4: the page sees the socket down', await wait(`__synopia.readiness().connected === false`, 8000));
+await ev('__synopia.spy()');
+await ev(`document.getElementById('qa-send').click()`);
+check('4: offline, the answer is refused with a toast', await wait(`/answer wasn't sent/.test(document.getElementById('toast').textContent)`), await ev(`document.getElementById('toast').textContent`));
+check('4: nothing went, the picks are kept', (await ev(`__synopia.sent('answer').length`)) === 0 && (await card()) === card2 && await ev(`!!document.querySelector('.qa-card')`), `${await card()} vs ${card2}`);
+startBackend();
+check('4: reloaded on the backend that is back', await load());
+check('4: the card keeps its picks', await goTo(S2) && await wait(`!!document.querySelector('#qa-send')`) && (await card()) === card2, `${await card()} vs ${card2}`);
+await ev('__synopia.spy()');
+await ev(`document.getElementById('qa-send').click()`);
+check('4: online, the answer goes with an id and is acked; then its picks go', await wait(`(([a]) => !!a && __synopia.received('ack').some(k => k.id === a.id && k.ok === true))(__synopia.sent('answer')) && !__synopia.cards()['${S2}:req-question-1']`),
+  JSON.stringify(await ev(`[__synopia.sent('answer'), __synopia.received('ack')]`)));
 await c.cdp('Emulation.clearDeviceMetricsOverride');
 c.print();
 c.close();

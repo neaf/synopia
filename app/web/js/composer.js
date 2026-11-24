@@ -195,7 +195,7 @@ function dismissBackground() {
 /* the second b: the backend calls backgroundTasks() on the session's process, and says so only when nothing moved */
 function confirmBackground() {
   const sid = bgAsk; dismissBackground();
-  if (sid && sid === current && bgSteps(cur()).length) send({ t: "background", sid });
+  if (sid && sid === current && bgSteps(cur()).length) act({ t: "background", sid });
 }
 /* the turn ended, the steps finished or the view changed under the prompt */
 function syncBackground() {
@@ -205,7 +205,7 @@ document.addEventListener("mousedown", () => { if (bgAsk) dismissBackground(); }
 /* the second Esc: stop the turn, if it still runs */
 function confirmInterrupt() {
   const sid = interruptAsk; dismissInterrupt();
-  if (sid && sid === current && canInterrupt(cur())) send({ t: "interrupt", sid });
+  if (sid && sid === current && canInterrupt(cur())) act({ t: "interrupt", sid });
 }
 /* the turn ended or the view changed under the prompt */
 function syncInterrupt() {
@@ -261,7 +261,7 @@ function mountComposer(s) {
   renderAttachments();
   /* a pick is stored per session (the backend's session message updates the header) and applied to a running process (setModel, the effort through applyFlagSettings) */
   attachSlash(ta, (m, effort) => {
-    send({ t: "setModel", sid: s.id, model: m.value, effort }); // the header shows it once stored; a running CLI also writes "/model …" to the transcript
+    act({ t: "setModel", sid: s.id, model: m.value, effort }); // the header shows it once stored; a running CLI also writes "/model …" to the transcript
   });
   /* Enter sends the text and the pasted images (base64 PNG or JPEG, 5 MB each) to the session's input.
      s.id follows the session when its id changes (a new session's real id), so the message reaches it. */
@@ -278,9 +278,8 @@ function mountComposer(s) {
       if (m[2].length * 3 / 4 > 5 * 1024 * 1024) { toast("An image is over 5 MB. Remove it, or paste a smaller one."); return; }
       images.push({ mediaType: m[1], data: m[2], n: a.n }); // the backend sends the text, then these in tag order (sdk.ts userContent)
     }
-    if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your message is still in the box."); return; }
     if (termPid(cur()) || takeoverWait?.sid === s.id) { takeBack(s, ta, images); return; } // the box keeps it until the session is back
-    send({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() });
+    if (!act({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() }, { refused: "Not connected to the Synopia backend. Your message is still in the box." })) return;
     ta.value = ""; ta.style.height = "auto";
     attachments.length = 0; renderAttachments();
     uiFlush(); // the sent draft is gone from the backend at once, its images too
@@ -345,8 +344,7 @@ function mountBash(s, ta) {
 function runBang(s, ta) {
   const cmd = ta.value; if (!cmd.trim()) return;
   if (bangRunning(cur())) { toast("A shell command is still running in this session. Wait for it, or Esc, Esc to end it."); return; }
-  if (!store.ui.connected) { toast("Not connected to the Synopia backend. Your command is still in the box."); return; }
-  send({ t: "bang", sid: s.id, command: cmd, uuid: newUuid() });
+  if (!act({ t: "bang", sid: s.id, command: cmd, uuid: newUuid() }, { refused: "Not connected to the Synopia backend. Your command is still in the box." })) return;
   ta.value = ""; ta.style.height = "auto"; setBash(ta, false);
   uiFlush();
 }
@@ -356,13 +354,14 @@ let takeoverWait = null; // { sid, text, seen }: a message the box keeps until t
 const termPid = s => s?.state?.detail?.terminal || 0;
 /* Enter: the backend takes the session back once the terminal is idle; the text stays until then */
 function takeBack(s, ta, images) {
+  if (!act({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() }, { refused: "Not connected to the Synopia backend. Your message is still in the box." })) return;
   takeoverWait = { sid: s.id, text: ta.value, seen: false };
-  send({ t: "send", sid: s.id, text: ta.value, images, uuid: newUuid() });
   syncTakeover();
 }
 function cancelTakeBack() {
   if (!takeoverWait) return;
-  send({ t: "cancelTakeover", sid: takeoverWait.sid }); takeoverWait = null; syncTakeover();
+  if (!act({ t: "cancelTakeover", sid: takeoverWait.sid })) return; // still waiting, as the backend is
+  takeoverWait = null; syncTakeover();
 }
 function mountTakeover(s, ta) {
   ta.closest(".composer").insertAdjacentHTML("beforeend", `<p class="term-line"></p><p class="term-wait" role="status"></p>`);

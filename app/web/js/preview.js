@@ -1,6 +1,6 @@
 /* Preview: a text or source file, read-only and highlighted, over the main area (requirements R5.9).
    A file link asks the backend with `preview {path}`; a text file comes back as `preview` (bat's colours as
-   escaped spans, one line per '\n'), anything else is opened by the backend as `open` would. HTML opens in
+   escaped spans, one line per '\n'), anything else is opened by the backend as `open` would, and its reply says `opened`. HTML opens in
    the browser; Alt-click shows its source here. Keys while it is shown: Esc closes, j/k scroll a line, g/G
    top and bottom, / or Cmd+F find, Enter or n the next match (Shift or N the previous). A click outside
    closes it. It always opens at the top. Lines the turn changed get quiet gutter marks (a green bar for added, a red
@@ -54,6 +54,7 @@ const previewShown = () => Boolean(pv.el && !pv.el.hidden);
 /* the backend's reply (main.js); one for a file asked before the last is dropped */
 function showPreview(m) {
   if (!pv.want || m.path !== pv.want.path) return;
+  if (m.opened) { pv.want = null; return; } // not text: the backend opened it in its app
   if (!pv.el) pvBuild();
   const want = pv.want; pv.want = null;
   pv.path = m.path; pv.line = 0; pv.back = want.back;

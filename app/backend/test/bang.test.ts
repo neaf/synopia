@@ -118,10 +118,10 @@ test('bang: the cap counts code points, never splits a pair, and the cut line na
 
 test('delivery: a command that cannot spawn toasts, and the daemon goes on (sessions-sdk#B3)', async () => {
   const { sessions, SID, got, last } = setup();
-  assert.equal(sessions.bang(SID, 'echo \0x').ok, true);
+  assert.equal(sessions.get(SID)!.runBang('echo \0x').ok, true);
   await until(() => last()?.bang?.running === false);
   assert.match(String(got.find((m) => m.t === 'toast')?.text), /couldn't start/);
-  assert.equal(sessions.bang(SID, 'echo again').ok, true, 'the next command runs');
+  assert.equal(sessions.get(SID)!.runBang('echo again').ok, true, 'the next command runs');
   await until(() => last()?.bang?.running === false);
   sessions.stop();
 });
@@ -179,7 +179,7 @@ const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); wh
 
 test('delivery: the command and its output go as shouldQuery:false user messages, and no turn starts', async () => {
   const { sessions, SID, inputs, q, last } = setup();
-  const r = sessions.bang(SID, 'echo hi; echo err >&2; exit 3', ID);
+  const r = sessions.get(SID)!.runBang('echo hi; echo err >&2; exit 3', ID);
   assert.equal(r.ok, true);
   assert.equal(last()?.bang?.running, true, 'the page sees it running');
   await until(() => inputs.length === 2);
@@ -194,7 +194,7 @@ test('delivery: the command and its output go as shouldQuery:false user messages
   await new Promise((r) => setTimeout(r, 20));
   assert.notEqual(last()?.state.status, 'busy');
   // The next message goes as usual and starts the turn.
-  assert.equal(sessions.send(SID, 'what did it print?').ok, true);
+  assert.equal(sessions.get(SID)!.send('what did it print?').ok, true);
   await until(() => inputs.length === 3);
   assert.equal(inputs[2].shouldQuery, undefined);
   assert.equal(last()?.state.status, 'busy');
@@ -203,17 +203,17 @@ test('delivery: the command and its output go as shouldQuery:false user messages
 
 test('delivery: one command at a time, Esc, Esc ends it, not in a session a terminal holds', async () => {
   const { sessions, SID, inputs, last } = setup();
-  assert.equal(sessions.bang(SID, 'sleep 30').ok, true);
-  const second = sessions.bang(SID, 'echo again');
+  assert.equal(sessions.get(SID)!.runBang('sleep 30').ok, true);
+  const second = sessions.get(SID)!.runBang('echo again');
   assert.equal(second.ok, false);
   assert.match((second as { error: string }).error, /still running/);
-  await sessions.interrupt(SID);
+  await sessions.get(SID)!.interrupt();
   await until(() => last()?.bang?.running === false);
   assert.equal(last()?.bang?.interrupted, true);
   assert.equal(last()?.bang?.exit, 143);
   await until(() => inputs.length === 2);
   assert.match(String(inputs[1].message.content), /<bash-stderr>Interrupted by the user, exit code 143<\/bash-stderr>$/);
   assert.deepEqual(parseBashOutput(String(inputs[1].message.content)), { out: '', err: '', cut: false, exit: 143, interrupted: true });
-  assert.equal(sessions.bang(SID, '  ').ok, false);
+  assert.equal(sessions.get(SID)!.runBang('  ').ok, false);
   sessions.stop();
 });

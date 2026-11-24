@@ -85,12 +85,12 @@ test('scripted: the main fixture\'s cards, working session and stream preview, o
     assert.equal(stream?.stream, "Two subagents are still running. I'll merge their changes when both report back.");
     assert.ok([S1, S2, S4].every((s) => meta(s).driven), 'Synopia\'s own processes drive them');
     // the menu from S1's running process: HTML unescaped, internal commands left out
-    const menu = await readMenu(sessions.menuSource(S1)!, 1000);
+    const menu = await readMenu(sessions.get(S1)!.menuSource()!, 1000);
     assert.equal(menu.commands.length, 7);
     assert.equal(menu.commands.find((c) => c.name === 'pr-review')?.hint, '<number>');
     assert.deepEqual(menu.models.map((m) => m.value), ['default', 'fixture-large', 'fixture-small']);
     // an answer settles the request: working, then the script's result 3 s later
-    assert.equal(sessions.answer(S2, 'req-question-1', { questions: [{ picks: ['No'] }, { picks: ['Docs'] }] }).ok, true);
+    assert.equal(sessions.get(S2)!.answer('req-question-1', { questions: [{ picks: ['No'] }, { picks: ['Docs'] }] }).ok, true);
     assert.ok(!publisher.pending().some((p) => p.request.id === 'req-question-1'));
     await sleep(20);
     assert.equal(meta(S2).status, 'busy');
@@ -135,15 +135,15 @@ test('scripted: an interrupt cancels the queued messages not in the transcript, 
   try {
     assert.equal(meta(S1).status, 'busy');
     const a = '0a0a0a0a-0000-4000-8000-00000000000a', b = '0b0b0b0b-0000-4000-8000-00000000000b';
-    assert.equal(sessions.send(S1, 'First, queued.', [], a).ok, true);
-    assert.equal(sessions.send(S1, 'Second, queued.', [], b).ok, true);
+    assert.equal(sessions.get(S1)!.send('First, queued.', [], a).ok, true);
+    assert.equal(sessions.get(S1)!.send('Second, queued.', [], b).ok, true);
     await sleep(10);
     assert.equal(meta(S1).detail.queued, 2);
     // the first lands, as the CLI writes a queued message it took in
     const file = path.join(claudeDir, 'projects', '-tmp-fixture', `${S1}.jsonl`);
     fs.appendFileSync(file, JSON.stringify({ type: 'attachment', uuid: 'land-1', timestamp: new Date().toISOString(), sessionId: S1, attachment: { type: 'queued_command', prompt: 'First, queued.' } }) + '\n');
     got.length = 0;
-    await sessions.interrupt(S1);
+    await sessions.get(S1)!.interrupt();
     await sleep(20);
     transcripts.poll();
     assert.deepEqual(got.filter((m) => m.t === 'restore').map((m) => m.texts), [['Second, queued.']]);
@@ -159,7 +159,7 @@ test('scripted: a message that starts a turn and bash mode\'s context go to the 
   try {
     const file = path.join(claudeDir, 'projects', '-tmp-fixture', `${S1}.jsonl`);
     const uuid = '0c0c0c0c-0000-4000-8000-00000000000c';
-    assert.equal(sessions.send(S1, 'Read the notes again.', [], uuid).ok, true);
+    assert.equal(sessions.get(S1)!.send('Read the notes again.', [], uuid).ok, true);
     await sleep(5);
     assert.equal(meta(S1).status, 'busy');
     const last = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()!);

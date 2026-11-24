@@ -335,7 +335,7 @@ test('triggers: a result calls onTurnEnded, a start calls onOpened', async () =>
   const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, onTurnEnded: (s) => ended.push(s), onOpened: (s) => opened.push(s) });
   sessions.start();
   assert.deepEqual(opened, [id]);
-  sessions.send(id, 'hello');
+  sessions.get(id)!.send('hello');
   await wait(5);
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: id, uuid: 'u' });
   emit(q.calls[0], { type: 'result', subtype: 'success', is_error: false, result: 'done', uuid: 'r' });

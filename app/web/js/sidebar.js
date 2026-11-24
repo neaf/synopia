@@ -48,7 +48,8 @@ function loadLayout() {
     others: data.map(s => s.id)
   };
 }
-const saveLayout = () => { store.layout = JSON.parse(JSON.stringify(layout)); send({ t: "layout", layout }); };
+/* while disconnected the change stays here and goes once the socket is back (connection.js sync) */
+const saveLayout = () => { store.layout = JSON.parse(JSON.stringify(layout)); sync("layout", { t: "layout", layout: store.layout }); };
 /* Closed sessions keep their place in the layout, hidden (plan section 11), so one reopened from the
    Open list comes back where it was. Open sessions found nowhere go to "Not in a group". */
 function reconcile() {
@@ -112,7 +113,7 @@ function closeStops(s) {
 }
 /* x, x: hides the session and ends its process (or, one another process drives, only removes it from Synopia) */
 function closeSession(s) {
-  if (s) send({ t: "close", sid: s.id });
+  if (s) act({ t: "close", sid: s.id });
 }
 /* the footer's Open line: the list of past sessions (open-list.js) */
 document.getElementById("open").onclick = () => showOpenList();

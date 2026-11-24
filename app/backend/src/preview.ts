@@ -242,6 +242,7 @@ export function batArgs(p: string, truncated: boolean, theme: Theme = 'light'): 
 }
 
 export type PreviewReply = { t: 'preview'; path: string; display: string; lang: string; html: string; lines: number; truncated: boolean; size: number };
+export type PreviewOpened = { t: 'preview'; path: string; opened: true };
 
 // Reads, caps and highlights a planned file. Plain escaped text when bat is missing, fails or times out.
 export function render(
@@ -270,15 +271,16 @@ export function render(
   });
 }
 
-// The `preview` message: a preview reply, today's `open` for files that aren't text, or a toast.
+// The `preview` message: a preview reply; a file that isn't text is opened as `open` would, and the reply
+// says so (`opened`), so the page stops waiting for it (seams#B8); or a toast.
 export async function previewFile(
   p: unknown,
-  opts: { bat: Bat; theme?: Theme; display?: (p: string) => string; run?: RunBat; log?: Log; open: (p: string) => void; reply: (msg: PreviewReply) => void; toast: (text: string) => void },
+  opts: { bat: Bat; theme?: Theme; display?: (p: string) => string; run?: RunBat; log?: Log; open: (p: string) => void; reply: (msg: PreviewReply | PreviewOpened) => void; toast: (text: string) => void },
 ): Promise<void> {
   const log = opts.log ?? nullLog;
   const plan = planPreview(p);
   if (!plan.ok) { log('preview.refused', {}); opts.toast(plan.error); return; }
-  if (plan.how === 'open') { log('preview.open', {}); opts.open(p as string); return; }
+  if (plan.how === 'open') { log('preview.open', {}); opts.open(p as string); opts.reply({ t: 'preview', path: p as string, opened: true }); return; }
   try {
     const r = await render(p as string, plan.real, plan.size, opts);
     log('preview', { lines: r.lines, truncated: r.truncated, bat: Boolean(opts.bat) });
