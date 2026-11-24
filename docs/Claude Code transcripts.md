@@ -13,7 +13,7 @@ Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Co
 | `~/.claude/projects/<folder>/<sid>/subagents/agent-<aid>.meta.json` | the subagent's facts: `agentType`, `isFork`, `description`, `toolUseId`, `spawnDepth`, `finished` |
 | `~/.claude/plans/<slug>.md` | the plan text the CLI writes before ExitPlanMode asks |
 
-- `<folder>` is the realpath of the session's cwd with every non-alphanumeric character replaced by `-` (`/tmp/x` gives `-private-tmp-x`). Synopia never builds it: it globs `projects/*/<sid>.jsonl` and takes the first match in name order. Code: `transcript.ts` `findTranscript` (1132-1146), `registry.ts` `transcriptOf`. Source: spike/FINDINGS.md row 1.
+- `<folder>` is the realpath of the session's cwd with every non-alphanumeric character replaced by `-` (`/tmp/x` gives `-private-tmp-x`). Synopia never builds it: it globs `projects/*/<sid>.jsonl` and takes the first match in name order. Code: `transcript.ts` `findTranscript` (1132-1146), `registry.ts` `transcriptOf`. Source: SDK spike row 1 (`spike/FINDINGS.md` at tag `rearch-base`).
 - `CLAUDE_CONFIG_DIR` moves the whole tree; the backend's `--claude-dir` follows it.
 - Records are single lines, usually under 60 KB; one record can be many MB (images, long tool results). The largest session seen is 55 MB in 4,200 lines (96.9 MB in a later scan). Test: `tail.test.ts` 139-170 parses 50 MB in under 2 s.
 - The JSONL appears about 1 s after the SDK's `system/init` for a new session. Code: `views.ts` looks again each second for a file that doesn't exist yet. Source: live run S1-6.
@@ -82,7 +82,7 @@ Source: `.ai-notes/app/README.md` "Facts (branch facts)" Streaming.
 - An AskUserQuestion result reads `The user answered: "<question>"="<pick>" notes: <note>. …`; multi-select picks join with `, `.
 - Tool results: Edit and Write carry `toolUseResult.structuredPatch` (hunks with `oldStart`, `oldLines`, `newStart`, `newLines`, `lines`); a Write that creates a file has `type: "create"` and `content` instead.
 
-Code: `transcript.ts` `user` (562-708). Source: `export_transcripts.py`, live runs S3 and M1-final.
+Code: `transcript.ts` `user` (562-708). Source: `export_transcripts.py` (tag `rearch-base`), live runs S3 and M1-final.
 
 ### Images and image tags
 

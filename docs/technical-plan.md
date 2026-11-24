@@ -3,7 +3,7 @@
 > 🧭 **What:** milestone 1 makes the prototype real. You open Synopia as its own app on your machine. You start sessions in it, or open ones you've closed in the terminal, and chat in them with everything the prototype shows. You can stop using the terminal.
 > **In scope:** new sessions, opening a past session, transcripts with subagents and background work, files and diffs, the needs-you cards answered through the SDK, Claude-written titles and "Now" lines, keys and modes (including interrupt), the per-session model, drag-and-drop groups, Close session, the app icon.
 > **Out of scope:** any knowledge of terminal sessions, Dock badge and notifications, drift detection and "Split into a new session", the closing note with loose ends, new worktrees, Claude's first grouping suggestion, messaging a running subagent, the stale, rate-limited, compacting, credentials-expired and queued states.
-> **Sources:** `docs/requirements.md` (behaviour), `prototype/app.html` (look), `spike/FINDINGS.md` (SDK), `spike/native-shell/` (shell), `export_transcripts.py` (reference parser), `.ai-notes/app/README.md` (handover). Read at `150ed5d` on 2026-11-23. The source digests and the decisions sit in `.attack-plan/synopia-m1/`.
+> **Sources:** `docs/requirements.md` (behaviour), `prototype/app.html` (look), `spike/FINDINGS.md` (SDK), `spike/native-shell/` (shell), `export_transcripts.py` (reference parser), `.ai-notes/app/README.md` (handover). Read at `150ed5d` on 2026-11-23. The spike, the parser and the source digests and decisions (`.attack-plan/synopia-m1/`) are kept at tag `rearch-base`; their facts are in the topic docs.
 
 ## Contents
 
@@ -40,7 +40,7 @@
   - The transcript comes from the session's JSONL file. The SDK stream carries control and live state.
   - Sessions stay open until you close them, across restarts.
   - Sessions keep your permission mode, `auto`.
-  - New sessions are empty sessions in `~/dev/demo-project`.
+  - New sessions are empty sessions in the new-session folder (R3.3).
   - Titles and Now lines are written by Claude, with no limit on calls.
   - Esc, Esc interrupts.
   - The page reaches the backend over a local WebSocket guarded by a token.
@@ -92,14 +92,14 @@ app/
   check.sh          unit tests, a shell type check, a page syntax check; prints the pass or fail line only
   shell/            main.swift, AppDelegate.swift, Backend.swift, Info.plist
   backend/          package.json and package-lock.json (pinned), src/*.ts, test/*.test.ts, test/fixtures/
-  web/              index.html, css/app.css, js/*.js, icon/ (copied from prototype/icon)
+  web/              index.html, css/app.css, js/*.js, icon/ (the only icon folder)
 prototype/          unchanged, stays the look reference
 ```
 
 ## 2. The shell
 
 - **Build:** `app/build.sh` runs `swiftc -O shell/*.swift -framework Cocoa -framework WebKit` into `build/Synopia.app`.
-  - It makes `Synopia.icns` from `prototype/icon/icon-1024.png` with `sips` and `iconutil`, which ship with macOS.
+  - It makes `Synopia.icns` from `app/web/icon/icon-1024.png` with `sips` and `iconutil`, which ship with macOS.
   - It writes `Contents/Resources/config.json` with `node`, the absolute path from `asdf which node` (falling back to `command -v node`), and `backend`, the path to `app/backend/src/main.ts` in this checkout. Apps opened from Finder don't get the asdf PATH. After a Node upgrade, rebuild.
   - The app runs the backend from the repo: one user, one machine, no copy of `node_modules`. `*.app/` is already in `.gitignore`.
 - **The backend is a daemon** (decided 2026-11-24): the app is only UI and may crash or quit at any time; running work survives that. The daemon owns every session's `claude` process and all state.
@@ -213,7 +213,7 @@ Page to server:
 | `bang` | `sid`, `command`, `uuid` | bash mode (R5.13, `bang.ts`): runs `$SHELL -c <command>` in the session's folder with the daemon's env (the login env merged), its own process group, output capped at 30,000 characters; when it ends, `<bash-input>` and `<bash-stdout>…<bash-stderr>` go to the session as two `SDKUserMessage`s with `shouldQuery: false` (`sdk.d.ts:7033`: appended without a turn, merged into the next message that queries), into the running process or one started for them. `toast` when one runs already, a terminal holds the session or the folder is gone. `interrupt` ends a running one first (SIGTERM to the group, SIGKILL after 3 s) |
 | `answer` | `sid`, `requestId`, `answer` | settles the pending canUseTool |
 | `interrupt` | `sid` | interrupts the turn |
-| `newSession` | none | creates an empty session in `settings.newSessionCwd` |
+| `newSession` | none | creates an empty session in the new-session folder (R3.3) |
 | `listRecent` | `filter` | asks for the Open list |
 | `openSession` | `id` | adds a past session to the open list |
 | `close` | `sid` | marks it closed and ends its process |
@@ -250,7 +250,7 @@ Items keep the prototype's shapes (`k: you|claude|tool|report|ask`, `patch`, `ag
   - **Take-over:** a send on a held session is kept (`detail.takeover: 'waiting'`), the page keeps the text in the box. It goes when the pid file says idle and the transcript shows no open turn, no pending ask, no running subagent and no background work: the registry is re-read for that session (pid and `procStart` again; busy, or another pid, means waiting again), the CLI's tty is read (`ps -o tty=`), SIGTERM, SIGINT at 5 s, give up at 10 s (toast, message stays, never SIGKILL). After the exit the note goes to `/dev/<tty>` (skipped and logged once if there is none or it fails), the JSONL must be unchanged for 500 ms (at most 5 s), and the message is sent as any other (the start guard runs again). The mark clears in the same update that starts the turn, which tells the page to empty the box. An edit or Esc sends `cancelTakeover`. A CLI that exits by itself meanwhile lets the message go at once.
   - **Start guard:** `startProcess` re-reads the registry for the session before every start. A live terminal there means no start: a plain send gets its text back in the box (`restore`) with a toast; a take-over goes back to waiting.
   - **The Open list:** each row carries the pid of a terminal that holds it, shown as "Open in a terminal". Opening such a row opens it read-only.
-- **New session:** `newSession` adds a placeholder row with a local id, the folder `settings.newSessionCwd` (default `~/dev/demo-project`) and the title "New session".
+- **New session:** `newSession` adds a placeholder row with a local id, the new-session folder (`settings.newSessionCwd` when set, else the most recently opened session's folder, else `~`; `newSessionFolder` in store.ts) and the title "New session".
   - The first `send` starts `query()` without `resume`. Messages sent before `system/init` arrives go into the same input queue, in order.
   - `system/init` gives the session id. The backend writes it to `open[]` and the layout, and sends `session` with `replaces`.
   - A placeholder you never sent anything to isn't stored, so it is gone after a restart.
@@ -395,7 +395,7 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
   "answers":  {"<toolUseId>": "Allow once"},
   "status":   {"<sid>": {"status": "idle", "at": 0}},
   "written":  {"<sid>": {"title": "…", "now": "…", "at": 0}},
-  "settings": {"newSessionCwd": "~/dev/demo-project", "writerModel": "haiku"},
+  "settings": {"writerModel": "haiku"},
   "ui": {
     "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "openBg": "<key>|null",
     "openList": {"filter": "…"}, "preview": {"path": "…", "scroll": 0, "find": "…"}, "viewer": {"srcs": ["/api/image?sid=…&ref=…"], "i": 0},
@@ -475,7 +475,7 @@ Each slice is usable alone and checked in the real app before the next starts. T
 
 ### Slice 1: start a session in Synopia and chat in it
 
-You open Synopia.app, start a new session in `~/dev/demo-project` and chat in it with streamed replies. It is still there after a restart.
+You open Synopia.app, start a new session and chat in it with streamed replies. It is still there after a restart.
 
 - **S1-1 Install check and backend skeleton.** `npm ci` in `app/backend` with the pinned packages (the check that the SDK's binary installs on this machine), `main.ts` with its flags, `server.ts`, `lock.ts`, `log.ts`, `store.ts`, `app/dev.sh`, `app/check.sh`, and a placeholder `app/web/index.html` that authenticates and shows `hello`. Unit tests for the server, the lock and the store.
 - **S1-2 Shell.** `app/shell/` and `app/build.sh`: the window, the menus, the icon, spawning the backend, the URL from the stdout line, the navigation delegate, and Quit without the running check.

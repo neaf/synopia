@@ -25,6 +25,7 @@ import { takeoverNote } from './registry.ts';
 import { NeedsYou } from './pending.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Views } from './views.ts';
+import { newSessionFolder } from './store.ts';
 import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -207,10 +208,10 @@ export class Sessions {
     return [...this.live.values()].filter((a) => a.proc && a.status.working).map((a) => a.id);
   }
 
-  // An empty session in settings.newSessionCwd. It isn't stored until system/init gives its id.
+  // An empty session in newSessionFolder's folder. It isn't stored until system/init gives its id.
   newSession(): string {
     const id = `new-${randomUUID()}`;
-    this.add(id, this.expand(this.store.state.settings.newSessionCwd), true, null);
+    this.add(id, this.expand(newSessionFolder(this.store.state)), true, null);
     this.log('sessions.new', { sid: id });
     return id;
   }

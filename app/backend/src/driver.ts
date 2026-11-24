@@ -1,5 +1,5 @@
 // The session driver (plan section 6): one SDK `query()` per active session, fed by an
-// async-iterable input queue (as in spike/chat.ts), so messages pushed before system/init
+// async-iterable input queue, so messages pushed before system/init
 // and during a turn reach the CLI in order. The only module that imports the SDK's `query`.
 // The process's stderr is kept in memory (the last 20 lines) for the failure toast, never logged.
 import { query as sdkQuery } from '@anthropic-ai/claude-agent-sdk';

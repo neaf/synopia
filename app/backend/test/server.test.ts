@@ -105,7 +105,7 @@ test('every response carries the strict CSP, naming its own origin', async () =>
 
 test('the real page has no inline script and repeats the CSP as a meta tag', () => {
   const web = join(import.meta.dirname, '..', '..', 'web');
-  for (const f of ['index.html', 'check.html']) {
+  for (const f of ['index.html']) {
     const html = readFileSync(join(web, f), 'utf8');
     assert.ok(!/<script(?![^>]*\bsrc=)[^>]*>/i.test(html), `${f}: inline script`);
     assert.ok(!/<style/i.test(html), `${f}: inline style element`);

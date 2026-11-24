@@ -21,7 +21,7 @@ export type IdleQueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; opti
 
 export const IDLE_TIMEOUT_MS = 30_000;
 
-// The descriptions come HTML-escaped (spike/dump_menu.mjs): `&lt;file&gt;`.
+// The descriptions come HTML-escaped: `&lt;file&gt;` (docs/Agent SDK.md, "Quirk: command descriptions come HTML-escaped").
 export function unescapeHtml(s: string): string {
   return s.replace(/&(lt|gt|quot|#39|apos|amp);/g, (_, e: string) => ({ lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'", amp: '&' })[e] as string);
 }

@@ -9,10 +9,10 @@ bundle="$root/build/Synopia.app"
 node="$(asdf which node 2>/dev/null || command -v node || true)"
 [ -n "$node" ] || { echo "build: fail (no node found)"; exit 1; }
 
-icon="$root/prototype/icon/icon-1024.png"
+icon="$app/web/icon/icon-1024.png"
 if [ ! -f "$icon" ]; then
-  icon="$(ls -S "$root"/prototype/icon/*.png 2>/dev/null | head -1 || true)"
-  [ -n "$icon" ] || { echo "build: fail (no PNG in prototype/icon)"; exit 1; }
+  icon="$(ls -S "$app"/web/icon/*.png 2>/dev/null | head -1 || true)"
+  [ -n "$icon" ] || { echo "build: fail (no PNG in app/web/icon)"; exit 1; }
 fi
 
 rm -rf "$bundle"

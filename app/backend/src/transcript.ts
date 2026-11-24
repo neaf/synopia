@@ -1,5 +1,5 @@
 // JSONL records to items for one conversation (the main one or a subagent's).
-// A stateful port of export_transcripts.py lines 101-252 (plan section 7): records arrive in
+// Stateful (docs/Claude Code transcripts.md, plan section 7): records arrive in
 // file order, and a later record (a tool result, a task notification) updates an earlier item
 // in place. Every item has a stable id; takeChanges() lists what changed since the last call.
 import fs from 'node:fs';

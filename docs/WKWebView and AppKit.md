@@ -44,7 +44,7 @@ How the Swift shell hosts the page, and what WebKit and AppKit do that the page 
 
 ## JavaScript panels
 
-WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `runJavaScriptConfirmPanelWithMessage` implementation, `confirm()` returns false at once. The page uses no `confirm()` (closing asks in the message box); the shell's NSAlert bridge has no caller. Code: `WebView.swift` 101-110.
+WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `runJavaScriptConfirmPanelWithMessage` implementation, `confirm()` returns false at once. The page uses no `alert()` or `confirm()`: closing asks in the message box, so the shell implements no panel delegate. Code: `WebView.swift` `WKUIDelegate` (createWebViewWith only).
 
 ## Snapshots without permission
 

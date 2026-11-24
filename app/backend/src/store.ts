@@ -11,8 +11,9 @@ import type { UiState } from './ui.ts';
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
 export type Group = { id: string; name: string; ids: string[] };
 export type Layout = { groups: Group[]; others: string[] };
+// `newSessionCwd`: the folder of new sessions when set (else newSessionFolder's default).
 // `model`: the model of new sessions when set (else the CLI's default).
-export type Settings = { newSessionCwd: string; writerModel: string; model?: string };
+export type Settings = { newSessionCwd?: string; writerModel: string; model?: string };
 
 export type State = {
   version: 1;
@@ -50,9 +51,18 @@ export function defaultState(): State {
     written: {},
     ended: {},
     endedFailed: {},
-    settings: { newSessionCwd: '~/dev/demo-project', writerModel: 'haiku' },
+    settings: { writerModel: 'haiku' },
     ui: { sessions: {} },
   };
+}
+
+// The folder a new session opens in (R3.3): the stored setting, else the folder of the most
+// recently opened session, else the home folder.
+export function newSessionFolder(state: State): string {
+  if (state.settings.newSessionCwd) return state.settings.newSessionCwd;
+  let last: OpenEntry | null = null;
+  for (const e of state.open) if (!last || e.openedAt > last.openedAt) last = e;
+  return last ? last.cwd : '~';
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -100,7 +110,7 @@ export function normalize(raw: unknown): State {
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
     const st = raw.settings;
-    if (typeof st.newSessionCwd === 'string') s.settings.newSessionCwd = st.newSessionCwd;
+    if (typeof st.newSessionCwd === 'string' && st.newSessionCwd) s.settings.newSessionCwd = st.newSessionCwd;
     if (typeof st.writerModel === 'string') s.settings.writerModel = st.writerModel;
     if (typeof st.model === 'string' && st.model) s.settings.model = st.model;
   }

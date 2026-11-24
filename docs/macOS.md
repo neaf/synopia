@@ -68,7 +68,7 @@ A test can pass variables to an app it launches only through `open --env NAME=va
 
 ## Jamf Protect
 
-A locally `swiftc`-built app, with only the linker's ad-hoc signature, launched under Jamf Protect without being blocked (one author run, 2026-11-23, `spike/native-shell`). `unverified` beyond that run: there is no codesign step in `build.sh`, and nothing is downloaded at build time that Jamf could block.
+A locally `swiftc`-built app, with only the linker's ad-hoc signature, launched under Jamf Protect without being blocked (one author run, 2026-11-23, `spike/native-shell` at tag `rearch-base`). `unverified` beyond that run: there is no codesign step in `build.sh`, and nothing is downloaded at build time that Jamf could block.
 
 ## Platform floor
 

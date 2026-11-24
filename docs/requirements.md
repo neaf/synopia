@@ -6,7 +6,7 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 1. Who it's for and the job
 
-- One user, one machine, usually one repository (`~/dev/demo-project`) with several worktrees, many parallel sessions, each using subagents, forks, background shells and monitors heavily.
+- One user, one machine, usually one repository with several worktrees, many parallel sessions, each using subagents, forks, background shells and monitors heavily.
 - The problems it solves:
   - Switching between iTerm tabs named by hyphenated slugs.
   - Asking every session "how are we doing" and "so what, what's next".
@@ -47,7 +47,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - Synopia takes a session a terminal holds (the user sends here): when the CLI is idle (nothing running or waiting in it), Synopia checks again right before, writes a note to the CLI's terminal, ends it (SIGTERM, then SIGINT, never SIGKILL; if it won't exit within 10 s the message stays in the box with a toast), waits for the transcript to settle, resumes the session and sends. The message stays in the box until then. When the CLI is busy or waiting, the box keeps it, marked "Waiting for the terminal to finish…", and the take-over runs once the CLI is idle; any edit or Esc cancels the wait.
   - The note, written to the CLI's own terminal after it exits: "Synopia took over this session at 12:04. To continue here instead: claude --resume <id>". Without a terminal to write to, it is skipped.
   - "Open session" lists past sessions from the SDK's `listSessions()`, newest first; one a terminal holds says "Open in a terminal" in its row and opens read-only. Opening one resumes it by id on the first message.
-- R3.3 New session: "New session" opens an empty session in `~/dev/demo-project` (a config value). There's no dialog and no new worktree yet. The first prompt sets the tone, and Claude names the session from there.
+- R3.3 New session: "New session" opens an empty session in the new-session folder: a stored setting (`settings.newSessionCwd` in state.json) that defaults to the folder of the most recently opened session, or `~` when there is none (decided 2026-11-24). There's no dialog and no new worktree yet. The first prompt sets the tone, and Claude names the session from there.
 - R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it.
 - R3.5 No drift detection. The user keeps one session per topic (see Rejected).
 - R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. x, x in normal mode (R9.6) marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
@@ -85,7 +85,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - Group headings are not drop targets.
 - R4.6 The dragged copy follows the pointer at 50% opacity, offset 14px to the right, so the target stays visible.
 - R4.7 Double-click a group name to rename it. Empty groups disappear. Rows keep the user's order, with no automatic sorting by state.
-- R4.8 Claude may suggest the first grouping, from shared rare references: the same Notion attack plan, Linear project, GitHub label or worktree. A worktree is a signal, not the rule. From then on the user's layout is authoritative and persists. Experimental, not built; the rationale is in Design notes (section 16).
+- R4.8 Claude may suggest the first grouping, from shared rare references: the same Notion plan doc, Linear project, GitHub label or worktree. A worktree is a signal, not the rule. From then on the user's layout is authoritative and persists. Experimental, not built; the rationale is in Design notes (section 16).
 - R4.9 Rejected:
   - "Why grouped" explanations: magic must be dependable or adjustable, not explained.
   - Folding.

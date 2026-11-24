@@ -7,25 +7,22 @@ Status: requirements and a polished UI prototype. The real app comes next.
 | Path | What it is |
 |---|---|
 | `docs/requirements.md` | What the app must do and look like, with the choices that were rejected |
-| `prototype/app.html` | The UI reference, rendered from your real open sessions |
-| `prototype/*-storyboard.html` | Design storyboards for status marks, kind marks and the "needs you" card |
-| `prototype/icon/` | App icon and favicon (option B, "Paper") |
-| `export_transcripts.py` | Exports the open sessions into `prototype/transcripts.js` for the prototype |
-| `group_sessions.py` | Experiment: groups sessions by shared references |
-| `spike/` | Agent SDK spike; results in `spike/FINDINGS.md` |
+| `prototype/app.html` | The UI reference |
+| `prototype/*-storyboard.html` | Design storyboards for status marks, kind marks and the "needs you" card (design history; `docs/requirements.md` wins) |
+| `app/web/icon/` | App icon and favicon (option B, "Paper"); the build and the prototype read it |
 | `.ai-notes/` | Handover notes between sessions |
 
 ## Viewing the prototype
 
-The prototype reads `prototype/transcripts.js`, which isn't committed because it holds real session transcripts. Generate it, then open the page:
+The prototype reads `transcripts.js` and `menu.js` beside it. `app/web/dev/compare.sh` builds both from the invented test fixtures into a copy of the page, then screenshots it:
 
 ```sh
-python3 -I export_transcripts.py
-open -a "Google Chrome" prototype/app.html
+app/web/dev/compare.sh
+open /tmp/synopia-compare/proto/prototype/app.html
 ```
 
-Test states for the "needs you" card: add `?demo=ask`, `ask6`, `multi`, `permission` or `plan` before the `#<session-id>`, for example `prototype/app.html?demo=ask6#d0d0d0d0`.
+Test states for the "needs you" card: add `?demo=ask`, `ask6`, `multi`, `permission` or `plan` before the `#<session-id>`, for example `app.html?demo=ask6#22222222`.
 
 ## Before publishing
 
-The storyboards embed screenshots and text from real work sessions (PR numbers, ticket names). Scrub them before pushing this repository anywhere public.
+The tree holds invented data only. Commits up to tag `rearch-base` hold real work data (PR numbers, ticket ids, branch names, a session screenshot): scrub the history before pushing this repository anywhere.

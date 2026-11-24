@@ -55,7 +55,7 @@ Transcript files are in [Claude Code transcripts](Claude%20Code%20transcripts.md
 
 ## Two writers on one transcript
 
-Nothing in the CLI stops two processes from writing one session's JSONL: their records interleave. Source: spike/FINDINGS.md "Gotchas". Synopia guards itself: before it resumes a session it checks the pid files, and it yields a session a terminal takes.
+Nothing in the CLI stops two processes from writing one session's JSONL: their records interleave. Source: SDK spike, "Gotchas" (`spike/FINDINGS.md` at tag `rearch-base`). Synopia guards itself: before it resumes a session it checks the pid files, and it yields a session a terminal takes.
 
 ## Take-over
 

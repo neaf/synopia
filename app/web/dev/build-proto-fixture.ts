@@ -1,5 +1,5 @@
 // Builds the prototype's data files from the backend fixture tree, for compare.sh:
-// transcripts.js (window.TRANSCRIPTS, the shape export_transcripts.py writes) and menu.js (window.MENU).
+// transcripts.js (window.TRANSCRIPTS, the shape prototype/app.html reads) and menu.js (window.MENU).
 // It reads the fixtures through the same Views and fake script the port gets under --fake, and turns
 // the pending requests into ask items with the page's own card.js, so both sides show the same state.
 // Usage: node --experimental-strip-types build-proto-fixture.ts <claude-dir> <out-dir>

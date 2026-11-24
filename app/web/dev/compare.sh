@@ -15,10 +15,10 @@ CHROME=$("$DEV/chrome-bin.sh") || exit 1
 FIXTURE="$APP/backend/test/fixtures/claude"
 
 rm -rf "$OUT"
-mkdir -p "$OUT/proto" "$OUT/shots" "$OUT/state"
-cp "$ROOT/prototype/app.html" "$OUT/proto/app.html"
-cp -R "$ROOT/prototype/icon" "$OUT/proto/icon"
-node --experimental-strip-types --disable-warning=ExperimentalWarning "$DEV/build-proto-fixture.ts" "$FIXTURE" "$OUT/proto" >/dev/null
+mkdir -p "$OUT/proto/prototype" "$OUT/proto/app/web" "$OUT/shots" "$OUT/state"
+cp "$ROOT/prototype/app.html" "$OUT/proto/prototype/app.html"
+cp -R "$WEB/icon" "$OUT/proto/app/web/icon" # app.html links ../app/web/icon
+node --experimental-strip-types --disable-warning=ExperimentalWarning "$DEV/build-proto-fixture.ts" "$FIXTURE" "$OUT/proto/prototype" >/dev/null
 
 SYNOPIA_DEV_PORT=$PORT SYNOPIA_DEV_STATE="$OUT/state" "$APP/dev.sh" --fake >"$OUT/backend.out" 2>&1 &
 trap 'pkill -f -- "--state-dir $OUT/state" 2>/dev/null || true' EXIT
@@ -41,7 +41,7 @@ shot() { # name url
 # name | query | hash: a question card, a permission card, a plan card, working with a subagent wave, an open diff, a subagent view
 for s in "waiting||22222222" "permission||33333333" "plan||55555555" "busy||44444444" "diff|open=1|11111111" "agent|agent=aaaa0002|44444444"; do
   name=${s%%|*}; rest=${s#*|}; q=${rest%%|*}; h=${rest#*|}
-  shot "$name-proto.png" "file://$OUT/proto/app.html${q:+?$q}#$h"
+  shot "$name-proto.png" "file://$OUT/proto/prototype/app.html${q:+?$q}#$h"
   shot "$name-port.png" "$URL${q:+&$q}#$h"
 done
 echo "compare: $(ls "$OUT/shots" | wc -l | tr -d ' ') screenshots in $OUT/shots"

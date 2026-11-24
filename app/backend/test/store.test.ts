@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStore, defaultState, reconcileLayout } from '../src/store.ts';
+import { openStore, defaultState, reconcileLayout, newSessionFolder } from '../src/store.ts';
 import type { OpenEntry, Layout } from '../src/store.ts';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'synopia-store-'));
@@ -13,7 +13,7 @@ test('defaults when there is no state file', () => {
   const dir = tmp();
   const s = openStore(dir);
   assert.deepEqual(s.state, defaultState());
-  assert.equal(s.state.settings.newSessionCwd, '~/dev/demo-project');
+  assert.equal(s.state.settings.newSessionCwd, undefined);
   assert.equal(s.state.settings.writerModel, 'haiku');
   assert.equal(existsSync(join(dir, 'state.json')), false);
 });
@@ -24,9 +24,25 @@ test('a partial state file is filled with defaults', () => {
   const s = openStore(dir);
   assert.deepEqual(s.state.reviewed, ['a1']);
   assert.equal(s.state.settings.writerModel, 'sonnet');
-  assert.equal(s.state.settings.newSessionCwd, '~/dev/demo-project');
+  assert.equal(s.state.settings.newSessionCwd, undefined);
   assert.deepEqual(s.state.layout, { groups: [], others: [] });
   assert.deepEqual(s.state.open, []);
+});
+
+test('new sessions open in the setting, else the most recent session folder, else home', () => {
+  const s = defaultState();
+  assert.equal(newSessionFolder(s), '~');
+  s.open = [
+    { id: 'a', cwd: '/w/old', openedAt: 1, closedAt: null },
+    { id: 'b', cwd: '/w/new', openedAt: 3, closedAt: 5 },
+    { id: 'c', cwd: '/w/mid', openedAt: 2, closedAt: null },
+  ];
+  assert.equal(newSessionFolder(s), '/w/new');
+  s.settings.newSessionCwd = '~/work';
+  assert.equal(newSessionFolder(s), '~/work');
+  const dir = tmp();
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ version: 1, settings: { newSessionCwd: '' } }));
+  assert.equal(openStore(dir).state.settings.newSessionCwd, undefined);
 });
 
 test('a corrupt state file is kept aside, not overwritten', () => {
