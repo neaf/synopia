@@ -1,20 +1,37 @@
-/* Rail: the background work panel (split from prototype/app.html). */
-/* ---------- background work: forks, subagents, shells, monitors ---------- */
-const bgOf = s => s.background || [];
-const hasBackground = s => agentsOf(s).length || bgOf(s).length;
-function bgState(b) {
+/* Rail: the background work panel (requirements R7.1, R7.2): Main conversation, the running forks,
+   subagents, shells and monitors as a tree, To review, and Past. Rebuilt whole on each render; its cards
+   tween in and out (tween.js). */
+import { store, cur, view } from "./state.js";
+import { classic as C } from "./legacy.js";
+import { ind, kind, KG, kindKey, bgMarkKey, sessionMark } from "./marks.js";
+import { lineTweens, graceScan, inGrace } from "./tween.js";
+
+const esc = s => C.esc(s);
+const agentsOf = s => s.agents || [];
+export const bgOf = s => s.background || [];
+export const hasBackground = s => agentsOf(s).length || bgOf(s).length;
+export function bgState(b) {
   if (b.status && b.status !== "running") return b.status === "completed" ? "done" : b.status;
-  if (b.kind === "monitor" && b.timeout && !b.persistent && new Date(b.start).getTime() + b.timeout < NOWISH) return "timed out";
+  if (b.kind === "monitor" && b.timeout && !b.persistent && new Date(b.start).getTime() + b.timeout < C.NOWISH) return "timed out";
   return "running";
 }
-const bgMs = b => (b.end ? new Date(b.end) : (bgState(b) === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : NOWISH)) - new Date(b.start);
-let openBg = null;
+const bgMs = b => (b.end ? new Date(b.end) : (bgState(b) === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : C.NOWISH)) - new Date(b.start);
+/* the shell or monitor card expanded to its command and summary (one at a time; kept in the UI state) */
+export let openBg = null;
+export function setOpenBg(key) { openBg = key || null; }
+/* every subagent, shell and monitor the panels show, with whether it runs, for the finish grace (tween.js) */
+export function scanGrace() {
+  graceScan([...store.sessions.values()].flatMap(s => [
+    ...agentsOf(s).map(a => [s.id + "|" + a.id, !a.finished]),
+    ...bgOf(s).map(b => [s.id + "|" + b.toolUseId, bgState(b) === "running"]),
+  ]));
+}
 /* No Stop row (author, 2026-11-24): it moved the panel when switching subagents. A key comes when it's
    needed; until then a runaway background task ends with its session. */
-function railHTML(s, A) {
+export function railHTML(s, A) { // exported for the escape test
   if (!hasBackground(s)) return "";
-  graceScan();
-  const kindOf = x => x.kind ? x.kind : agentType(x);
+  scanGrace();
+  const { live, took, hhmm, agentMs } = C;
   const all = [
     ...agentsOf(s).map(a => ({ key: a.id, agent: a, name: a.description, kind: a.fork ? "fork" : (a.type || "subagent"), start: a.start, end: a.finished ? a.end : null, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done", ms: agentMs(a) })),
     ...bgOf(s).map(b => { const st = bgState(b); return { key: b.toolUseId, bg: b, name: b.description || b.command, kind: b.kind, start: b.start,
@@ -34,7 +51,6 @@ function railHTML(s, A) {
     if (x.agent) return ""; // a subagent's card opens its transcript, nothing expands
     return `<div class="bw-detail">${x.bg.summary ? esc(x.bg.summary) : x.running ? "No report yet." : esc(x.st)}<code>${esc(x.bg.command)}</code></div>`;
   };
-  const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
       <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running).length)}</span><span class="w">${esc(s.state.word)}</span></button>
@@ -63,3 +79,12 @@ const railTw = lineTweens({
     ks.prepend(n);
   },
 });
+
+export function renderRail() {
+  const s = cur(), conv = document.getElementById("conv"); if (!s || !C.mounted) return;
+  const A = view && C.agentById(s, view);
+  const old = conv.querySelector(".rail"), html = railHTML(s, A), before = old ? railTw.snap(old) : new Map();
+  if (old && html) old.outerHTML = html; else if (old) old.remove(); else if (html) conv.insertAdjacentHTML("beforeend", html);
+  conv.classList.toggle("no-rail", !hasBackground(s));
+  const rail = conv.querySelector(".rail"); if (rail) railTw.run(rail, before); // its children tween in and out
+}

@@ -4,7 +4,8 @@
    light, tone, word, mark, stopped, needsYou, review, driven. The page decides no status itself.
    This module is the only writer of `current` (the session shown) and `view` (the subagent shown in it,
    null for the main conversation): everything else calls select() or selectView(). */
-export const store = { sessions: new Map(), layout: null, menu: {}, pending: new Map(), ui: { connected: false } };
+/* `layout`: the sidebar's groups, the backend's (layout.ts), replaced whole by `hello`, `layout` and a `session` with `replaces` */
+export const store = { sessions: new Map(), layout: { groups: [], others: [] }, menu: {}, pending: new Map(), ui: { connected: false } };
 /* every session in the server's order, the same objects as in store.sessions */
 export let data = [];
 export let current = null;
@@ -53,15 +54,17 @@ function upsertById(list, upsert, keep) {
 export function applyHello(m) {
   store.sessions = new Map(m.sessions.map(s => [s.id, { ...blankSession(s.id), ...s }]));
   for (const s of store.sessions.values()) s.agents.forEach(a => { a.items ||= []; });
-  store.layout = m.layout && (m.layout.groups.length || m.layout.others.length) ? m.layout : null;
+  store.layout = m.layout;
   store.menu = m.menu || {};
   store.pending = new Map();
   for (const p of m.pending || []) applyPending({ sid: p.sid, request: p.request });
   syncData();
 }
-/* a `session` frame; with `replaces`, the session's id changed (a new session got its real id, or a reset) */
+/* a `session` frame; with `replaces`, the session's id changed (a new session got its real id, or a reset),
+   and its `layout` has the new id in the old one's place */
 export function applySession(m) {
-  const { t, replaces, ...fields } = m;
+  const { t, replaces, layout, ...fields } = m;
+  if (layout) store.layout = layout;
   let s = store.sessions.get(replaces) || store.sessions.get(m.id);
   if (replaces && store.sessions.has(replaces)) {
     store.sessions.delete(replaces);
@@ -105,4 +108,5 @@ export function applyPending(m) {
   if (list.length) store.pending.set(m.sid, list); else store.pending.delete(m.sid);
 }
 export function applyStream(m) { const s = store.sessions.get(m.sid); if (s) s.stream = m.clear ? null : m.text; return s; }
+export function applyLayout(m) { store.layout = m.layout; }
 export function applyMenu(m) { store.menu[m.cwd] = { commands: m.commands || [], models: m.models || [] }; }

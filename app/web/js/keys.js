@@ -15,7 +15,7 @@ function setMode(m) {
 function stepSession(step) {
   if (!KEYS.length) return;
   const i = KEYS.indexOf(current);
-  select(i < 0 ? KEYS[step > 0 ? 0 : KEYS.length - 1] : KEYS[(i + step + KEYS.length) % KEYS.length]); openBg = null; renderAll();
+  select(i < 0 ? KEYS[step > 0 ? 0 : KEYS.length - 1] : KEYS[(i + step + KEYS.length) % KEYS.length]); setOpenBg(null); renderAll();
 }
 document.addEventListener("focusin", e => { if ((e.target.id === "msg" || e.target.id === "qa-own") && mode !== "insert") { mode = "insert"; paintMode(); } });
 document.addEventListener("focusout", e => { if (e.target.id === "msg" && mode !== "normal") { mode = "normal"; paintMode(); } });

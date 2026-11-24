@@ -23,10 +23,9 @@ await reduce(false);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
 await c.load(url);
 
-// a group of two sessions, the first one under test: stored as the page would send it, then a reload
+// a group of two sessions, the first one under test: made as a drop would make it, then a reload
 const ids = await ev(`[...document.querySelectorAll('#groups .row')].slice(0, 2).map(r => r.dataset.id)`);
-const l0 = await ev(`__synopia.layout()`), rest = (list) => list.filter((x) => !ids.includes(x));
-await serverSend(url, { t: 'layout', layout: { groups: [{ id: 'gtw', name: 'Tween', ids }, ...l0.groups.map((g) => ({ ...g, ids: rest(g.ids) }))], others: rest(l0.others) } });
+await serverSend(url, { t: 'newGroup', sid: ids[1], onto: ids[0], group: 'gtw', name: 'Tween' });
 await c.load(url);
 const setup = ids.length < 2 ? 'need two sessions' : await ev(`(() => {
   const g = [...document.querySelectorAll('#groups .group')].find(g => g.querySelector('.g-name')?.textContent === 'Tween');

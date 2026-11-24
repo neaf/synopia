@@ -17,7 +17,6 @@ export const LOST = "The connection to the Synopia backend dropped before it con
 
 let ws = null, retryMs = 500, handlers = null, up = false, nextId = 0;
 const waiting = new Map(); // action id -> done(ok, error)
-const unsent = new Map(); // state the backend hasn't taken (sync): key -> the last frame
 /* the test API's spy (test-api.js): sees every frame sent and received while set */
 export const tap = { sent: null, got: null };
 
@@ -40,12 +39,8 @@ export function act(msg, { done, refused } = {}) {
   return true;
 }
 
-/* State the page holds and the backend stores (the layout): sent now, or kept and given back by
-   takeUnsent once the socket is back, so the next hello doesn't undo it. */
-export function sync(key, msg) {
-  if (send(msg)) unsent.delete(key); else unsent.set(key, msg);
-}
-export function takeUnsent(key) { const m = unsent.get(key); unsent.delete(key); return m || null; }
+/* the actions sent and not acked yet (the test API's settle point) */
+export const acting = () => waiting.size;
 
 /* on: { message(m), open(), close(wasOpen), refused(), toast(text) } */
 export function connect(on) {

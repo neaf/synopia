@@ -11,6 +11,7 @@
 import { store, current, view, cur, requestsOf, select } from "./state.js";
 import { send, TOKEN } from "./connection.js";
 import { classic as C } from "./legacy.js";
+import { openBg, setOpenBg } from "./rail.js";
 
 const uiS = {}; // sid -> { scroll: {view: anchor}, earlier: {view: oldest item id}, diffs: Set, folds: Set, rail }
 const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not on screen
@@ -36,7 +37,7 @@ export function applyHello(u) {
   const has = sid => typeof sid === "string" && store.sessions.has(sid);
   if (!location.hash && has(u.current)) select(u.current, u.view);
   if (u.mode === "insert" || u.mode === "normal") C.mode = u.mode;
-  if (typeof u.openBg === "string") C.openBg = u.openBg;
+  if (typeof u.openBg === "string") setOpenBg(u.openBg);
   for (const [sid, x] of Object.entries(u.sessions || {})) {
     if (!has(sid) || !x) continue;
     const s = sess(sid);
@@ -208,7 +209,7 @@ export function changed() {
 function top() {
   const code = document.getElementById("pv-code"), find = document.getElementById("pv-find"), pv = C.pv, viewer = C.viewer;
   return {
-    current, view: view || null, mode: C.mode, openBg: C.openBg || null, theme: C.themePref,
+    current, view: view || null, mode: C.mode, openBg: openBg || null, theme: C.themePref,
     openList: C.openListShown() ? { filter: C.openList.filter } : null,
     preview: C.previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
     viewer: viewer ? (keep => keep.length ? { srcs: keep.map(k => viewer.srcs[k].replace(/([?&])token=[^&]*&?/, "$1")), froms: keep.map(k => viewer.froms[k] || ""), i: Math.max(0, keep.indexOf(viewer.i)) } : null)(viewer.srcs.map((s, k) => k).filter(k => viewer.srcs[k].startsWith("/api/image?"))) : null,

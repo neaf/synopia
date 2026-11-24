@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStore, defaultState, reconcileLayout, newSessionFolder, ReviewedMarks, REVIEWED_MAX } from '../src/store.ts';
-import type { OpenEntry, Layout } from '../src/store.ts';
+import { openStore, defaultState, newSessionFolder, ReviewedMarks, REVIEWED_MAX } from '../src/store.ts';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'synopia-store-'));
 const wait = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
@@ -157,65 +156,4 @@ test('reviewed marks: a new mark past REVIEWED_MAX drops the oldest (backend-cor
   assert.equal(marks.has('a1'), true);
   assert.equal(marks.has('new'), true);
   s.close();
-});
-
-// Layout reconcile (section 11).
-const open = (ids: string[], closed: string[] = []): OpenEntry[] => [
-  ...ids.map((id) => ({ id, cwd: '/x', openedAt: 1, closedAt: null })),
-  ...closed.map((id) => ({ id, cwd: '/x', openedAt: 1, closedAt: 2 })),
-];
-const empty: Layout = { groups: [], others: [] };
-
-test('reconcile: new sessions go to Not in a group', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a'] }], others: [] };
-  const got = reconcileLayout(stored, stored, open(['a', 'b', 'c']));
-  assert.deepEqual(got, { groups: [{ id: 'g1', name: 'Work', ids: ['a'] }], others: ['b', 'c'] });
-});
-
-test('reconcile: the page layout is authoritative for visible ids', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'b'] }], others: ['c'] };
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Renamed', ids: ['c', 'a'] }], others: ['b'] };
-  assert.deepEqual(reconcileLayout(incoming, stored, open(['a', 'b', 'c'])), incoming);
-});
-
-test('reconcile: closed ids stay hidden in their group, at their place', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'x', 'b'] }], others: ['y'] };
-  // The page doesn't show x and y (closed) and moves b before a.
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['b', 'a'] }], others: [] };
-  const got = reconcileLayout(incoming, stored, open(['a', 'b'], ['x', 'y']));
-  assert.deepEqual(got, { groups: [{ id: 'g1', name: 'Work', ids: ['b', 'a', 'x'] }], others: ['y'] });
-});
-
-test('reconcile: a group with only hidden ids is kept', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Old', ids: ['x', 'a'] }], others: [] };
-  // The page moved a out and no longer sends g1.
-  const incoming: Layout = { groups: [], others: ['a'] };
-  const got = reconcileLayout(incoming, stored, open(['a'], ['x']));
-  assert.deepEqual(got, { groups: [{ id: 'g1', name: 'Old', ids: ['x'] }], others: ['a'] });
-});
-
-test('reconcile: a group with no ids at all is dropped', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a'] }, { id: 'g2', name: 'Empty', ids: [] }], others: [] };
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Work', ids: [] }, { id: 'g2', name: 'Empty', ids: [] }], others: ['a'] };
-  assert.deepEqual(reconcileLayout(incoming, stored, open(['a'])), { groups: [], others: ['a'] });
-});
-
-test('reconcile: unknown and duplicate ids are removed', () => {
-  const incoming: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'ghost', 'a'] }], others: ['a', 'b'] };
-  assert.deepEqual(reconcileLayout(incoming, empty, open(['a', 'b'])), {
-    groups: [{ id: 'g1', name: 'Work', ids: ['a'] }],
-    others: ['b'],
-  });
-});
-
-test('reconcile: a reopened session keeps its place', () => {
-  const stored: Layout = { groups: [{ id: 'g1', name: 'Work', ids: ['a', 'x', 'b'] }], others: [] };
-  // x was closed and is now open again: it is visible where it was.
-  const got = reconcileLayout(stored, stored, open(['a', 'x', 'b']));
-  assert.deepEqual(got, stored);
-});
-
-test('reconcile: malformed input is treated as empty', () => {
-  const got = reconcileLayout({ groups: 'no' } as unknown as Layout, empty, open(['a']));
-  assert.deepEqual(got, { groups: [], others: ['a'] });
 });

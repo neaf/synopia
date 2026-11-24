@@ -384,7 +384,7 @@ Rearchitecture decisions (2026-11-24):
 - "Always allow" rules for a session clear when it closes (R6.5).
 - One window and one page per daemon; `restore` and toasts go to the page that acted.
 - The fonts are bundled (R11).
-- An action taken while disconnected (answer, layout, reviewed, close, interrupt) is refused with a toast and local state stays as it was; UI state and layout are sent again on reconnect.
+- An action taken while disconnected (answer, a layout change, reviewed, close, interrupt) is refused with a toast and local state stays as it was; UI state is sent again on reconnect. The layout is the backend's: the page sends intents and draws the layout it gets.
 - Future, out of the rearchitecture's scope and not to be blocked by it: the signed-out banner (section 14), FR-SES-15, FR-SIDE-06, FR-STAT-06.
 
 ## 16. Design notes

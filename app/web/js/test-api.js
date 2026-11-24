@@ -4,7 +4,9 @@
    recorded until a check calls spy(), so in use it costs nothing. The only module that writes `window`
    besides legacy.js's accessors; main.js installs it with the message handler and the panel render. */
 import * as state from "./state.js";
-import { tap } from "./connection.js";
+import { tap, acting } from "./connection.js";
+import { MARKS, ind } from "./marks.js";
+import { tweens } from "./sidebar.js";
 import * as ui from "./ui-state.js";
 import { classic as C } from "./legacy.js";
 
@@ -32,7 +34,8 @@ export function installTestApi({ inject, render }) {
     cur: () => copy(state.cur()),
     data: () => copy(state.data), // every session, in the server's order
     pending: sid => copy(state.store.pending.get(sid) || []), // the session's requests, oldest first
-    layout: () => copy(C.layout), // the sidebar's groups, hidden (closed) ids included
+    layout: () => copy(state.store.layout), // the sidebar's groups, the backend's, hidden (closed) ids included
+    acting: () => acting(), // actions sent and not acked yet (0: every intent's result is in)
     spy: () => {
       spied = { sent: [], got: [] };
       tap.sent = m => spied.sent.push(copy(m)); tap.got = m => spied.got.push(copy(m));
@@ -49,11 +52,11 @@ export function installTestApi({ inject, render }) {
     cards: () => copy(C.qstate), // every card's state, by "<sid>:<request id>"
     preview: () => ({ shown: C.previewShown(), path: C.pv.path }),
     openList: () => ({ shown: C.openListShown(), filter: C.openList.filter }),
-    marks: () => Object.keys(C.marks), // every mark kind
-    mark: (kind, size) => C.ind(kind, size), // a mark's markup
+    marks: () => Object.keys(MARKS), // every mark kind
+    mark: (kind, size) => ind(kind, size), // a mark's markup
     /* renders on demand, as a server message would: for checks that a render keeps something */
     render: (...parts) => { render(...parts); }, // "side", "conv", "header", "log", "card", "rail"
     redraw: () => { document.querySelectorAll("#log .log-inner > *").forEach(e => { e._sig = ""; }); C.renderLog(); }, // every log block replaced
-    resetTweens: () => { C.tweens.clear(); }, // the sidebar forgets its sub-line tweens
+    resetTweens: () => { tweens.clear(); }, // the sidebar forgets its sub-line tweens
   });
 }

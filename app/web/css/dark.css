@@ -43,7 +43,6 @@
   --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
   --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
 :root[data-theme="dark"] .side .row[aria-current="true"] .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
-:root[data-theme="dark"] .side .row[aria-current="true"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
 :root[data-theme="dark"] .side .row[aria-current="true"] .r-side { border-color: #6E7781; }
 :root[data-theme="dark"] .side .tree .row[aria-current="true"] .tg::before, :root[data-theme="dark"] .side .tree .row[aria-current="true"] .tg::after { border-color: #6E7781; }
 :root[data-theme="dark"] .drop-into { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
@@ -94,19 +93,9 @@
 
 /* ---------- marks and kind tags: the dark tracks under the turning parts ---------- */
 :root[data-theme="dark"] .spinner { border-color: #1F4D2C; border-top-color: #3FB950; border-right-color: #3FB950; }
-:root[data-theme="dark"] .ind .arc { border-color: #1F4D2C; border-top-color: var(--green); border-right-color: var(--green); }
-:root[data-theme="dark"] .ind .arc.dual { border-color: #1F4D2C; border-top-color: var(--green); border-bottom-color: var(--green); }
-:root[data-theme="dark"] .ind .arc.fork { border-color: #3E2F66; border-top-color: var(--k-fork); border-right-color: var(--k-fork); }
-:root[data-theme="dark"] .ind .arc.k2 { border-color: #3E2F66; border-top-color: var(--k-fork); border-bottom-color: var(--k-fork); }
-:root[data-theme="dark"] .ind .arc.grey, :root[data-theme="dark"] .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
-:root[data-theme="dark"] .ind .sat { border-color: #545D68; }
-:root[data-theme="dark"] .ind .v-escal .bars i { background: linear-gradient(180deg, var(--red) 0 .19em, #8E3A36 .19em .3em); background-size: 100% .3em; }
-:root[data-theme="dark"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
+:root[data-theme="dark"] .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
 @media (prefers-reduced-motion: reduce) {
   :root[data-theme="dark"] .spinner { border-color: #3FB950; }
-  :root[data-theme="dark"] .ind .arc:not(.frozen):not(.grey) { border-color: var(--green); }
-  :root[data-theme="dark"] .ind .arc.fork, :root[data-theme="dark"] .ind .arc.k2 { border-color: var(--k-fork); }
-  :root[data-theme="dark"] .ind .radar .sweep { background: none; }
 }
 :root[data-theme="dark"] .kind { --kc: #ADBAC7; --kb: #3A424D; }
 :root[data-theme="dark"] .kd-sub { --kc: #56D364; --kb: #1F3A28; }

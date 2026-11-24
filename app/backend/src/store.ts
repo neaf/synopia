@@ -7,10 +7,10 @@ import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { normalizeUi } from './ui-state.ts';
 import type { UiState } from './ui-state.ts';
+import { cleanLayout } from './layout.ts';
+import type { Layout } from './layout.ts';
 
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
-export type Group = { id: string; name: string; ids: string[] };
-export type Layout = { groups: Group[]; others: string[] };
 // `newSessionCwd`: the folder of new sessions when set (else newSessionFolder's default).
 // `model`: the model of new sessions when set (else the CLI's default).
 export type Settings = { newSessionCwd?: string; writerModel: string; model?: string };
@@ -83,20 +83,6 @@ function entries<T>(v: unknown, clean: (x: unknown) => T | undefined): Record<st
   return out;
 }
 
-function cleanLayout(v: unknown): Layout {
-  const out: Layout = { groups: [], others: [] };
-  if (!isObj(v)) return out;
-  if (Array.isArray(v.groups)) {
-    for (const g of v.groups) {
-      if (isObj(g) && typeof g.id === 'string' && typeof g.name === 'string' && isStrArr(g.ids)) {
-        out.groups.push({ id: g.id, name: g.name, ids: [...g.ids] });
-      }
-    }
-  }
-  if (isStrArr(v.others)) out.others = [...v.others];
-  return out;
-}
-
 // Fills every missing or malformed top-level field with its default, so a
 // state file from an older or partial write still loads.
 export function normalize(raw: unknown): State {
@@ -141,60 +127,6 @@ export function normalize(raw: unknown): State {
     if (typeof st.model === 'string' && st.model) s.settings.model = st.model;
   }
   return s;
-}
-
-// Reconciles a layout sent by the page with the stored one (section 11):
-// - ids are kept only for sessions in `open`, each once (first place wins);
-// - closed ids the page doesn't show stay in their stored group, hidden, at
-//   their place after the id that preceded them, so a reopened session
-//   keeps its place;
-// - open ids found nowhere go to "Not in a group" (`others`);
-// - a group is dropped only when it has no ids at all, hidden ones included.
-export function reconcileLayout(incoming: Layout, stored: Layout, open: OpenEntry[]): Layout {
-  const closed = new Set(open.filter((e) => e.closedAt !== null).map((e) => e.id));
-  const known = new Set(open.map((e) => e.id));
-  const seen = new Set<string>();
-  const take = (ids: string[]) =>
-    ids.filter((id) => {
-      if (!known.has(id) || seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-
-  const inc = cleanLayout(incoming);
-  const groups: Group[] = inc.groups.map((g) => ({ id: g.id, name: g.name, ids: take(g.ids) }));
-  const others = take(inc.others);
-
-  // Put back hidden (closed) ids the page left out, where they were stored.
-  const restore = (target: string[], storedIds: string[]) => {
-    storedIds.forEach((id, i) => {
-      if (!closed.has(id) || seen.has(id)) return;
-      seen.add(id);
-      let at = 0;
-      for (let j = i - 1; j >= 0; j--) {
-        const k = target.indexOf(storedIds[j]);
-        if (k !== -1) { at = k + 1; break; }
-      }
-      target.splice(at, 0, id);
-    });
-  };
-  for (const sg of stored.groups) {
-    let g = groups.find((x) => x.id === sg.id);
-    if (!g && sg.ids.some((id) => closed.has(id) && !seen.has(id))) {
-      g = { id: sg.id, name: sg.name, ids: [] };
-      groups.push(g);
-    }
-    if (g) restore(g.ids, sg.ids);
-  }
-  restore(others, stored.others);
-
-  for (const e of open) {
-    if (!seen.has(e.id) && e.closedAt === null) {
-      seen.add(e.id);
-      others.push(e.id);
-    }
-  }
-  return { groups: groups.filter((g) => g.ids.length > 0), others };
 }
 
 export type Store = {

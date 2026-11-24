@@ -57,8 +57,8 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 - Symptom: running marks jump back to phase 0 every few seconds.
 - Cause: an `innerHTML` render makes new elements, and a new element's CSS animation starts at 0.
 - Workaround: pin every mark animation (`.ind`, `.spinner`) to the document timeline's origin, `CSSAnimation.startTime = 0`, from a document-wide `MutationObserver` (once per frame) and an `animationstart` listener. Layout tweens keep their own timing.
-- Code: `marks.js` `syncMarks` (99-118).
-- Related: `getAnimations()` on a detached node is empty, so a tween is cancelled after reinserting the node; `currentTime` on a new animation waits a frame, `startTime` doesn't. Code: `sidebar.js` `tweenLines`.
+- Code: `marks.js` `syncMarks`.
+- Related: `getAnimations()` on a detached node is empty, so a tween is cancelled after reinserting the node; `currentTime` on a new animation waits a frame, `startTime` doesn't. Code: `tween.js` `lineTweens`.
 
 ### Quirk: a re-render loses open state
 
@@ -72,7 +72,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 - Symptom: dragging a sidebar row starts no drag, or a click instead.
 - Cause: native HTML5 drag is unreliable on `<button>` rows in WebKit.
 - Workaround: drag and drop uses pointer events and `touch-action: none`.
-- Code: `dnd.js` 2, `app.css` 441.
+- Code: `dnd.js` (pointer listeners), `app.css` `#groups .row { touch-action: none }`.
 
 ## Page platform facts
 
@@ -91,4 +91,4 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 ## WebKit features used
 
-The page uses CSS `subgrid`, the CSS Custom Highlight API (`CSS.highlights`, feature-detected: without it find marks are absent), `inert` and a writable `CSSAnimation.startTime`. The minimum WebKit (and so macOS) version that has all of them is `unverified`. Code: `app.css` 783 (subgrid), `preview.js` 97, `tween.js` 42 (inert), `marks.js` 109.
+The page uses CSS `subgrid`, the CSS Custom Highlight API (`CSS.highlights`, feature-detected: without it find marks are absent), `inert` and a writable `CSSAnimation.startTime`. The minimum WebKit (and so macOS) version that has all of them is `unverified`. Code: `app.css` 783 (subgrid), `preview.js` 97, `tween.js` `lineTweens` (inert), `marks.js` `syncMarks`.

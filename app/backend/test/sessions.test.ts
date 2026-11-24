@@ -5,11 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
-import { Sessions, renameInLayout } from '../src/sessions.ts';
+import { Sessions } from '../src/sessions.ts';
 import { StreamPreview } from '../src/session.ts';
 import { STATE_FLAG } from '../src/sdk.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
-import { openStore, reconcileLayout } from '../src/store.ts';
+import { openStore } from '../src/store.ts';
 import { patchUi } from '../src/ui-state.ts';
 import type { Client } from '../src/server.ts';
 import type { CanUseTool, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
@@ -37,7 +37,7 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
   store.state.settings.model = 'haiku';
   let sessions: Sessions | null = null;
   const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
-  const publisher = new Publisher({ transcripts, clients: () => clients, home: root, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r) });
+  const publisher = new Publisher({ transcripts, clients: () => clients, home: root, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r), layout: () => sessions?.layout.get() });
   const q = fakeQuery({ sessions: past });
   sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, ...extra });
   const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
@@ -141,6 +141,7 @@ test('sessions: conversation_reset moves the id in the open list, layout, models
   emit(q.calls[0], init(REAL));
   await tick();
   const st = store.state;
+  st.open.push({ id: 'x', cwd: '/x', openedAt: 0, closedAt: 1 }); // a closed one, hidden in the group
   st.layout = { groups: [{ id: 'g1', name: 'Group', ids: ['x', REAL] }], others: [] };
   st.models[REAL] = { model: 'haiku', effort: 'low' };
   st.rules[REAL] = ['Bash(ls:*)'];
@@ -148,7 +149,7 @@ test('sessions: conversation_reset moves the id in the open list, layout, models
   take();
   emit(q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: REAL });
   await tick();
-  assert.deepEqual(st.open.map((e) => e.id), [RESET]);
+  assert.deepEqual(st.open.map((e) => e.id), [RESET, 'x']);
   assert.deepEqual(st.layout.groups[0].ids, ['x', RESET]);
   assert.deepEqual(st.models[RESET], { model: 'haiku', effort: 'low' });
   assert.equal(st.models[REAL], undefined);
@@ -527,12 +528,6 @@ test('stream preview: thinking blocks are not shown, and land by type', () => {
   assert.equal(p.text(), null);
 });
 
-test('renameInLayout: swaps in place, or adds to Not in a group', () => {
-  assert.deepEqual(renameInLayout({ groups: [{ id: 'g', name: 'G', ids: ['a', 'b'] }], others: [] }, 'a', 'z', true),
-    { groups: [{ id: 'g', name: 'G', ids: ['z', 'b'] }], others: [] });
-  assert.deepEqual(renameInLayout({ groups: [], others: ['q'] }, 'a', 'z', true), { groups: [], others: ['q', 'z'] });
-});
-
 // A past session's JSONL, hand-written: one prompt and one reply.
 const PAST = 'aaaaaaaa-0000-4000-8000-00000000000a';
 function writePast(claudeDir: string, cwd: string, id = PAST): string {
@@ -678,6 +673,7 @@ test('close: ends the process, sends removed, hides it in its group; reopening p
   const t = setup(root, past);
   await t.sessions.openSession(PAST);
   const st = t.store.state;
+  st.open.push({ id: 'x', cwd: '/x', openedAt: 0, closedAt: 1 }); // a closed one, hidden in the group
   st.layout = { groups: [{ id: 'g1', name: 'Work', ids: ['x', PAST] }], others: [] };
   t.sessions.get(PAST)!.send('go');
   await tick();
@@ -704,8 +700,7 @@ test('close: ends the process, sends removed, hides it in its group; reopening p
   // reopening it: back in its group, the same open[] entry
   await t2.sessions.openSession(PAST);
   assert.deepEqual(t2.transcripts.ids(), [PAST]);
-  assert.equal(t2.store.state.open.length, 1);
-  assert.equal(t2.store.state.open[0].closedAt, null);
+  assert.deepEqual(t2.store.state.open.map((e) => [e.id, e.closedAt === null]), [[PAST, true], ['x', false]], 'the same open[] entry');
   assert.deepEqual(t2.store.state.layout.groups[0].ids, ['x', PAST]);
 });
 
@@ -1082,17 +1077,25 @@ test('layout: a new session dragged into a group keeps its place through init (L
   const t = setup();
   const ph = t.sessions.newSession();
   const st = t.store.state;
-  st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [ph] }], others: [] }, st.layout, t.sessions.layoutEntries());
-  assert.deepEqual(st.layout.groups.map((g) => g.ids), [[ph]], 'the placeholder is kept');
+  assert.deepEqual(st.layout.others, [ph], 'a new session is placed at once');
+  const other = t.sessions.newSession();
+  assert.deepEqual(t.sessions.layout.newGroup(ph, other, 'g1', 'Work'), { ok: true });
+  assert.deepEqual(t.sessions.layout.move(other, { group: 'others' }), { ok: true });
+  assert.deepEqual(st.layout.groups.map((g) => g.ids), [[ph]], 'the placeholder is kept in its group');
+  const frames = t.take('layout');
+  assert.deepEqual(frames.at(-1)?.layout, st.layout, 'each change goes to the pages');
   t.sessions.get(ph)!.send('hi');
   await tick();
   emit(t.q.calls[0], init(REAL));
   await tick();
   assert.deepEqual(st.layout.groups.map((g) => g.ids), [[REAL]]);
-  assert.deepEqual(st.layout.others, [], 'not also under Not in a group');
-  // an id no session has is still dropped
-  st.layout = reconcileLayout({ groups: [{ id: 'g1', name: 'Work', ids: [REAL, 'new-gone'] }], others: [] }, st.layout, t.sessions.layoutEntries());
-  assert.deepEqual(st.layout.groups[0].ids, [REAL]);
+  assert.deepEqual(st.layout.others, [other], 'not also under Not in a group');
+  const after = t.take();
+  assert.deepEqual(after.find((m) => m.t === 'session' && m.replaces === ph)?.layout, st.layout, 'the session frame with replaces carries the layout');
+  assert.equal(after.filter((m) => m.t === 'layout').length, 0, 'not sent alone');
+  // a closed placeholder's id goes
+  t.sessions.close(other);
+  assert.deepEqual(st.layout, { groups: [{ id: 'g1', name: 'Work', ids: [REAL] }], others: [] });
 });
 
 test('sessions: a session whose turn runs in another process reads working, until that turn ends', async () => {

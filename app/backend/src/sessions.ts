@@ -19,7 +19,8 @@ import type { SendResult, TerminalSource } from './session.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Publisher } from './publisher.ts';
 import { newSessionFolder } from './store.ts';
-import type { Store, Layout, OpenEntry } from './store.ts';
+import type { Store, OpenEntry } from './store.ts';
+import { Layouts } from './layout.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
@@ -65,6 +66,8 @@ export class Sessions {
   private live = new Map<string, Session>();
   private aliases = new Map<string, string>();
   private recent = new Map<string, Recent>(); // the last Open list, for openSession's folder
+  // The sidebar's layout (layout.ts): the open list gives it its ids.
+  readonly layout: Layouts;
 
   constructor(opts: SessionsOptions) {
     this.opts = opts;
@@ -74,6 +77,7 @@ export class Sessions {
     this.log = opts.log ?? nullLog;
     this.home = opts.home ?? os.homedir();
     this.now = opts.now ?? Date.now;
+    this.layout = new Layouts({ store: this.store, entries: () => this.layoutEntries(), publish: (l) => this.publisher.layout(l) });
   }
 
   // Opens every session of the open list that isn't closed. None has a process yet.
@@ -83,6 +87,7 @@ export class Sessions {
       if (e.closedAt !== null || this.live.has(e.id)) continue;
       this.add(e.id, e.cwd, false, restored(this.store.state.status[e.id]));
     }
+    this.layout.sync();
   }
 
   // The current id for an id the page may still hold.
@@ -125,6 +130,7 @@ export class Sessions {
   newSession(): string {
     const id = `new-${randomUUID()}`;
     this.add(id, this.expand(newSessionFolder(this.store.state)), true, null);
+    this.layout.sync(); // last under Not in a group
     this.log('sessions.new', { sid: id });
     return id;
   }
@@ -177,9 +183,9 @@ export class Sessions {
     } else {
       st.open.push({ id, cwd: r.cwd, openedAt: this.now(), closedAt: null });
     }
-    st.layout = renameInLayout(st.layout, id, id, true);
     this.store.changed();
     this.add(id, r.cwd, false, restored(st.status[id]) ?? { status: 'idle', at: r.lastModified });
+    this.layout.sync(); // a reopened one is back in its place
     this.log('sessions.open', { sid: id, reopened: Boolean(e) });
     return { ok: true, sid: id };
   }
@@ -199,6 +205,7 @@ export class Sessions {
       this.store.changed();
     }
     pruneUi(this.store, id); // its scroll, draft and the rest of the page's state for it (R3.9)
+    this.layout.sync(); // a placeholder's id goes; a stored one keeps its place, hidden
     this.transcripts.close(id); // the pages get `removed` (publisher.ts)
     this.log('sessions.close', { sid: id, running });
     return { ok: true, sid: id };
@@ -261,10 +268,8 @@ export class Sessions {
       st.open.push({ id: newId, cwd: s.cwd, openedAt: this.now(), closedAt: null });
       if (s.choice) st.models[newId] = s.choice;
       s.choice = null;
-      st.layout = renameInLayout(st.layout, old, newId, true);
     } else {
       for (const e of st.open) if (e.id === old) e.id = newId;
-      st.layout = renameInLayout(st.layout, old, newId, false);
       for (const k of ['models', 'rules', 'status', 'ended', 'endedFailed'] as const) {
         const rec = st[k] as Record<string, unknown>;
         if (old in rec) { rec[newId] = rec[old]; delete rec[old]; }
@@ -272,6 +277,7 @@ export class Sessions {
       if (why === 'reset') delete st.written[old];
       else if (old in st.written) { st.written[newId] = st.written[old]; delete st.written[old]; }
     }
+    this.layout.rename(old, newId); // before the `session` frame with `replaces`, which carries it
     st.status[newId] = { status: s.status.status, at: s.status.at };
     rekeyUi(this.store, old, newId); // the page's state for it moves too (R3.9)
     this.store.changed();
@@ -294,13 +300,4 @@ export class Sessions {
 export function titleOf(s: SDKSessionInfo): string {
   const t = [s.customTitle, s.summary, s.firstPrompt].find((x) => typeof x === 'string' && x.trim()) ?? '';
   return t.trim().split('\n')[0].slice(0, 120) || 'Untitled session';
-}
-
-// Replaces an id in the layout; `add` puts a new id under "Not in a group" when it wasn't there.
-export function renameInLayout(layout: Layout, old: string, id: string, add: boolean): Layout {
-  const swap = (ids: string[]) => ids.map((x) => (x === old ? id : x));
-  const out: Layout = { groups: layout.groups.map((g) => ({ ...g, ids: swap(g.ids) })), others: swap(layout.others) };
-  const placed = out.others.includes(id) || out.groups.some((g) => g.ids.includes(id));
-  if (add && !placed) out.others.push(id);
-  return out;
 }

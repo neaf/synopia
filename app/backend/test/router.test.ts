@@ -48,11 +48,24 @@ test('reviewed: stored once; the next hello shows the deliverable reviewed and t
   assert.equal(hello.reviewed, undefined, 'the page gets the marks only as the subagents\' review flag (backend-core#B5)');
 });
 
-test('layout: reconciled with the open sessions (unknown and repeated ids dropped, the rest in others)', async () => {
-  const hello = await sendThenHello({ t: 'layout', layout: { groups: [{ id: 'g1', name: 'Work', ids: [S2, S1, 'nope', S2] }, { id: 'g2', name: '', ids: [] }], others: [S3] } });
-  assert.deepEqual(hello.layout, { groups: [{ id: 'g1', name: 'Work', ids: [S2, S1] }], others: [S3, S4, S5] });
-  const again = await sendThenHello({ t: 'layout' }, { t: 'layout', layout: 'flat' });
-  assert.deepEqual(again.layout, hello.layout, 'a layout frame without an object layout changes nothing');
+test('layout: intents change the layout every page gets, and the next hello has it; a refused one is acked with why', async () => {
+  const p = await connectPage(d.info), q = await connectPage(d.info);
+  assert.deepEqual(p.hello.layout, { groups: [], others: [S1, S2, S3, S4, S5] }, 'every open session has a place');
+  p.send({ t: 'newGroup', id: 'n1', sid: S2, onto: S1, group: 'g1' });
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'n1'), { t: 'ack', id: 'n1', ok: true });
+  p.send({ t: 'renameGroup', id: 'r1', group: 'g1', name: ' Work ' });
+  p.send({ t: 'moveSession', id: 'm1', sid: S3, before: S1 });
+  assert.equal((await p.next('ack', (m) => m.id === 'm1')).ok, true);
+  const want = { groups: [{ id: 'g1', name: 'Work', ids: [S3, S1, S2] }], others: [S4, S5] };
+  assert.deepEqual((await q.next('layout', (m) => JSON.stringify(m.layout) === JSON.stringify(want))).layout, want, 'the other page gets it too');
+  p.send({ t: 'moveSession', id: 'm2', sid: S4, group: 'g9' });
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'm2'), { t: 'ack', id: 'm2', ok: false, error: 'That group is gone.' });
+  await p.close(); await q.close();
+  const hello = await sendThenHello({ t: 'layout', layout: { groups: [], others: [] } });
+  assert.deepEqual(hello.layout, want, 'the whole-layout frame is gone: ignored');
+  await logged(/ router\.unknown t=layout/);
+  // back as it was, for the other tests
+  await sendThenHello({ t: 'moveSession', sid: S3, group: 'others' }, { t: 'moveSession', sid: S1, group: 'others' }, { t: 'moveSession', sid: S2, group: 'others' });
 });
 
 test('ui: the patch is stored and comes back in hello', async () => {

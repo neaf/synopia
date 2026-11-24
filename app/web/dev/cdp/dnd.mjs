@@ -22,10 +22,12 @@ async function drag(fromP, toSel, f, during) {
     return { ghost: !!g, op: g && getComputedStyle(g).opacity, gl: g && parseFloat(g.style.left), cls: t ? [...t.classList].find(x => x.startsWith('drop-')) : null }; })()`);
   if (during) during(seen, a, b);
   await mouse('mouseReleased', b.x, b.y + b.h * f);
-  await sleep(150);
+  await settle();
   return seen;
 }
-// the sidebar layout, the open sessions only, by first digit
+// the drop's intent acked: the backend's layout frame (sent before the ack) is drawn
+const settle = async () => { await sleep(50); if (!(await c.until('__synopia.acting() === 0', 3000))) check('intent acked', false); };
+// the sidebar layout as the backend sent it, the open sessions only, by first digit
 const L = () => ev(`(() => { const l = __synopia.layout(), open = new Set(__synopia.data().map(s => s.id)), shown = ids => ids.filter(id => open.has(id)).map(x => x.slice(0, 1));
   return JSON.stringify({ groups: l.groups.map(g => ({ name: g.name, ids: shown(g.ids) })), others: shown(l.others) }); })()`);
 const ORDER = `[...document.querySelectorAll('#groups .row')].map(r => r.dataset.id[0]).join('')`; // the sidebar rows, top to bottom
@@ -48,6 +50,7 @@ let seen = await drag('2', S('1'), 0.5, (s, a) => {
 check('merge made a group of the two', (await L()) === '{"groups":[{"name":"New group","ids":["1","2"]}],"others":["3","4","5"]}', await L());
 check('name field opened', await ev(`document.activeElement?.id === 'g-input'`));
 await ev(`(() => { const i = document.getElementById('g-input'); i.value = 'Alpha'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+await settle();
 check('named Alpha', (await L()).includes('"Alpha"'), await L());
 // 2. top edge of a row in a group: inserts before, blue line
 seen = await drag('3', S('1'), 0.12, (s) => check('top edge shows drop-before', s.cls === 'drop-before', JSON.stringify(s)));
@@ -73,6 +76,7 @@ check('dropping on a group heading does nothing', (await L()) === '{"groups":[{"
 // 8. a second group by merge, then empty it: it disappears
 await drag('3', S('2'), 0.5);
 await ev(`(() => { const i = document.getElementById('g-input'); i.value = 'Beta'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+await settle();
 check('second group', (await L()) === '{"groups":[{"name":"Alpha","ids":["1","5","4"]},{"name":"Beta","ids":["2","3"]}],"others":[]}', await L());
 await drag('2', S('1'), 0.12);
 await drag('3', `document.querySelector('.g-empty')`, 0.5);
@@ -84,6 +88,7 @@ await ev(`(() => { const i = document.getElementById('g-input'); i.value = 'Gamm
 check('Esc keeps the name', (await L()).includes('"Alpha"'), await L());
 await ev(`document.querySelector('.group:not(.others) .g-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))`);
 await ev(`(() => { const i = document.getElementById('g-input'); i.value = '  Work  '; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()`);
+await settle();
 check('renamed (trimmed)', (await L()).includes('"Work"'), await L());
 // 10. a short drag (under 5px) is a click, not a drop; Esc cancels a drag
 const before = await L();

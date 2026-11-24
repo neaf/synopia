@@ -56,6 +56,8 @@ export type PublisherOptions = {
   onRunning?: (sid: string, r: Running) => void;
   // A background shell, monitor or subagent of the session stopped running.
   onWorkEnded?: (sid: string) => void;
+  // The sidebar's layout (layout.ts), for the `session` frame of an id that changed.
+  layout?: () => unknown;
 };
 
 // What `hello` carries besides the sessions and their cards (main.ts gathers it).
@@ -121,6 +123,11 @@ export class Publisher {
   // protocol version (a page of another version reloads) and the daemon's code hash.
   hello(client: Client, rest: Hello): void {
     client.send({ t: 'hello', v: VERSION, code: rest.code, sessions: this.sessions(), pending: this.pending(), layout: rest.layout, menu: rest.menu, ui: rest.ui, update: rest.update });
+  }
+
+  // The sidebar's layout, whole, after it changed (layout.ts).
+  layout(layout: unknown): void {
+    this.broadcast({ t: 'layout', layout });
   }
 
   // A toast to the page that acted, or to every page when none did or it is gone (backend-core#B8).
@@ -424,7 +431,8 @@ export class Publisher {
 
   // The whole record moves (status, cards, held messages, the stream preview, the choice, the work
   // seen running, the session's own state); the reading started again (transcripts.ts). The pages
-  // viewing it move, and `session` goes with `replaces` once.
+  // viewing it move, and `session` goes with `replaces` once, with the layout that has the new id
+  // (layout.ts), so the sidebar keeps the row in its place.
   private rekeyed(from: string, to: string): void {
     const p = this.pubs.get(from);
     this.pubs.delete(from);
@@ -438,7 +446,8 @@ export class Publisher {
     const meta = this.metaOf(next);
     next.sent = JSON.stringify(meta);
     this.opts.badge?.set(to, badgeOf(meta.state));
-    this.broadcast({ t: 'session', replaces: from, ...meta });
+    const layout = this.opts.layout?.();
+    this.broadcast({ t: 'session', replaces: from, ...meta, ...(layout ? { layout } : {}) });
     for (const [client, sub] of this.liveSubs()) {
       if (sub.sid !== from) continue;
       sub.sid = to;

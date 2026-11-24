@@ -42,7 +42,7 @@ if (process.argv[2] === 'make') {
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir] = process.argv.slice(2);
 // a group with all three, the working session in the middle, stored before the page loads
-await serverSend(url, { t: 'layout', layout: { groups: [{ id: 'g-close', name: 'Demo work', ids: [C, A, B] }], others: [] } });
+await serverSend(url, { t: 'newGroup', sid: A, onto: C, group: 'g-close', name: 'Demo work' }, { t: 'moveSession', sid: B, after: A });
 const c = await connect();
 const { ev, check, key } = c;
 const dialogs = [];

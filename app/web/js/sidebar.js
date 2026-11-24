@@ -1,7 +1,22 @@
-/* Sidebar: session rows, the layout of groups and renaming (split from prototype/app.html). */
-/* ---------- sidebar ---------- */
-let KEYS = [];
-function rowHTML(s) {
+/* Sidebar: the session rows and the groups tree (requirements R4). The backend owns the layout
+   (backend layout.ts): the page draws the one it got (state.js store.layout) and sends intents, as acked
+   actions: `moveSession` and `newGroup` from a drop (dnd.js), `renameGroup` from the name field. Nothing
+   here changes the layout itself, so a refused or unsent intent leaves the sidebar as the backend has it. */
+import { store, data, current, select } from "./state.js";
+import { act } from "./connection.js";
+import { classic as C } from "./legacy.js";
+import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
+import { lineTweens, inGrace } from "./tween.js";
+import { bgOf, bgState, scanGrace, setOpenBg } from "./rail.js";
+
+const esc = s => C.esc(s);
+const agentsOf = s => s.agents || [];
+/* the sessions in sidebar order (J/K, keys.js) */
+export let KEYS = [];
+
+/* one session row (exported for the escape test) */
+export function rowHTML(s) {
+  const { took, live, agentMs } = C;
   return `<button class="row" data-id="${esc(s.id)}" data-state="${s.state.tone}" aria-current="${s.id === current}">
     <span class="r-main">
       <span class="r-title">${esc(s.title)}</span>
@@ -31,7 +46,7 @@ function bgLine(s) {
 }
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
 function rowWord(s) {
-  const st = s.state, d = st.detail, n = d.queued;
+  const { age, until } = C, st = s.state, d = st.detail, n = d.queued;
   if (st.light === "red") return `${esc(st.word)}, ${age(st.since)}`;
   if (st.status === "busy") return n ? `Working, ${esc(n)} message${n > 1 ? "s" : ""} queued` : esc(st.word);
   if (st.status === "compacting") return "Compacting context";
@@ -39,41 +54,33 @@ function rowWord(s) {
   if (st.status === "stale") return `No updates for ${age(st.since)}`;
   return `${esc(st.word)}, ${age(st.since)}`;
 }
-/* ---------- layout: groups and order are yours; the backend stores it (state.json), nothing is in localStorage ---------- */
-let layout = null; // null until hello; renderSide copies it from the store
-function loadLayout() {
-  layout = store.layout ? JSON.parse(JSON.stringify(store.layout)) : null;
-  if (!layout) layout = {
-    groups: [],
-    others: data.map(s => s.id)
-  };
-}
-/* while disconnected the change stays here and goes once the socket is back (connection.js sync) */
-const saveLayout = () => { store.layout = JSON.parse(JSON.stringify(layout)); sync("layout", { t: "layout", layout: store.layout }); };
-/* Closed sessions keep their place in the layout, hidden (plan section 11), so one reopened from the
-   Open list comes back where it was. Open sessions found nowhere go to "Not in a group". */
-function reconcile() {
-  const placed = new Set([...layout.groups.flatMap(g => g.ids), ...layout.others]);
-  data.forEach(s => { if (!placed.has(s.id)) layout.others.push(s.id); });
-  layout.groups = layout.groups.filter(g => g.ids.length);
-}
-const shown = ids => ids.filter(id => store.sessions.has(id));
-function removeId(id) { layout.groups.forEach(g => g.ids = g.ids.filter(x => x !== id)); layout.others = layout.others.filter(x => x !== id); }
-const listOf = id => layout.groups.find(g => g.ids.includes(id))?.ids || (layout.others.includes(id) ? layout.others : null);
-let renaming = null;
 
-function renderSide() {
-  if (!layout) loadLayout();
-  reconcile();
-  graceScan();
-  const byId = id => data.find(s => s.id === id);
-  const groups = layout.groups.map(g => ({ ...g, ids: shown(g.ids) })).filter(g => g.ids.length), others = shown(layout.others);
+/* ---------- the groups: the backend's layout, closed sessions' ids in it hidden ---------- */
+const layout = () => store.layout || { groups: [], others: [] };
+/* whether the session is under Not in a group (a drop on its middle makes a new group, dnd.js) */
+export const inOthers = id => layout().others.includes(id);
+let renaming = null; // the group whose name field is open
+/* opens the name field of a group, now or once the backend's layout has it (a new group, dnd.js) */
+export function startRename(group) { renaming = group; }
+const rendered = [];
+/* called after every render with the sidebar's element (dnd.js keeps a dragged row dimmed) */
+export function onRendered(fn) { rendered.push(fn); }
+
+export function renderSide() {
+  scanGrace();
+  const l = layout(), byId = id => store.sessions.get(id);
+  const shown = ids => ids.filter(id => store.sessions.has(id));
+  const placed = new Set([...l.groups.flatMap(g => g.ids), ...l.others]);
+  const groups = l.groups.map(g => ({ ...g, ids: shown(g.ids) })).filter(g => g.ids.length);
+  /* a session the backend's layout doesn't hold yet (its `layout` frame is on the way) shows last here */
+  const others = [...shown(l.others), ...data.map(s => s.id).filter(id => !placed.has(id))];
   KEYS = [...groups.flatMap(g => g.ids), ...others];
+  const typing = document.getElementById("g-input"), typed = typing && typing.dataset.group === renaming ? typing.value : null;
   let html = "";
   for (const g of groups) {
     html += `<section class="group tree" data-group="${esc(g.id)}">
       <div class="th">
-        ${renaming === g.id ? `<input class="g-input" id="g-input" value="${esc(g.name)}" aria-label="Group name">` : `<span class="g-name" title="Double-click to rename">${esc(g.name)}</span>`}
+        ${renaming === g.id ? `<input class="g-input" id="g-input" data-group="${esc(g.id)}" value="${esc(g.name)}" aria-label="Group name">` : `<span class="g-name" title="Double-click to rename">${esc(g.name)}</span>`}
       </div>
       ${g.ids.map(id => rowHTML(byId(id))).join("")}
     </section>`;
@@ -82,13 +89,20 @@ function renderSide() {
     ${others.length ? others.map(id => rowHTML(byId(id))).join("") : `<div class="g-empty" data-drop-group="others">Drop a session here to take it out of its group</div>`}</section>`;
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
-  if (drag?.started) { const r = [...el.querySelectorAll(".row")].find(x => x.dataset.id === dragId); if (r) { r.classList.add("dragging"); drag.row = r; } } // a re-render keeps the dragged row dimmed
-  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); openBg = null; renderAll(); }; });
+  rendered.forEach(f => f(el));
+  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); setOpenBg(null); C.renderAll(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
   if (inp) {
-    inp.focus(); inp.select();
-    const done = keep => { const g = layout.groups.find(x => x.id === renaming); if (g && keep && inp.value.trim()) { g.name = inp.value.trim(); saveLayout(); } renaming = null; renderSide(); };
+    inp.focus();
+    if (typed === null) inp.select(); else inp.value = typed; // a render while you type keeps what you typed
+    const done = keep => {
+      if (renaming === null) return;
+      const g = l.groups.find(x => x.id === renaming), name = inp.value.trim();
+      renaming = null;
+      if (g && keep && name && name !== g.name) act({ t: "renameGroup", group: g.id, name });
+      renderSide();
+    };
     inp.onkeydown = e => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); };
     inp.onblur = () => done(true);
   }
@@ -100,10 +114,12 @@ const sideTw = lineTweens({
   box: (n, h) => ({ open: { height: h, marginTop: "0px" }, shut: { height: "0px", marginTop: "-1px" } }), // -1px takes back the grid gap
   place: (r, n, after) => (after || r.querySelector(".r-state")).after(n),
 });
-const tweens = sideTw.tweens, lineSnap = sideTw.snap, tweenLines = sideTw.run;
+export const tweens = sideTw.tweens;
+const lineSnap = sideTw.snap, tweenLines = sideTw.run;
+
 /* what closing a session stops: its turn, subagents, shells and monitors, as one sentence ("" when nothing
    runs); the x, x prompt adds it (composer.js) */
-function closeStops(s) {
+export function closeStops(s) {
   const n = k => bgOf(s).filter(b => !b.agentId && bgState(b) === "running" && b.kind === k).length; // a subagent's own stop with it
   const plural = (c, one, many) => c ? [`${c} ${c === 1 ? one : many}`] : [];
   const work = [...(s.state.light !== "amber" ? ["Claude's turn"] : []), ...plural(agentsOf(s).filter(a => !a.finished).length, "subagent", "subagents"),
@@ -112,8 +128,8 @@ function closeStops(s) {
   return `${work.length > 1 ? `${work.slice(0, -1).join(", ")} and ${work.at(-1)}` : work[0]} will stop.`;
 }
 /* x, x: hides the session and ends its process (or, one another process drives, only removes it from Synopia) */
-function closeSession(s) {
+export function closeSession(s) {
   if (s) act({ t: "close", sid: s.id });
 }
 /* the footer's Open line: the list of past sessions (open-list.js) */
-document.getElementById("open").onclick = () => showOpenList();
+document.getElementById("open").onclick = () => C.showOpenList();

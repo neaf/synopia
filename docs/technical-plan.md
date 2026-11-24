@@ -183,14 +183,14 @@ Node 22.13 with TypeScript run by `--experimental-strip-types`. There's no build
 
 One WebSocket, JSON text frames, `{t: "<type>", …}`. The first frame from the page must be `{t:"auth", token}`. The server keeps all state, so the page can reload at any time and get a full `hello`. `app/web/js/protocol.js` is the schema, shared by the page and the backend: every type and field, and the protocol version. The page checks each server frame against it and drops one that doesn't fit; the backend's router checks each page frame.
 
-Actions (`send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession`, `openSession`, `cancelTakeover`, `setModel`, `reviewed`) carry an `id`; the backend answers each with one `ack` to the page that sent it, `ok: false` with the `error` the page shows when it wasn't done (a handler that throws included; the daemon goes on). While the socket is down the page sends no action: it says so in a toast and keeps what it had (card picks, the message box); the layout waits and goes once the socket is back, the `ui` state goes whole after the next `hello`. While the daemon stops it acks every action `ok: false` ("Synopia is restarting").
+Actions (`send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession`, `openSession`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`) carry an `id`; the backend answers each with one `ack` to the page that sent it, `ok: false` with the `error` the page shows when it wasn't done (a handler that throws included; the daemon goes on). While the socket is down the page sends no action: it says so in a toast and keeps what it had (card picks, the message box, the layout as the backend sent it); the `ui` state goes whole after the next `hello`. While the daemon stops it acks every action `ok: false` ("Synopia is restarting").
 
 Server to page:
 
 | Type | Fields | When |
 |---|---|---|
 | `hello` | `v` (the protocol version: a page with another one reloads), `code` (the daemon's code hash), `sessions[]` (meta and status, no items), `pending[]`, `layout`, `menu`, `ui` (section 11), `update` | after `auth` |
-| `session` | `id`, `replaces` (the placeholder id, once), and the changed fields: `title`, `now`, `cwd`, `prs`, `state` (`status.ts` `sessionState`: `status`, `since`, `detail`, `light`, `tone`, `word`, `mark`, `stopped`, `needsYou`, `review` count, `driven`; the page decides no status itself), `model`, `effort`, `bang` (bash mode, R5.13: the `!` command that runs or just ran, `{id, cmd, out, err, cut, running, exit, interrupted, at, error?, landed?}`, streamed at most every 100 ms; `landed` is the bash item it became, and the next flush drops it) | on change |
+| `session` | `id`, `replaces` (the old id, once, with `layout`: the layout holding the new id), and the changed fields: `title`, `now`, `cwd`, `prs`, `state` (`status.ts` `sessionState`: `status`, `since`, `detail`, `light`, `tone`, `word`, `mark`, `stopped`, `needsYou`, `review` count, `driven`; the page decides no status itself), `model`, `effort`, `bang` (bash mode, R5.13: the `!` command that runs or just ran, `{id, cmd, out, err, cut, running, exit, interrupted, at, error?, landed?}`, streamed at most every 100 ms; `landed` is the bash item it became, and the next flush drops it) | on change |
 | `removed` | `id` | closed |
 | `items` | `sid`, `agent` (null for the main conversation), `upsert[]` (items with `id`), `total`, `reset`, `prepend` | after a tail read; `reset` on first view and after a file is rewritten; `prepend` in reply to `earlier`, with the items before the oldest shown, oldest first |
 | `agents` | `sid`, `upsert[]` (the subagent fields the page reads today) | a new subagent file or a meta change |
@@ -204,6 +204,7 @@ Server to page:
 | `toolOutput` | `sid`, `agent`, `toolUseId`, `text` (the tool's full result) | reply to `toolOutput`; a `toast` instead when the file is gone or was rewritten |
 | `toast` | `text` | failures you must see |
 | `update` | `pending` | an update of the daemon waits for the running work |
+| `layout` | `layout` (`{groups: [{id, name, ids}], others}`, closed sessions' ids included) | the layout changed (an intent, a new or reopened session) |
 | `ack` | `id`, `ok`, `error` | an action is done, or not |
 
 Page to server:
@@ -224,7 +225,9 @@ Page to server:
 | `setModel` | `sid`, `model`, `effort` | stored, and applied when the process runs |
 | `cancelTakeover` | `sid` | the message waiting for a terminal no longer waits |
 | `background` | `sid` | b, b (R9.5): `Query.backgroundTasks()` on the session's process sends every foreground Bash and subagent in flight to the background; `toast` only when nothing could go (no process, a false return, or background tasks turned off) |
-| `layout` | `layout` | replaces the stored layout |
+| `moveSession` | `sid`, one of `before`, `after` (a session id) or `group` (a group id, `others` for Not in a group) | moves the session there; every id through its aliases |
+| `newGroup` | `sid`, `onto` (a session not in a group), `group` (the new group's id, the page picks it), `name` | a group of the two, last among the groups; the page opens its name field once the `layout` has it |
+| `renameGroup` | `group`, `name` | renames it (trimmed, not empty) |
 | `ui` | `patch` | merged into the stored ui state (section 11); a draft image refused by the caps gets `toast` |
 | `reviewed` | `agentId` | adds a reviewed mark |
 | `open` | `path` or `url` | opens a file or an `https?` URL |
@@ -421,9 +424,10 @@ One status per session in `status.ts`, from SDK events and the driver's own stat
   - Draft images: the page sends an image's base64 once, with the first patch that lists it; the backend writes `<state-dir>/drafts/<sid>/<id>.png|jpg` (at most 5 MB each, 20 MB per session; past that a toast and it isn't kept) and keeps only `{id, mediaType, size}`. A patch that no longer lists an image removes its file; a send clears the draft. After a restore the page loads them from `GET /api/image?sid&ref=draft:<id>`.
   - A card's state is dropped once its request is gone. `close` prunes the session's data and its drafts folder; an id swap (init, a `/clear`) moves both (`Sessions.swap`, and the page's `renamed`).
 
-- **Layout** keeps the prototype's shape and is authoritative once stored. The page sends the whole layout after each drop or rename, and the backend reconciles it:
-  - new sessions go to "Not in a group";
+- **Layout** keeps the prototype's shape. The backend owns it (`layout.ts`, the only writer of `state.json` `layout`): the page sends intents (`moveSession`, `newGroup`, `renameGroup`, acked actions) and draws the layout it gets in `hello`, `layout` and a `session` with `replaces`. The backend keeps it reconciled with the open list:
+  - new and reopened sessions with no place go last under "Not in a group";
   - closed ids stay in their group, hidden, so a reopened session keeps its place;
+  - an id that changes (init, a reset) keeps its place;
   - a group is dropped only when it has no ids at all, hidden ones included.
 - **Nothing is in localStorage.** The page works the same in Chrome and in the app.
 - **Never stored:** transcript text beyond the written title and Now line, environment values, credentials.

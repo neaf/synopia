@@ -118,6 +118,7 @@ const publisher = new Publisher({
   badge,
   onRunning: (sid, r) => sessions.runningChanged(sid, r),
   onWorkEnded: (sid) => writer.workEnded(sid),
+  layout: () => sessions.layout.get(),
 });
 // bat for the file preview, found once (plain text without it)
 const bat = loadBat({ log });
@@ -168,7 +169,7 @@ try {
     token,
     webRoot: fileURLToPath(new URL('../../web/', import.meta.url)),
     log,
-    onAuthed: (client) => publisher.hello(client, { code: CODE, layout: store.state.layout, menu: menus.all(), ui: store.state.ui, update: daemon.updatePending }),
+    onAuthed: (client) => publisher.hello(client, { code: CODE, layout: sessions.layout.get(), menu: menus.all(), ui: store.state.ui, update: daemon.updatePending }),
     quitCheck: () => quitSummary(sessions.quitCheck()),
     badge: () => badge.count,
     ping: () => ({ code: CODE, v: PROTOCOL }),

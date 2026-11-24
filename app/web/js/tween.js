@@ -1,14 +1,14 @@
-/* Layout tweens and the finish grace, shared by the sidebar's sub-lines and the background panel's tree. */
+/* Tween: layout tweens and the finish grace, shared by the sidebar's sub-lines and the background panel's tree. */
 /* ---------- keyed line tweens (R8.1): a line that comes opens its height, then fades in; one that goes fades out,
    then closes; TW ms a step, instant with reduced motion. The panels rebuild their markup on every render, so
    each tween is keyed by its group (a session id) and line (data-line) and re-applied at its elapsed time on
    the document timeline after every render. A line whose text changes keeps its key and doesn't move. ---------- */
-const TW = 150;
+export const TW = 150;
 /* o: { sel: a line, inside a group; groups: el => Map(group key -> group element); id: the animations' id;
    cls: { tw: class while it tweens, gone: class of a going line put back };
    box: n => { open, shut }: keyframe values of the tweened box; fade: n => the elements that fade (default n);
    place: (group, n, after, parent, find) => puts a going line back, after the line before it or first under its parent } */
-function lineTweens(o) {
+export function lineTweens(o) {
   const tweens = new Map(); // "group|line" -> { dir: 1 comes, -1 goes, t0, node: a going line's last element, after, parent }
   const live = g => [...g.querySelectorAll(o.sel)].filter(n => !n.classList.contains(o.cls.gone));
   const prevKey = n => { let p = n.previousElementSibling; while (p && !(p.matches(o.sel) && !p.classList.contains(o.cls.gone))) p = p.previousElementSibling; return p ? p.dataset.line : null; };
@@ -63,21 +63,20 @@ function lineTweens(o) {
 /* ---------- the finish grace: a running item that finishes (done, failed, stopped, timed out) stays where it was
    for GRACE ms with its final status, then leaves with the tween. Kept per item in the page, by "session|item",
    from when the page saw it stop running, so a session switch or a re-render neither restarts nor cuts it. ---------- */
-const GRACE = 5000;
+export const GRACE = 5000;
 const graceSeen = new Set(), graceAt = new Map(); // seen running; "sid|key" -> when the page saw it finish (ms)
-let graceTimer = null;
-function graceScan() {
+let graceTimer = null, graceEnd = () => {};
+/* what re-renders once a grace is over (main.js: the sidebar and the panel) */
+export function onGraceEnd(fn) { graceEnd = fn; }
+/* items: every [ "sid|item", running ] the panels show (rail.js scanGrace) */
+export function graceScan(items) {
   const now = Date.now();
-  for (const s of store.sessions.values()) {
-    const items = [...agentsOf(s).map(a => [a.id, !a.finished]), ...bgOf(s).map(b => [b.toolUseId, bgState(b) === "running"])];
-    for (const [key, run] of items) {
-      const k = s.id + "|" + key;
-      if (run) { graceSeen.add(k); graceAt.delete(k); }
-      else if (graceSeen.delete(k)) graceAt.set(k, now);
-    }
+  for (const [k, run] of items) {
+    if (run) { graceSeen.add(k); graceAt.delete(k); }
+    else if (graceSeen.delete(k)) graceAt.set(k, now);
   }
   let next = Infinity;
   for (const [k, t] of graceAt) { if (now - t >= GRACE) graceAt.delete(k); else next = Math.min(next, t + GRACE); }
-  if (next < Infinity && !graceTimer) graceTimer = setTimeout(() => { graceTimer = null; renderSide(); renderRail(); }, next - now + 10);
+  if (next < Infinity && !graceTimer) graceTimer = setTimeout(() => { graceTimer = null; graceEnd(); }, next - now + 10);
 }
-const inGrace = (sid, key) => { const t = graceAt.get(sid + "|" + key); return t != null && Date.now() - t < GRACE; };
+export const inGrace = (sid, key) => { const t = graceAt.get(sid + "|" + key); return t != null && Date.now() - t < GRACE; };

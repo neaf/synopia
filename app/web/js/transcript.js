@@ -491,15 +491,6 @@ function carryState(from, to) {
     n.hidden = false; to.querySelector(`[aria-controls="${CSS.escape(d.id)}"]`)?.setAttribute("aria-expanded", "true");
   });
 }
-function renderRail() {
-  const s = cur(); if (!s || !mounted) return;
-  const A = view && agentById(s, view);
-  const old = conv.querySelector(".rail"), html = railHTML(s, A), before = old ? railTw.snap(old) : new Map();
-  if (old && html) old.outerHTML = html; else if (old) old.remove(); else if (html) conv.insertAdjacentHTML("beforeend", html);
-  conv.classList.toggle("no-rail", !hasBackground(s));
-  const rail = conv.querySelector(".rail"); if (rail) railTw.run(rail, before); // its children tween in and out (rail.js)
-}
-
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
   const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], #model-label");
@@ -512,9 +503,9 @@ conv.addEventListener("click", e => {
     e.preventDefault(); e.stopPropagation();
     selectView(t.dataset.agent); renderConv();
   }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; selectView(null); renderConv(); } // leaving a subagent folds its card
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) setOpenBg(null); selectView(null); renderConv(); } // leaving a subagent folds its card
   else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
-  else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
+  else if (t.dataset.bg) { setOpenBg(openBg === t.dataset.bg ? null : t.dataset.bg); renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") openModelPicker();
 });

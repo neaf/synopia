@@ -8,20 +8,31 @@ import vm from 'node:vm';
 
 const JS = join(import.meta.dirname, '..', '..', 'web', 'js');
 // The store is an ES module (js/state.js); the classic builders read its bindings as window globals
-// (main.js publishes them), so a stand-in of those comes first.
-const STORE = `const store = { sessions: new Map(), layout: null, menu: {}, settings: {}, pending: new Map(), ui: { connected: false } };
+// (main.js publishes them), so a stand-in of those comes first, with legacy.js's `classic` (C) as a
+// lookup of the script's globals and no-op actions.
+const STORE = `const store = { sessions: new Map(), layout: { groups: [], others: [] }, menu: {}, settings: {}, pending: new Map(), ui: { connected: false } };
 let data = [], current = null, view = null;
 const syncData = () => { data = [...store.sessions.values()]; };
 const requestsOf = (s) => store.pending.get(s.id) || [];
-const cur = () => store.sessions.get(current);`;
+const cur = () => store.sessions.get(current);
+const select = () => {}, act = () => true;
+const C = new Proxy({}, { get: (_, k) => eval(String(k)) });`;
 const FILES = ['marks.js', 'md.js', 'tween.js', 'sidebar.js', 'images.js', 'transcript.js', 'rail.js', 'card.js'];
+const MODULES = new Set(['marks.js', 'tween.js', 'sidebar.js', 'rail.js']);
+// An ES module joins the one script: its imports dropped (the names are the script's globals), its body in
+// a function scope of its own, its exports made globals.
+function asClassic(src: string): string {
+  const body = src.replace(/^import [^;]+;\n/gm, '');
+  const names = [...body.matchAll(/^export (?:const|let|function) ([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
+  return `const { ${names.join(', ')} } = (() => {\n${body.replace(/^export /gm, '')}\nreturn { ${names.join(', ')} };\n})();`;
+}
 
 function page() {
   const el = (): Record<string, unknown> => ({ addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], classList: { toggle() {}, add() {}, remove() {} }, dataset: {}, style: {} });
   const document = { getElementById: el, querySelector: el, querySelectorAll: () => [], addEventListener() {}, body: { dataset: {} } };
-  const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, MutationObserver: class { observe() {} }, console, TOKEN: 't' });
+  const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, MutationObserver: class { observe() {} }, console, TOKEN: 't', setTimeout, Date });
   const names = ['md', 'esc', 'rowHTML', 'railHTML', 'filesHTML', 'itemsHTML', 'qaHTML', 'askOf', 'store', 'syncData', 'heldHTML', 'thumbsHTML'];
-  vm.runInContext([STORE, ...FILES.map((f) => readFileSync(join(JS, f), 'utf8'))].join('\n;\n') + `\n;globalThis.P = { ${names.join(', ')} };`, ctx);
+  vm.runInContext([STORE, ...FILES.map((f) => (MODULES.has(f) ? asClassic : (x: string) => x)(readFileSync(join(JS, f), 'utf8')))].join('\n;\n') + `\n;globalThis.P = { ${names.join(', ')} };`, ctx);
   return (ctx as unknown as { P: Record<string, (...a: unknown[]) => string> & { store: { sessions: Map<string, unknown>; pending: Map<string, unknown> } } }).P;
 }
 

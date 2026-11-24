@@ -4,7 +4,7 @@
    reloads. An action carries an `id` and gets one `ack {id, ok, error}` back, to the page that sent it.
 
    Field types: "str", "num", "bool", "obj", "arr", "any"; a trailing "?" also takes a missing field or null. */
-export const VERSION = 1;
+export const VERSION = 2;
 
 /* page to backend */
 export const PAGE = {
@@ -19,7 +19,6 @@ export const PAGE = {
   open: { path: "str?", url: "str?" },
   /* state the page holds: the last one wins; sent again whole on a reconnect */
   ui: { patch: "obj" },
-  layout: { layout: "obj" },
   /* actions: each with an id, acked */
   send: { id: "str?", sid: "str", text: "str?", images: "arr?", uuid: "str?" },
   bang: { id: "str?", sid: "str", command: "str", uuid: "str?" },
@@ -32,21 +31,28 @@ export const PAGE = {
   cancelTakeover: { id: "str?", sid: "str" },
   setModel: { id: "str?", sid: "str", model: "str", effort: "str?" },
   reviewed: { id: "str?", agentId: "str" },
+  /* the sidebar's layout, which the backend owns (layout.ts): a session moves before or after another, or last
+     into a group ("others" is Not in a group); a new group of a session not in a group and the one dropped on it */
+  moveSession: { id: "str?", sid: "str", before: "str?", after: "str?", group: "str?" },
+  newGroup: { id: "str?", sid: "str", onto: "str", group: "str", name: "str?" },
+  renameGroup: { id: "str?", group: "str", name: "str" },
 };
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "close", "newSession", "openSession", "cancelTakeover", "setModel", "reviewed"]);
+export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "close", "newSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup"]);
 
 /* backend to page */
 export const SERVER = {
   hello: { v: "num", code: "str", sessions: "arr", pending: "arr", layout: "obj", menu: "obj", ui: "obj?", update: "bool?" },
-  /* a session's meta; `replaces` once when its id changed; `{id, held}` alone for the messages held behind a card.
-     hello's sessions also carry agents, background and stream. */
+  /* a session's meta; `replaces` once when its id changed, with the layout that holds the new id; `{id, held}`
+     alone for the messages held behind a card. hello's sessions also carry agents, background and stream. */
   session: {
     id: "str", replaces: "str?", title: "str?", name: "str?", now: "str?", cwd: "str?", prs: "arr?", state: "obj?",
     model: "any", effort: "any", ask: "obj?", outbox: "arr?", bang: "obj?", held: "arr?",
-    agents: "arr?", background: "arr?", stream: "str?",
+    agents: "arr?", background: "arr?", stream: "str?", layout: "obj?",
   },
+  /* the sidebar's groups and order, whole, closed sessions' ids included (hidden), after any change */
+  layout: { layout: "obj" },
   removed: { id: "str" },
   items: { sid: "str", agent: "str?", upsert: "arr", total: "num", reset: "bool", prepend: "bool?" },
   agents: { sid: "str", upsert: "arr" },

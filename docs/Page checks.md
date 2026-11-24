@@ -101,7 +101,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 - `c.check(name, ok)` passes only when `ok === true`. A truthy string, number or object fails, with what it got. Compare explicitly or use `!!`.
 - `c.print()` prints `N/M pass` and the failures and sets exit code 1 on a failure. A check that recorded nothing prints `FAIL no checks ran`. Never `process.exit(0)` after it.
 - Wait with `c.until(expr, ms)` (default 5000; `until` in `helpers.mjs`), never a fixed sleep. It polls until the value is `=== true`; a throw counts as not yet, and a throw on the last try is rethrown. A suite has no `until` of its own.
-- `helpers.mjs` holds the shared pieces: `until`, `sleep`, `PageError`, `keyTable(c.key)` (letters, Shift letters, `esc`, `enter`, `tab`, `space`, `backspace`, `slash`, arrows, `next`/`prev` for Cmd-Shift-]/[, `cmdF`), `shot(c, file, clip)`, the test API wrappers `page(c)`, `spySent(c)` and `inject(c, msg)`, `serverSend(url, ...msgs)` (frames to the backend from a socket of its own, for state the page must find at load, such as a layout), and the record builders `line`, `fresh` and `records(cwd, ts)` with `rec`, `you`, `said` and `tool`. It imports nothing from `cdp.mjs`, so `make` modes use it without a browser.
+- `helpers.mjs` holds the shared pieces: `until`, `sleep`, `PageError`, `keyTable(c.key)` (letters, Shift letters, `esc`, `enter`, `tab`, `space`, `backspace`, `slash`, arrows, `next`/`prev` for Cmd-Shift-]/[, `cmdF`), `shot(c, file, clip)`, the test API wrappers `page(c)`, `spySent(c)` and `inject(c, msg)`, `serverSend(url, ...msgs)` (frames to the backend from a socket of its own, for state the page must find at load, such as a group made with `newGroup` and `moveSession`), and the record builders `line`, `fresh` and `records(cwd, ts)` with `rec`, `you`, `said` and `tool`. It imports nothing from `cdp.mjs`, so `make` modes use it without a browser.
 - When two page actions must both happen before a server reply, do them in one `ev`.
 - `crc32` from `node:zlib` (Node 22.2+) builds the PNG fixtures in `images.mjs` 11.
 - A new suite goes in `SUITES` and the header list in `run.sh`; a fixture it writes goes through the `make` branch there.
@@ -122,7 +122,8 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `cur()` | the shown session: `{id, title, state, items, total, agents, background, outbox, …}`; `state` is the backend's (`status.ts` `sessionState`: `status`, `since`, `detail`, `light`, `tone`, `word`, `mark`, `stopped`, `needsYou`, `review`, `driven`) |
 | `data()` | every session, in the server's order (only the viewed one holds items) |
 | `pending(sid)` | that session's requests (question, permission, plan), oldest first |
-| `layout()` | the sidebar's groups, closed sessions' ids included |
+| `layout()` | the sidebar's groups as the backend sent them, closed sessions' ids included |
+| `acting()` | actions sent and not acked yet; 0 once every intent's result (its `layout` frame comes first) is in |
 | `spy()` | starts recording, dropping what an earlier `spy()` recorded |
 | `sent(...types)` | frames the page sent since `spy()`, of those types (all with none) |
 | `received(...types)` | frames from the server since `spy()`, before the page applied them |

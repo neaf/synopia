@@ -4,29 +4,31 @@
 import { publish, classic as C } from "./legacy.js";
 import * as state from "./state.js";
 import { store, isCurrent, isViewed } from "./state.js";
-import { connect, send, act, sync, takeUnsent, hooks, TOKEN } from "./connection.js";
+import { connect, send, act, hooks, TOKEN } from "./connection.js";
 import * as ui from "./ui-state.js";
+import * as marks from "./marks.js";
+import * as rail from "./rail.js";
+import * as sidebar from "./sidebar.js";
+import * as dnd from "./dnd.js";
+import { onGraceEnd } from "./tween.js";
 import { installTestApi } from "./test-api.js";
 
 /* render(part): side, header, log, card, rail, or conv (all of the view) */
 function render(...parts) {
   for (const p of new Set(parts)) {
-    if (p === "side") C.renderSide();
+    if (p === "side") sidebar.renderSide();
     else if (p === "conv") C.renderConv();
     else if (p === "header") C.renderHeader();
     else if (p === "log") C.renderLog();
     else if (p === "card") C.renderCard();
-    else if (p === "rail") C.renderRail();
+    else if (p === "rail") rail.renderRail();
   }
 }
 
 function onMessage(m) {
   switch (m.t) {
     case "hello": {
-      /* a layout change the socket was down for: kept over the stored one, and sent now (requirements Q9) */
-      const mine = takeUnsent("layout");
-      if (mine) { m = { ...m, layout: mine.layout }; sync("layout", mine); }
-      state.applyHello(m); ui.applyHello(m.ui); C.layout = null; state.pickCurrent(); // the stored ui state first: no default view flashes
+      state.applyHello(m); ui.applyHello(m.ui); state.pickCurrent(); // the stored ui state first: no default view flashes
       showUpdate(m.update);
       /* a reconnect onto the view on screen: it keeps its log until its reset comes, so the log never blanks
          for a frame (hello has no items) and the message box stays as it was */
@@ -83,6 +85,11 @@ function onMessage(m) {
       if (state.applyStream(m) && isViewed(m.sid, null)) render("log");
       break;
     }
+    case "layout": {
+      state.applyLayout(m);
+      render("side");
+      break;
+    }
     case "menu": {
       state.applyMenu(m);
       render("header");
@@ -98,12 +105,10 @@ function onMessage(m) {
   }
 }
 
-/* a session's id changed (a new session got its real id, or a reset): the layout and the page's state
-   for it follow, so the message box keeps what you typed (the store moves the session, its card and
-   `current` itself, state.js applySession) */
+/* a session's id changed (a new session got its real id, or a reset): the page's state for it follows, so
+   the message box keeps what you typed (the store moves the session, its card and `current` itself, and
+   takes the frame's layout, state.js applySession) */
 function renamed(from, to) {
-  const swap = ids => ids.map(x => x === from ? to : x);
-  for (const l of [C.layout, store.layout]) if (l) { l.groups.forEach(g => g.ids = swap(g.ids)); l.others = swap(l.others); }
   /* the view on screen keeps its frame: renderConv sees the same key under the new id */
   if (C.mounted && C.mounted.startsWith(from + "|")) C.mounted = to + C.mounted.slice(from.length);
   const qstate = C.qstate; // a card still up moves with what you picked on it
@@ -130,12 +135,19 @@ publish({
   store: () => state.store, data: () => state.data, current: () => state.current, view: () => state.view,
   cur: () => state.cur, requestsOf: () => state.requestsOf, isViewed: () => state.isViewed,
   select: () => state.select, selectView: () => state.selectView,
-  send: () => send, act: () => act, sync: () => sync, TOKEN: () => TOKEN, render: () => render,
+  send: () => send, act: () => act, TOKEN: () => TOKEN, render: () => render,
   requestView: () => ui.requestView, uiChanged: () => ui.changed, uiFlush: () => ui.flush,
   uiPreviewRestored: () => ui.previewRestored, uiTakeTyping: () => ui.takeTyping, uiLeave: () => ui.leave,
   uiEnterComposer: () => ui.enterComposer, uiHeld: () => ui.held, uiExpectReset: () => ui.expectReset,
   uiHolding: () => ui.holding, uiAfterLog: () => ui.afterLog, uiNewId: () => ui.newId,
+  ind: () => marks.ind, kind: () => marks.kind, KG: () => marks.KG, sessionMark: () => marks.sessionMark,
+  sessionMarkKey: () => marks.sessionMarkKey, kindKey: () => marks.kindKey, bgMarkKey: () => marks.bgMarkKey,
+  bgOf: () => rail.bgOf, bgState: () => rail.bgState, hasBackground: () => rail.hasBackground,
+  openBg: () => rail.openBg, setOpenBg: () => rail.setOpenBg, renderRail: () => rail.renderRail,
+  renderSide: () => sidebar.renderSide, KEYS: () => sidebar.KEYS, closeStops: () => sidebar.closeStops,
+  closeSession: () => sidebar.closeSession, drag: () => dnd.drag,
 });
+onGraceEnd(() => render("side", "rail")); // a finished line's grace is over: it leaves
 installTestApi({ inject: onMessage, render });
 
 /* live durations and ages tick once a second, in place */

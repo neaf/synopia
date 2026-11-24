@@ -361,14 +361,17 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .pr[aria-current="true"]::before { border-color: var(--ink); }
 .pr[aria-current="true"] .n { color: var(--ink); }
 .now { border-bottom: 1px solid var(--line-2); padding: 7px 0 7px; flex: none; max-height: 55%; overflow-y: auto; }
-.card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
-  margin: 0 7px 5.5px; width: calc(100% - 14.5px); padding: 7px 9px; border-radius: 5.5px; background: #E6F6EA; border: 1px solid #B4E2C0; cursor: pointer; }
-.card:hover { background: #DAF2E0; }
+/* a running item's card: neutral, no coloured edge (the mark carries the kind) */
+.card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  margin: 0 7px 5.5px; width: calc(100% - 14.5px); padding: 7px 9px; border-radius: 5.5px; background: var(--panel); border: 1px solid var(--line); cursor: pointer; }
+.card:hover { background: var(--sub); }
 .card:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
 .card[aria-current="true"] { border-color: var(--ink); }
 .card .n { font-weight: 700; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.card .d { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 2; }
+.card > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
+.card .m .kind { margin-right: 4px; }
+.card .d { color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: 11px; grid-row: 1 / 3; grid-column: 3; } /* quiet like "Working" and the Past times */
 .bw-detail { margin: 0 12.5px 7px; font-size: 11px; color: var(--ink-2); }
 .bw-detail code { display: block; font-family: var(--mono); font-size: 10.5px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 3.5px; padding: 3.5px 5.5px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3.5px; }
 /* the main conversation is a card like the running ones; what runs in the background hangs under it as a tree,
@@ -412,9 +415,6 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
   border: 2px solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin var(--mark-period) linear infinite; vertical-align: -2px; }
 .spinner.lg { width: 11px; height: 11px; }
 .status .spinner { margin-right: .6ch; }
-.card { grid-template-columns: 12.5px minmax(0, 1fr) auto; }
-.card .spinner { grid-row: 1 / 3; align-self: center; }
-.card .d { grid-column: 3; }
 .ast .spinner { margin-right: .5ch; }
 .r-agent .spinner { width: 9px; height: 9px; margin-right: 3.5px; vertical-align: -1px; }
 @media (prefers-reduced-motion: reduce) {
@@ -462,106 +462,49 @@ body.is-dragging, body.is-dragging * { user-select: none; cursor: grabbing !impo
 .g-empty { margin: 0 12.5px; padding: 7px 9px; border: 1px dashed var(--line); border-radius: 5.5px; font-size: 11px; color: var(--faint); }
 body:not(.is-dragging) .g-empty { display: none; }
 
-/* ---------- status vocabulary from status-storyboard.html (recommended options) ---------- */
+/* ---------- marks (marks.js): a 1em box, every part in em so the 64px view is the 12px mark enlarged ---------- */
 :root { --fork: #8250DF; }
-/* ---------- indicators: 1em box, every part in em so the 64px view is the 12px mark enlarged ---------- */
 
 @keyframes spinback { to { transform: rotate(-360deg); } }
 @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
-@keyframes slide { 0%, 100% { transform: translateY(-.1em); } 50% { transform: translateY(.1em); } }
-@keyframes up { to { background-position: 0 -.3em; } }
-@keyframes down { to { background-position: 0 .3em; } }
 @keyframes shrink { from { transform: scale(1); } to { transform: scale(.06); } }
-@keyframes march { to { stroke-dashoffset: -5; } }
-@keyframes count { from { stroke-dashoffset: 0; } to { stroke-dashoffset: 24; } }
 
 .ind { display: inline-grid; place-items: center; width: 1em; height: 1em; position: relative; flex: none; vertical-align: middle; line-height: 0; }
 .ind > * { grid-area: 1 / 1; }
-.ind.wide { width: 1.9em; display: inline-flex; justify-content: space-between; align-items: center; }
 .ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
 
-/* circle family: working */
+/* no updates: a frozen arc; compacting: rings shrinking; rate limited: dashes turning back */
 .ind .arc { width: 1em; height: 1em; border-radius: 50%; border: .17em solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin var(--mark-period) linear infinite; }
-.ind .arc.dual { border-color: #C6E9D0; border-top-color: var(--green); border-bottom-color: var(--green); animation-duration: .6s; }
-.ind .arc.fork { border-color: #E2D6F8; border-top-color: var(--fork); border-right-color: var(--fork); }
-.ind .arc.grey { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
-.ind .arc.mini { width: .78em; height: .78em; border-width: .14em; }
-.ind .arc.slow { animation-duration: 2.4s; }
 .ind .arc.frozen { animation: none; border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); transform: rotate(-20deg); }
-.ind .qdot { width: .36em; height: .36em; border-radius: 50%; background: var(--link); }
 .ind .cr { width: 1em; height: 1em; border-radius: 50%; border: .13em solid var(--green); animation: shrink var(--mark-period) linear infinite; }
 .ind .cr:nth-child(2) { animation-delay: -.6s; } .cr:nth-child(3) { animation-delay: -1.2s; }
-.ind .radar { width: 1em; height: 1em; border-radius: 50%; border: .12em solid var(--green); position: relative; }
-.ind .radar .sweep { position: absolute; inset: 0; border-radius: 50%; animation: spin var(--mark-watch) linear infinite;
-  background: conic-gradient(from 270deg, transparent 0deg, rgba(45,164,78,.42) 90deg, transparent 90deg); }
-.ind .radar .sweep::before { content: ""; position: absolute; left: 50%; top: .02em; width: .14em; height: .37em; margin-left: -.07em; background: var(--green); border-radius: .07em; }
 .ind .rl { animation: spinback var(--mark-period) linear infinite; }
 .ind .rl circle { stroke: var(--amber); }
-.ind .hg { width: .62em; height: .82em; background: var(--dot-amber); clip-path: polygon(0 0, 100% 0, 50% 50%, 100% 100%, 0 100%, 50% 50%); animation: spin var(--mark-period) linear infinite; }
-.ind .cd .run { animation: count var(--mark-period) linear infinite; }
 
 /* two stripes: needs you */
 .ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
 .ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; }
 .ind .v-seesaw .bars i { animation: see var(--mark-period) linear infinite; }
 .ind .v-seesaw .bars i + i { animation-delay: -.55s; }
-.ind .v-meter .bars { align-items: flex-end; }
-.ind .v-meter .bars i { animation: see var(--mark-period) linear infinite; transform-origin: 50% 100%; }
-.ind .v-meter .bars i + i { animation-delay: -.55s; }
-.ind .v-escal .bars i { background: linear-gradient(180deg, var(--red) 0 .19em, #FF9A92 .19em .3em); background-size: 100% .3em; animation: up var(--mark-period) linear infinite; }
-.ind .v-escal .bars i + i { animation-name: down; }
-.ind .v-slide .bars { height: .7em; }
-.ind .v-slide .bars i { animation: slide var(--mark-period) linear infinite; }
-.ind .v-slide .bars i + i { animation-delay: -.55s; }
-.ind .v-rot .bars { animation: spin var(--mark-period) linear infinite; }
-.ind .bars.qbar i:first-child { height: .84em; }
 
-/* still shapes */
-.ind .dot { width: .62em; height: .62em; border-radius: 50%; background: var(--dot-amber); }
-.ind .dot.sm { width: .5em; height: .5em; }
-.ind .hring { width: .62em; height: .62em; border-radius: 50%; border: .16em solid var(--dot-amber); }
-.ind .hring.faint { width: .56em; height: .56em; border-width: .12em; border-color: var(--dot-off); }
-.ind .caret { width: .42em; height: .42em; border: solid var(--amber); border-width: .17em .17em 0 0; transform: translateX(-.08em) rotate(45deg); }
-.ind .orb { width: 1.22em; height: 1.22em; position: relative; animation: spin var(--mark-period) linear infinite; }
-.ind .orb i { position: absolute; top: 0; left: 50%; width: .26em; height: .26em; margin-left: -.13em; border-radius: 50%; background: var(--dot-green); }
-.ind .sq { width: .66em; height: .66em; border-radius: .1em; background: var(--ink-3); }
-.ind .sq.red { background: var(--red); }
-.ind .sq.amber { background: var(--dot-amber); }
-.ind .sq.spin { animation: spin var(--mark-period) linear infinite; }
-.ind .sqo { width: .64em; height: .64em; border-radius: .1em; border: .15em solid var(--ink-3); }
-.ind .sqo.amber { border-color: var(--amber); }
-.ind .march-r { animation: march var(--mark-period) linear infinite; }
+/* still shapes: done, to review, signed out */
 .ind .chk { width: .32em; height: .6em; border: solid var(--ink-3); border-width: 0 .16em .16em 0; transform: translateY(-.07em) rotate(45deg); }
-.ind .chk.sm { width: .22em; height: .42em; border-width: 0 .12em .12em 0; }
-.ind .ring-thin { width: .96em; height: .96em; border-radius: 50%; border: .1em solid var(--ink-3); }
 .ind .badge { width: .9em; height: .9em; border-radius: 50%; background: var(--link); }
 .ind .badge-chk { width: .22em; height: .42em; border: solid #fff; border-width: 0 .13em .13em 0; transform: translateY(-.06em) rotate(45deg); }
-.ind .flag { width: .8em; height: .86em; position: relative; }
-.ind .flag::before { content: ""; position: absolute; left: .04em; top: 0; bottom: 0; width: .13em; background: var(--link); border-radius: .05em; }
-.ind .flag::after { content: ""; position: absolute; left: .17em; top: .02em; width: .6em; height: .44em; background: var(--link); clip-path: polygon(0 0, 100% 0, 72% 50%, 100% 100%, 0 100%); }
-.ind .ring-blue { width: .96em; height: .96em; border-radius: 50%; border: .12em solid var(--link); }
-.ind .bluechk { border-color: var(--link); }
 .ind .lock { position: relative; width: .74em; height: .92em; }
 .ind .lock .sh { position: absolute; left: .14em; top: 0; width: .46em; height: .52em; border: .13em solid var(--red); border-bottom: 0; border-radius: .24em .24em 0 0; }
 .ind .lock .bd { position: absolute; left: 0; bottom: 0; width: .74em; height: .5em; background: var(--red); border-radius: .08em; }
-.ind .none { width: 1em; height: 1em; }
 
-/* reduced motion: every mark keeps its shape and stops. .rm is set from the media query or the preview button; .still is a single fallback sample */
+/* reduced motion: every mark keeps its shape and stops */
 @media (prefers-reduced-motion: reduce) { .ind *, .ind *::before { animation: none !important; } }
 .ind { font-size: 11px; }
-.ind .bars i, .ind .arc, .ind .dot { }
 .kind { --kc: #57606A; --kb: #EAEEF2; display: inline-flex; align-items: center; gap: 3px; font: 500 11.5px/16px var(--sans); padding: 0 5px 0 3px; border-radius: 4px;
   color: var(--kc); background: var(--kb); white-space: nowrap; vertical-align: 1px; flex: none; }
 .kind svg { width: 11px; height: 11px; flex: none; display: block; }
 .kind.g { padding: 0 2px; }
 .kd-sub { --kc: #1A7F37; --kb: #DAFBE1; } .kd-fork { --kc: #8250DF; --kb: #F3EEFE; } .kd-shell { --kc: #0B7A82; --kb: #DCF1F2; } .kd-mon { --kc: #0E6BA8; --kb: #DDEEF8; }
-.kinds-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px; }
-.kinds-list { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .kind { font-size: 10px; line-height: 14px; }
 .kind .ind { font-size: 10px; }
-@media (prefers-reduced-motion: reduce) {
-  .ind .arc:not(.frozen):not(.grey) { border-color: var(--green); } .ind .arc.fork { border-color: var(--fork); } .ind .radar .sweep { background: none; }
-}
 
 /* placing the marks */
 .r-side .ind { font-size: 11px; }
@@ -570,9 +513,6 @@ body:not(.is-dragging) .g-empty { display: none; }
 .r-review { color: var(--link); }
 .status .ind { font-size: 11px; margin-right: .3ch; vertical-align: -1px; }
 .main-row .ind { font-size: 11px; }
-.card { grid-template-columns: 14px minmax(0, 1fr) auto; }
-.card > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
-.card .m .kind { margin-right: 4px; }
 .pr { grid-template-columns: auto minmax(0, 1fr) auto; }
 .pr .pm { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
 .pr .pm .ind { font-size: 9px; }
@@ -589,20 +529,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .rv-open .m .kind { margin-right: 4px; }
 .rv-done { font-size: 10.5px; margin-right: 4px; }
 
-/* kind = spinner + colour: subagent orbit (slate), fork two arcs (purple), shell turning bar (teal), monitor radar (pink) */
+/* the kinds' colours (their words and tags; the marks use the --mk-* set) */
 :root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
-.ind .sat { width: 1em; height: 1em; border-radius: 50%; border: .13em solid #AFB8C1; position: relative; animation: spin var(--mark-period) linear infinite; box-sizing: border-box; }
-.ind .sat i { position: absolute; top: -.25em; left: 50%; width: .4em; height: .4em; margin-left: -.2em; border-radius: 50%; background: var(--k-sub); }
-.ind .arc.k2 { border-color: #E2D6F8; border-top-color: var(--k-fork); border-bottom-color: var(--k-fork); animation-duration: .9s; }
-.ind .rbar { width: .22em; height: .95em; border-radius: .11em; background: var(--k-shell); animation: spin var(--mark-period) linear infinite; }
-.ind .radar { border-color: var(--k-mon); }
-.ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(14, 107, 168, .34) 90deg, transparent 90deg); }
-.ind .radar .sweep::before { background: var(--k-mon); }
-@media (prefers-reduced-motion: reduce) { .ind .arc.k2 { border-color: var(--k-fork); } }
-/* running cards: neutral, kind colour on the left edge */
-.card { background: var(--panel); border: 1px solid var(--line); } /* no coloured left edge: the mark carries the kind */
-.card:hover { background: var(--sub); }
-.card .d { color: var(--ink-3); font-weight: 400; font-size: 11px; } /* quiet like "Working" and the Past times */
 .kw { font-weight: 700; color: var(--kc); }
 .kc-sub { --kc: var(--k-sub); } .kc-fork { --kc: var(--k-fork); } .kc-shell { --kc: var(--k-shell); } .kc-mon { --kc: var(--k-mon); }
 
@@ -725,10 +653,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 :root { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
 .side { --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
 .side .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
-.side .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(88, 166, 255, .38) 90deg, transparent 90deg); }
 .side .row[aria-current="true"] { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
 .side .row[aria-current="true"] .ind { --red: #CF222E; --ink-3: #6E7781; --link: #0550AE; --dot-amber: #D4A72C; --amber: #9A6700; --green: #1A7F37; --line-2: #E4E8EC; }
-.side .row[aria-current="true"] .ind .radar .sweep { background: conic-gradient(from 270deg, transparent 0deg, rgba(14, 107, 168, .34) 90deg, transparent 90deg); }
 .side .row .r-side { background: #2D333B; border-color: #545D68; border-width: 1px; }
 .side .row[aria-current="true"] .r-side { background: var(--panel); border-color: #8C959F; }
 

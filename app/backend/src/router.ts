@@ -12,8 +12,8 @@ import type { Session, SendResult } from './session.ts';
 import type { Publisher } from './publisher.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Menus } from './menu.ts';
-import type { Store, Layout, ReviewedMarks } from './store.ts';
-import { reconcileLayout } from './store.ts';
+import type { Store, ReviewedMarks } from './store.ts';
+import type { Place, Result as LayoutResult } from './layout.ts';
 import type { CardAnswer } from './cards.ts';
 import type { Image } from './sdk.ts';
 import type { Bat } from './preview.ts';
@@ -43,10 +43,16 @@ export type RouterOptions = {
 };
 
 type Msg = { t: string; [k: string]: unknown };
-type Result = SendResult | void;
+type Result = SendResult | LayoutResult | void;
 type Handler = (client: Client, m: Msg) => Result | Promise<Result>;
 
 const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+// moveSession's one target: before or after a session, or last in a group
+function placeOf(m: Msg, resolve: (id: string) => string): Place | null {
+  const before = str(m.before), after = str(m.after), group = str(m.group);
+  if ([before, after, group].filter((x) => x !== null).length !== 1) return null;
+  return before !== null ? { before: resolve(before) } : after !== null ? { after: resolve(after) } : { group: group as string };
+}
 
 export class Router {
   private o: RouterOptions;
@@ -163,10 +169,6 @@ export class Router {
       // ---------- state the page holds ----------
       // the page's UI state (R3.9): stored, returned in hello, never broadcast
       ui: (client, m) => { patchUi(store, m.patch, { resolve: (id) => sessions.resolve(id), known: (id) => transcripts.has(id), toast: toastTo(client) }); },
-      layout: (_client, m) => {
-        store.state.layout = reconcileLayout(m.layout as Layout, store.state.layout, sessions.layoutEntries());
-        store.changed();
-      },
       // ---------- actions ----------
       // shown at once, queued while a turn runs (session.ts)
       send: (client, m) => this.act(m.sid, (s) => {
@@ -184,6 +186,14 @@ export class Router {
       openSession: (_client, m) => sessions.openSession(m.sid as string)
         .catch((): SendResult => ({ ok: false, error: "Synopia couldn't read the list of past sessions." })),
       reviewed: (_client, m) => { if (marks.mark(m.agentId as string)) publisher.reviewed(m.agentId as string); },
+      // the sidebar's layout (layout.ts): every session id through its aliases, so an intent sent
+      // before a new session got its real id still moves that session (seams#A6)
+      moveSession: (_client, m) => {
+        const to = placeOf(m, (id) => sessions.resolve(id));
+        return to ? sessions.layout.move(sessions.resolve(m.sid as string), to) : { ok: false, error: UNREADABLE };
+      },
+      newGroup: (_client, m) => sessions.layout.newGroup(sessions.resolve(m.sid as string), sessions.resolve(m.onto as string), m.group as string, str(m.name) ?? undefined),
+      renameGroup: (_client, m) => sessions.layout.renameGroup(m.group as string, m.name as string),
     };
   }
 }
