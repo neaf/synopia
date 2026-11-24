@@ -1,6 +1,6 @@
 // The read-only file preview (requirements R5.9): `preview {path}` from the page gets back
 // `preview {path, display, lang, html, lines, truncated, size}`, the file highlighted by `bat` (GitHub
-// theme) and turned from ANSI colours into escaped HTML spans. Any regular file that looks like text
+// theme, or the dark one for `theme: "dark"`) and turned from ANSI colours into escaped HTML spans. Any regular file that looks like text
 // (no NUL byte in the first 8 KB) is shown, whatever its extension or execute bit, except images and
 // PDFs. Anything else gets today's `open` (the caller's fallback). bat runs through execFile,
 // never a shell, on what this module read (at most 2 MB and 5,000 lines) over stdin, 5 s at most.
@@ -87,11 +87,20 @@ export function capText(buf: Buffer, size: number): { text: string; lines: numbe
 const ESC_HTML: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
 export const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ESC_HTML[c]);
 const hex = (r: number, g: number, b: number) => '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v | 0)).toString(16).padStart(2, '0')).join('');
-// The 16 basic colours, as GitHub's light palette draws them.
-const BASIC = ['#24292f', '#cf222e', '#116329', '#4d2d00', '#0969da', '#8250df', '#1b7c83', '#6e7781',
-  '#57606a', '#a40e26', '#1a7f37', '#633c01', '#218bff', '#a475f9', '#3192aa', '#8c959f'];
-export function color256(n: number): string {
-  if (n < 16) return BASIC[n];
+export type Theme = 'light' | 'dark';
+export const themeOf = (v: unknown): Theme => (v === 'dark' ? 'dark' : 'light');
+// bat has no GitHub Dark theme. Coldark-Dark is the closest of its own (`bat --list-themes`): GitHub Dark's
+// blues and purples, and the only one whose every colour, comments included, keeps about 4.3:1 or more on the dark panel
+export const BAT_THEME: Record<Theme, string> = { light: 'GitHub', dark: 'Coldark-Dark' };
+// The 16 basic colours, as GitHub's light and dark palettes draw them.
+const BASIC: Record<Theme, string[]> = {
+  light: ['#24292f', '#cf222e', '#116329', '#4d2d00', '#0969da', '#8250df', '#1b7c83', '#6e7781',
+    '#57606a', '#a40e26', '#1a7f37', '#633c01', '#218bff', '#a475f9', '#3192aa', '#8c959f'],
+  dark: ['#8b949e', '#ff7b72', '#3fb950', '#d29922', '#58a6ff', '#bc8cff', '#39c5cf', '#b1bac4',
+    '#9198a1', '#ffa198', '#56d364', '#e3b341', '#79c0ff', '#d2a8ff', '#56d4dd', '#f0f6fc'],
+};
+export function color256(n: number, theme: Theme = 'light'): string {
+  if (n < 16) return BASIC[theme][n];
   if (n < 232) {
     const v = n - 16, steps = [0, 95, 135, 175, 215, 255];
     return hex(steps[Math.floor(v / 36)], steps[Math.floor(v / 6) % 6], steps[v % 6]);
@@ -103,7 +112,7 @@ export function color256(n: number): string {
 type Sgr = { fg: string | null; bold: boolean; italic: boolean; underline: boolean };
 const plain = (): Sgr => ({ fg: null, bold: false, italic: false, underline: false });
 
-function applySgr(st: Sgr, params: number[]): Sgr {
+function applySgr(st: Sgr, params: number[], theme: Theme): Sgr {
   const s = { ...st };
   const ps = params.length ? params : [0];
   for (let i = 0; i < ps.length; i++) {
@@ -115,12 +124,12 @@ function applySgr(st: Sgr, params: number[]): Sgr {
     else if (p === 22) s.bold = false;
     else if (p === 23) s.italic = false;
     else if (p === 24) s.underline = false;
-    else if (p >= 30 && p <= 37) s.fg = BASIC[p - 30];
-    else if (p >= 90 && p <= 97) s.fg = BASIC[p - 90 + 8];
+    else if (p >= 30 && p <= 37) s.fg = BASIC[theme][p - 30];
+    else if (p >= 90 && p <= 97) s.fg = BASIC[theme][p - 90 + 8];
     else if (p === 39) s.fg = null;
     else if (p === 38 || p === 48) { // extended colour; the background is not drawn
       let c: string | null = null;
-      if (ps[i + 1] === 5) { c = color256(ps[i + 2] ?? 0); i += 2; }
+      if (ps[i + 1] === 5) { c = color256(ps[i + 2] ?? 0, theme); i += 2; }
       else if (ps[i + 1] === 2) { c = hex(ps[i + 2] ?? 0, ps[i + 3] ?? 0, ps[i + 4] ?? 0); i += 4; }
       if (p === 38 && c) s.fg = c;
     }
@@ -139,7 +148,7 @@ function styleOf(s: Sgr): string {
 
 // One HTML line per text line ('\n'-joined): every span closes at the end of its line, so the page can
 // split on '\n'. Text is escaped; styles are only the colours and weights built above.
-export function ansiToHtml(input: string): string {
+export function ansiToHtml(input: string, theme: Theme = 'light'): string {
   const out: string[] = [];
   let st = plain();
   let runs: [string, string][] = []; // [style, text] on this line; neighbours with one style merge
@@ -161,7 +170,7 @@ export function ansiToHtml(input: string): string {
   for (let m = re.exec(input); m; m = re.exec(input)) {
     emit(input.slice(last, m.index));
     last = re.lastIndex;
-    if (m[2] === 'm') st = applySgr(st, m[1] === '' ? [] : m[1].split(';').map((x) => Number(x) || 0));
+    if (m[2] === 'm') st = applySgr(st, m[1] === '' ? [] : m[1].split(';').map((x) => Number(x) || 0), theme);
   }
   // other escape sequences are dropped, and so are stray control characters
   emit(input.slice(last).replace(/\x1b/g, ''));
@@ -223,8 +232,8 @@ export function langOf(p: string, bat: Bat): string {
   return bat?.langs.get(base) ?? (ext ? bat?.langs.get(ext) : undefined) ?? 'Plain text';
 }
 
-export function batArgs(p: string, truncated: boolean): string[] {
-  return ['--no-config', '--color=always', '--theme=GitHub', '--style=plain', '--paging=never', '--wrap=never',
+export function batArgs(p: string, truncated: boolean, theme: Theme = 'light'): string[] {
+  return ['--no-config', '--color=always', `--theme=${BAT_THEME[theme]}`, '--style=plain', '--paging=never', '--wrap=never',
     ...(truncated ? [`--line-range=:${MAX_LINES}`] : []), `--file-name=${path.basename(p)}`, '-'];
 }
 
@@ -233,7 +242,7 @@ export type PreviewReply = { t: 'preview'; path: string; display: string; lang: 
 // Reads, caps and highlights a planned file. Plain escaped text when bat is missing, fails or times out.
 export function render(
   p: string, real: string, size: number,
-  opts: { bat: Bat; display?: (p: string) => string; run?: RunBat; log?: Log },
+  opts: { bat: Bat; theme?: Theme; display?: (p: string) => string; run?: RunBat; log?: Log },
 ): Promise<PreviewReply> {
   const log = opts.log ?? nullLog;
   const fd = fs.openSync(real, 'r');
@@ -250,9 +259,9 @@ export function render(
   if (!opts.bat) return Promise.resolve(plainReply());
   const bat = opts.bat;
   return new Promise((resolve) => {
-    (opts.run ?? runBat)(bat.file, batArgs(p, truncated), text, (err, out) => {
+    (opts.run ?? runBat)(bat.file, batArgs(p, truncated, opts.theme), text, (err, out) => {
       if (err) { log('preview.batFailed', { killed: Boolean((err as { killed?: boolean }).killed) }); resolve(plainReply()); return; }
-      resolve({ ...base, html: ansiToHtml(out.replace(/\n$/, '')) });
+      resolve({ ...base, html: ansiToHtml(out.replace(/\n$/, ''), opts.theme) });
     });
   });
 }
@@ -260,7 +269,7 @@ export function render(
 // The `preview` message: a preview reply, today's `open` for files that aren't text, or a toast.
 export async function previewFile(
   p: unknown,
-  opts: { bat: Bat; display?: (p: string) => string; run?: RunBat; log?: Log; open: (p: string) => void; reply: (msg: PreviewReply) => void; toast: (text: string) => void },
+  opts: { bat: Bat; theme?: Theme; display?: (p: string) => string; run?: RunBat; log?: Log; open: (p: string) => void; reply: (msg: PreviewReply) => void; toast: (text: string) => void },
 ): Promise<void> {
   const log = opts.log ?? nullLog;
   const plan = planPreview(p);

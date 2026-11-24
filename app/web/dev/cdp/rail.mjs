@@ -73,7 +73,7 @@ const seenSel = [];
 for (const [label, q, state] of items) seenSel.push({ label, ...(await sel(q, state)) });
 const edgeOf = (x) => x.edges[0]?.replace(/^\w+ /, '');
 check('every selected item has exactly one visible edge, no border plus ring', seenSel.every((x) => x.n === 1 && x.edges.length === 1), JSON.stringify(seenSel.map((x) => [x.label, x.n, x.edges])));
-check('the selected edge is the same 1px ink line on every kind and state', seenSel.every((x) => edgeOf(x) === 'border rgb(31, 35, 40) 1px'), JSON.stringify(seenSel.map((x) => [x.label, x.edges])));
+check('the selected edge is the same 1px ink line on every kind and state', seenSel.every((x) => edgeOf(x) === (process.env.SYNOPIA_CDP_THEME === 'dark' ? 'border rgb(230, 237, 243) 1px' : 'border rgb(31, 35, 40) 1px')), JSON.stringify(seenSel.map((x) => [x.label, x.edges])));
 const g0 = seenSel[0].geo, moved = seenSel.filter((x) => x.geo.length !== g0.length || x.geo.some((b, i) => b.some((v, j) => Math.abs(v - g0[i][j]) > 0.5)));
 check('selecting changes no geometry: every card, row, mark and guide keeps its place and size', moved.length === 0, JSON.stringify(moved.map((x) => x.label)));
 await ev(`document.querySelector('[data-back-main]').click()`);

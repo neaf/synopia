@@ -25,7 +25,7 @@ export async function connect(port = +process.env.SYNOPIA_CHROME_PORT) {
   const listeners = [];
   ws.on('message', (d) => { const m = JSON.parse(d); if (waiting.has(m.id)) { waiting.get(m.id)(m); waiting.delete(m.id); } else if (m.method) listeners.forEach((f) => f(m)); });
   ws.on('close', () => { for (const [id, r] of waiting) { waiting.delete(id); r({ error: { message: 'CDP closed' } }); } });
-  const cdp = (method, params = {}) => new Promise((r) => {
+  let cdp = (method, params = {}) => new Promise((r) => {
     const id = ++n; const t = setTimeout(() => { if (waiting.delete(id)) r({ error: { message: method + ' timed out' } }); }, 30_000);
     waiting.set(id, (m) => { clearTimeout(t); r(m); }); ws.send(JSON.stringify({ id, method, params }));
   });
@@ -36,6 +36,15 @@ export async function connect(port = +process.env.SYNOPIA_CHROME_PORT) {
   await cdp('Emulation.setFocusEmulationEnabled', { enabled: true });
   await cdp('Page.bringToFront');
   await cdp('Page.addScriptToEvaluateOnNewDocument', { source: SEEN });
+  // SYNOPIA_CDP_THEME=dark (or light): the system appearance the page sees, so any check runs in either theme;
+  // kept when a check sets its own media features (reduced motion)
+  const theme = process.env.SYNOPIA_CDP_THEME;
+  if (theme) {
+    const set = cdp;
+    cdp = (method, params = {}) => method !== 'Emulation.setEmulatedMedia' || (params.features || []).some((f) => f.name === 'prefers-color-scheme') ? set(method, params)
+      : set(method, { ...params, features: [...(params.features || []), { name: 'prefers-color-scheme', value: theme }] });
+    await cdp('Emulation.setEmulatedMedia', { features: [] });
+  }
   const results = [];
   const check = (name, ok, extra = '') => { results.push((ok ? 'pass' : 'FAIL') + ' ' + name + (extra && !ok ? ' ' + extra : '')); };
   // headless Chrome can drop the first key after a load: before the first key on each document, send a

@@ -13,7 +13,7 @@ function previewClick(a, e) {
   const p = a.dataset.path;
   if (!p || (PV_HTML.test(p) && !e.altKey)) return false;
   pv.want = { path: p, back: a, ...pvChanges(a) };
-  send({ t: "preview", path: p });
+  send({ t: "preview", path: p, theme: themeNow() });
   return true;
 }
 /* the lines the row's diff changed, in the new file: added lines, and for a deletion the line after it.
@@ -82,6 +82,15 @@ function hidePreview() {
   document.getElementById("pv-lines").innerHTML = "";
   const back = pv.back; pv.back = null;
   if (back && back.isConnected) back.focus({ preventScroll: true });
+}
+/* the theme changed (theme.js): the file shown is asked again in bat's other theme, keeping its marks, scroll and find */
+function previewRetheme() {
+  if (!previewShown() || !pv.path) return;
+  const rows = [...document.querySelectorAll("#pv-lines .pl")], at = cls => new Set(rows.flatMap((r, i) => r.classList.contains(cls) ? [i + 1] : []));
+  const find = document.getElementById("pv-find");
+  pv.want = { path: pv.path, back: pv.back, added: at("chg"), cut: at("cut"), first: 0,
+    restore: { scroll: document.getElementById("pv-code").scrollTop, find: find.hidden ? "" : document.getElementById("pv-q").value } };
+  send({ t: "preview", path: pv.path, theme: themeNow() });
 }
 
 /* ---------- find: every match marked with the CSS Custom Highlight API (no markup added), the current one stronger ---------- */

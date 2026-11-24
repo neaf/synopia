@@ -26,7 +26,8 @@ check('starts in normal mode', (await mode()) === 'normal');
 check('normal: grey message box, no ring', await ev(`getComputedStyle(document.querySelector('.dock')).boxShadow === 'none' && getComputedStyle(document.querySelector('.dock .composer')).backgroundColor !== 'rgb(255, 255, 255)'`));
 await K.i();
 check('i: insert, focus in the box', (await mode()) === 'insert' && (await ev('document.activeElement.id')) === 'msg');
-check('insert: blue ring', /rgb\(84, 174, 255\)/.test(await ev(`getComputedStyle(document.querySelector('.dock')).boxShadow`)));
+const dark = process.env.SYNOPIA_CDP_THEME === 'dark'; // the ring's blue in the theme the check runs in
+check('insert: blue ring', (dark ? /rgb\(68, 147, 248\)/ : /rgb\(84, 174, 255\)/).test(await ev(`getComputedStyle(document.querySelector('.dock')).boxShadow`)));
 await key('x', { code: 'KeyX', vk: 88 });
 check('insert: keys type', (await ev('document.getElementById("msg").value')) === 'x');
 await K.esc();

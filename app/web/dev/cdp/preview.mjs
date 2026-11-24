@@ -76,7 +76,9 @@ check('header: path, language and line count', (await ev(`document.getElementByI
 const lines = fs.readFileSync(SRC, 'utf8').split('\n').length - 1;
 check('one row per line', (await ev(`document.querySelectorAll('#pv-lines .pl').length`)) === lines, String(lines));
 const colours = await ev(`[...new Set([...document.querySelectorAll('#pv-lines .tx span')].map(s => getComputedStyle(s).color))]`);
-check('highlighted with several GitHub colours', Array.isArray(colours) && colours.length >= 4 && colours.includes('rgb(167, 29, 93)'), JSON.stringify(colours));
+// GitHub's keyword colour, or Coldark-Dark's when the check runs dark (SYNOPIA_CDP_THEME)
+const kw = process.env.SYNOPIA_CDP_THEME === 'dark' ? 'rgb(198, 153, 227)' : 'rgb(167, 29, 93)';
+check('highlighted with several bat theme colours', Array.isArray(colours) && colours.length >= 4 && colours.includes(kw), JSON.stringify(colours));
 check('mono 12px, no wrap', await ev(`(() => { const s = getComputedStyle(document.querySelector('#pv-lines .tx')); return s.fontSize === '12px' && /JetBrains/.test(s.fontFamily) && getComputedStyle(document.querySelector('#pv-lines .pl')).whiteSpace === 'pre'; })()`));
 check('line numbers aligned: one gutter width, right-aligned', await ev(`(() => { const n = [...document.querySelectorAll('#pv-lines .no')]; const w = new Set(n.map(x => Math.round(x.getBoundingClientRect().right))); return w.size === 1 && getComputedStyle(n[0]).textAlign === 'right'; })()`));
 check('a long line scrolls sideways', await ev(`(() => { const c = document.getElementById('pv-code'); return c.scrollWidth > c.clientWidth; })()`));
