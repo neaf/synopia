@@ -14,7 +14,7 @@ const here = path.dirname(new URL(import.meta.url).pathname);
 const repo = path.resolve(here, '../../../..');
 const c = await connect();
 const { ev, check, key } = c;
-const until = async (expr, ms = 6000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
+const wait = (expr, ms = 6000) => c.until(expr, ms);
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S4 = '44444444-0000-4000-8000-000000000004';
 const AGENT = 'aaaa0001';
 const PREVIEW = path.join(repo, 'app/backend/src/open.ts');
@@ -22,7 +22,7 @@ const PREVIEW = path.join(repo, 'app/backend/src/open.ts');
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1100, height: 480, deviceScaleFactor: 1, mobile: false });
 let url = url0;
 const load = () => c.load(url);
-const goTo = async (sid) => { await ev(`document.querySelector('.side .row[data-id="${sid}"]').click()`); return until(`current === '${sid}' && mounted === '${sid}|' && !uiRestoring && cur().items.length > 0`); };
+const goTo = async (sid) => { await ev(`document.querySelector('.side .row[data-id="${sid}"]').click()`); return wait(`current === '${sid}' && mounted === '${sid}|' && !uiRestoring && cur().items.length > 0`); };
 const anchor = () => ev(`JSON.stringify(uiAnchor(document.getElementById('log')))`);
 const near = (a, b) => { const x = JSON.parse(a), y = JSON.parse(b); return !x.bottom && x.id === y.id && Math.abs(x.off - y.off) <= 2; };
 const flush = async () => { await ev('uiFlush()'); await sleep(300); };
@@ -58,16 +58,16 @@ check('session 1 is scrolled mid-way', !JSON.parse(mid).bottom && await ev(`docu
 await ev(`(() => { const t = document.getElementById('msg'); t.value = 'a draft to keep'; t.dispatchEvent(new Event('input')); t.setSelectionRange(15, 15); })()`);
 await paste(); // its [Image #1] tag at the caret (R5.13)
 await ev(`document.getElementById('msg').setSelectionRange(2, 7)`);
-check('the pasted image is read', await until(`attachments.length === 1 && !!attachments[0].data`));
-check('session 2 shows its card', await goTo(S2) && await until(`!!document.querySelector('.qa-card')`));
+check('the pasted image is read', await wait(`attachments.length === 1 && !!attachments[0].data`));
+check('session 2 shows its card', await goTo(S2) && await wait(`!!document.querySelector('.qa-card')`));
 for (const k of ['j', ' ', 'Enter', 'j', ' ']) await key(k);
 const card0 = await card();
 check('the card is half answered', /"picks":\{"0":\["No"\],"1":\["Docs"\]\}/.test(card0) && /"qi":1/.test(card0), card0);
 check('session 4 shows', await goTo(S4));
 await ev(`document.querySelector('[data-agent="${AGENT}"]').click()`);
-check('its subagent view opens', await until(`view === '${AGENT}' && mounted === '${S4}|${AGENT}'`));
+check('its subagent view opens', await wait(`view === '${AGENT}' && mounted === '${S4}|${AGENT}'`));
 await ev(`(() => { pv.want = { path: ${JSON.stringify(PREVIEW)}, back: null, added: new Set(), cut: new Set(), first: 0 }; send({ t: 'preview', path: ${JSON.stringify(PREVIEW)} }); })()`);
-check('the preview opens', await until(`previewShown()`));
+check('the preview opens', await wait(`previewShown()`));
 await ev(`(() => { pvOpenFind(); const q = document.getElementById('pv-q'); q.value = 'export'; pvFind('export'); document.getElementById('pv-code').scrollTop = 300; })()`);
 await sleep(150);
 const pvScroll = await ev(`document.getElementById('pv-code').scrollTop`);
@@ -76,23 +76,23 @@ await flush();
 // ---------- 1. reload the page ----------
 async function checkSession1(tag, firstLoad) {
   if (!firstLoad) check(`${tag}: session 1 shows`, await goTo(S1));
-  else check(`${tag}: session 1 is the one shown`, await until(`current === '${S1}' && mounted === '${S1}|' && !uiRestoring`));
+  else check(`${tag}: session 1 is the one shown`, await wait(`current === '${S1}' && mounted === '${S1}|' && !uiRestoring`));
   check(`${tag}: the scroll lands on the same item within 2 px`, near(await anchor(), mid), `${await anchor()} vs ${mid}`);
   check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep [Image #1]' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
-  check(`${tag}: the pasted image is back`, await until(`attachments.length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
-  check(`${tag}: its bytes are back for sending`, await until(`/^data:image\\/png;base64,/.test(attachments[0].data || '')`));
+  check(`${tag}: the pasted image is back`, await wait(`attachments.length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
+  check(`${tag}: its bytes are back for sending`, await wait(`/^data:image\\/png;base64,/.test(attachments[0].data || '')`));
   check(`${tag}: the step is open`, await stepOpen('List the demo folder'));
   check(`${tag}: the tool group is unfolded`, await foldOpen());
   check(`${tag}: the diff is open`, await diffOpen());
 }
 async function checkCard(tag) {
-  check(`${tag}: session 2 shows its card`, await goTo(S2) && await until(`!!document.querySelector('.qa-card')`));
+  check(`${tag}: session 2 shows its card`, await goTo(S2) && await wait(`!!document.querySelector('.qa-card')`));
   check(`${tag}: the card's picks and cursor`, (await card()) === card0, await card());
   check(`${tag}: the card shows them`, await ev(`document.querySelector('.qa-card .acc[data-qi="0"] .ans')?.textContent === 'No' && !!document.querySelector('.qa-card .o.on[data-oi="1"]')`));
 }
 check('1: reloaded', await load());
 check('1: the subagent view is back, with no default view first', await ev(`current === '${S4}' && view === '${AGENT}' && mounted === '${S4}|${AGENT}'`));
-check('1: the preview is back, scrolled, with its find query', await until(`previewShown() && pv.path === ${JSON.stringify(PREVIEW)}`)
+check('1: the preview is back, scrolled, with its find query', await wait(`previewShown() && pv.path === ${JSON.stringify(PREVIEW)}`)
   && await ev(`document.getElementById('pv-q').value === 'export' && !document.getElementById('pv-find').hidden && Math.abs(document.getElementById('pv-code').scrollTop - ${pvScroll}) <= 1`), await ev(`document.getElementById('pv-code').scrollTop`));
 await ev('hidePreview()');
 await checkSession1('1', false);
@@ -100,20 +100,20 @@ await checkCard('1');
 
 // ---------- 2. restart the backend, on a card with half a typed answer ----------
 for (const k of ['j', 'j', 'i']) await key(k);
-check('2: typing into the card', await until(`document.activeElement?.id === 'qa-own'`));
+check('2: typing into the card', await wait(`document.activeElement?.id === 'qa-own'`));
 for (const ch of 'half') await key(ch);
 const card1 = await card();
 await restart();
 check('2: reloaded on the restarted backend', await load());
-check('2: session 2 and insert mode are back', await until(`current === '${S2}' && document.body.dataset.mode === 'insert'`));
-check('2: the typed answer is back in its field', await until(`document.getElementById('qa-own')?.value === 'half' && document.activeElement?.id === 'qa-own'`), await ev(`document.getElementById('qa-own')?.value`));
+check('2: session 2 and insert mode are back', await wait(`current === '${S2}' && document.body.dataset.mode === 'insert'`));
+check('2: the typed answer is back in its field', await wait(`document.getElementById('qa-own')?.value === 'half' && document.activeElement?.id === 'qa-own'`), await ev(`document.getElementById('qa-own')?.value`));
 check('2: the card state is back', (await card()) === card1, `${await card()} vs ${card1}`);
 await ev(`document.getElementById('qa-own').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
 await checkSession1('2', false);
 
 // ---------- 3. restart again, in session 1 in insert mode ----------
 await key('i');
-check('3: insert mode in the message box', await until(`document.body.dataset.mode === 'insert' && document.activeElement?.id === 'msg'`));
+check('3: insert mode in the message box', await wait(`document.body.dataset.mode === 'insert' && document.activeElement?.id === 'msg'`));
 await ev(`document.getElementById('msg').setSelectionRange(2, 7)`);
 await restart();
 check('3: reloaded on the restarted backend', await load());
@@ -134,7 +134,7 @@ check('a stale anchor falls back to the bottom', await goTo(S1) && (await anchor
 // the Open list, with its filter
 await ev(`(() => { showOpenList(); const i = document.getElementById('ol-filter'); i.value = 'demo'; i.dispatchEvent(new Event('input')); })()`);
 await flush();
-check('the Open list comes back with its filter', await load() && await until(`openListShown() && document.getElementById('ol-filter').value === 'demo' && openList.filter === 'demo'`));
+check('the Open list comes back with its filter', await load() && await wait(`openListShown() && document.getElementById('ol-filter').value === 'demo' && openList.filter === 'demo'`));
 await c.cdp('Emulation.clearDeviceMetricsOverride');
 c.print();
 c.close();

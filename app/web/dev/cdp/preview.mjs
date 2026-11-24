@@ -7,6 +7,7 @@
 // a binary and an HTML file falling back to `open`, and Alt-click on HTML showing its source.
 import fs from 'node:fs';
 import path from 'node:path';
+import { shot, keyTable } from './helpers.mjs';
 import { fileURLToPath } from 'node:url';
 
 const SID = 'f0f0f0f0-0000-4000-8000-0000000000f0';
@@ -43,20 +44,12 @@ const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
 const { bin, html } = extra(claudeDir);
 const c = await connect();
-const { ev, check, key } = c;
+const { ev, check, key, until } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
 await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
-const until = async (expr, ms = 4000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 const logText = () => fs.readFileSync(path.join(stateDir, 'backend.log'), 'utf8');
-const K = {
-  j: () => key('j', { code: 'KeyJ', vk: 74 }), k: () => key('k', { code: 'KeyK', vk: 75 }),
-  g: () => key('g', { code: 'KeyG', vk: 71 }), G: () => key('G', { shift: true, code: 'KeyG', vk: 71 }),
-  n: () => key('n', { code: 'KeyN', vk: 78 }), J: () => key('J', { shift: true, code: 'KeyJ', vk: 74 }),
-  slash: () => key('/', { code: 'Slash', vk: 191 }), esc: () => key('Escape', { code: 'Escape', vk: 27 }),
-  enter: () => key('Enter', { code: 'Enter', vk: 13 }), cmdF: () => key('f', { meta: true, code: 'KeyF', vk: 70 }),
-  i: () => key('i', { code: 'KeyI', vk: 73 }),
-};
+const K = keyTable(key);
 const type = async (s) => { for (const ch of s) await c.cdp('Input.insertText', { text: ch }); };
 const shown = () => ev(`previewShown()`);
 const row = (p) => `[...document.querySelectorAll('.frow .fp')].find(a => a.dataset.path === ${JSON.stringify(p)})`;
@@ -84,7 +77,7 @@ check('line numbers aligned: one gutter width, right-aligned', await ev(`(() => 
 check('a long line scrolls sideways', await ev(`(() => { const c = document.getElementById('pv-code'); return c.scrollWidth > c.clientWidth; })()`));
 check('opens at the top, changes marked in the gutter only', await ev(`document.getElementById('pv-code').scrollTop === 0 && !!document.querySelector('#pv-lines .pl.chg, #pv-lines .pl.cut') && getComputedStyle(document.querySelector('#pv-lines .pl.chg, #pv-lines .pl.cut')).backgroundColor === 'rgba(0, 0, 0, 0)'`));
 check('escaped: no element but spans in the code', await ev(`document.querySelectorAll('#pv-lines .tx *:not(span)').length === 0`));
-await c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, 'preview-open.png'), Buffer.from(r.result.data, 'base64')));
+await shot(c, path.join(stateDir, 'preview-open.png'));
 
 const top = () => ev(`document.getElementById('pv-code').scrollTop`);
 await K.g(); await sleep(50);
@@ -115,7 +108,7 @@ await K.n(); await sleep(50);
 check('n: next match', (await ev(`document.getElementById('pv-count').textContent`)).startsWith('3 of'));
 await K.cmdF();
 check('Cmd+F opens the find box', await ev(`!document.getElementById('pv-find').hidden && document.activeElement.id === 'pv-q'`));
-await c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, 'preview-find.png'), Buffer.from(r.result.data, 'base64')));
+await shot(c, path.join(stateDir, 'preview-find.png'));
 await K.esc(); await K.esc();
 check('Esc closes the preview', !(await shown()));
 check('Esc did not reach the composer or other keys', (await ev('document.body.dataset.mode')) === 'normal' && (await ev('current')) === before);

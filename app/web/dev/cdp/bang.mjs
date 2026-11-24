@@ -10,15 +10,12 @@
 // ends a `sleep 30` ("Stopped"); a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records } from './helpers.mjs';
 
 const D = 'b4b4b4b4-0000-4000-8000-0000000000d1'; // driven, idle
 const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: another process runs it
 const dirOf = (claude) => path.join(claude, 'projects', '-tmp-synopia-bang');
-const line = (o) => JSON.stringify(o) + '\n';
-const ts = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
-const rec = (sid, o) => line({ cwd: '/tmp/synopia-bang', sessionId: sid, ...o });
-const you = (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const said = (sid, uuid, s, text) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const { rec, you, said } = records('/tmp/synopia-bang');
 
 if (process.argv[2] === 'make') {
   const dir = dirOf(process.argv[3]);

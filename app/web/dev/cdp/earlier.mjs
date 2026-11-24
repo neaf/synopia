@@ -32,10 +32,9 @@ if (process.argv[2] === 'make') {
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
 const c = await connect();
-const { ev, check, key } = c;
+const { ev, check, key, until } = c;
 await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
-const until = async (expr, ms = 4000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 const ids = () => ev(`(() => { const s = cur(), A = view && agentById(s, view); return (A || s).items.map(i => i.id); })()`);
 const link = () => ev(`document.querySelector('#log .earlier')?.textContent ?? null`);
 // a reply's item id is its record uuid plus `:<block index>`

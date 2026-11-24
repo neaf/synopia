@@ -1,0 +1,65 @@
+// Shared helpers for the page checks: waiting, the key table, screenshots and transcript record builders.
+// No import of cdp.mjs here, so a suite's `make` mode can use the builders without a browser.
+import fs from 'node:fs';
+
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// an exception in a page expression (cdp.mjs `ev` throws it); its message names the expression
+export class PageError extends Error {
+  constructor(msg, expr) { super(`page exception: ${msg} in: ${expr.replace(/\s+/g, ' ').slice(0, 120)}`); this.name = 'PageError'; }
+}
+// Polls `ev(expr)` until it is === true, for `ms` at most; false on a timeout. A page exception counts as
+// not yet (an element not there yet), but one on the last try is rethrown, so a renamed global fails.
+// Suites call it as `c.until(expr, ms)`.
+export async function until(ev, expr, ms = 5000) {
+  for (const end = Date.now() + ms; ;) {
+    let last = null;
+    try { if ((await ev(expr)) === true) return true; } catch (e) { if (!(e instanceof PageError)) throw e; last = e; }
+    if (Date.now() > end) { if (last) throw last; return false; }
+    await sleep(50);
+  }
+}
+
+// Real key presses through `c.key`: K.j(), K.G() (with Shift), K.esc(), K.next() (Cmd-Shift-]) and so on.
+const NAMED = {
+  esc: ['Escape', 'Escape', 27], enter: ['Enter', 'Enter', 13], tab: ['Tab', 'Tab', 9], space: [' ', 'Space', 32],
+  backspace: ['Backspace', 'Backspace', 8], slash: ['/', 'Slash', 191],
+  down: ['ArrowDown', 'ArrowDown', 40], up: ['ArrowUp', 'ArrowUp', 38], right: ['ArrowRight', 'ArrowRight', 39], left: ['ArrowLeft', 'ArrowLeft', 37],
+};
+export function keyTable(key) {
+  const K = {};
+  for (const ch of 'abcdefghijklmnopqrstuvwxyz') {
+    const up = ch.toUpperCase(), code = 'Key' + up, vk = up.charCodeAt(0);
+    K[ch] = () => key(ch, { code, vk });
+    K[up] = () => key(up, { shift: true, code, vk });
+  }
+  for (const [name, [k, code, vk]] of Object.entries(NAMED)) K[name] = () => key(k, { code, vk });
+  K.next = () => key(']', { meta: true, shift: true, code: 'BracketRight', vk: 221 });
+  K.prev = () => key('[', { meta: true, shift: true, code: 'BracketLeft', vk: 219 });
+  K.cmdF = () => key('f', { meta: true, code: 'KeyF', vk: 70 });
+  return K;
+}
+
+// A PNG of the page, or of `clip` ({ x, y, width, height }, scale 1 unless given), written to `file`.
+export async function shot(c, file, clip) {
+  const r = await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { scale: 1, ...clip } } : {}) });
+  if (!r.result) throw new Error('screenshot failed: ' + JSON.stringify(r.error));
+  fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'));
+  return file;
+}
+
+// Transcript records (Claude Code JSONL, docs/Claude Code transcripts.md), one line each.
+export const line = (o) => JSON.stringify(o) + '\n';
+// `s` seconds into a turn that started a minute ago: fresh, so the session reads running (status.ts ages)
+export const fresh = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
+// Builders for one project folder `cwd`: rec(sid, fields), you (a prompt), said (Claude's text), tool (a tool_use).
+// `ts(s)` dates a record from its second; the default is `fresh`.
+export function records(cwd, ts = fresh) {
+  const rec = (sid, o) => line({ cwd, sessionId: sid, ...o });
+  const reply = (sid, uuid, s, content) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content } });
+  return {
+    rec,
+    you: (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } }),
+    said: (sid, uuid, s, text) => reply(sid, uuid, s, [{ type: 'text', text }]),
+    tool: (sid, uuid, s, id, name, input) => reply(sid, uuid, s, [{ type: 'tool_use', id, name, input }]),
+  };
+}

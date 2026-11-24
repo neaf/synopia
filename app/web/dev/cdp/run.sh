@@ -19,22 +19,23 @@
 #   app/web/dev/cdp/run.sh background  b, b sends foreground steps to the background (R9): the highlight, the prompt, cancel, send, not driven, with a shot
 #   app/web/dev/cdp/run.sh dark    dark mode (section 11): follows the system live, the switch stored and kept over a reload, no light background left, with shots
 #   app/web/dev/cdp/run.sh titles  title changes in the transcript (R5.12c): two Retitled lines in place, kept over a reload and a backend restart, with a shot
-# SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 #   app/web/dev/cdp/run.sh queued  messages sent during a turn show pending (R5.5): in order above the live line, one lands in place, an interrupt puts the other back in the box, with shots
 #   app/web/dev/cdp/run.sh bang    bash mode (R5.13): ! enters it, Backspace leaves it, a command's output, stderr and exit, Show all, one at a time, Esc, Esc ends a sleep, with shots
 #   app/web/dev/cdp/run.sh close  x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
+#   app/web/dev/cdp/run.sh viewswitch  back from a subagent the view renders once (R3.9): one view message, one reset, no other range first, on the earlier transcript
+# SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch)
 name="${1:-}"
 
 if [ "$name" = all ]; then
   logs="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-all.XXXXXX")"
   failed=0; fails=""
-  printf '%-8s %s\n' check result
+  printf '%-10s %s\n' check result
   for s in "${SUITES[@]}"; do
     "$here/run.sh" "$s" > "$logs/$s.log" 2>&1; code=$?
     pass=0; total=0
@@ -45,7 +46,7 @@ if [ "$name" = all ]; then
       f="$(grep -E '^FAIL|Error|error:' "$logs/$s.log" | head -8)"; [ -n "$f" ] || f="$(tail -5 "$logs/$s.log")"
       fails="$fails$s:"$'\n'"$(sed 's/^/  /' <<<"$f")"$'\n'
     fi
-    printf '%-8s %s\n' "$s" "$r"
+    printf '%-10s %s\n' "$s" "$r"
   done
   [ -n "$fails" ] && printf '\n%s' "$fails"
   echo "logs: $logs"
@@ -72,6 +73,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
+if [ "$name" = viewswitch ]; then fix="$state/claude"; node "$here/earlier.mjs" make "$fix" || exit 1; fi
 if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi

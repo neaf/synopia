@@ -9,15 +9,13 @@
 // in the page as the real backend does (`removed`, `recent`, `session`). Writes close-asking.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records, fresh, line } from './helpers.mjs';
 
 const A = 'c1c1c1c1-0000-4000-8000-0000000000c1'; // driven, working: a turn, two subagents and a shell
 const C = 'c1c1c1c1-0000-4000-8000-0000000000c2'; // driven, idle
 const B = 'c1c1c1c1-0000-4000-8000-0000000000c3'; // not driven: its status comes from the transcript
-const line = (o) => JSON.stringify(o) + '\n';
-const ts = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
-const rec = (sid, o) => line({ cwd: '/tmp/synopia-close', sessionId: sid, ...o });
-const you = (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const said = (sid, uuid, s, text) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'text', text }] } });
+const ts = fresh;
+const { rec, you, said } = records('/tmp/synopia-close');
 const result = (sid, uuid, s, id, toolUseResult, content) => rec(sid, { type: 'user', uuid, timestamp: ts(s), toolUseResult, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
 
 if (process.argv[2] === 'make') {

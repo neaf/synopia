@@ -8,16 +8,13 @@
 // A message sent while nothing runs isn't queued. Writes queued-two.png and queued-landed.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records } from './helpers.mjs';
 
 const A = 'a9a9a9a9-0000-4000-8000-0000000000a1'; // driven, working
 const B = 'a9a9a9a9-0000-4000-8000-0000000000b2'; // driven, idle
 const dirOf = (claude) => path.join(claude, 'projects', '-tmp-synopia-queued');
-const line = (o) => JSON.stringify(o) + '\n';
-const ts = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString();
-const rec = (sid, o) => line({ cwd: '/tmp/synopia-queued', sessionId: sid, ...o });
-const you = (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const said = (sid, uuid, s, text) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'text', text }] } });
-const tool = (sid, uuid, s, id, command) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command, description: 'Run the demo tests' } }] } });
+const { rec, you, said, tool: toolUse } = records('/tmp/synopia-queued');
+const tool = (sid, uuid, s, id, command) => toolUse(sid, uuid, s, id, 'Bash', { command, description: 'Run the demo tests' });
 const FIRST = 'Also check the **demo** notes when you are done.';
 const SECOND = 'And then rename the demo folder.';
 

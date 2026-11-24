@@ -6,6 +6,7 @@
 //        node extcard.mjs <url> <state-dir> <claude-dir>
 import fs from 'node:fs';
 import path from 'node:path';
+import { shot as shotTo } from './helpers.mjs';
 
 const Q = 'e1e1e1e1-0000-4000-8000-00000000000a', P = 'e2e2e2e2-0000-4000-8000-00000000000b', D = 'e3e3e3e3-0000-4000-8000-00000000000e';
 const file = (dir, sid) => path.join(dir, 'projects', '-tmp-ext', `${sid}.jsonl`);
@@ -26,11 +27,10 @@ if (process.argv[2] === 'make') {
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
 const c = await connect();
-const { ev, check, key } = c;
+const { ev, check, key, until } = c;
 const text = (sel) => ev(`document.querySelector(${JSON.stringify(sel)})?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`);
-const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
 let n = 0;
-const shot = async () => { const s = await c.cdp('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(`${stateDir}/extcard-${++n}.png`, Buffer.from(s.result.data, 'base64')); };
+const shot = () => shotTo(c, `${stateDir}/extcard-${++n}.png`);
 const open = async (sid) => { await ev(`document.querySelector('.row[data-id^="${sid.slice(0, 8)}"]').click()`); await sleep(800); };
 const row = (sid) => ev(`(() => { const r = document.querySelector('.row[data-id^="${sid.slice(0, 8)}"]'); return r && { state: r.dataset.state, word: r.querySelector('.r-state').textContent.trim() }; })()`);
 

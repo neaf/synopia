@@ -7,6 +7,7 @@
 // the composer: a synthetic paste, the ✕ on hover, remove, send. Writes images-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { shot as shotTo } from './helpers.mjs';
 import { deflateSync, crc32 } from 'node:zlib';
 
 const SID = 'c0c0c0c0-0000-4000-8000-0000000000c0';
@@ -84,12 +85,11 @@ if (process.argv[2] === 'make') {
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir] = process.argv.slice(2);
 const c = await connect();
-const { ev, check, key, mouse } = c;
+const { ev, check, key, mouse, until } = c;
 await c.cdp('Page.enable');
 const { identifier } = await c.cdp('Page.addScriptToEvaluateOnNewDocument', { source: `window.__csp = []; document.addEventListener('securitypolicyviolation', e => __csp.push(e.violatedDirective + ' ' + e.blockedURI));` }).then((r) => r.result);
 await c.load(url + `#${SID.slice(0, 8)}`, `current === '${SID}'`);
-const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
-const shot = async (name, clip) => fs.writeFileSync(path.join(stateDir, `images-${name}.png`), Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { ...clip, scale: 1 } } : {}) })).result.data, 'base64'));
+const shot = (name, clip) => shotTo(c, path.join(stateDir, `images-${name}.png`), clip && { ...clip, scale: 1 });
 const near = (a, b) => Math.abs(a - b) < 0.6;
 
 check('the session loads with its prompt thumbnails', await until(`cur()?.id === '${SID}' && document.querySelectorAll('[data-key="you:u1"] .thumbs .thumb').length === 3`));

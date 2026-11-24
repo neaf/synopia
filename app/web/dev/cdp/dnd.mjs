@@ -33,7 +33,7 @@ if (phase === 'after-restart') {
   check('layout restored from hello after a restart', (await L()) === want, (await L()) + ' vs ' + want);
   const order = await ev(`[...document.querySelectorAll('#groups .row')].map(r => r.dataset.id[0]).join('')`);
   check('sidebar rows in the stored order', order.length === 5, order);
-  c.print(); c.close(); process.exit(0);
+  c.print(); c.close(); process.exit();
 }
 
 check('start: all in Not in a group', (await L()) === '{"groups":[],"others":["1","2","3","4","5"]}', await L());

@@ -11,6 +11,7 @@
 // Writes steps.png and steps-running.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records, fresh, shot } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 
 const S = 'b7b7b7b7-0000-4000-8000-0000000000c1'; // driven, its Bash runs
@@ -18,9 +19,8 @@ const N = 'c8c8c8c8-0000-4000-8000-0000000000c2'; // not driven: its Bash runs b
 const DESC = 'Inspect feature based ability builder';
 const CMD = 'npm run build\nnpm test -- --grep "ability builder"';
 const fileOf = (claude, sid) => path.join(claude, 'projects', '-tmp-synopia-steps', `${sid}.jsonl`);
-const rec = (sid, s, o) => JSON.stringify({ cwd: '/tmp/synopia-steps', sessionId: sid, timestamp: new Date(Date.now() - 60_000 + s * 1000).toISOString(), ...o }) + '\n';
-const you = (sid, uuid, s, text) => rec(sid, s, { type: 'user', uuid, message: { role: 'user', content: text } });
-const bashRec = (sid, uuid, s, id, command, description) => rec(sid, s, { type: 'assistant', uuid, message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Bash', input: { command, description } }] } });
+const { rec, you, tool } = records('/tmp/synopia-steps');
+const bashRec = (sid, uuid, s, id, command, description) => tool(sid, uuid, s, id, 'Bash', { command, description });
 
 if (process.argv[2] === 'make') {
   const [src, dst] = process.argv.slice(3);
@@ -36,8 +36,7 @@ if (process.argv[2] === 'make') {
 
 const [url, stateDir, claude] = process.argv.slice(2);
 const c = await connect();
-const { ev, check } = c;
-const until = async (expr, ms = 5000) => { for (let t = 0; t < ms; t += 100) { if (await ev(expr)) return true; await sleep(100); } return false; };
+const { ev, check, until } = c;
 await c.load(url + '#11111111', `current?.startsWith('11111111')`);
 check('the tool group shows', await until(`!!document.querySelector('details.fold .body details.step')`));
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
@@ -67,7 +66,7 @@ check('the group stays open', await ev(`document.querySelector('details.fold').o
 await ev(`document.querySelector('details.fold').closest('[data-key]').scrollIntoView({ block: 'start' })`);
 await sleep(200);
 const clip = await ev(`(() => { const r = document.querySelector('details.fold').closest('[data-key]').getBoundingClientRect(); return { x: Math.max(0, r.left - 20), y: Math.max(0, r.top - 10), width: Math.min(1000, r.width + 40), height: Math.min(800, r.height + 20), scale: 1 }; })()`);
-fs.writeFileSync(path.join(stateDir, 'steps.png'), Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png', clip })).result.data, 'base64'));
+await shot(c, path.join(stateDir, 'steps.png'), clip);
 await click('Grep(TODO)');
 await sleep(150);
 check('a click closes it', await ev(`!${step('Grep(TODO)')}.open`));
@@ -101,7 +100,7 @@ const t2 = await timer();
 check('the timer ticks', t2 !== t1 && t2.startsWith('Running, '), `${t1} -> ${t2}`);
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight; })()`);
 await sleep(100);
-fs.writeFileSync(path.join(stateDir, 'steps-running.png'), Buffer.from((await c.cdp('Page.captureScreenshot', { format: 'png' })).result.data, 'base64'));
+await shot(c, path.join(stateDir, 'steps-running.png'));
 await ev(`${OWN}.querySelector('summary').click()`);
 check('a click on its own line closes both', await c.until(`!${LIVE}.open && !${OWN}.open`, 2000));
 await ev(`${OWN}.querySelector('summary').click()`);
@@ -115,7 +114,7 @@ check('the UI-state restore keeps it open', await c.until(`!!${LIVE} && ${LIVE}.
 // the result lands: the step becomes today's finished view in place
 const topOf = `${OWN}.closest('.ln').offsetTop`;
 const top0 = await ev(topOf);
-fs.appendFileSync(fileOf(claude, S), rec(S, 60, { type: 'user', uuid: 's-r1', toolUseResult: { stdout: 'built 3 modules\n12 passing', stderr: '', interrupted: false },
+fs.appendFileSync(fileOf(claude, S), rec(S, { timestamp: fresh(60), type: 'user', uuid: 's-r1', toolUseResult: { stdout: 'built 3 modules\n12 passing', stderr: '', interrupted: false },
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_live1', content: 'built 3 modules\n12 passing' }] } }));
 check('the result arrives', await c.until(`cur().items.some(i => i.id === 'toolu_live1' && i.state === 'done')`, 8000));
 await sleep(200);

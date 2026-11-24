@@ -7,14 +7,12 @@
 // doesn't drive; b types in insert mode. Writes background-asking.png.
 import fs from 'node:fs';
 import path from 'node:path';
+import { records, fresh } from './helpers.mjs';
 
 const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: the fake driver gives it a status
 const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its status comes from the transcript
-const line = (o) => JSON.stringify(o) + '\n';
-const ts = (s) => new Date(Date.now() - 60_000 + s * 1000).toISOString(); // fresh: the turn reads running
-const rec = (sid, o) => line({ cwd: '/tmp/synopia-background', sessionId: sid, ...o });
-const you = (sid, uuid, s, text) => rec(sid, { type: 'user', uuid, timestamp: ts(s), message: { role: 'user', content: text } });
-const tool = (sid, uuid, s, id, name, input) => rec(sid, { type: 'assistant', uuid, timestamp: ts(s), message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+const ts = fresh; // fresh: the turn reads running
+const { rec, you, tool } = records('/tmp/synopia-background');
 
 if (process.argv[2] === 'make') {
   const dir = path.join(process.argv[3], 'projects', '-tmp-synopia-background');
