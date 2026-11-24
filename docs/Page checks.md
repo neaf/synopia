@@ -150,10 +150,10 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 ## Backend tests
 
 - `node --test test/` fails on a directory in Node 22.13; pass a glob: `node --experimental-strip-types --disable-warning=ExperimentalWarning --test test/*.test.ts`. Code: `check.sh` 16-17, `backend/package.json` 8.
-- `daemon.test.ts` spawns the real `main.ts` with `--experimental-strip-types`. The restart test leaves a detached successor that the test must kill (232-268).
-- The contract tests run a real daemon through `test/daemon-harness.ts` (`startDaemon`, `connectPage`, `api`, `fixtureCopy`): `protocol-golden.test.ts` (the server's frames on the fixture tree against `test/golden/*.json`; `SYNOPIA_GOLDEN=update` rewrites them, then read the diff), `router.test.ts` (page frames and what they change), `shell-contract.test.ts` (what `Backend.swift` and `AppDelegate.swift` decode) and `handover.test.ts`.
-- `handover.test.ts` runs on a copy of `app/backend` whose `main.ts` each case replaces, and takes about 35 s: the 20 s successor timeout and two 10 s code-hash reads (`daemon.ts` `startSuccessor`, `UPDATE_READ_MS`) are fixed in the code. Its three cases run concurrently.
-- The handover test makes work start on cue with `send` frames: under the main fixture's script a message that starts a turn is worked on for 3 s (`sdk-script.json` `onSend`).
+- `daemon.test.ts` spawns the real `main.ts` with `--experimental-strip-types`. The restart test leaves a detached successor that the test must kill.
+- The contract tests run a real daemon through `test/daemon-harness.ts` (`startDaemon`, `shellDaemon`, `connectPage`, `api`, `fixtureCopy`, `backendCopy`, `watchDaemonJson`): `protocol-golden.test.ts` (the server's frames on the fixture tree against `test/golden/*.json`; `SYNOPIA_GOLDEN=update` rewrites them, then read the diff), `router.test.ts` (page frames and what they change), `shell-contract.test.ts` (what `DaemonFiles.swift`, `Backend.swift` and `AppDelegate.swift` decode, a handover's `daemon.json` too) and `handover.test.ts`.
+- `handover.test.ts` runs on a copy of `app/backend` (`backendCopy`) whose `main.ts` each case replaces, and takes under 5 s: the test-only flags `--update-read-ms` and `--successor-ms` cut the 10 s code reading and the 20 s successor wait. Its three cases run concurrently.
+- The handover test makes work start on cue with `send` frames: it shortens its copy of the script so a message that starts a turn is worked on for 400 ms (`sdk-script.json` `onSend`, 3 s in the fixture).
 
 ## Date-relative fixtures
 

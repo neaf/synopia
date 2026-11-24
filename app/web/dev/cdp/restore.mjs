@@ -170,7 +170,7 @@ check('the Open list comes back with its filter', await load() && await wait(`__
 // ---------- the card answered while the backend is down (web-ui#B1, requirements Q9) ----------
 check('4: session 2 shows its card', await goTo(S2) && await wait(`!!document.querySelector('#qa-send')`));
 const card2 = await card();
-await stopBackend('SIGKILL'); // a crash: a stop would clear the card's request on the way out
+await stopBackend('SIGKILL'); // a crash: the page keeps what it showed
 check('4: the page sees the socket down', await wait(`__synopia.readiness().connected === false`, 8000));
 await ev('__synopia.spy()');
 await ev(`document.getElementById('qa-send').click()`);

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { openStore, normalize } from '../src/store.ts';
-import { patchUi, pruneUi, rekeyUi, draftImage, normalizeUi, DRAFT_IMAGE_MAX } from '../src/ui.ts';
+import { patchUi, pruneUi, rekeyUi, draftImage, normalizeUi, DRAFT_IMAGE_MAX } from '../src/ui-state.ts';
 
 const SID = '11111111-2222-4333-8444-555555555555';
 const NEW = '66666666-7777-4888-8999-aaaaaaaaaaaa';
@@ -106,7 +106,7 @@ test('ui: an image over 5 MB, or past 20 MB for the session, is not kept, with a
   assert.ok(!fs.existsSync(drafts(SID)));
 });
 
-test('ui: pruning a closed session drops its data and draft files; null in a patch does the same', () => {
+test('ui: pruning a closed session drops its data, draft files and current session; null in a patch drops the data', () => {
   const { store, drafts } = setup();
   patchUi(store, { current: SID, view: 'a1', sessions: { [SID]: { draft: { text: 't', images: [{ id: 'i', mediaType: 'image/png', data: png(10) }] } }, [NEW]: { steps: ['|x'] } } });
   assert.ok(fs.existsSync(drafts(SID)));
@@ -133,4 +133,24 @@ test('ui: a new id re-keys the session data, its draft files and the current ses
   // a late patch with the old id reaches the new one through resolve
   patchUi(store, { sessions: { [SID]: { folds: ['|run:a#0'] } } }, { resolve: (id) => (id === SID ? NEW : id) });
   assert.deepEqual(store.state.ui.sessions[NEW].folds, ['|run:a#0']);
+});
+
+test('ui: an emptied entry of the current session keeps current and view (backend-core#B2)', () => {
+  const { store, drafts } = setup();
+  patchUi(store, { current: SID, view: 'a1', sessions: { [SID]: { draft: { text: 't', images: [{ id: 'i', mediaType: 'image/png', data: png(10) }] } } } });
+  patchUi(store, { sessions: { [SID]: { draft: null } } }); // the draft sent: the entry's last field
+  assert.equal(store.state.ui.sessions[SID], undefined);
+  assert.ok(!fs.existsSync(drafts(SID)));
+  assert.equal(store.state.ui.current, SID);
+  assert.equal(store.state.ui.view, 'a1');
+  patchUi(store, { sessions: { [SID]: { steps: ['|x'] } } });
+  patchUi(store, { sessions: { [SID]: { steps: null } } }); // the last fold closed
+  assert.equal(store.state.ui.current, SID);
+  patchUi(store, { sessions: { [SID]: null } }); // a null entry drops the data, not the current session
+  assert.equal(store.state.ui.current, SID);
+  assert.equal(store.state.ui.view, 'a1');
+  store.flush(); // what a reload reads
+  const again = openStore(path.dirname(store.path));
+  assert.equal(again.state.ui.current, SID);
+  assert.equal(again.state.ui.view, 'a1');
 });

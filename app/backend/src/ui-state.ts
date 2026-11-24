@@ -154,7 +154,7 @@ export function patchUi(store: Store, patch: unknown, opts: PatchOptions = {}): 
     for (const [raw, v] of Object.entries(patch.sessions)) {
       const sid = opts.resolve ? opts.resolve(raw) : raw;
       if (!SAFE_ID.test(sid)) continue;
-      if (v === null) { pruneUi(store, sid); continue; }
+      if (v === null) { dropSession(store, sid); continue; }
       if (!isObj(v) || (opts.known && !opts.known(sid))) continue;
       const cur = ui.sessions[sid] ?? {};
       const clean = cleanSession(v);
@@ -170,7 +170,7 @@ export function patchUi(store: Store, patch: unknown, opts: PatchOptions = {}): 
         if (d && (d.text || kept.length)) cur.draft = { ...d, images: kept };
         else delete cur.draft;
       }
-      if (Object.keys(cur).length) ui.sessions[sid] = cur; else pruneUi(store, sid);
+      if (Object.keys(cur).length) ui.sessions[sid] = cur; else dropSession(store, sid);
     }
   }
   store.changed();
@@ -209,13 +209,20 @@ function dropImages(store: Store, sid: string, was: Draft | undefined, kept: Dra
   if (!kept.length) fs.rmSync(draftsDir(store, sid), { recursive: true, force: true });
 }
 
-// A closed session: its ui data and its draft images go.
+// A session's ui data and its draft images go; `current` and `view` stay, so a session whose last
+// field emptied (a draft sent, the last step folded) is still the one on screen (backend-core#B2).
+function dropSession(store: Store, sid: string): boolean {
+  const had = sid in store.state.ui.sessions;
+  delete store.state.ui.sessions[sid];
+  if (SAFE_ID.test(sid)) fs.rmSync(draftsDir(store, sid), { recursive: true, force: true });
+  return had;
+}
+
+// A closed session: its ui data and its draft images go, and it is no longer the one on screen.
 export function pruneUi(store: Store, sid: string): void {
   const ui = store.state.ui;
-  const had = sid in ui.sessions || ui.current === sid;
-  delete ui.sessions[sid];
-  if (ui.current === sid) { ui.current = null; ui.view = null; }
-  if (SAFE_ID.test(sid)) fs.rmSync(draftsDir(store, sid), { recursive: true, force: true });
+  let had = dropSession(store, sid);
+  if (ui.current === sid) { ui.current = null; ui.view = null; had = true; }
   if (had) store.changed();
 }
 

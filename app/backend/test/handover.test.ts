@@ -1,65 +1,46 @@
-// The handover to a new daemon (main.ts handOver, daemon.ts startSuccessor), on a copy of the backend whose
-// code each test changes: a new daemon that exits at once or stays silent for 20 s leaves the old one
-// running with a toast; an update waits while work runs, is put off when work starts while the new daemon
-// loads, and goes once nothing runs. A characterization of the current lifecycle. About 35 s.
+// The handover to a new daemon (daemon.ts handOver, startSuccessor), on a copy of the backend whose code
+// each test changes: a new daemon that exits at once or stays silent past the wait leaves the old one
+// running with a toast; an update waits while work runs, is put off when work starts while the new
+// daemon loads, tries again only after the next code reading, and then hands over with daemon.json's
+// `handover`. The waits are cut short by the test-only --update-read-ms and --successor-ms.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readDaemonInfo } from '../src/daemon.ts';
-import { startDaemon, connectPage, waitFor, fixtureCopy, scripted, api, tmp } from './daemon-harness.ts';
-import type { Daemon } from './daemon-harness.ts';
+import { once } from 'node:events';
+import { readDaemonInfo } from '../src/daemon-files.ts';
+import { backendCopy, connectPage, shellDaemon, waitFor, fixtureCopy, scripted, api, tmp, watchDaemonJson } from './daemon-harness.ts';
 
-const BACKEND = new URL('..', import.meta.url).pathname;
-const WEB = new URL('../../web', import.meta.url).pathname;
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002';
 const TOAST = "The new backend didn't start, so this one goes on. See daemon.log.";
-
-// app/backend/{src, dev, package.json, package-lock.json, node_modules} and app/web, as main.ts finds them
-function backendCopy(): { main: string; dir: string } {
-  const app = join(tmp('handover'), 'app'), dir = join(app, 'backend');
-  mkdirSync(dir, { recursive: true });
-  for (const d of ['src', 'dev']) cpSync(join(BACKEND, d), join(dir, d), { recursive: true });
-  for (const f of ['package.json', 'package-lock.json']) cpSync(join(BACKEND, f), join(dir, f));
-  symlinkSync(join(BACKEND, 'node_modules'), join(dir, 'node_modules'));
-  symlinkSync(WEB, join(app, 'web'));
-  return { main: join(dir, 'src', 'main.ts'), dir };
-}
-
-// as the shell starts it: stdout and stderr are <state>/daemon.log, where the new daemon's go too
-async function daemonOf(main: string, args: string[]): Promise<Daemon & { daemonLog: () => string }> {
-  const stateDir = tmp('state'), file = join(stateDir, 'daemon.log');
-  const fd = openSync(file, 'a');
-  const d = await startDaemon(args, { stateDir, main, stdio: ['ignore', fd, fd] });
-  closeSync(fd);
-  return { ...d, daemonLog: () => readFileSync(file, 'utf8') };
-}
+const FAST = ['--update-read-ms', '200'];
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const kill = (pid: number | undefined) => { if (pid) try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ } };
+const cycleOf = (log: string, event: string) => [...log.matchAll(new RegExp(`${event.replace('.', '\\.')}[^\\n]* cycle=(\\d+)`, 'g'))].map((m) => Number(m[1]));
 
 test('handover', { concurrency: true }, async (t) => {
   const runs: Promise<void>[] = [];
   runs.push(t.test('restart: a new daemon that exits at once leaves this one, with a toast', async () => {
     const { main } = backendCopy();
-    const d = await daemonOf(main, ['--claude-dir', tmp('claude')]);
+    const d = await shellDaemon(['--claude-dir', tmp('claude'), '--successor-ms', '5000'], main);
     try {
       const page = await connectPage(d.info);
       writeFileSync(main, 'process.exit(1);\n'); // the new code fails as it loads
       assert.equal((await api(d.info, 'restart', { method: 'POST' })).status, 200);
-      assert.equal((await page.next('toast', () => true, 15_000)).text, TOAST);
+      assert.equal((await page.next('toast', () => true, 5000)).text, TOAST);
       assert.match(d.log(), /handover\.start reason=restart/);
       assert.match(d.log(), /handover\.failed reason=restart/);
       assert.doesNotMatch(d.log(), /backend\.stop/);
       assert.equal((await (await api(d.info, 'ping')).json()).pid, d.info.pid, 'the old daemon still answers');
-      assert.equal(readDaemonInfo(d.stateDir)?.pid, d.info.pid, 'and keeps daemon.json');
+      assert.deepEqual(readDaemonInfo(d.stateDir), d.info, 'and keeps daemon.json, with no handover');
       await page.close();
     } finally { await d.stop(); }
   }));
 
-  runs.push(t.test('restart: a new daemon silent for 20 s is ended, this one stays, with a toast', async () => {
+  runs.push(t.test('restart: a new daemon silent past the wait is ended, this one stays, with a toast', async () => {
     const { main, dir } = backendCopy();
-    const d = await daemonOf(main, ['--claude-dir', tmp('claude')]);
+    const d = await shellDaemon(['--claude-dir', tmp('claude'), '--successor-ms', '3000'], main);
     const pidFile = join(dir, 'successor.pid');
     try {
       const page = await connectPage(d.info);
@@ -67,12 +48,12 @@ test('handover', { concurrency: true }, async (t) => {
       writeFileSync(main, `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetInterval(() => {}, 1000);\n`);
       const t0 = Date.now();
       assert.equal((await api(d.info, 'restart', { method: 'POST' })).status, 200);
-      const next = Number(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8'), 10_000, 'the new daemon'));
+      const next = Number(await waitFor(() => existsSync(pidFile) && readFileSync(pidFile, 'utf8'), 5000, 'the new daemon'));
       assert.equal(alive(next), true);
-      assert.equal((await page.next('toast', () => true, 30_000)).text, TOAST);
-      assert.ok(Date.now() - t0 >= 19_000, `the toast after the 20 s wait, not ${Date.now() - t0} ms`);
+      assert.equal((await page.next('toast', () => true, 5000)).text, TOAST);
+      assert.ok(Date.now() - t0 >= 2900, `the toast after the wait, not ${Date.now() - t0} ms`);
       assert.match(d.log(), /handover\.failed reason=restart/);
-      await waitFor(() => !alive(next), 5000, 'the silent daemon to be ended');
+      await waitFor(() => !alive(next), 3000, 'the silent daemon to be ended');
       assert.equal((await (await api(d.info, 'ping')).json()).pid, d.info.pid);
       await page.close();
     } finally {
@@ -81,44 +62,57 @@ test('handover', { concurrency: true }, async (t) => {
     }
   }));
 
-  runs.push(t.test('update: pending while work runs, put off when work starts as the new daemon loads, then handed over', async () => {
+  runs.push(t.test('update: pending while work runs, put off when work starts as the new daemon loads, handed over on the next reading', async () => {
     const { main } = backendCopy();
     // the fixture with two scripted sessions: S1's process waits idle, S2's waits on a question card,
-    // so the daemon is busy until it is answered; a message that starts a turn is worked on for 3 s
+    // so the daemon is busy until it is answered; a message that starts a turn is worked on for 400 ms
     const claude = fixtureCopy();
     const scriptFile = join(claude, 'sdk-script.json');
     const script = JSON.parse(readFileSync(scriptFile, 'utf8'));
-    script.sessions = { [S1]: { start: true }, [S2]: script.sessions[S2] };
+    const s2 = script.sessions[S2];
+    for (const st of s2.steps) if (st.after) st.after = 300;
+    for (const st of script.onSend) if (st.after) st.after = 400;
+    script.sessions = { [S1]: { start: true }, [S2]: s2 };
     writeFileSync(scriptFile, JSON.stringify(script));
-    const d = await daemonOf(main, scripted(claude));
+    const d = await shellDaemon([...scripted(claude), ...FAST, '--successor-ms', '5000'], main);
     let next: number | undefined;
     try {
       const page = await connectPage(d.info);
       assert.equal(page.hello.update, false);
-      // new code that loads 1.5 s late, so work can start while it loads
-      writeFileSync(main, 'await new Promise((ok) => setTimeout(ok, 1500));\n' + readFileSync(main, 'utf8'));
-      // the same new hash on two 10 s reads: pending, and the page says so
-      assert.equal((await page.next('update', (m) => m.pending === true, 30_000)).pending, true);
-      await new Promise((ok) => setTimeout(ok, 1500));
+      // new code that loads 500 ms late, so work can start while it loads
+      writeFileSync(main, 'await new Promise((ok) => setTimeout(ok, 500));\n' + readFileSync(main, 'utf8'));
+      // the same new hash on two readings: pending, and the page says so
+      assert.equal((await page.next('update', (m) => m.pending === true, 5000)).pending, true);
+      await new Promise((ok) => setTimeout(ok, 600));
       assert.doesNotMatch(d.log(), /handover\.start/, 'not while a card waits');
-      // answered: the script works 3 s, then nothing runs and the handover starts
+      // answered: the script works 300 ms, then nothing runs and the handover starts
       page.send({ t: 'answer', sid: S2, requestId: 'req-question-1', answer: { questions: [{ picks: ['No'] }, { picks: ['Blog'] }] } });
-      await waitFor(() => /handover\.start reason=update/.test(d.log()), 15_000, 'handover.start');
-      // work starts while the new daemon loads (a message to S1 every 300 ms, each turn 3 s): put off
-      const work = setInterval(() => page.send({ t: 'send', sid: S1, text: 'One more pass over the demo notes.' }), 300);
-      try { await waitFor(() => /handover\.deferred/.test(d.log()), 20_000, 'handover.deferred'); } finally { clearInterval(work); }
+      await waitFor(() => /handover\.start reason=update/.test(d.log()), 5000, 'handover.start');
+      // work starts while the new daemon loads (a message to S1 every 100 ms, each turn 400 ms): put off
+      const work = setInterval(() => page.send({ t: 'send', sid: S1, text: 'One more pass over the demo notes.' }), 100);
+      try { await waitFor(() => /handover\.deferred/.test(d.log()), 5000, 'handover.deferred'); } finally { clearInterval(work); }
       assert.equal(d.child.exitCode, null, 'the old daemon goes on');
-      assert.equal(readDaemonInfo(d.stateDir)?.pid, d.info.pid);
-      // nothing runs again: the next try hands over
-      await waitFor(() => d.child.exitCode !== null, 30_000, 'the old daemon to hand over and exit');
-      assert.equal(d.child.exitCode, 0);
-      const n = await waitFor(() => { const r = readDaemonInfo(d.stateDir); return r && r.pid !== d.info.pid ? r : null; }, 20_000, 'the new daemon.json');
+      assert.deepEqual(readDaemonInfo(d.stateDir), d.info);
+      // nothing runs again: after the next reading it hands over, marking daemon.json for the shell
+      const exited = once(d.child, 'exit');
+      const fresh = waitFor(() => { const r = readDaemonInfo(d.stateDir); return r && r.pid !== d.info.pid ? r : null; }, 10_000, 'the new daemon.json');
+      const seen = await watchDaemonJson(d.stateDir, fresh);
+      const [code] = await exited;
+      assert.equal(code, 0);
+      const n = await fresh;
       next = n.pid;
-      assert.match(d.daemonLog(), /Synopia backend: stop \(update\)\n/);
+      const [deferred] = cycleOf(d.log(), 'handover.deferred'), starts = cycleOf(d.log(), 'handover.start');
+      assert.equal(starts.length, 2, 'one try after the deferral, not one per idle second');
+      assert.ok(starts[1] > deferred, `the retry on a new reading (deferred at ${deferred}, retried at ${starts[1]})`);
+      const marked = seen.find((i) => i.handover);
+      assert.ok(marked, 'daemon.json had a handover before the new daemon wrote its own');
+      assert.equal(marked.pid, d.info.pid);
+      assert.deepEqual(marked.handover, { reason: 'update', successor: n.pid });
+      assert.equal(n.handover, undefined);
       assert.match(d.log(), /backend\.stop reason=update/);
       assert.equal((await (await api(n, 'ping')).json()).pid, n.pid);
       assert.equal((await api(n, 'stop', { method: 'POST' })).status, 200);
-      await waitFor(() => !alive(n.pid), 10_000, 'the new daemon to stop');
+      await waitFor(() => !alive(n.pid), 5000, 'the new daemon to stop');
     } finally {
       kill(next);
       await d.stop();

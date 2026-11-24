@@ -23,7 +23,7 @@ import type { Store, Layout, OpenEntry } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
-import { pruneUi, rekeyUi } from './ui.ts';
+import { pruneUi, rekeyUi } from './ui-state.ts';
 
 export const RECENT = 50;
 export type Recent = { id: string; title: string; cwd: string; lastModified: number; terminal?: number };

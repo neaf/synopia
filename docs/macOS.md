@@ -75,6 +75,13 @@ Every `ps` call is `/bin/ps -o <field>= -p <pid>` with env `LC_ALL=C TZ=UTC`, ru
 
 `writeFileSync`'s `mode` is masked by the umask, so files that must be 0600 get an explicit `chmodSync`. See [Daemon files](Daemon%20files.md#state-folder).
 
+## File locks
+
+- `open(2)` on macOS takes `O_EXLOCK` (an exclusive `flock` taken atomically with the open) and `O_NONBLOCK` (fail with `EAGAIN` instead of waiting while another open file holds it). The lock belongs to the open file description and goes when the last descriptor closes, so a process that ends, by SIGKILL too, holds nothing. Source: `man 2 open`, `man 2 flock`.
+- Node's `fs.constants` lists `O_NONBLOCK` (4) but not `O_EXLOCK`; Node passes a numeric flags value to `open(2)` as given (Node docs, File system flags), so `O_EXLOCK` is the header value `0x20` (`<sys/fcntl.h>`). Checked once on this machine: eight processes opening one file at the same moment, one got it, seven `EAGAIN`; it was free again after the holder's SIGKILL.
+- Two opens in one process conflict too: the lock is per open, not per process.
+- Code: `daemon-files.ts` `acquireLock`, `O_EXLOCK`. Test: `daemon-files.test.ts`.
+
 ## Jamf Protect
 
 A locally `swiftc`-built app, with only the linker's ad-hoc signature, launched under Jamf Protect without being blocked (one author run, 2026-11-23, `spike/native-shell` at tag `rearch-base`). `unverified` beyond that run: there is no codesign step in `build.sh`, and nothing is downloaded at build time that Jamf could block.

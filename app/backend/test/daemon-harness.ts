@@ -1,18 +1,20 @@
 // A real daemon (src/main.ts) for the contract tests: started on a temp state folder, found through its
 // daemon.json, and a page's socket on it that records every frame. Not a test file itself.
-import { cpSync, mkdtempSync, readFileSync } from 'node:fs';
+import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { ChildProcess, StdioOptions } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
-import { readDaemonInfo } from '../src/daemon.ts';
-import type { DaemonInfo } from '../src/daemon.ts';
+import { readDaemonInfo } from '../src/daemon-files.ts';
+import type { DaemonInfo } from '../src/daemon-files.ts';
 
 export const MAIN = new URL('../src/main.ts', import.meta.url).pathname;
 export const FIXTURES = new URL('./fixtures/claude', import.meta.url).pathname;
 export const NODE_FLAGS = ['--experimental-strip-types', '--disable-warning=ExperimentalWarning'];
+const BACKEND = new URL('..', import.meta.url).pathname;
+const WEB = new URL('../../web', import.meta.url).pathname;
 
 export const tmp = (name = 'daemon') => mkdtempSync(join(tmpdir(), `synopia-${name}-`));
 
@@ -84,6 +86,44 @@ export async function connectPage(info: Pick<DaemonInfo, 'port' | 'token'>): Pro
     send: (m) => ws.send(JSON.stringify(m)),
     close: async () => { if (ws.readyState === ws.CLOSED) return; const c = once(ws, 'close'); ws.close(); await c; },
   };
+}
+
+// A copy of app/backend/{src, dev, package.json, package-lock.json, node_modules} beside a link to app/web,
+// as main.ts finds them: a test can change its code (an update, a new daemon that fails, a crash).
+export function backendCopy(): { main: string; dir: string } {
+  const app = join(tmp('backend'), 'app'), dir = join(app, 'backend');
+  mkdirSync(dir, { recursive: true });
+  for (const d of ['src', 'dev']) cpSync(join(BACKEND, d), join(dir, d), { recursive: true });
+  for (const f of ['package.json', 'package-lock.json']) cpSync(join(BACKEND, f), join(dir, f));
+  symlinkSync(join(BACKEND, 'node_modules'), join(dir, 'node_modules'));
+  symlinkSync(WEB, join(app, 'web'));
+  return { main: join(dir, 'src', 'main.ts'), dir };
+}
+
+// A daemon as the shell starts it: stdout and stderr are <state>/daemon.log, where a new daemon's go too.
+export async function shellDaemon(args: string[], main = MAIN): Promise<Daemon & { daemonLog: () => string }> {
+  const stateDir = tmp('state'), file = join(stateDir, 'daemon.log');
+  const fd = openSync(file, 'a');
+  try {
+    const d = await startDaemon(args, { stateDir, main, stdio: ['ignore', fd, fd] });
+    return { ...d, daemonLog: () => readFileSync(file, 'utf8') };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// Every distinct daemon.json seen until `until` settles, read every 5 ms: a handover's mark lives
+// only until the new daemon listens.
+export async function watchDaemonJson(stateDir: string, until: Promise<unknown>): Promise<DaemonInfo[]> {
+  const seen: DaemonInfo[] = [];
+  let done = false;
+  void until.then(() => { done = true; }, () => { done = true; });
+  while (!done) {
+    const i = readDaemonInfo(stateDir);
+    if (i && JSON.stringify(i) !== JSON.stringify(seen.at(-1))) seen.push(i);
+    await new Promise((ok) => setTimeout(ok, 5));
+  }
+  return seen;
 }
 
 // GET or POST /api/<path> with the daemon's token.

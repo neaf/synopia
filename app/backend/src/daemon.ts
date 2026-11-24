@@ -1,102 +1,25 @@
-// The daemon's discovery file and its lifetime (plan section 2). The app is only UI: it finds a
-// running backend through `<state-dir>/daemon.json` ({pid, procStart, port, token, version}, mode
-// 0600, written atomically when the server listens) and starts a new one when that file is
-// missing or stale. The backend ends on "Stop All Work" or after 30 min with no page connected and
-// nothing running; its stdout and stderr (`daemon.log`) are rotated at 5 MB. It records a hash of
-// its own code at start, and hands over to a new daemon once the checkout's code differs and
-// nothing runs (or at once on "Restart Backend Now…").
-import { chmodSync, closeSync, copyFileSync, openSync, readdirSync, readFileSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+// The daemon's lifecycle (requirements R2.8): starting (the lock taken, a handover's old daemon gone
+// first), ready (daemon.json written, the idle exit and the update check running) and stopping (the
+// shutdown order, then exit). The backend ends on "Stop All Work", SIGTERM or SIGINT, or after 30 min
+// with no page connected and nothing running. It records a hash of its own code at start and hands
+// over to a new daemon once the checkout's code differs and nothing runs (at once on "Restart
+// Backend Now…"). An uncaught error flushes state.json and ends it with exit 1; the shell restarts
+// it once. Under app/dev.sh (`parent: false`) there is no idle exit, update or restart.
+import { closeSync, openSync } from 'node:fs';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { alive, procStart } from './macos.ts';
+import { alive } from './macos.ts';
+import {
+  DAEMON_LOG, EXIT, LockedError, acquireLock, clearStaleDaemonInfo, markHandover, ownStart, removeDaemonInfo, rotateLog, writeDaemonInfo,
+} from './daemon-files.ts';
+import type { HandoverReason, Lock } from './daemon-files.ts';
+import type { Log } from './log.ts';
 
-export const DAEMON_FILE = 'daemon.json';
-export const DAEMON_LOG = 'daemon.log';
-export const LOG_LIMIT = 5 * 1024 * 1024;
 export const IDLE_EXIT_MS = 30 * 60 * 1000;
-
-export type DaemonInfo = { pid: number; procStart: string; port: number; token: string; version: string; code: string };
-
-// A parsed daemon.json, or null when any field is missing or of the wrong shape.
-export function parseDaemonInfo(text: string): DaemonInfo | null {
-  let v: unknown;
-  try {
-    v = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  const o = v as Partial<DaemonInfo> | null;
-  if (!o || typeof o !== 'object') return null;
-  if (!Number.isInteger(o.pid) || (o.pid as number) <= 0) return null;
-  if (!Number.isInteger(o.port) || (o.port as number) <= 0 || (o.port as number) > 65535) return null;
-  if (typeof o.token !== 'string' || !/^[0-9a-f]{64}$/.test(o.token)) return null;
-  if (typeof o.procStart !== 'string' || typeof o.version !== 'string' || typeof o.code !== 'string') return null;
-  return { pid: o.pid as number, procStart: o.procStart, port: o.port as number, token: o.token, version: o.version, code: o.code };
-}
-
-export function readDaemonInfo(stateDir: string): DaemonInfo | null {
-  try {
-    return parseDaemonInfo(readFileSync(join(stateDir, DAEMON_FILE), 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-// Written to a file of our own (0600) and renamed into place, so a reader never sees half of it.
-export function writeDaemonInfo(stateDir: string, info: DaemonInfo): void {
-  const path = join(stateDir, DAEMON_FILE);
-  const tmp = `${path}.${info.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(info) + '\n', { mode: 0o600 });
-  chmodSync(tmp, 0o600); // the mode above is masked by the umask; this isn't
-  renameSync(tmp, path);
-}
-
-// Removes daemon.json; with a pid, only while it is still that daemon's. Without one, at start:
-// the lock is ours, so a file left there is stale.
-export function removeDaemonInfo(stateDir: string, pid?: number): void {
-  if (pid !== undefined && readDaemonInfo(stateDir)?.pid !== pid) return;
-  try {
-    unlinkSync(join(stateDir, DAEMON_FILE));
-  } catch {
-    // Already gone.
-  }
-}
-
-export type Probe = { alive: (pid: number) => boolean; startOf: (pid: number) => Promise<string | null> };
-const realProbe: Probe = { alive, startOf: (pid) => procStart(pid) };
-
-// Whether daemon.json still names a running daemon: its pid runs and started when the file says
-// (`ps -o lstart=` as printed: the app compares the same string, docs/Daemon files.md#quirk-process-start-strings).
-// A missing, malformed or stale file is false, and so is a start `ps` couldn't give.
-// (The app also asks GET /api/ping with the token.)
-export async function isLive(info: DaemonInfo | null, probe: Probe = realProbe): Promise<boolean> {
-  if (!info || !probe.alive(info.pid)) return false;
-  return info.procStart !== '' && (await probe.startOf(info.pid)) === info.procStart;
-}
-
-// This daemon's start time for daemon.json: `ps` asked up to three times, '' when it never answers
-// (the app then reads the file as stale).
-export async function ownStart(pid = process.pid, startOf: (pid: number) => Promise<string | null> = (p) => procStart(p)): Promise<string> {
-  for (let i = 0; i < 3; i++) {
-    const s = await startOf(pid);
-    if (s !== null) return s;
-  }
-  return '';
-}
-
-// Copy and truncate, as logrotate's copytruncate: the daemon's stdout and stderr are the file
-// itself (opened for append by the app), so it can't be renamed from under them.
-export function rotateLog(file: string, limit = LOG_LIMIT): boolean {
-  try {
-    if (statSync(file).size <= limit) return false;
-    copyFileSync(file, `${file}.1`);
-    truncateSync(file, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
+export const UPDATE_READ_MS = 10_000;
+export const SUCCESSOR_MS = 20_000;
 
 // The idle-exit rule: the daemon ends once `timeoutMs` have passed since it last saw a page
 // connected or something running (a turn, a subagent, a background shell or monitor, a pending card).
@@ -118,32 +41,64 @@ export class IdleExit {
   }
 }
 
-// The backend's code version: a SHA-256 over `src/**/*.ts` (each path and content, in path order)
-// and `package-lock.json`, its first 16 hex digits. null while a file can't be read (a save or a
-// checkout in progress). About a millisecond for the whole tree.
-export function codeHash(backendDir: string): string | null {
-  try {
-    const files = (readdirSync(join(backendDir, 'src'), { recursive: true }) as string[])
-      .filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
-    const h = createHash('sha256');
-    for (const f of [...files, 'package-lock.json']) h.update(f).update('\0').update(readFileSync(join(backendDir, f))).update('\0');
-    return h.digest('hex').slice(0, 16);
-  } catch {
-    return null;
+type HashIo = {
+  readdir: (dir: string) => Promise<string[]>;
+  stat: (file: string) => Promise<{ size: number; mtimeMs: number; ctimeMs: number; ino: number }>;
+  readFile: (file: string) => Promise<Buffer>;
+};
+const realIo: HashIo = {
+  readdir: async (dir) => (await readdir(dir, { recursive: true })) as string[],
+  stat: (f) => stat(f),
+  readFile: (f) => readFile(f),
+};
+
+// The backend's code version: a SHA-256 over `src/**/*.ts` and `package-lock.json` (each path and
+// its content's digest, in path order), its first 16 hex digits. null while a file can't be read (a
+// save or a checkout in progress). Async, and a file whose size, times and inode are unchanged since
+// the last reading isn't read again (NFR-06).
+export class CodeHasher {
+  private dir: string;
+  private io: HashIo;
+  private seen = new Map<string, { key: string; digest: string }>();
+  constructor(backendDir: string, io: HashIo = realIo) {
+    this.dir = backendDir;
+    this.io = io;
+  }
+  async read(): Promise<string | null> {
+    try {
+      const files = (await this.io.readdir(join(this.dir, 'src'))).filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
+      const h = createHash('sha256');
+      const next = new Map<string, { key: string; digest: string }>();
+      for (const f of [...files, 'package-lock.json']) {
+        const st = await this.io.stat(join(this.dir, f));
+        const key = `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}`;
+        let e = this.seen.get(f);
+        if (!e || e.key !== key) e = { key, digest: createHash('sha256').update(await this.io.readFile(join(this.dir, f))).digest('hex') };
+        next.set(f, e);
+        h.update(f).update('\0').update(e.digest).update('\0');
+      }
+      this.seen = next;
+      return h.digest('hex').slice(0, 16);
+    } catch {
+      return null;
+    }
   }
 }
-
-export const UPDATE_READ_MS = 10_000;
+export const codeHash = (backendDir: string) => new CodeHasher(backendDir).read();
 
 // The update rule. The daemon reads the checkout's code hash every 10 s: an update is pending once
 // a hash other than the running one reads the same twice in a row (no restart halfway through a
-// save or a checkout), and the daemon restarts once one is pending and nothing runs. A hash whose
-// new daemon failed to start isn't tried again; a checkout back at the running code clears it.
+// save or a checkout), and the daemon restarts once one is pending and nothing runs. A handover put
+// off because work started waits for the next reading (a new hash cycle), not the next idle second
+// (backend-core#B10). A hash whose new daemon failed to start isn't tried again; a checkout back at
+// the running code clears it.
 export class UpdateCheck {
   readonly running: string;
   pending = false;
+  cycle = 0; // readings so far
   private last: string;
   private failed: string | null = null;
+  private deferredAt = -1;
   constructor(running: string) {
     this.running = running;
     this.last = running;
@@ -151,13 +106,18 @@ export class UpdateCheck {
   // One reading of the checkout's hash (null: unreadable, skipped); true when `pending` changed.
   read(hash: string | null): boolean {
     if (hash === null) return false;
+    this.cycle++;
     const was = this.pending;
     this.pending = hash !== this.running && hash === this.last && hash !== this.failed;
     this.last = hash;
     return this.pending !== was;
   }
   restartNow(busy: boolean): boolean {
-    return this.pending && !busy;
+    return this.pending && !busy && this.cycle > this.deferredAt;
+  }
+  // Work started while the new daemon loaded: try again after the next reading.
+  defer(): void {
+    this.deferredAt = this.cycle;
   }
   // The new daemon didn't start: wait for the next change.
   fail(): void {
@@ -178,13 +138,13 @@ export function successorArgs(argv: string[], pid: number): string[] {
   return [...out, '--after', String(pid)];
 }
 
-export type Successor = { loaded: Promise<boolean>; abort: () => void };
+export type Successor = { pid: number; loaded: Promise<boolean>; abort: () => void };
 
 // Starts the new daemon (detached: its own session, stdout and stderr appended to daemon.log).
 // `loaded` is true once it has loaded every module and waits for this one to exit; false when it
-// exits or stays silent for 20 s first (say a syntax error in the new code: this daemon stays).
+// exits or stays silent for `timeoutMs` first (say a syntax error in the new code: this daemon stays).
 // `abort` ends a waiting one, when work started in the meantime.
-export function startSuccessor(logFile: string, timeoutMs = 20_000): Successor {
+export function startSuccessor(logFile: string, timeoutMs = SUCCESSOR_MS): Successor {
   const fd = openSync(logFile, 'a', 0o600);
   const child = spawn(process.execPath, [...process.execArgv, ...successorArgs(process.argv.slice(1), process.pid)], {
     detached: true, stdio: ['ignore', fd, fd, 'ipc'],
@@ -201,14 +161,215 @@ export function startSuccessor(logFile: string, timeoutMs = 20_000): Successor {
     child.unref();
     return ok;
   });
-  return { loaded, abort: () => { child.kill('SIGTERM'); } };
+  return { pid: child.pid ?? 0, loaded, abort: () => { child.kill('SIGTERM'); } };
 }
 
 // In the new daemon, before it takes the lock: tells the old one it loaded, then waits (at most
-// 20 s) for the old one's pid to go, so two daemons never run on one state folder.
-export async function awaitHandover(oldPid: number, timeoutMs = 20_000): Promise<void> {
+// `timeoutMs`) for the old one's pid to go, so two daemons never run on one state folder.
+export async function awaitHandover(oldPid: number, timeoutMs = SUCCESSOR_MS): Promise<void> {
   process.send?.({ t: 'loaded' });
   if (process.connected) process.disconnect();
   const deadline = Date.now() + timeoutMs;
   while (alive(oldPid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
+}
+
+// ---------- the lifecycle ----------
+
+export type DaemonState = 'starting' | 'ready' | 'stopping';
+
+export type DaemonOptions = {
+  stateDir: string;
+  backendDir: string;
+  log: Log;
+  parent: boolean; // false under app/dev.sh (--no-parent): no idle exit, update or restart
+  after?: number; // a handover's old daemon: wait for its pid to go before the lock
+  exitIdleMs?: number;
+  updateReadMs?: number; // test-only: a shorter update reading than 10 s
+  successorMs?: number; // test-only: a shorter wait for the new daemon than 20 s
+};
+
+// What the daemon stops, in this order, and what it asks while it runs.
+export type Parts = {
+  busy: () => boolean;
+  pages: () => number;
+  broadcast: (msg: object) => void;
+  refuse: () => void; // no frame acts any more, running actions are acked, and the pages get nothing more
+  stop: () => void; // every module's timers and processes
+  flush: () => void; // state.json, synchronously
+  close: () => Promise<void>; // the server: each page's socket, then the listener
+};
+
+export type Daemon = {
+  readonly code: string;
+  readonly state: DaemonState;
+  readonly updatePending: boolean;
+  // The server listens: daemon.json is written and the timers start.
+  ready: (parts: Parts, listen: { port: number; token: string; version: string; v: number }) => Promise<void>;
+  stop: (reason: string) => Promise<void>;
+  handOver: (reason: HandoverReason) => Promise<void>;
+  // The server couldn't listen: exit 4.
+  cannotListen: (port: number, code: string) => never;
+};
+
+// Starting: the code hash, a handover's wait, the lock (exit 3 when another daemon holds it), and
+// the exit and crash handlers. Then the caller wires the modules and calls `ready`.
+export async function startDaemon(o: DaemonOptions): Promise<Daemon> {
+  const { stateDir, log } = o;
+  const hasher = new CodeHasher(o.backendDir);
+  // The code this daemon runs: its modules are loaded by now (daemon.json, /api/ping, updates).
+  const code = (await hasher.read()) ?? 'unknown';
+  const successorMs = o.successorMs ?? SUCCESSOR_MS;
+  const updateReadMs = o.updateReadMs ?? UPDATE_READ_MS;
+  const exitIdleMs = o.exitIdleMs ?? IDLE_EXIT_MS;
+
+  // A handover (an update or "Restart Backend Now…"): the old daemon writes state.json and releases
+  // the lock once it hears this one loaded; this one takes the lock only after its pid has gone.
+  if (o.after !== undefined) await awaitHandover(o.after, successorMs);
+
+  let lock: Lock;
+  try {
+    lock = acquireLock(stateDir);
+  } catch (e) {
+    if (!(e instanceof LockedError)) throw e;
+    log('lock.refused', { pid: Number.isNaN(e.pid) ? null : e.pid });
+    process.stderr.write(`Synopia backend: ${e.message}. Quit it first.\n`);
+    process.exit(EXIT.locked);
+  }
+  clearStaleDaemonInfo(stateDir);
+
+  let state: DaemonState = 'starting';
+  let parts: Parts | null = null;
+  let handedOver = false; // daemon.json now names the successor's handover: leave it
+  let crashed = false;
+  const timers: NodeJS.Timeout[] = [];
+  const updates = new UpdateCheck(code);
+  const daemonLog = join(stateDir, DAEMON_LOG);
+
+  // Any other end: logged, and daemon.json goes (unless it is a handover's).
+  process.on('exit', (exitCode) => {
+    if (state !== 'stopping' && !crashed) log('backend.exit', { code: exitCode });
+    if (!handedOver) removeDaemonInfo(stateDir, process.pid);
+  });
+  // An uncaught error: its trace to daemon.log, state.json written now (seams#B4), exit 1.
+  const crash = (kind: string) => (err: unknown) => {
+    if (crashed) return;
+    crashed = true;
+    process.stderr.write(`${new Date().toISOString()} Synopia backend: ${kind}: ${(err as Error)?.stack ?? String(err)}\n`);
+    log('backend.crash', { kind });
+    try { parts?.flush(); } catch { /* the exit goes on */ }
+    process.exit(EXIT.crash);
+  };
+  process.on('uncaughtException', crash('uncaughtException'));
+  process.on('unhandledRejection', crash('unhandledRejection'));
+  process.on('SIGINT', () => void stop('sigint'));
+  process.on('SIGTERM', () => void stop('sigterm'));
+  // A memory figure on demand, without --inspect (the perf measurements read it).
+  process.on('SIGUSR2', () => {
+    (globalThis as { gc?: () => void }).gc?.(); // with --expose-gc: the live heap, not garbage
+    const m = process.memoryUsage();
+    const mb = (n: number) => Math.round(n / 1048576);
+    log('memory', { rss: mb(m.rss), heapUsed: mb(m.heapUsed), heapTotal: mb(m.heapTotal), external: mb(m.external), arrayBuffers: mb(m.arrayBuffers) });
+  });
+
+  // Stopping. The stop line on stderr is for people reading daemon.log; the shell tells a
+  // handover from a crash by daemon.json's `handover`, not by this line.
+  async function stop(reason: string, successor?: number): Promise<void> {
+    if (state === 'stopping') return;
+    const was = state;
+    state = 'stopping';
+    log('backend.stop', { reason });
+    process.stderr.write(`${new Date().toISOString()} Synopia backend: stop (${reason})\n`);
+    for (const t of timers) clearInterval(t);
+    if (was === 'starting' || !parts) { lock.release(); process.exit(EXIT.ok); }
+    parts.refuse();
+    if (successor !== undefined && markHandover(stateDir, process.pid, { reason: reason as HandoverReason, successor })) handedOver = true;
+    else removeDaemonInfo(stateDir, process.pid);
+    parts.stop();
+    parts.flush();
+    await parts.close();
+    lock.release();
+    process.exit(EXIT.ok);
+  }
+
+  let handingOver = false;
+  async function handOver(reason: HandoverReason): Promise<void> {
+    if (state !== 'ready' || handingOver || !parts) return;
+    handingOver = true;
+    log('handover.start', { reason, code, cycle: updates.cycle });
+    let next: Successor | null = null;
+    try {
+      next = startSuccessor(daemonLog, successorMs);
+    } catch {
+      // Can't open daemon.log or spawn node: handled as a new daemon that didn't load.
+    }
+    const ok = next ? await next.loaded : false;
+    handingOver = false;
+    if ((state as DaemonState) === 'stopping') return next?.abort();
+    if (!ok || !next) { // the new code didn't load: this daemon stays (daemon.log has the new one's error)
+      log('handover.failed', { reason });
+      if (reason === 'update') {
+        updates.fail();
+        parts.broadcast({ t: 'update', pending: false });
+      }
+      parts.broadcast({ t: 'toast', text: "The new backend didn't start, so this one goes on. See daemon.log." });
+      return;
+    }
+    if (reason === 'update' && parts.busy()) { // work started while the new daemon loaded: after the next reading
+      next.abort();
+      updates.defer();
+      log('handover.deferred', { cycle: updates.cycle });
+      return;
+    }
+    void stop(reason, next.pid);
+  }
+
+  async function ready(p: Parts, listen: { port: number; token: string; version: string; v: number }): Promise<void> {
+    parts = p;
+    writeDaemonInfo(stateDir, { pid: process.pid, procStart: await ownStart(), port: listen.port, token: listen.token, version: listen.version, code, v: listen.v });
+    if ((state as DaemonState) === 'stopping') return;
+    state = 'ready';
+    log('daemon.ready', { port: listen.port, code });
+    rotateLog(daemonLog);
+    if (!o.parent) return;
+    // The idle exit, each minute (or a tenth of a shorter test timeout); the same timer rotates
+    // daemon.log at 5 MB.
+    const idle = new IdleExit(exitIdleMs, Date.now());
+    timers.push(setInterval(() => {
+      rotateLog(daemonLog);
+      if (idle.check({ pages: p.pages(), busy: p.busy() }, Date.now())) void stop('idle');
+    }, Math.max(50, Math.min(60_000, Math.floor(exitIdleMs / 10)))));
+    // Updates: a reading every 10 s. While one is pending the page shows "Update ready: restarts
+    // when idle", and each second the daemon checks whether anything runs.
+    const tickMs = Math.min(1000, updateReadMs);
+    let lastRead = Date.now(), reading = false;
+    timers.push(setInterval(() => {
+      if (!reading && Date.now() - lastRead >= updateReadMs) {
+        reading = true;
+        void hasher.read().then((h) => {
+          reading = false;
+          lastRead = Date.now();
+          if (state === 'ready' && updates.read(h)) {
+            log('update.pending', { pending: updates.pending });
+            p.broadcast({ t: 'update', pending: updates.pending });
+          }
+        });
+      }
+      if (updates.restartNow(p.busy())) void handOver('update');
+    }, tickMs));
+  }
+
+  return {
+    code,
+    get state() { return state; },
+    get updatePending() { return updates.pending; },
+    ready,
+    stop: (reason) => stop(reason),
+    handOver,
+    cannotListen(port, errCode) {
+      lock.release();
+      log('server.failed', { code: errCode });
+      process.stderr.write(`Synopia backend: cannot listen on 127.0.0.1:${port} (${errCode})\n`);
+      process.exit(EXIT.listen);
+    },
+  };
 }

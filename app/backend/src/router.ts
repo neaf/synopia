@@ -19,7 +19,7 @@ import type { Image } from './sdk.ts';
 import type { Bat } from './preview.ts';
 import { previewFile, themeOf } from './preview.ts';
 import { openTarget } from './open.ts';
-import { patchUi } from './ui.ts';
+import { patchUi } from './ui-state.ts';
 import { displayPath } from './paths.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';

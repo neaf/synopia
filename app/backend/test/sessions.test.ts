@@ -10,7 +10,7 @@ import { StreamPreview } from '../src/session.ts';
 import { STATE_FLAG } from '../src/sdk.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
 import { openStore, reconcileLayout } from '../src/store.ts';
-import { patchUi } from '../src/ui.ts';
+import { patchUi } from '../src/ui-state.ts';
 import type { Client } from '../src/server.ts';
 import type { CanUseTool, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 

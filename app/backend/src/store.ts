@@ -1,12 +1,12 @@
 // state.json: the open sessions, the layout, reviewed marks, models, session
 // rules, written text, settings and the page's ui state. Loaded once, kept in memory, and written
 // atomically (temp file, then rename) at most once per second.
-import { readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { normalizeUi } from './ui.ts';
-import type { UiState } from './ui.ts';
+import { normalizeUi } from './ui-state.ts';
+import type { UiState } from './ui-state.ts';
 
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
 export type Group = { id: string; name: string; ids: string[] };
@@ -23,20 +23,20 @@ export type State = {
   open: OpenEntry[];
   layout: Layout;
   reviewed: string[];
-  models: Record<string, { model: string; effort?: string }>;
+  models: Record<string, { model: string; effort?: string | null }>;
   rules: Record<string, string[]>;
   answers: Record<string, string>;
-  // Final: the plan text each answered plan card showed, per ExitPlanMode tool use.
+  // The plan text each answered plan card showed, per ExitPlanMode tool use.
   plans: Record<string, string>;
   status: Record<string, { status: string; at: number }>;
-  // Slice 5: when each session's last process ended (ms), so its background work then reads as stopped.
+  // When each session's last process ended (ms), so its background work then reads as stopped.
   ended: Record<string, number>;
-  // Final: that end was a process failure, so a tool left without a result reads as failed.
+  // That end was a process failure, so a tool left without a result reads as failed.
   endedFailed: Record<string, boolean>;
   // `history`: the titles the writer gave, oldest first (at most 50), for the transcript's title items.
   written: Record<string, { title?: string; now?: string; at: number; history?: { title: string; at: number }[] }>;
   settings: Settings;
-  // The page's UI state, restored after a reload, a crash or a quit (ui.ts).
+  // The page's UI state, restored after a reload, a crash or a quit (ui-state.ts).
   ui: UiState;
 };
 
@@ -71,6 +71,17 @@ export function newSessionFolder(state: State): string {
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+// A map section of state.json: each entry through `clean`, those it returns undefined for dropped.
+function entries<T>(v: unknown, clean: (x: unknown) => T | undefined): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (!isObj(v)) return out;
+  for (const [k, x] of Object.entries(v)) {
+    const c = clean(x);
+    if (c !== undefined) out[k] = c;
+  }
+  return out;
+}
 
 function cleanLayout(v: unknown): Layout {
   const out: Layout = { groups: [], others: [] };
@@ -103,13 +114,25 @@ export function normalize(raw: unknown): State {
   }
   s.layout = cleanLayout(raw.layout);
   if (isStrArr(raw.reviewed)) s.reviewed = raw.reviewed.slice(-REVIEWED_MAX);
-  for (const k of ['models', 'rules', 'answers', 'plans', 'status', 'written', 'ended', 'endedFailed'] as const) {
-    if (isObj(raw[k])) (s as Record<string, unknown>)[k] = raw[k];
-  }
-  for (const w of Object.values(s.written)) {
-    if (!isObj(w) || w.history === undefined) continue;
-    w.history = Array.isArray(w.history) ? w.history.filter((h) => isObj(h) && typeof h.title === 'string' && typeof h.at === 'number') : [];
-  }
+  // Each entry checked (backend-core#B4): a wrong-shaped one is dropped, not passed on.
+  s.models = entries(raw.models, (v) => isObj(v) && typeof v.model === 'string'
+    ? { model: v.model, ...(typeof v.effort === 'string' || v.effort === null ? { effort: v.effort } : {}) } : undefined);
+  s.rules = entries(raw.rules, (v) => (isStrArr(v) ? [...v] : undefined));
+  s.answers = entries(raw.answers, (v) => (typeof v === 'string' ? v : undefined));
+  s.plans = entries(raw.plans, (v) => (typeof v === 'string' ? v : undefined));
+  s.status = entries(raw.status, (v) => (isObj(v) && typeof v.status === 'string' && isNum(v.at) ? { status: v.status, at: v.at } : undefined));
+  s.ended = entries(raw.ended, (v) => (isNum(v) ? v : undefined));
+  s.endedFailed = entries(raw.endedFailed, (v) => (typeof v === 'boolean' ? v : undefined));
+  s.written = entries(raw.written, (v) => {
+    if (!isObj(v) || !isNum(v.at)) return undefined;
+    const w: State['written'][string] = { at: v.at };
+    if (typeof v.title === 'string') w.title = v.title;
+    if (typeof v.now === 'string') w.now = v.now;
+    if (v.history !== undefined) {
+      w.history = Array.isArray(v.history) ? v.history.filter((h): h is { title: string; at: number } => isObj(h) && typeof h.title === 'string' && isNum(h.at)) : [];
+    }
+    return w;
+  });
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
     const st = raw.settings;
@@ -208,18 +231,32 @@ export function openStore(stateDir: string, opts: { log?: Log; minIntervalMs?: n
   let timer: NodeJS.Timeout | null = null;
   let lastWrite = 0;
   let dirty = false;
+  let failedWith: string | null = null; // the last write's error code, logged once until a write works
 
+  function arm() {
+    if (timer) return;
+    const wait = Math.max(0, lastWrite + minInterval - Date.now());
+    timer = setTimeout(write, wait);
+  }
+
+  // A failed write keeps the state dirty and tries again after the interval (backend-core#B1).
   function write() {
     if (timer) { clearTimeout(timer); timer = null; }
     if (!dirty) return;
-    dirty = false;
     lastWrite = Date.now();
     try {
       writeFileSync(tmp, JSON.stringify(store.state, null, 2) + '\n', { mode: 0o600 });
+      chmodSync(tmp, 0o600); // the mode above is masked by the umask (docs/macOS.md#file-modes)
       renameSync(tmp, path);
+      dirty = false;
+      if (failedWith) log('store.writeOk');
+      failedWith = null;
     } catch (e) {
-      log('store.writeFailed', { code: (e as NodeJS.ErrnoException).code ?? 'unknown' });
+      const code = (e as NodeJS.ErrnoException).code ?? 'unknown';
+      if (code !== failedWith) log('store.writeFailed', { code });
+      failedWith = code;
       try { unlinkSync(tmp); } catch { /* ignore */ }
+      arm();
     }
   }
 
@@ -228,13 +265,13 @@ export function openStore(stateDir: string, opts: { log?: Log; minIntervalMs?: n
     path,
     changed() {
       dirty = true;
-      if (timer) return;
-      const wait = Math.max(0, lastWrite + minInterval - Date.now());
-      timer = setTimeout(write, wait);
+      arm();
     },
     flush: write,
+    // The last write, synchronous (a stop or a crash exit); no retry is left armed.
     close() {
       write();
+      if (timer) { clearTimeout(timer); timer = null; }
     },
   };
   return store;

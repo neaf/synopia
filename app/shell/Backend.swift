@@ -1,15 +1,14 @@
-// The backend daemon (plan section 2). The app is only UI: the Node backend owns the sessions and
-// outlives the app. The shell finds a running daemon through <state-dir>/daemon.json ({pid,
-// procStart, port, token, version}): the pid runs, `ps -o lstart=` matches procStart, and
-// GET /api/ping answers with the token. Otherwise it starts one detached (its own session through
+// The backend daemon (requirements R2.8). The app is only UI: the Node backend owns the sessions and
+// outlives the app. The shell finds a running daemon through <state-dir>/daemon.json (DaemonFiles):
+// the pid runs, `ps -o lstart=` matches procStart, and GET /api/ping answers with the token. Otherwise it starts one detached (its own session through
 // POSIX_SPAWN_SETSID, stdin /dev/null, stdout and stderr appended to daemon.log) and waits for the
 // file. It polls GET /api/badge every 2 s for the Dock badge, which also notices a daemon that went
 // away. "Stop All Work" is POST /api/stop, "Restart Backend Now…" POST /api/restart.
 //
 // Updates are the daemon's own: it notices its checkout's code changed, and once nothing runs it
-// starts its successor and exits. The shell sees that as a daemon that went away, with daemon.log's
-// last line "… Synopia backend: stop (update)" (or "(restart)"): it waits for the successor's
-// daemon.json and reloads the page from it, without starting one or counting it as a crash.
+// starts its successor and exits. The shell sees that as a daemon that went away whose daemon.json
+// has a `handover` (or already names the successor): it waits for the successor's daemon.json and
+// reloads the page from it, without starting one or counting it as a crash.
 import Darwin
 import Foundation
 
@@ -32,7 +31,6 @@ struct ShellError: Error, CustomStringConvertible {
 
 final class Backend {
   struct Ready { let pid: pid_t; let port: Int; let token: String }
-  private struct Info: Decodable { let pid: Int32; let procStart: String; let port: Int; let token: String; let version: String }
 
   /// Main queue: a daemon answers, at launch or after one went away.
   var onReady: ((Ready) -> Void)?
@@ -43,6 +41,7 @@ final class Backend {
 
   private(set) var ready: Ready?
   let stateDir: URL
+  let files: DaemonFiles
   private let queue = DispatchQueue(label: "Synopia.backend")
   private var connecting = false
   private var stopping = false
@@ -61,6 +60,7 @@ final class Backend {
       stateDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent("Library/Application Support/Synopia", isDirectory: true)
     }
+    files = DaemonFiles(stateDir: stateDir)
   }
 
   /// Finds the running daemon or starts one, then calls onReady (or onExit). `wait`: seconds to
@@ -139,13 +139,12 @@ final class Backend {
       if exitedAt == nil { exitedAt = Date() }
       if Date().timeIntervalSince(exitedAt!) > 1 { break }
     }
-    return .failure(ShellError(lastLogLine() ?? "The Synopia backend didn't start. See daemon.log in \(stateDir.path)."))
+    return .failure(ShellError(files.lastLogLine() ?? "The Synopia backend didn't start. See daemon.log in \(stateDir.path)."))
   }
 
   /// The daemon daemon.json names, when it runs and answers; nil for a missing or stale file.
   private func live() -> Ready? {
-    guard let data = try? Data(contentsOf: stateDir.appendingPathComponent("daemon.json")),
-          let i = try? JSONDecoder().decode(Info.self, from: data), i.pid > 0, !i.procStart.isEmpty,
+    guard let i = files.info(), i.pid > 0, !i.procStart.isEmpty,
           running(i.pid), Backend.procStart(i.pid) == i.procStart else { return nil }
     let r = Ready(pid: i.pid, port: i.port, token: i.token)
     guard let body = request(r, "ping", timeout: 2),
@@ -275,22 +274,16 @@ final class Backend {
     badgeTimer?.invalidate()
     setBadge(0)
     // A handover: the new daemon is starting (it waits for the old pid, then writes daemon.json).
-    if handover() {
+    if files.handedOver(from: r.pid) {
       log("handover from pid \(r.pid)")
       return connect(wait: 20)
     }
     if Date().timeIntervalSince(lastRestart) < 60 {
-      onExit?(lastLogLine() ?? "The Synopia backend stopped.")
+      onExit?(files.lastLogLine() ?? "The Synopia backend stopped.")
       return
     }
     lastRestart = Date()
     connect()
-  }
-
-  /// Whether the daemon that went away handed over to a new one (an update or a restart).
-  private func handover() -> Bool {
-    guard let line = lastLogLine() else { return false }
-    return line.hasSuffix("Synopia backend: stop (update)") || line.hasSuffix("Synopia backend: stop (restart)")
   }
 
   // MARK: helpers
@@ -315,16 +308,6 @@ final class Backend {
     }.resume()
     done.wait()
     return out
-  }
-
-  /// The last non-empty line of daemon.log (the daemon's stderr: an error, or its stop reason).
-  func lastLogLine() -> String? {
-    guard let h = try? FileHandle(forReadingFrom: stateDir.appendingPathComponent("daemon.log")) else { return nil }
-    defer { try? h.close() }
-    let size = (try? h.seekToEnd()) ?? 0
-    try? h.seek(toOffset: size > 4096 ? size - 4096 : 0)
-    let text = String(decoding: h.readDataToEndOfFile(), as: UTF8.self)
-    return text.split(separator: "\n").last { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.map(String.init)
   }
 
   private func log(_ s: String) {
