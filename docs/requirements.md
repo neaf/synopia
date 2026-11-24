@@ -305,6 +305,12 @@ These requirements come from a day of prototyping against the user's real sessio
   - diff backgrounds `#DAFBE1` / `#FFEBE9`
 - No ALL CAPS labels. Plain sentence-case copy from the user's point of view.
 - Lines and guides are 1px.
+- Dark mode. The light theme is the default look; a dark theme is also available.
+  - By default the page follows the system appearance (macOS Light or Dark, `prefers-color-scheme`), live.
+  - The switch is a shaded icon at the left of the sidebar footer, before "Open session" and "New session": a moon in light mode ("Dark mode"), a sun in dark mode ("Light mode"), with no border and no background. A click picks the other theme and keeps it with the UI state (R3.9), whatever the system does after. Alt-click follows the system again.
+  - The layout reads the same: the sidebar (`#22272E`) stays the darkest surface, the canvas (`#2A3038`) and the panels (`#333A44`) a step lighter each. Lines stay 1px and visible, text keeps WCAG AA contrast, the marks use the sidebar's bright dark set (R8.4), and red stays for needs you.
+  - Everything has a dark variant, so no light patch is left: diffs and their gutters, code, tables, the needs-you cards, the Open list, the slash menu and model picker, toasts, the image viewer, the background panel's tree and the Main conversation card's tints, and the message box's mode ring. The file preview asks `bat` for its dark theme (Coldark-Dark, as bat has no GitHub Dark).
+  - The switch is instant, with no transition.
 
 ## 12. Data the app relies on
 

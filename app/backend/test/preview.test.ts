@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, chmodSync, rmSync, symlinkSync, mkdirSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ansiToHtml, planPreview, capText, looksText, color256, findBat, parseLanguages, langOf, batArgs, render, previewFile,
+  ansiToHtml, planPreview, capText, looksText, color256, themeOf, findBat, parseLanguages, langOf, batArgs, render, previewFile,
   MAX_LINES, MAX_BYTES,
 } from '../src/preview.ts';
 import type { RunBat, PreviewReply } from '../src/preview.ts';
@@ -34,6 +34,17 @@ test('ansi: bold, italic and 256 colours', () => {
   assert.equal(color256(1), '#cf222e');
   // a background colour is skipped with its parameters, not read as a foreground
   assert.equal(ansiToHtml(`${E}48;2;9;9;9mx`), 'x');
+});
+
+test('ansi: the dark theme draws the basic colours from the dark palette, still as escaped style spans', () => {
+  assert.equal(ansiToHtml(`${E}31mred${E}39m <b>`, 'dark'), '<span style="color:#ff7b72">red</span> &lt;b&gt;');
+  assert.equal(ansiToHtml(`${E}38;5;2mg`, 'dark'), '<span style="color:#3fb950">g</span>');
+  assert.equal(color256(1, 'dark'), '#ff7b72');
+  assert.equal(color256(196, 'dark'), '#ff0000'); // the cube and the greys are the same in both
+  assert.equal(themeOf('dark'), 'dark');
+  assert.equal(themeOf('<x>'), 'light');
+  assert.ok(batArgs('/x/a.ts', false, 'dark').includes('--theme=Coldark-Dark'));
+  assert.ok(batArgs('/x/a.ts', false).includes('--theme=GitHub'));
 });
 
 test('ansi: <, & and quotes inside code are escaped', () => {

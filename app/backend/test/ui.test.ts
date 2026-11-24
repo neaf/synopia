@@ -37,6 +37,16 @@ test('ui: a patch merges top-level fields and per-session fields; null removes; 
   patchUi(store, { mode: 'visual', sessions: { [SID]: { scroll: { '': { id: 3 }, a: { bottom: true } } } } });
   assert.equal(ui.mode, 'normal');
   assert.deepEqual(ui.sessions[SID].scroll, { a: { bottom: true } });
+  // the theme choice: light or dark is kept, null (follow the system) and anything else clears it
+  patchUi(store, { theme: 'dark' });
+  assert.equal(ui.theme, 'dark');
+  patchUi(store, { mode: 'insert' });
+  assert.equal(ui.theme, 'dark');
+  patchUi(store, { theme: 'sepia' });
+  assert.equal(ui.theme, null);
+  patchUi(store, { theme: 'light' });
+  patchUi(store, { theme: null });
+  assert.equal(ui.theme, null);
   // ids that aren't file names, and sessions that aren't open, are dropped
   patchUi(store, { sessions: { '../x': { steps: ['a'] }, other: { steps: ['a'] } } }, { known: (id) => id === SID });
   assert.deepEqual(Object.keys(ui.sessions), [SID]);
