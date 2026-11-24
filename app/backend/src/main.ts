@@ -222,7 +222,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     const queues = views.queues(sessions.resolve(msg.sid)) && !sessions.terminalHolds(msg.sid);
     const r = sessions.send(msg.sid, text, images, uuid);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
-    else if (queues && uuid) views.sent(r.sid, uuid, text, images.length);
+    // shown at once: sent while idle it is the new turn's prompt; sent during a turn it's queued (R5.5)
+    else if (uuid && !sessions.terminalHolds(msg.sid)) views.sent(r.sid, uuid, text, images.length, queues);
   } else if (sessions && msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });

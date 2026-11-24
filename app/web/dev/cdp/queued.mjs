@@ -85,11 +85,14 @@ check('interrupted: no queued band left', await c.until(`document.querySelectorA
 check('its text is back in the message box', await c.until(`document.getElementById('msg').value === ${JSON.stringify(SECOND)}`), await ev(`document.getElementById('msg').value`));
 check('the landed prompt stays', (await order()).filter((x) => x === 'you:Also check the demo notes when you are done.').length === 1);
 
-// nothing runs: a message isn't queued
+// nothing runs: a message isn't queued, but shows at once as the new turn's prompt
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`);
 await c.until(`current === '${B}' && !!mounted`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 await sendText('Read them again.');
 await sleep(400);
-check('idle session: sent, nothing shows queued', (await ev(`__sent.filter(m => m.t === 'send').length`)) === 1 && (await queuedRows()) === 0 && (await ev(`cur().outbox.length`)) === 0);
+check('idle session: sent, nothing shows queued, the prompt shows at once undimmed', (await ev(`__sent.filter(m => m.t === 'send').length`)) === 1 && (await queuedRows()) === 0
+  && (await ev(`cur().outbox.length === 1 && cur().outbox[0].queued === false`))
+  && (await ev(`[...document.querySelectorAll('#log .prompt')].some(p => p.textContent.includes('Read them again.') && !p.classList.contains('queued'))`)));
+
 c.print(); c.close();

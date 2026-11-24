@@ -119,9 +119,10 @@ export class FakeDriver {
   // while. A message sent while a session works is queued (shown pending until a prompt record
   // with its text lands in the fixture file), and an interrupt sends the queued ones back to the box.
   onMessage(_client: Client, msg: { t: string; [k: string]: unknown }): boolean {
-    if (msg.t === 'send' && typeof msg.sid === 'string' && typeof msg.uuid === 'string' && this.views.queues(msg.sid)) {
-      this.views.sent(msg.sid, msg.uuid, typeof msg.text === 'string' ? msg.text : '', Array.isArray(msg.images) ? msg.images.length : 0);
-      this.recount(msg.sid);
+    if (msg.t === 'send' && typeof msg.sid === 'string' && typeof msg.uuid === 'string') {
+      const queued = this.views.queues(msg.sid); // while idle the message shows at once as the new prompt
+      this.views.sent(msg.sid, msg.uuid, typeof msg.text === 'string' ? msg.text : '', Array.isArray(msg.images) ? msg.images.length : 0, queued);
+      if (queued) this.recount(msg.sid);
       return true;
     }
     if (msg.t === 'interrupt' && typeof msg.sid === 'string' && this.views.queues(msg.sid)) {

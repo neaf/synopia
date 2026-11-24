@@ -30,7 +30,7 @@ export type SessionMeta = {
 };
 // A message you sent while a turn ran, shown pending at the end of the transcript until it lands.
 // `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
-export type QueuedMessage = { id: string; text: string; images: number; landed?: string };
+export type QueuedMessage = { id: string; text: string; images: number; landed?: string; queued?: boolean }; // queued: sent during a turn
 type Outbox = QueuedMessage & { at: number };
 const RUNNING = new Set<Status>(['busy', 'retrying', 'compacting']);
 // A queued message that hasn't landed by this long after the turn stopped running is dropped (it
@@ -329,7 +329,7 @@ export class Views {
       ask: status === 'waiting' && !s.pending.length ? ran.ask ?? null : null,
       model: ch ? ch.model : t.requestedModel ?? this.opts.defaultModel?.() ?? null,
       effort: ch ? ch.effort ?? null : effortOf(t.effort),
-      outbox: s.outbox.map(({ id, text, images, landed }) => (landed ? { id, text, images, landed } : { id, text, images })),
+      outbox: s.outbox.map(({ id, text, images, landed, queued }) => (landed ? { id, text, images, landed, queued } : { id, text, images, queued })),
     };
   }
 
@@ -574,11 +574,11 @@ export class Views {
 
   // A message the driver took while a turn ran (main.ts, the fake driver): it is queued, and the
   // page shows it pending (R5.5) until its prompt lands in the transcript. Not one held behind a card.
-  sent(sid: string, uuid: string, text: string, images = 0): void {
+  sent(sid: string, uuid: string, text: string, images = 0, queued = true): void {
     const s = this.live.get(sid);
     if (!s || s.pending.length || s.held.includes(text)) return;
     if (s.outbox.some((o) => o.id === uuid)) return;
-    s.outbox.push({ id: uuid, text, images, at: Date.now() });
+    s.outbox.push({ id: uuid, text, images, at: Date.now(), queued });
     this.flush(s);
   }
 
