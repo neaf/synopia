@@ -94,9 +94,9 @@ check('driver: no card', !(await ev(`!!document.querySelector('.dock .qa-card')`
 check('driver: Not answered (Synopia quit)', (await ev(`document.querySelector('.log').textContent.includes('Not answered (Synopia quit)')`)));
 check('driver: row your turn', (await row(D))?.state === 'amber', JSON.stringify(await row(D)));
 
-// 5. the Dock badge counts the two
-const badges = () => fs.readFileSync(`${stateDir}/out`, 'utf8').match(/"badge":\d+/g) || [];
-check('badge: 2', badges().at(-1) === '"badge":2', JSON.stringify(badges()));
+// 5. the Dock badge counts the two (the shell polls GET /api/badge)
+const badge = async () => { const u = new URL(url); u.pathname = '/api/badge'; return (await (await fetch(u)).json()).badge; };
+check('badge: 2', (await badge()) === 2, String(await badge()));
 
 // 6. answered in the other process: the card goes, the answer is your turn, the row works
 await open(Q);
@@ -107,7 +107,7 @@ check('answered: your answer as your turn', await until(`[...document.querySelec
 check('answered: no waiting line', !(await ev(`!!document.querySelector('.log .waitln')`)));
 check('answered: row working', await until(`document.querySelector('.row[data-id^="${Q.slice(0, 8)}"]')?.dataset.state === 'green'`), JSON.stringify(await row(Q)));
 await sleep(800);
-check('answered: badge 1', badges().at(-1) === '"badge":1', JSON.stringify(badges()));
+check('answered: badge 1', (await badge()) === 1, String(await badge()));
 await shot();
 c.print();
 c.close();
