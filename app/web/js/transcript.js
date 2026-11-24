@@ -233,7 +233,7 @@ const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div cl
 /* messages sent while a card waits: held behind it, sent once you answer */
 const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
 /* messages you sent while the turn runs, oldest first: your prompt's band, dimmed, with the moving
-   queued mark, just above the live line, where each lands. Once its prompt item is in, that shows instead. */
+   queued mark, below the live line (what's working began before it), as the CLI shows queued input. Once its prompt item is in, that shows instead. */
 const queuedOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
 const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt queued"><span class="g">❯</span><div class="md">${q.images ? `<p class="img">[${q.images} pasted image${q.images > 1 ? "s" : ""}]</p>` : ""}${md(q.text)}<p class="qlabel">${ind("queued")}Queued, goes to Claude at its next step</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
@@ -336,8 +336,8 @@ function logEntries(s, A) {
   out.push(...itemsHTML(items, A ? !A.finished : stateOf(s) === "green", s));
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
-  if (!A) out.push(...queuedHTML(s));
   out.push(["live", liveLine(s, A)]);
+  if (!A) out.push(...queuedHTML(s)); // below the live line: what's working began before you sent it (the author, 2026-11-24)
   return out;
 }
 /* Earlier items: the server sends the page's last 160; the link asks for the 160 before the oldest
