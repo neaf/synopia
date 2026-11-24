@@ -123,10 +123,11 @@ check('J skips a session no longer shown', (await cur()) === order[2], await cur
 const withAgents = await ev(`[...store.sessions.values()].find(s => (s.agents || []).length >= 2)?.id`);
 if (withAgents) {
   await go(withAgents.slice(0, 8));
-  const n = await ev(`agentsOf(cur()).length`);
+  const n = await ev(`new Set([...document.querySelectorAll('.rail [data-agent]')].map(e => e.dataset.agent)).size`);
+  const shown = await ev(`[...new Set([...document.querySelectorAll('.rail [data-agent]')].map(e => e.dataset.agent))]`);
   const seen = [];
   for (let i = 0; i <= n; i++) { await key('j', { ctrl: true, code: 'KeyJ', vk: 74 }); await sleep(150); seen.push(await ev('view')); }
-  check('Ctrl+J steps through every subagent, then back to Main conversation', new Set(seen.slice(0, n)).size === n && seen[n] === null, JSON.stringify(seen));
+  check('Ctrl+J follows the panel top to bottom, then back to Main conversation', JSON.stringify(seen.slice(0, n)) === JSON.stringify(shown) && seen[n] === null, JSON.stringify([shown, seen]));
   await key('k', { ctrl: true, code: 'KeyK', vk: 75 }); await sleep(150);
   check('Ctrl+K from Main conversation wraps to the last one', (await ev('view')) === seen[n - 1]);
   await key('k', { ctrl: true, code: 'KeyK', vk: 75 }); await sleep(150);

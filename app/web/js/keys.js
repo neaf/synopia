@@ -62,15 +62,14 @@ document.addEventListener("keydown", e => {
   if (openListShown() || drag?.started) return; // the Open list and a drag keep the session behind them
   stepSession(e.code === "BracketRight" ? 1 : -1);
 });
-/* Ctrl+J / Ctrl+K: the next or previous conversation inside the session: Main conversation, then its subagents
-   and forks in the panel's order (running ones, forks first, oldest first; then past ones, newest first). Wraps.
+/* Ctrl+J / Ctrl+K: the next or previous conversation inside the session: Main conversation, then the subagents
+   and forks as the background panel shows them, top to bottom; past the last one it wraps to Main conversation.
    Normal mode only, so Ctrl+K never fights a text field. */
 function stepView(step) {
   const s = cur(); if (!s) return;
-  const as = agentsOf(s), run = as.filter(a => !a.finished), past = as.filter(a => a.finished);
-  run.sort((p, q) => ((q.fork ? 1 : 0) - (p.fork ? 1 : 0)) || (new Date(p.start) - new Date(q.start)));
-  past.sort((p, q) => new Date(q.end || q.start) - new Date(p.end || p.start));
-  const order = [null, ...run.map(a => a.id), ...past.map(a => a.id)];
+  // the order you see: the panel's subagent and fork cards top to bottom (running tree, then Past), once each
+  const ids = [...new Set([...document.querySelectorAll(".rail [data-agent]")].map(el => el.dataset.agent))].filter(id => agentById(s, id));
+  const order = [null, ...ids];
   if (order.length < 2) return;
   const i = Math.max(0, order.indexOf(view || null));
   view = order[(i + step + order.length) % order.length]; renderConv();
