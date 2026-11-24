@@ -556,7 +556,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 /* running cards: neutral, kind colour on the left edge */
 .card { background: var(--panel); border: 1px solid var(--line); } /* no coloured left edge: the mark carries the kind */
 .card:hover { background: var(--sub); }
-.card .d { color: var(--ink); }
+.card .d { color: var(--ink-3); font-weight: 400; font-size: 11px; } /* quiet like "Working" and the Past times */
 .kw { font-weight: 700; color: var(--kc); }
 .kc-sub { --kc: var(--k-sub); } .kc-fork { --kc: var(--k-fork); } .kc-shell { --kc: var(--k-shell); } .kc-mon { --kc: var(--k-mon); }
 
