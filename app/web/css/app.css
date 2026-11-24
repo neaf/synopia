@@ -680,9 +680,10 @@ body:not(.is-dragging) .g-empty { display: none; }
 .main-row[data-state="green"] { background: #E6F6EA; border-color: #B4E2C0; }
 .main-row[data-state="red"] { background: #FFEBE9; border-color: #FFCECB; }
 .main-row[data-state="amber"] { background: var(--sub); }
-.main-row[aria-current="true"][data-state="green"] { box-shadow: inset 3px 0 0 var(--green); }
-.main-row[aria-current="true"][data-state="red"] { box-shadow: inset 3px 0 0 var(--red); }
-.main-row[aria-current="true"][data-state="amber"] { box-shadow: inset 3px 0 0 var(--ink-3); }
+/* selected: the same 2px ring as a selected subagent card, in the session's state colour */
+.main-row[aria-current="true"][data-state="green"] { box-shadow: 0 0 0 2px var(--dot-green); }
+.main-row[aria-current="true"][data-state="red"] { box-shadow: 0 0 0 2px var(--red); }
+.main-row[aria-current="true"][data-state="amber"] { box-shadow: 0 0 0 2px var(--ink-3); }
 .main-row:hover { filter: brightness(.98); }
 
 /* modes */
