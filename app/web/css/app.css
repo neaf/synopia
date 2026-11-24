@@ -526,7 +526,7 @@ body:not(.is-dragging) .g-empty { display: none; }
 .ind .radar .sweep::before { background: var(--k-mon); }
 @media (prefers-reduced-motion: reduce) { .ind .arc.k2 { border-color: var(--k-fork); } }
 /* running cards: neutral, kind colour on the left edge */
-.card { background: var(--panel); border: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--kc, var(--green)); }
+.card { background: var(--panel); border: 1px solid var(--line); } /* no coloured left edge: the mark carries the kind */
 .card:hover { background: var(--sub); }
 .card .d { color: var(--ink); }
 .kw { font-weight: 700; color: var(--kc); }
