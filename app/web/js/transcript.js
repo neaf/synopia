@@ -152,22 +152,13 @@ function waveHTML(tools, s) {
     const { t, a } = rows[0];
     return `<div class="ln agent one"><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
   }
-  // The timeline bar shows only for finished rows: how long each took against the others. A running
-  // one has no end yet, so a bar would read as progress toward one; it shows its live time only.
-  const ms = rows.map(r => r.a ? agentMs(r.a) : 0), ended = (r) => r.a?.start && !busy(r.a);
-  const allDone = rows.every(r => r.a && !busy(r.a));
+  // No duration bars (author, 2026-11-24): each row is its mark, its name and its time.
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));
-  const tEnd = Math.max(...rows.map((r, i) => ended(r) ? +new Date(r.a.start) + ms[i] : 0));
-  const span = Math.max(1, tEnd - t0);
   const forks = rows.every(r => r.a?.fork);
   const parallel = rows.every(r => r.a) && Math.max(...rows.map(r => +new Date(r.a.start))) - t0 < 120000;
   return `<div class="ln agent wave"><span class="g"></span><div><span class="name">${rows.length} ${forks ? "forks" : "subagents"}${parallel ? " in parallel" : ""}</span>
     <div class="wgrid">${rows.map(({ t, a }, i) => {
-      const st = !a ? "unknown" : busy(a) ? "running" : "done";
-      const left = a?.start ? (new Date(a.start) - t0) / span * 100 : 0, width = Math.max(2, ms[i] / span * 100);
-      // bars only once the whole wave is done: next to rows still running a bar compares nothing
-      const bar = allDone ? `<span class="bar st-done"><i style="left:${left}%;width:${width}%"></i></span>` : `<span class="bar"></span>`;
-      return `${ind(markOf(a))}${nameOf(t, a)}${bar}<span class="adur">${time(a)}</span>`;
+      return `${ind(markOf(a))}${nameOf(t, a)}<span class="adur">${time(a)}</span>`;
     }).join("")}</div></div></div>`;
 }
 
@@ -367,7 +358,7 @@ function renderLog() {
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
 /* live times tick in place, so they don't count as a change */
-const still = html => html.replace(/(<span data-(?:live|age)="[^"]*">)[^<]*/g, "$1").replace(/(class="bar st-running"><i style=")[^"]*/g, "$1");
+const still = html => html.replace(/(<span data-(?:live|age)="[^"]*">)[^<]*/g, "$1");
 function patchChildren(parent, entries) {
   const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
   const seen = new Set(); let prev = null;
