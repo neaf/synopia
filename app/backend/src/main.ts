@@ -200,6 +200,8 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     badge?.changed();
   } else if (sessions && msg.t === 'stopTask' && typeof msg.sid === 'string' && typeof msg.taskId === 'string') {
     void sessions.stopTask(msg.sid, msg.taskId).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
+  } else if (sessions && msg.t === 'background' && typeof msg.sid === 'string') { // b, b (R9): a toast only when nothing moved
+    void sessions.background(msg.sid).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (msg.t === 'open') {
     openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-open'], log, onError: (text) => client.send({ t: 'toast', text }) });
   } else if (msg.t === 'preview') { // a text file's read-only preview; anything else opens as `open` does

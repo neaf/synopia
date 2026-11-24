@@ -750,6 +750,45 @@ test('a foreground Bash moved to the background (backgroundTaskId) is a backgrou
   assert.equal(t.getBackground('toolu_fg')?.status, 'completed');
 });
 
+test('background_tasks_changed: a foreground Bash or Agent in the live set is background work, by task id, once; leaving it ends it', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('h-u1', 'Go', ago(5)),
+    replied('h-a1', ago(4), [{ type: 'tool_use', id: 'toolu_hb', name: 'Bash', input: { command: 'sleep 40; echo done', description: 'Wait' } }]),
+    replied('h-a2', ago(4), [{ type: 'tool_use', id: 'toolu_hag', name: 'Agent', input: { description: 'Look', prompt: 'x' } }]),
+    replied('h-a3', ago(4), [{ type: 'tool_use', id: 'toolu_hbg', name: 'Bash', input: { command: 'make', run_in_background: true } }]),
+    replied('h-a4', ago(4), [{ type: 'tool_use', id: 'toolu_hr', name: 'Read', input: { file_path: '/tmp/x' } }]),
+  ]);
+  assert.equal(byId(t, 'toolu_hb').fg, undefined, 'not before the CLI registered it as a task');
+  t.taskStarted('toolu_hb', 'bhb1');
+  t.taskStarted('toolu_hag', 'ahag1');
+  t.taskStarted('toolu_hr', 'rx1');
+  assert.deepEqual(['toolu_hb', 'toolu_hag', 'toolu_hbg', 'toolu_hr'].map((id) => byId(t, id).fg), [true, true, undefined, undefined], 'only foreground Bash and Agent can go');
+  t.backgroundTasks(['bunknown'], ago(3));
+  assert.equal(t.background().length, 1, 'a task id with no tool use changes nothing');
+  t.takeChanges();
+  t.backgroundTasks(['bhb1', 'ahag1'], ago(3));
+  const ch = t.takeChanges();
+  assert.ok(ch.background.includes('toolu_hb') && ch.items.includes('toolu_hb') && ch.items.includes('toolu_hag'));
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.taskId, b.status, b.command]), [['toolu_hbg', null, 'running', 'make'], ['toolu_hb', 'bhb1', 'running', 'sleep 40; echo done']]);
+  assert.equal(byId(t, 'toolu_hb').fg, undefined);
+  assert.equal(byId(t, 'toolu_hag').fg, undefined);
+  t.backgroundTasks(['bhb1', 'ahag1'], ago(3)); // the same level again
+  assert.equal(t.background().length, 2);
+  // a rewrite keeps the level: the shell comes back as background work before its result is read
+  t.reset();
+  t.pushAll([typed('h-u1', 'Go', ago(5)), replied('h-a1', ago(4), [{ type: 'tool_use', id: 'toolu_hb', name: 'Bash', input: { command: 'sleep 40; echo done', description: 'Wait' } }])]);
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.status]), [['toolu_hb', 'running']]);
+  t.pushAll([{ ...toolResult('h-r1', ago(2), 'toolu_hb', { content: 'Command was moved to the background with ID: bhb1.' }), toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bhb1' } }]);
+  assert.equal(t.background().length, 1, 'its result adds no second shell');
+  t.backgroundTasks([], ago(1));
+  assert.deepEqual([t.getBackground('toolu_hb')?.status, t.getBackground('toolu_hb')?.end], ['completed', ago(1)]);
+  t.taskEnded('toolu_hb', 'stopped', '', ago(0));
+  assert.equal(t.getBackground('toolu_hb')?.status, 'stopped', "the SDK's notification says how it ended");
+  t.pushAll([{ type: 'user', uuid: 'h-n1', timestamp: ago(0), message: { role: 'user', content: '<task-notification>\n<task-id>bhb1</task-id>\n<tool-use-id>toolu_hb</tool-use-id>\n<status>killed</status>\n<summary>x</summary>\n</task-notification>' } }]);
+  assert.equal(t.getBackground('toolu_hb')?.status, 'killed', "the JSONL's wins");
+});
+
 test("a subagent's shell under an SDK-driven CLI: no toolUseResult in its file, the task id from task_started", () => {
   const main = new Transcript({ home: HOME });
   main.pushAll([typed('g-u1', 'Go', ago(10)), replied('g-a1', ago(9), [{ type: 'tool_use', id: 'toolu_ag', name: 'Agent', input: { description: 'Sleep', prompt: 'x', run_in_background: true } }])]);

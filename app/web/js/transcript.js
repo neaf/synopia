@@ -8,13 +8,16 @@ function took(ms) {
 const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
+/* a foreground Bash or Agent still running: b, b can send it to the background, and the first b marks it (R9) */
+const isFg = t => !!t.fg && t.state === "running";
+const fgMark = t => isFg(t) ? " data-fg" : "";
 function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
-  return `<div class="ln tool ${esc(t.state)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view)}</div>`;
+  return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view)}</div>`;
 }
 
 /* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
@@ -55,10 +58,10 @@ function toolsHTML(run) {
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = fails ? "failed" : "";
-  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
+  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(isFg) ? " data-fg" : ""}><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
       const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
-      return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}">${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}">${row}</div>`;
+      return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)}>${row}</div>`;
     }).join("")}</div></details>${run.map(t => thumbsHTML(t.imgs, current, view)).join("")}</div>`;
 }
 
@@ -146,11 +149,12 @@ function waveHTML(tools, s) {
   // resumes when that work reports, so it reads as running.
   const busy = a => a && (!a.finished || bgOf(s).some(b => b.agentId === a.id && bgState(b) === "running"));
   const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : (isReview(a) && !reviewed.has(a.id)) ? "review" : (a.fork ? "s_fork" : "s_sub");
-  const nameOf = (t, a) => a ? `<button class="alink" data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span>${esc(t.obj)}</span>`;
+  // in a wave the name carries the b, b mark (R9); a single line carries it on the whole line
+  const nameOf = (t, a, mark = fgMark(t)) => a ? `<button class="alink"${mark} data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span${mark}>${esc(t.obj)}</span>`;
   const time = a => a ? (busy(a) ? live(a.start, a.finished ? NOWISH - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
-    return `<div class="ln agent one"><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
+    return `<div class="ln agent one"${fgMark(t)}><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a, "")} <span class="adur">${time(a)}</span></div></div>`;
   }
   // No duration bars (author, 2026-11-24): each row is its mark, its name and its time.
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));

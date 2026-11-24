@@ -403,6 +403,24 @@ export class Sessions {
     return { ok: true, sid: a.id };
   }
 
+  // b, b (R9): the session's foreground Bash commands and subagents go to the background
+  // (Query.backgroundTasks). The panel shows them from background_tasks_changed and the transcript;
+  // only a failure has something to say.
+  async background(sid: string): Promise<SendResult> {
+    const a = this.live.get(this.resolve(sid));
+    if (!a) return { ok: false, error: "That session isn't open any more." };
+    if (!a.proc || a.proc.done) return { ok: false, error: 'Nothing could go to the background.' };
+    let moved: boolean;
+    try {
+      moved = await a.proc.backgroundTasks();
+    } catch {
+      this.log('sessions.backgroundFailed', { sid: a.id });
+      return { ok: false, error: 'Nothing could go to the background: background tasks are turned off for this session (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).' };
+    }
+    this.log('sessions.background', { sid: a.id, moved });
+    return moved ? { ok: true, sid: a.id } : { ok: false, error: 'Nothing could go to the background.' };
+  }
+
   // Slice 3: a card's answer settles its canUseTool request. Session rules from "Always allow"
   // are stored and passed back as allowedTools on resume; the labels the JSONL won't show
   // ("Allow once", "Denied: …") are kept per tool-use id for the transcript. Messages held
@@ -613,6 +631,11 @@ export class Sessions {
     } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {
       // A subagent's shell or monitor: its file has no task id when the SDK drives the CLI (facts, 2026-11-24).
       this.views.taskStarted(a.id, m.tool_use_id, m.task_id);
+    } else if (m.type === 'system' && m.subtype === 'background_tasks_changed' && Array.isArray(m.tasks)) {
+      // The whole live set (b, b moves steps into it): running or ended at once. Ambient tasks aren't work.
+      const ids = (m.tasks as { task_id?: unknown; ambient?: unknown }[]).filter((t) => t && typeof t.task_id === 'string' && t.ambient !== true).map((t) => t.task_id as string);
+      this.log('driver.bgTasks', { sid: a.id, n: ids.length });
+      this.views.backgroundTasks(a.id, ids);
     } else if (m.type === 'system' && m.subtype === 'commands_changed' && Array.isArray(m.commands)) {
       this.opts.onCommands?.(a.id, m.commands as SlashCommand[]);
     } else if (m.type === 'conversation_reset' && typeof m.new_conversation_id === 'string') {

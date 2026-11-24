@@ -45,7 +45,7 @@ function onMessage(m) {
       if (!had && wantNew && m.id.startsWith("new-")) { wantNew = false; current = m.id; view = null; mode = "insert"; renderAll(); break; }
       if (wantOpen === m.id) { wantOpen = null; current = m.id; view = null; renderAll(); break; } // opened from the Open list
       if (!current) pickCurrent();
-      syncInterrupt(); // the turn ended under the "Interrupt?" prompt
+      syncInterrupt(); syncBackground(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
       if (!had || !mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
       break;
@@ -61,6 +61,7 @@ function onMessage(m) {
       uiResetIn(m); // the log a view switch held back renders now, once
       if (m.prepend) { renderLogKeepingPlace(); uiItems(m); break; } // earlier items: the card and header don't change
       render("log", "card", "header"); // the header drops its Now line while a new session is empty
+      syncBackground(); // the marked steps ended or went to the background
       uiItems(m); // a restored scroll waits for these (ui.js)
       runHooks(m);
       break;
