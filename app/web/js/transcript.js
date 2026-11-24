@@ -16,7 +16,7 @@ const fgMark = t => isFg(t) ? " data-fg" : "";
 function toolLine(t) {
   const res = t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
+    : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   const line = `<span class="name">${esc(toolName(t))}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
   return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
@@ -267,9 +267,16 @@ const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<d
 const queuedOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
 const queuedHTML = s => queuedOf(s).map(q => [`q:${q.id}`, `<div class="prompt queued"><span class="g">❯</span><div class="md">${q.images ? `<p class="img">[${q.images} pasted image${q.images > 1 ? "s" : ""}]</p>` : ""}${md(q.text)}<p class="qlabel">${ind("queued")}Queued, goes to Claude at its next step</p></div></div>`]);
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
-   compacting, rate limited or no updates instead, and say a message you sent is queued. */
+   compacting, rate limited or no updates instead, and say a message you sent is queued. When it names
+   the newest step and that step runs, a click expands it: the same open state as the step's own line
+   (openSteps, by item id), so opening either opens both (R5.6). */
+const liveStep = t => !!t && t.state === "running" && hasStep(t) && !(t.name === "Agent" || t.name === "Task");
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span><div><b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span></div></div>`;
+  const line = (mark, t, word = "Working", extra = "") => {
+    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${t.obj ? `(${esc(t.obj)})` : ""}` : "")}</span>`;
+    const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
+    return `<div class="ln liveln" data-state="${A ? "green" : toneOf(s)}"><span class="g">${ind(mark)}</span>${body}</div>`;
+  };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", (A.items || []).filter(x => x.k === "tool").pop());
   if (stateOf(s) !== "green") return "";
   const t = [...s.items].reverse().find(x => x.k === "tool");
@@ -469,6 +476,8 @@ conv.addEventListener("click", e => {
 conv.addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset || !d.dataset.step) return;
   if (d.open) openSteps.add(stepKey(d.dataset.step)); else openSteps.delete(stepKey(d.dataset.step));
+  // a running step and the live line naming it are one step: both follow
+  conv.querySelectorAll(`details[data-step="${CSS.escape(d.dataset.step)}"]`).forEach(o => { if (o !== d && o.open !== d.open) o.open = d.open; });
 }, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
    (plan section 2), so the app and Chrome behave the same */

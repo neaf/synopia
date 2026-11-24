@@ -50,6 +50,7 @@ type Live = {
   finder: NodeJS.Timeout | null;
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   ran: string; // the last Running sent to onRunning
+  since: Map<string, number>; // tool use id -> when a running tool started, from the SDK's tool_progress (R5.6)
 };
 
 export type ViewsOptions = {
@@ -117,7 +118,7 @@ export class Views {
       id, path: file, cwd: init.cwd ?? '', t: new Transcript({ home: this.home, answerOf: this.opts.answerOf, planOf: this.opts.planOf, titlesOf: () => this.opts.written?.(id)?.history }),
       tailer: null, watcher: null, children: new Map(),
       status: null, statusAt: 0, statusDetail: {}, stream: null, pending: [], held: [],
-      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, finder: null, working: new Set(), ran: '',
+      sent: '', needReset: false, resetChildren: new Set(), queued: false, outbox: [], outboxTimer: null, finder: null, working: new Set(), ran: '', since: new Map(),
     };
     this.live.set(id, s);
     this.log('views.open', { sid: id, found: Boolean(file) });
@@ -217,6 +218,7 @@ export class Views {
     n.held = s.held;
     n.outbox = s.outbox;
     n.stream = s.stream;
+    n.since = s.since;
     const meta = this.metaOf(n);
     n.sent = JSON.stringify(meta);
     this.broadcast({ t: 'session', replaces: oldId, ...meta });
@@ -439,7 +441,7 @@ export class Views {
     if (end < 0) return 0;
     const start = Math.max(0, end - WINDOW);
     sub.from = Math.min(sub.from, start);
-    const upsert = t.items.slice(start, end);
+    const upsert = this.dress(this.live.get(sid), t.items.slice(start, end));
     client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert, total: t.total, reset: false, prepend: true });
     return upsert.length;
   }
@@ -525,6 +527,7 @@ export class Views {
     const s = this.live.get(sid);
     if (!s) return;
     s.t.processEnded(new Date(at).toISOString(), failed);
+    s.since.clear(); // its tools ended with it
     this.flush(s);
   }
 
@@ -551,6 +554,30 @@ export class Views {
     if (!s) return;
     s.t.backgroundTasks(taskIds, new Date().toISOString());
     this.flush(s);
+  }
+
+  // The SDK's tool_progress for a running tool of a Synopia-driven session (main or subagent). It
+  // carries only the elapsed seconds (sdk.d.ts SDKToolProgressMessage, no output), so the tool's
+  // start is now minus those. Kept once per tool: the page's timer counts from it, so later ones
+  // change nothing. The tool's item goes again to the pages that show it, with `since` (ISO).
+  toolProgress(sid: string, toolUseId: string, elapsedSeconds: number, now = Date.now()): void {
+    const s = this.live.get(sid);
+    if (!s || s.since.has(toolUseId) || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return;
+    s.since.set(toolUseId, now - Math.round(elapsedSeconds * 1000));
+    for (const [client, sub] of this.liveSubs()) {
+      if (sub.sid !== sid) continue;
+      const t = this.transcriptOf(sid, sub.agent);
+      if (t) this.sendUpserts(client, sub, t, [toolUseId]);
+    }
+  }
+
+  // Items as the pages get them: a running tool whose start is known carries it as `since`.
+  private dress(s: Live | undefined, items: Item[]): Item[] {
+    if (!s || !s.since.size) return items;
+    return items.map((i) => {
+      const at = i.k === 'tool' && i.state === 'running' ? s.since.get(i.id) : undefined;
+      return at === undefined ? i : { ...i, since: new Date(at).toISOString() } as Item;
+    });
   }
 
   // Messages an interrupt cancelled, back to the session's message box (and out of the outbox).
@@ -623,13 +650,13 @@ export class Views {
     const v = !t ? { items: [], total: 0 }
       : at >= 0 && at < t.items.length - WINDOW ? { items: t.items.slice(at), total: t.items.length } : t.view(WINDOW);
     sub.from = v.total - v.items.length;
-    client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert: v.items, total: v.total, reset: true });
+    client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert: this.dress(this.live.get(sub.sid), v.items), total: v.total, reset: true });
   }
 
   private sendUpserts(client: Client, sub: Sub, t: Transcript, changed: string[]): void {
     if (!changed.length) return;
     const ids = new Set(changed);
-    const upsert: Item[] = t.items.slice(sub.from).filter((i) => ids.has(i.id));
+    const upsert: Item[] = this.dress(this.live.get(sub.sid), t.items.slice(sub.from).filter((i) => ids.has(i.id)));
     if (upsert.length) client.send({ t: 'items', sid: sub.sid, agent: sub.agent, upsert, total: t.total, reset: false });
   }
 

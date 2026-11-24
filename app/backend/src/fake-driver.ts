@@ -24,6 +24,7 @@ export type FakeStep = {
   stream?: string | null;
   toast?: string;
   task?: { toolUseId: string; taskId: string }; // the SDK's task_started for a tool of the session
+  progress?: { toolUseId: string; elapsed: number }; // the SDK's tool_progress for a running tool (seconds)
 };
 export type FakeMenu = { models: object[]; commands: object[] };
 export type FakeScript = { home?: string; menu?: FakeMenu; steps: FakeStep[] };
@@ -113,6 +114,7 @@ export class FakeDriver {
     if (step.stream !== undefined) this.views.setStream(step.sid, step.stream);
     if (step.toast) this.views.toast(step.toast);
     if (step.task) this.views.taskStarted(step.sid, step.task.toolUseId, step.task.taskId);
+    if (step.progress) this.views.toolProgress(step.sid, step.progress.toolUseId, step.progress.elapsed);
   }
 
   // Page messages the fake answers: an answer settles its request and the session works for a

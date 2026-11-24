@@ -8,7 +8,7 @@
 #   app/web/dev/cdp/run.sh earlier loading earlier items, on a long transcript generated into the temp state
 #   app/web/dev/cdp/run.sh csp     the page under its CSP, the H1 payload, an injected handler blocked
 #   app/web/dev/cdp/run.sh files   files changed with a Bash command's edits (R5.9), with a shot
-#   app/web/dev/cdp/run.sh steps   a tool step expanded to its command and result, show all, a live update (R5.6), with a shot
+#   app/web/dev/cdp/run.sh steps   a tool step expanded to its command and result, show all, a live update, a running step from the live line and its own line (R5.6), with shots
 #   app/web/dev/cdp/run.sh preview the file preview (R5.9) on a generated session pointing at a repo file, a binary and HTML, with --dry-open
 #   app/web/dev/cdp/run.sh tween   sidebar sub-lines: height then fade, fade then height, no jump, guides aligned, instant with reduced motion (R8.1, R4.3)
 #   app/web/dev/cdp/run.sh images  image thumbnails, the viewer and pasted images (R5.13), on made-up images generated into the temp state, with shots
@@ -74,6 +74,7 @@ trap 'exit 130' INT TERM
 if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
+if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
 
 SYNOPIA_CHROME_PORT="$("$here/chrome.sh" "$profile")" || exit 1
 export SYNOPIA_CHROME_PORT
@@ -86,7 +87,7 @@ runCheck() { node "$@" & check=$!; wait $check; local c=$?; check=""; return $c;
 runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
-  states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shot: $state/steps.png" ;;
+  states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shots: $state/steps*.png" ;;
   extcard|preview|images|rail|background|dark|close|titles|queued) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi

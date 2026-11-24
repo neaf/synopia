@@ -486,6 +486,43 @@ test("work: the SDK's task_started gives a shell its task id when the file has n
   views.stop();
 });
 
+test("toolProgress: a running tool's start (now minus the elapsed time) goes with its item, once, and leaves with its result", () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000d1';
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: '2026-11-20T10:00:02.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_run', name: 'Bash', input: { command: 'npm test', description: 'Run the tests' } }] },
+  }));
+  const { clients, views } = setup(dir);
+  const c = client();
+  clients.add(c);
+  views.open(id);
+  views.check();
+  views.view(c, id, null);
+  const tool = (m: Msg) => (m.upsert as { id: string; since?: string; state?: string }[]).find((i) => i.id === 'toolu_run');
+  assert.equal(tool(c.take('items')[0])?.since, undefined, 'no progress yet: no start');
+  const now = Date.parse('2026-11-20T10:01:00.000Z');
+  views.toolProgress(id, 'toolu_run', 42, now);
+  const [up] = c.take('items');
+  assert.equal(up.reset, false);
+  assert.deepEqual((up.upsert as unknown[]).length, 1);
+  assert.equal(tool(up)?.since, '2026-11-20T10:00:18.000Z');
+  views.toolProgress(id, 'toolu_run', 43, now + 1000);
+  assert.deepEqual(c.take('items'), [], 'later progress changes nothing');
+  views.toolProgress(id, 'toolu_none', -1, now);
+  assert.deepEqual(c.take('items'), [], 'a bad elapsed time is ignored');
+  views.view(c, id, null);
+  assert.equal(tool(c.take('items')[0])?.since, '2026-11-20T10:00:18.000Z', 'a reset carries it too');
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), line({
+    type: 'user', uuid: 'r1', timestamp: '2026-11-20T10:01:01.000Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_run', content: 'ok' }] },
+  }));
+  views.check();
+  const done = tool(c.take('items')[0]);
+  assert.equal(done?.state, 'done');
+  assert.equal(done?.since, undefined, 'finished: no start');
+  views.stop();
+});
+
 test('toolOutput: the full result read again from its line, also after the file grew; a toast when it is gone', () => {
   const id = 'abababab-0000-4000-8000-00000000000b';
   const out = Array.from({ length: 30 }, (_, i) => `out ${i}`).join('\n');
