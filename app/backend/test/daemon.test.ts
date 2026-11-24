@@ -1,12 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, existsSync, readFileSync, statSync, openSync, closeSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, statSync, openSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { WebSocket } from 'ws';
 import {
-  IdleExit, isLive, parseDaemonInfo, procStart, readDaemonInfo, removeDaemonInfo, rotateLog, writeDaemonInfo,
+  IdleExit, UpdateCheck, codeHash, isLive, parseDaemonInfo, procStart, readDaemonInfo, removeDaemonInfo, rotateLog, successorArgs,
+  writeDaemonInfo,
 } from '../src/daemon.ts';
 import type { DaemonInfo } from '../src/daemon.ts';
 
@@ -15,7 +17,7 @@ const MAIN = new URL('../src/main.ts', import.meta.url).pathname;
 const FIXTURES = new URL('./fixtures/claude', import.meta.url).pathname;
 const NODE_FLAGS = ['--experimental-strip-types', '--disable-warning=ExperimentalWarning'];
 const TOKEN = 'a'.repeat(64);
-const info = (o: Partial<DaemonInfo> = {}): DaemonInfo => ({ pid: 4242, procStart: 'Tue Nov 24 10:00:00 2026', port: 4717, token: TOKEN, version: '0.1.0', ...o });
+const info = (o: Partial<DaemonInfo> = {}): DaemonInfo => ({ pid: 4242, procStart: 'Tue Nov 24 10:00:00 2026', port: 4717, token: TOKEN, version: '0.1.0', code: '0123456789abcdef', ...o });
 
 test('daemon.json: a good file parses, any wrong field is null', () => {
   assert.deepEqual(parseDaemonInfo(JSON.stringify(info())), info());
@@ -25,6 +27,7 @@ test('daemon.json: a good file parses, any wrong field is null', () => {
     JSON.stringify(info({ port: 0 })), JSON.stringify(info({ port: 70000 })),
     JSON.stringify(info({ token: 'short' })), JSON.stringify(info({ token: 'Z'.repeat(64) })),
     JSON.stringify({ ...info(), procStart: undefined }), JSON.stringify({ ...info(), version: 1 }),
+    JSON.stringify({ ...info(), code: undefined }),
   ]) assert.equal(parseDaemonInfo(bad), null, bad);
 });
 
@@ -73,6 +76,63 @@ test('idle exit: only after the timeout with no page and nothing running', () =>
   assert.equal(b.check({ pages: 0, busy: false }, 6000), true);
 });
 
+test('code hash: every src .ts file and package-lock.json, nothing else', () => {
+  const dir = tmp();
+  mkdirSync(join(dir, 'src', 'sub'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
+  writeFileSync(join(dir, 'src', 'sub', 'b.ts'), 'export const b = 2;\n');
+  assert.equal(codeHash(dir), null, 'no package-lock.json: unreadable');
+  writeFileSync(join(dir, 'package-lock.json'), '{"lockfileVersion":3}\n');
+  const h = codeHash(dir)!;
+  assert.match(h, /^[0-9a-f]{16}$/);
+  assert.equal(codeHash(dir), h, 'the same tree, the same hash');
+  writeFileSync(join(dir, 'src', 'notes.md'), 'not code');
+  writeFileSync(join(dir, 'README.md'), 'not code');
+  assert.equal(codeHash(dir), h, 'other files are not code');
+  writeFileSync(join(dir, 'src', 'sub', 'b.ts'), 'export const b = 2; // a comment\n');
+  const h2 = codeHash(dir)!;
+  assert.notEqual(h2, h, 'a comment in a nested file changes it');
+  writeFileSync(join(dir, 'src', 'sub', 'b.ts'), 'export const b = 2;\n');
+  assert.equal(codeHash(dir), h, 'reverted: back to the first');
+  writeFileSync(join(dir, 'package-lock.json'), '{"lockfileVersion":3,"x":1}\n');
+  assert.notEqual(codeHash(dir), h, 'the lock file counts');
+  writeFileSync(join(dir, 'package-lock.json'), '{"lockfileVersion":3}\n');
+  writeFileSync(join(dir, 'src', 'c.ts'), '');
+  assert.notEqual(codeHash(dir), h, 'a new file counts');
+  assert.match(codeHash(new URL('..', import.meta.url).pathname)!, /^[0-9a-f]{16}$/, 'the backend itself');
+});
+
+test('update rule: pending once a new hash holds for two reads; restart only when nothing runs', () => {
+  const u = new UpdateCheck('aaaa');
+  assert.equal(u.read('aaaa'), false);
+  assert.equal(u.read('bbbb'), false, 'one read of a new hash: maybe a save in progress');
+  assert.equal(u.pending, false);
+  assert.equal(u.restartNow(false), false);
+  assert.equal(u.read('cccc'), false, 'still changing');
+  assert.equal(u.read('cccc'), true, 'steady: pending');
+  assert.equal(u.pending, true);
+  assert.equal(u.read(null), false, 'an unreadable tree is skipped');
+  assert.equal(u.pending, true);
+  assert.equal(u.restartNow(true), false, 'never while work runs');
+  assert.equal(u.restartNow(false), true, 'at once when idle');
+  assert.equal(u.read('aaaa'), true, 'the checkout went back to the running code');
+  assert.equal(u.pending, false);
+  assert.equal(u.restartNow(false), false);
+  u.read('dddd'); u.read('dddd');
+  assert.equal(u.pending, true);
+  u.fail();
+  assert.equal(u.pending, false, 'a new daemon that failed to start');
+  assert.equal(u.read('dddd'), false, 'that hash is not tried again');
+  assert.equal(u.restartNow(false), false);
+  u.read('eeee');
+  assert.equal(u.read('eeee'), true, 'the next change is');
+});
+
+test('the new daemon gets the same flags and --after the old pid', () => {
+  assert.deepEqual(successorArgs(['/x/main.ts', '--state-dir', '/s', '--fake'], 7), ['/x/main.ts', '--state-dir', '/s', '--fake', '--after', '7']);
+  assert.deepEqual(successorArgs(['/x/main.ts', '--after', '5', '--fake', '--after=6'], 7), ['/x/main.ts', '--fake', '--after', '7']);
+});
+
 test('daemon.log rotates past its limit by copy and truncate', () => {
   const dir = tmp(), f = join(dir, 'daemon.log');
   writeFileSync(f, 'x'.repeat(100));
@@ -97,6 +157,19 @@ async function waitFor<T>(get: () => T | null | undefined, ms = 15_000): Promise
   }
 }
 
+// A page's socket on a daemon, authenticated, with its hello.
+async function hello(i: DaemonInfo): Promise<{ ws: WebSocket; hello: Record<string, unknown> }> {
+  const origin = `http://127.0.0.1:${i.port}`;
+  const ws = new WebSocket(`ws://127.0.0.1:${i.port}/ws`, { origin });
+  await once(ws, 'open');
+  ws.send(JSON.stringify({ t: 'auth', token: i.token }));
+  for (;;) {
+    const [data] = await once(ws, 'message');
+    const m = JSON.parse(String(data));
+    if (m.t === 'hello') return { ws, hello: m };
+  }
+}
+
 function daemon(dir: string, extra: string[] = []) {
   return spawn(process.execPath, [...NODE_FLAGS, MAIN, '--state-dir', dir, '--fake', '--claude-dir', FIXTURES, ...extra], { stdio: ['ignore', 'pipe', 'pipe'] });
 }
@@ -112,7 +185,8 @@ test('the daemon writes daemon.json, answers ping and badge, and ends on POST /a
   assert.equal(statSync(join(dir, 'daemon.json')).mode & 0o777, 0o600);
   assert.equal(isLive(i), true);
   const api = (p: string, init?: RequestInit) => fetch(`http://127.0.0.1:${i.port}/api/${p}?token=${i.token}`, init);
-  assert.deepEqual(await (await api('ping')).json(), { ok: true, pid: d.pid });
+  assert.deepEqual(await (await api('ping')).json(), { ok: true, pid: d.pid, code: i.code });
+  assert.equal(i.code, codeHash(new URL('..', import.meta.url).pathname), 'the code it runs');
   assert.equal((await fetch(`http://127.0.0.1:${i.port}/api/ping?token=${'b'.repeat(64)}`)).status, 403);
   assert.equal(typeof (await (await api('badge')).json()).badge, 'number');
   assert.equal((await api('stop')).status, 404, 'stop is POST only');
@@ -153,4 +227,42 @@ test('a stale daemon.json is replaced by the next daemon', async () => {
   assert.equal(isLive(i), true);
   d.kill('SIGTERM');
   await once(d, 'exit');
+});
+
+test('POST /api/restart hands over to a new daemon on the same state folder', async () => {
+  const dir = tmp();
+  // The real driver over an empty claude dir: nothing runs. Its stdout and stderr are daemon.log,
+  // as the shell starts it. The new daemon is detached: killed below.
+  const log = openSync(join(dir, 'daemon.log'), 'a');
+  const d = spawn(process.execPath, [...NODE_FLAGS, MAIN, '--state-dir', dir, '--claude-dir', tmp()], { stdio: ['ignore', log, log] });
+  closeSync(log);
+  const i = await waitFor(() => readDaemonInfo(dir));
+  // A page's UI state, sent just before: still in memory (state.json writes are spaced), so the
+  // old daemon must write it on the way out for the new one's hello to have it.
+  const page = await hello(i);
+  page.ws.send(JSON.stringify({ t: 'ui', patch: { openList: { filter: 'handover' } } }));
+  await new Promise((ok) => setTimeout(ok, 100));
+  const closed = once(page.ws, 'close');
+  assert.equal((await fetch(`http://127.0.0.1:${i.port}/api/restart?token=${i.token}`, { method: 'POST' })).status, 200);
+  const [code] = await once(d, 'exit');
+  assert.equal(code, 0);
+  await closed;
+  const n = await waitFor(() => { const r = readDaemonInfo(dir); return r && r.pid !== i.pid ? r : null; });
+  try {
+    const again = await hello(n);
+    assert.deepEqual((again.hello.ui as { openList: unknown }).openList, { filter: 'handover' });
+    again.ws.close();
+    assert.equal(isLive(n), true);
+    assert.notEqual(n.token, i.token);
+    assert.equal(n.code, i.code);
+    assert.equal(readFileSync(join(dir, 'backend.lock'), 'utf8'), String(n.pid), 'the new daemon holds the lock');
+    const lines = readFileSync(join(dir, 'backend.log'), 'utf8');
+    assert.match(lines, /handover\.start reason=restart/);
+    assert.match(lines, /backend\.stop reason=restart/);
+    assert.match(readFileSync(join(dir, 'daemon.log'), 'utf8'), /Synopia backend: stop \(restart\)\n$/, 'the shell reads this line');
+    assert.equal((await fetch(`http://127.0.0.1:${n.port}/api/stop?token=${n.token}`, { method: 'POST' })).status, 200);
+    await waitFor(() => !isLive(n));
+  } finally {
+    try { process.kill(n.pid, 'SIGKILL'); } catch { /* gone */ }
+  }
 });

@@ -36,6 +36,8 @@ pkill -TERM -x Synopia            # quits the app only; the daemon and its work 
 
 The backend is a daemon (plan section 2): the app finds it through `<state-dir>/daemon.json` or starts it detached, with its output in `<state-dir>/daemon.log`. ⌘Q quits only the app; "Stop All Work…" (⌥⌘Q) ends the daemon. From a script, stop a test daemon with `kill -TERM <pid from daemon.json>`, or `POST /api/stop?token=…`. `--env SYNOPIA_EXIT_IDLE_MS=3000` shortens its idle exit (30 min with no page and nothing running) for a check.
 
+Backend changes take effect without a relaunch: the daemon hashes `backend/src/**/*.ts` and `package-lock.json` at start (`code` in daemon.json and `/api/ping`), rereads the checkout every 10 s, and once the new hash holds and nothing runs it hands over to a new daemon on the same state folder (`backend.log`: `update.pending`, `handover.start`, `backend.stop reason=update`). The page shows "Reconnecting…" for about 2 s and comes back as it was; while work runs, the sidebar footer says "Update ready: restarts when idle". "Restart Backend Now…" in the App menu (or `POST /api/restart?token=…`) hands over at once. Page changes need only a reload. `app/dev.sh` has no updates: restart it.
+
 Add `--env SYNOPIA_FAKE=$PWD/app/backend/test/fixtures/claude` to play the fake driver over the fixtures (no model calls). The shell prints `Synopia shell: daemon found|started|lost pid N` and `Synopia shell: badge N` (polled from `GET /api/badge` every 2 s) on stderr (run `build/Synopia.app/Contents/MacOS/Synopia` directly to see it).
 
 Notes, facts settled and what is left: `.ai-notes/app/README.md`.

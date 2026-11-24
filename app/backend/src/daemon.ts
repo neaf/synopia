@@ -2,9 +2,12 @@
 // running backend through `<state-dir>/daemon.json` ({pid, procStart, port, token, version}, mode
 // 0600, written atomically when the server listens) and starts a new one when that file is
 // missing or stale. The backend ends on "Stop All Work" or after 30 min with no page connected and
-// nothing running; its stdout and stderr (`daemon.log`) are rotated at 5 MB.
-import { chmodSync, copyFileSync, readFileSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
+// nothing running; its stdout and stderr (`daemon.log`) are rotated at 5 MB. It records a hash of
+// its own code at start, and hands over to a new daemon once the checkout's code differs and
+// nothing runs (or at once on "Restart Backend Now…").
+import { chmodSync, closeSync, copyFileSync, openSync, readdirSync, readFileSync, renameSync, statSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 export const DAEMON_FILE = 'daemon.json';
@@ -12,7 +15,7 @@ export const DAEMON_LOG = 'daemon.log';
 export const LOG_LIMIT = 5 * 1024 * 1024;
 export const IDLE_EXIT_MS = 30 * 60 * 1000;
 
-export type DaemonInfo = { pid: number; procStart: string; port: number; token: string; version: string };
+export type DaemonInfo = { pid: number; procStart: string; port: number; token: string; version: string; code: string };
 
 // A parsed daemon.json, or null when any field is missing or of the wrong shape.
 export function parseDaemonInfo(text: string): DaemonInfo | null {
@@ -27,8 +30,8 @@ export function parseDaemonInfo(text: string): DaemonInfo | null {
   if (!Number.isInteger(o.pid) || (o.pid as number) <= 0) return null;
   if (!Number.isInteger(o.port) || (o.port as number) <= 0 || (o.port as number) > 65535) return null;
   if (typeof o.token !== 'string' || !/^[0-9a-f]{64}$/.test(o.token)) return null;
-  if (typeof o.procStart !== 'string' || typeof o.version !== 'string') return null;
-  return { pid: o.pid as number, procStart: o.procStart, port: o.port as number, token: o.token, version: o.version };
+  if (typeof o.procStart !== 'string' || typeof o.version !== 'string' || typeof o.code !== 'string') return null;
+  return { pid: o.pid as number, procStart: o.procStart, port: o.port as number, token: o.token, version: o.version, code: o.code };
 }
 
 export function readDaemonInfo(stateDir: string): DaemonInfo | null {
@@ -122,4 +125,99 @@ export class IdleExit {
     }
     return now - this.since >= this.timeoutMs;
   }
+}
+
+// The backend's code version: a SHA-256 over `src/**/*.ts` (each path and content, in path order)
+// and `package-lock.json`, its first 16 hex digits. null while a file can't be read (a save or a
+// checkout in progress). About a millisecond for the whole tree.
+export function codeHash(backendDir: string): string | null {
+  try {
+    const files = (readdirSync(join(backendDir, 'src'), { recursive: true }) as string[])
+      .filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
+    const h = createHash('sha256');
+    for (const f of [...files, 'package-lock.json']) h.update(f).update('\0').update(readFileSync(join(backendDir, f))).update('\0');
+    return h.digest('hex').slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+export const UPDATE_READ_MS = 10_000;
+
+// The update rule. The daemon reads the checkout's code hash every 10 s: an update is pending once
+// a hash other than the running one reads the same twice in a row (no restart halfway through a
+// save or a checkout), and the daemon restarts once one is pending and nothing runs. A hash whose
+// new daemon failed to start isn't tried again; a checkout back at the running code clears it.
+export class UpdateCheck {
+  readonly running: string;
+  pending = false;
+  private last: string;
+  private failed: string | null = null;
+  constructor(running: string) {
+    this.running = running;
+    this.last = running;
+  }
+  // One reading of the checkout's hash (null: unreadable, skipped); true when `pending` changed.
+  read(hash: string | null): boolean {
+    if (hash === null) return false;
+    const was = this.pending;
+    this.pending = hash !== this.running && hash === this.last && hash !== this.failed;
+    this.last = hash;
+    return this.pending !== was;
+  }
+  restartNow(busy: boolean): boolean {
+    return this.pending && !busy;
+  }
+  // The new daemon didn't start: wait for the next change.
+  fail(): void {
+    this.failed = this.last;
+    this.pending = false;
+  }
+}
+
+// The new daemon's command line: this one's, with `--after <pid>` (it waits for this daemon to
+// exit before it takes the lock) in place of any earlier one.
+export function successorArgs(argv: string[], pid: number): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--after') { i++; continue; }
+    if (argv[i].startsWith('--after=')) continue;
+    out.push(argv[i]);
+  }
+  return [...out, '--after', String(pid)];
+}
+
+export type Successor = { loaded: Promise<boolean>; abort: () => void };
+
+// Starts the new daemon (detached: its own session, stdout and stderr appended to daemon.log).
+// `loaded` is true once it has loaded every module and waits for this one to exit; false when it
+// exits or stays silent for 20 s first (say a syntax error in the new code: this daemon stays).
+// `abort` ends a waiting one, when work started in the meantime.
+export function startSuccessor(logFile: string, timeoutMs = 20_000): Successor {
+  const fd = openSync(logFile, 'a', 0o600);
+  const child = spawn(process.execPath, [...process.execArgv, ...successorArgs(process.argv.slice(1), process.pid)], {
+    detached: true, stdio: ['ignore', fd, fd, 'ipc'],
+  });
+  closeSync(fd);
+  const loaded = new Promise<boolean>((done) => {
+    const timer = setTimeout(() => { child.kill('SIGTERM'); done(false); }, timeoutMs);
+    const end = (ok: boolean) => { clearTimeout(timer); done(ok); };
+    child.once('message', (m) => end((m as { t?: string } | null)?.t === 'loaded'));
+    child.once('exit', () => end(false));
+    child.once('error', () => end(false));
+  }).then((ok) => {
+    if (child.connected) child.disconnect();
+    child.unref();
+    return ok;
+  });
+  return { loaded, abort: () => { child.kill('SIGTERM'); } };
+}
+
+// In the new daemon, before it takes the lock: tells the old one it loaded, then waits (at most
+// 20 s) for the old one's pid to go, so two daemons never run on one state folder.
+export async function awaitHandover(oldPid: number, timeoutMs = 20_000): Promise<void> {
+  process.send?.({ t: 'loaded' });
+  if (process.connected) process.disconnect();
+  const deadline = Date.now() + timeoutMs;
+  while (alive(oldPid) && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
 }

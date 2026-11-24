@@ -1,8 +1,9 @@
 // The Synopia backend, a daemon the app starts detached (plan section 2): it owns every session's
 // process and all state, and outlives the app. Once it listens it writes <state-dir>/daemon.json
 // (daemon.ts), where the app finds it. It ends on POST /api/stop ("Stop All Work"), on SIGTERM or
-// SIGINT, or after 30 min with no page connected and nothing running. app/dev.sh runs it with
-// --no-parent: {"port":…,"token":…} as the first stdout line, and no idle exit.
+// SIGINT, or after 30 min with no page connected and nothing running. When its checkout's code
+// changes it hands over to a new daemon once nothing runs (POST /api/restart: at once). app/dev.sh
+// runs it with --no-parent: {"port":…,"token":…} as the first stdout line, no idle exit, no updates.
 import { parseArgs } from 'node:util';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -22,11 +23,15 @@ import { displayPath } from './paths.ts';
 import { Writer } from './writer.ts';
 import { Menus } from './menu.ts';
 import { Badge, badgeCount } from './badge.ts';
-import { DAEMON_LOG, IDLE_EXIT_MS, IdleExit, procStart, removeDaemonInfo, rotateLog, writeDaemonInfo } from './daemon.ts';
+import {
+  DAEMON_LOG, IDLE_EXIT_MS, IdleExit, UPDATE_READ_MS, UpdateCheck, awaitHandover, codeHash, procStart, removeDaemonInfo, rotateLog,
+  startSuccessor, writeDaemonInfo,
+} from './daemon.ts';
 import { patchUi, draftImage } from './ui.ts';
 import type { Image } from './sessions.ts';
 import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
+import type { Successor } from './daemon.ts';
 import type { BadgeSession } from './badge.ts';
 import type { Layout, OpenEntry } from './store.ts';
 import type { Client, Server } from './server.ts';
@@ -43,9 +48,14 @@ const { values: flags } = parseArgs({
     'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
     'exit-idle-ms': { type: 'string' }, // test-only: a shorter daemon idle exit than 30 min
     'dry-open': { type: 'boolean', default: false }, // `open` logs its branch and runs nothing (checks)
+    after: { type: 'string' }, // set by the daemon this one replaces: wait for its pid to go first
   },
   strict: true,
 });
+
+// The code this daemon runs: its modules are loaded by now (daemon.json, /api/ping, updates).
+const backendDir = fileURLToPath(new URL('..', import.meta.url));
+const CODE = codeHash(backendDir) ?? 'unknown';
 
 const claudeDir = expand(flags['claude-dir'] ?? '~/.claude');
 const stateDir = expand(flags['state-dir'] ?? '~/Library/Application Support/Synopia');
@@ -66,6 +76,10 @@ const log = openLog(
   flags['state-dir'] !== undefined ? join(stateDir, 'backend.log') : join(homedir(), 'Library/Logs/Synopia/backend.log'),
 );
 
+// A handover (an update or "Restart Backend Now…"): the old daemon writes state.json and releases
+// the lock once it hears this one loaded; this one takes the lock only after its pid has gone.
+if (flags.after !== undefined) await awaitHandover(Number(flags.after));
+
 let lock: Lock;
 try {
   lock = acquireLock(stateDir);
@@ -84,6 +98,7 @@ const store = openStore(stateDir, { log });
 const token = randomBytes(32).toString('hex');
 
 const VERSION = String(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+const updates = new UpdateCheck(CODE);
 let server: Server | undefined;
 const noClients = new Set<Client>();
 const script = flags.fake ? loadScript(claudeDir) : null;
@@ -140,9 +155,12 @@ function openEntries(): OpenEntry[] {
 const badgeSource = { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed };
 
 // Something runs that the idle exit must not end: a turn, a subagent, a background shell or
-// monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer.
+// monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer. Under --fake, a session the
+// script left working counts as a running turn. The update restart waits on the same.
+const RUNNING = new Set(['busy', 'retrying', 'compacting']);
 function busy(): boolean {
   const q = sessions?.quitCheck();
+  if (fake && (views.sessions() as { status?: string }[]).some((s) => RUNNING.has(s.status ?? ''))) return true;
   return (q ? q.running.length + q.background.length : 0) > 0 || views.pending().length > 0;
 }
 
@@ -232,12 +250,17 @@ try {
       settings: store.state.settings,
       pending: views.pending(),
       ui: store.state.ui,
+      update: updates.pending,
     }),
     quitCheck: () => sessions?.quitCheck() ?? { running: [], background: [] },
     badge: () => badgeCount(badgeSource),
+    ping: () => ({ code: CODE }),
     onStop: () => void shutdown('stopAll'),
+    // "Restart Backend Now…": a handover at once, whatever runs (the shell asked first). Not under dev.sh.
+    onRestart: flags['no-parent'] ? undefined : () => void handOver('restart'),
     image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions ? sessions.resolve(sid) : sid, ref) : views.image(sessions ? sessions.resolve(sid) : sid, agent, ref),
-    onMessage,
+    // Nothing reaches the sessions once the daemon is stopping (a handover's new daemon takes over).
+    onMessage: (client, msg) => { if (!stopping) onMessage(client, msg); },
   });
 } catch (e) {
   lock.release();
@@ -248,12 +271,16 @@ try {
 
 let stopping = false;
 let idleTimer: NodeJS.Timeout | null = null;
+let updateTimer: NodeJS.Timeout | null = null;
+// daemon.log's stop line ("… Synopia backend: stop (update)") is also how the shell tells a
+// handover from a crash: it waits for the new daemon instead of starting one.
 async function shutdown(reason: string) {
   if (stopping) return;
   stopping = true;
   log('backend.stop', { reason });
   process.stderr.write(`${new Date().toISOString()} Synopia backend: stop (${reason})\n`);
   if (idleTimer) clearInterval(idleTimer);
+  if (updateTimer) clearInterval(updateTimer);
   removeDaemonInfo(stateDir, process.pid);
   fake?.stop();
   badge?.stop();
@@ -285,8 +312,8 @@ process.on('SIGUSR2', () => {
 // in slices, tail.ts), so the window isn't blank until every file is parsed. The daemon's stdout
 // is daemon.log, so the token goes only to daemon.json (0600); dev.sh reads it from stdout.
 if (flags['no-parent']) process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
-writeDaemonInfo(stateDir, { pid: process.pid, procStart: procStart(process.pid), port: (server as Server).port, token, version: VERSION });
-log('daemon.ready', { port: (server as Server).port });
+writeDaemonInfo(stateDir, { pid: process.pid, procStart: procStart(process.pid), port: (server as Server).port, token, version: VERSION, code: CODE });
+log('daemon.ready', { port: (server as Server).port, code: CODE });
 if (fake) fake.start(claudeDir);
 else sessions?.start();
 // The Dock badge (requirements R2.6): the shell polls GET /api/badge; each change is logged.
@@ -304,4 +331,51 @@ if (!flags['no-parent']) {
     rotateLog(daemonLog);
     if (idle.check({ pages: (server as Server).clients.size, busy: busy() }, Date.now())) void shutdown('idle');
   }, Math.max(50, Math.min(60_000, Math.floor(exitIdleMs / 10))));
+}
+
+// Updates: the daemon reads its checkout's code hash every 10 s (daemon.ts UpdateCheck). While
+// one is pending the page shows "Update ready: restarts when idle", and each second the daemon
+// checks whether anything runs; once nothing does, it hands over to a new daemon. None under dev.sh.
+let handingOver = false;
+async function handOver(reason: 'update' | 'restart') {
+  if (stopping || handingOver) return;
+  handingOver = true;
+  log('handover.start', { reason, code: CODE });
+  let next: Successor | null = null;
+  try {
+    next = startSuccessor(daemonLog);
+  } catch {
+    // Can't open daemon.log or spawn node: handled as a new daemon that didn't load.
+  }
+  const ok = next ? await next.loaded : false;
+  handingOver = false;
+  if (stopping) return next?.abort();
+  if (!ok || !next) { // the new code didn't load: this daemon stays (daemon.log has the new one's error)
+    log('handover.failed', { reason });
+    if (reason === 'update') {
+      updates.fail();
+      broadcast({ t: 'update', pending: false });
+    }
+    broadcast({ t: 'toast', text: "The new backend didn't start, so this one goes on. See daemon.log." });
+    return;
+  }
+  if (reason === 'update' && busy()) { // work started while the new daemon loaded: later
+    next.abort();
+    log('handover.deferred', {});
+    return;
+  }
+  void shutdown(reason);
+}
+function broadcast(msg: object) {
+  for (const c of (server as Server).clients) c.send(msg);
+}
+if (!flags['no-parent']) {
+  let tick = 0;
+  updateTimer = setInterval(() => {
+    if (++tick % Math.round(UPDATE_READ_MS / 1000) === 0 && updates.read(codeHash(backendDir))) {
+      log('update.pending', { pending: updates.pending });
+      broadcast({ t: 'update', pending: updates.pending });
+    }
+    if (updates.restartNow(busy())) void handOver('update');
+  }, 1000);
 }

@@ -598,6 +598,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 .side-foot .btn + .btn { margin-left: 5.5px; }
 .side-foot .btn.quiet { background: none; border-color: transparent; color: #9198A1; }
 .side-foot .btn.quiet:hover { background: #2D333B; color: #E6EDF3; }
+/* "Update ready: restarts when idle": the footer's quiet text (the prototype's #exported), on its own row above the buttons */
+.side-foot { flex-wrap: wrap; row-gap: 7px; }
+.side-foot .upd { flex: 1 0 100%; }
 .side-head h1 { color: #F0F6FC; }
 .summary { color: #9198A1; }
 .summary .r b { color: #FF7B72; } .summary .a b { color: #E3B341; } .summary .g b { color: #56D364; }
