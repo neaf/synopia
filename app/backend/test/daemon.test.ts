@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, statSync, openSync, closeSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, statSync, openSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
@@ -138,8 +138,8 @@ test('update rule: pending once a new hash holds for two reads; restart only whe
 });
 
 test('the new daemon gets the same flags and --after the old pid', () => {
-  assert.deepEqual(successorArgs(['/x/main.ts', '--state-dir', '/s', '--fake'], 7), ['/x/main.ts', '--state-dir', '/s', '--fake', '--after', '7']);
-  assert.deepEqual(successorArgs(['/x/main.ts', '--after', '5', '--fake', '--after=6'], 7), ['/x/main.ts', '--fake', '--after', '7']);
+  assert.deepEqual(successorArgs(['/x/main.ts', '--state-dir', '/s', '--dry-run'], 7), ['/x/main.ts', '--state-dir', '/s', '--dry-run', '--after', '7']);
+  assert.deepEqual(successorArgs(['/x/main.ts', '--after', '5', '--dry-run', '--after=6'], 7), ['/x/main.ts', '--dry-run', '--after', '7']);
 });
 
 test('daemon.log rotates past its limit by copy and truncate', () => {
@@ -179,8 +179,15 @@ async function hello(i: DaemonInfo): Promise<{ ws: WebSocket; hello: Record<stri
   }
 }
 
+// The scripted SDK over a copy of the fixture tree (it writes to the transcripts as a CLI would).
+function scriptedCopy(): string[] {
+  const claude = join(mkdtempSync(join(tmpdir(), 'synopia-claude-')), 'claude');
+  cpSync(FIXTURES, claude, { recursive: true });
+  return ['--claude-dir', claude, '--sdk-script', join(claude, 'sdk-script.json')];
+}
+
 function daemon(dir: string, extra: string[] = []) {
-  return spawn(process.execPath, [...NODE_FLAGS, MAIN, '--state-dir', dir, '--fake', '--claude-dir', FIXTURES, ...extra], { stdio: ['ignore', 'pipe', 'pipe'] });
+  return spawn(process.execPath, [...NODE_FLAGS, MAIN, '--state-dir', dir, ...scriptedCopy(), ...extra], { stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 test('the daemon writes daemon.json, answers ping and badge, and ends on POST /api/stop', async () => {
@@ -214,7 +221,7 @@ test('the daemon writes daemon.json, answers ping and badge, and ends on POST /a
 
 test('the daemon outlives a closed stdin and ends itself when idle', async () => {
   const dir = tmp();
-  // The real driver over an empty claude dir: nothing open, nothing running (the fake script's cards would hold it).
+  // The real driver over an empty claude dir: nothing open, nothing running (the fixture script's cards would hold it).
   const d = spawn(process.execPath, [...NODE_FLAGS, MAIN, '--state-dir', dir, '--claude-dir', tmp(), '--exit-idle-ms', '800'], { stdio: ['pipe', 'ignore', 'ignore'] });
   const guard = setTimeout(() => d.kill('SIGKILL'), 15_000);
   d.stdin!.end();

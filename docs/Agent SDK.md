@@ -184,3 +184,15 @@ Code: `sdk.ts` `writerOptions`, `oneShot`; `writer.ts` `write`. Test: `sdk.test.
 - The backend stays under 200 MB RSS with the 15 largest sessions open (309 MB of JSONL); first view under 0.7 s.
 
 Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB machine).
+
+## The scripted SDK
+
+`app/backend/dev/scripted-sdk.ts` implements the `Sdk` pair (`query`, `listSessions`) that `sdk.ts` consumes, from a script instead of a CLI. `main.ts --sdk-script <file>` passes it to `Sessions`, `Menus` and `Writer`; the page checks and `dev.sh --script` run on it, so they reach the real Sessions, status, writer and menu code with no model call. It reproduces these SDK facts:
+- A query is told apart by its options: `canUseTool` set is a session's process, `persistSession: false` the writer's call, neither the idle menu probe.
+- A turn starts with `system/init` (with `capabilities: ["interrupt_cancel_queued_v1"]`) and `session_state_changed: running`, and ends with `result`, then `session_state_changed: idle` ("State events need an undocumented flag").
+- A user message sent during a turn is queued. `interrupt({cancelQueued: true})` lists under `cancelled` the queued uuids not yet in the transcript, and the turn ends `result/error_during_execution` with `terminal_reason: aborted_streaming`.
+- A `shouldQuery: false` message joins the transcript and starts no turn ("Streaming input and control calls"). A message that starts a turn is written to the transcript as the CLI writes a prompt.
+- `supportedCommands` and `supportedModels` return the script's `menu` in the SDK's shapes, HTML-escaped hints included ("Command and model list shapes").
+- `listSessions()` gives one `SDKSessionInfo` per fixture transcript: `cwd` and `firstPrompt` from its records, `customTitle` and `summary` from its `custom-title` and `ai-title` records, `lastModified` from its mtime.
+
+The script format and what it seeds are in docs/Page checks.md, "The scripted SDK". Test: `app/backend/test/scripted-sdk.test.ts`.

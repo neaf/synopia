@@ -191,8 +191,11 @@ final class Backend {
     var args = [c.node, "--disable-warning=ExperimentalWarning", "--experimental-strip-types", c.backend]
     let env = ProcessInfo.processInfo.environment
     if let dir = env["SYNOPIA_STATE_DIR"], !dir.isEmpty { args += ["--state-dir", stateDir.path] }
-    // SYNOPIA_FAKE=<fixture claude dir> plays the fake driver over that tree (checks, no model calls).
-    if let dir = env["SYNOPIA_FAKE"], !dir.isEmpty { args += ["--fake", "--claude-dir", dir] }
+    // SYNOPIA_SDK_SCRIPT=<fixture claude dir> runs the scripted SDK over that tree and its
+    // sdk-script.json (checks, no model calls). The script writes to the tree: give it a copy.
+    if let dir = env["SYNOPIA_SDK_SCRIPT"], !dir.isEmpty {
+      args += ["--claude-dir", dir, "--sdk-script", (dir as NSString).appendingPathComponent("sdk-script.json")]
+    }
     // SYNOPIA_EXIT_IDLE_MS (checks only): a shorter idle exit than 30 min.
     if let ms = env["SYNOPIA_EXIT_IDLE_MS"], !ms.isEmpty { args += ["--exit-idle-ms", ms] }
 

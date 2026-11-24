@@ -53,7 +53,7 @@
       "title": "Run the demo build in the background and watch the log.",
       "name": "",
       "now": "",
-      "cwd": "",
+      "cwd": "~/dev/demo",
       "prs": [],
       "status": "waiting",
       "statusAt": "<time>",
@@ -252,224 +252,7 @@
     "others": []
   },
   "reviewed": [],
-  "menu": {
-    "~/dev/demo": {
-      "models": [
-        {
-          "value": "default",
-          "name": "Default",
-          "description": "Use the default model (currently Fixture Large (Default))",
-          "effort": [
-            "low",
-            "medium",
-            "high"
-          ]
-        },
-        {
-          "value": "fixture-large",
-          "name": "Fixture Large",
-          "description": "The larger fixture model",
-          "effort": [
-            "low",
-            "medium",
-            "high"
-          ]
-        },
-        {
-          "value": "fixture-small",
-          "name": "Fixture Small",
-          "description": "The fast fixture model",
-          "effort": []
-        }
-      ],
-      "commands": [
-        {
-          "name": "clear",
-          "description": "Clear the conversation",
-          "hint": ""
-        },
-        {
-          "name": "compact",
-          "description": "Summarise the conversation to free context",
-          "hint": "[instructions]"
-        },
-        {
-          "name": "model",
-          "description": "Choose the model for this session",
-          "hint": ""
-        },
-        {
-          "name": "plan",
-          "description": "Plan before changing files",
-          "hint": ""
-        },
-        {
-          "name": "pr-review",
-          "description": "Review a pull request",
-          "hint": "<number>"
-        },
-        {
-          "name": "release-notes",
-          "description": "Draft release notes from merged work",
-          "hint": ""
-        },
-        {
-          "name": "fixture:deploy",
-          "description": "Deploy the fixture app",
-          "hint": "<env>"
-        },
-        {
-          "name": "__internal",
-          "description": "Hidden from the menu",
-          "hint": ""
-        }
-      ]
-    },
-    "": {
-      "models": [
-        {
-          "value": "default",
-          "name": "Default",
-          "description": "Use the default model (currently Fixture Large (Default))",
-          "effort": [
-            "low",
-            "medium",
-            "high"
-          ]
-        },
-        {
-          "value": "fixture-large",
-          "name": "Fixture Large",
-          "description": "The larger fixture model",
-          "effort": [
-            "low",
-            "medium",
-            "high"
-          ]
-        },
-        {
-          "value": "fixture-small",
-          "name": "Fixture Small",
-          "description": "The fast fixture model",
-          "effort": []
-        }
-      ],
-      "commands": [
-        {
-          "name": "clear",
-          "description": "Clear the conversation",
-          "hint": ""
-        },
-        {
-          "name": "compact",
-          "description": "Summarise the conversation to free context",
-          "hint": "[instructions]"
-        },
-        {
-          "name": "model",
-          "description": "Choose the model for this session",
-          "hint": ""
-        },
-        {
-          "name": "plan",
-          "description": "Plan before changing files",
-          "hint": ""
-        },
-        {
-          "name": "pr-review",
-          "description": "Review a pull request",
-          "hint": "<number>"
-        },
-        {
-          "name": "release-notes",
-          "description": "Draft release notes from merged work",
-          "hint": ""
-        },
-        {
-          "name": "fixture:deploy",
-          "description": "Deploy the fixture app",
-          "hint": "<env>"
-        },
-        {
-          "name": "__internal",
-          "description": "Hidden from the menu",
-          "hint": ""
-        }
-      ]
-    },
-    "/tmp/fixture": {
-      "models": [
-        {
-          "value": "default",
-          "name": "Default",
-          "description": "Use the default model (currently Fixture Large (Default))",
-          "effort": [
-            "low",
-            "medium",
-            "high"
-          ]
-        },
-        {
-          "value": "fixture-large",
-          "name": "Fixture Large",
-          "description": "The larger fixture model",
-          "effort": [
-            "low",
-            "medium",
-            "high"
-          ]
-        },
-        {
-          "value": "fixture-small",
-          "name": "Fixture Small",
-          "description": "The fast fixture model",
-          "effort": []
-        }
-      ],
-      "commands": [
-        {
-          "name": "clear",
-          "description": "Clear the conversation",
-          "hint": ""
-        },
-        {
-          "name": "compact",
-          "description": "Summarise the conversation to free context",
-          "hint": "[instructions]"
-        },
-        {
-          "name": "model",
-          "description": "Choose the model for this session",
-          "hint": ""
-        },
-        {
-          "name": "plan",
-          "description": "Plan before changing files",
-          "hint": ""
-        },
-        {
-          "name": "pr-review",
-          "description": "Review a pull request",
-          "hint": "<number>"
-        },
-        {
-          "name": "release-notes",
-          "description": "Draft release notes from merged work",
-          "hint": ""
-        },
-        {
-          "name": "fixture:deploy",
-          "description": "Deploy the fixture app",
-          "hint": "<env>"
-        },
-        {
-          "name": "__internal",
-          "description": "Hidden from the menu",
-          "hint": ""
-        }
-      ]
-    }
-  },
+  "menu": {},
   "settings": {
     "writerModel": "haiku"
   },
@@ -479,6 +262,7 @@
       "request": {
         "id": "req-question-1",
         "kind": "question",
+        "since": "<time>",
         "toolName": "AskUserQuestion",
         "toolUseId": "toolu_ask2",
         "agentId": null,
@@ -520,7 +304,13 @@
             }
           ]
         },
-        "since": "<time>",
+        "cwd": "",
+        "description": "",
+        "title": "",
+        "decisionReason": "",
+        "defaultToNo": false,
+        "suppressAlwaysAllowRule": false,
+        "suggestions": [],
         "always": null
       }
     },
@@ -529,14 +319,20 @@
       "request": {
         "id": "req-permission-1",
         "kind": "permission",
+        "since": "<time>",
         "toolName": "Bash",
         "toolUseId": "toolu_fake_push1",
         "agentId": null,
-        "cwd": "~/dev/demo",
         "input": {
           "command": "git push origin demo-banner",
           "description": "Push the banner branch so CI runs the demo build on it."
         },
+        "cwd": "~/dev/demo",
+        "description": "",
+        "title": "",
+        "decisionReason": "",
+        "defaultToNo": false,
+        "suppressAlwaysAllowRule": false,
         "suggestions": [
           {
             "type": "addRules",
@@ -550,7 +346,6 @@
             "destination": "localSettings"
           }
         ],
-        "since": "<time>",
         "always": "Always allow Bash(git push:*) in this project (.claude/settings.local.json)."
       }
     },
@@ -559,13 +354,20 @@
       "request": {
         "id": "req-plan-1",
         "kind": "plan",
+        "since": "<time>",
         "toolName": "ExitPlanMode",
         "toolUseId": "toolu_fake_plan2",
         "agentId": null,
         "input": {
           "plan": "## Plan: ship the demo release\n\n1. **Tag.** Tag `v0.3.0` on main after the banner change merges.\n2. **Notes.** Use the release notes from the review subagent, with the teal banner first.\n3. **Ship.** Run `make demo-release` and check the demo site.\n\nThen tell you the release link."
         },
-        "since": "<time>",
+        "cwd": "/tmp/fixture",
+        "description": "",
+        "title": "",
+        "decisionReason": "",
+        "defaultToNo": false,
+        "suppressAlwaysAllowRule": false,
+        "suggestions": [],
         "always": null
       }
     }

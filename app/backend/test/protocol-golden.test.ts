@@ -6,14 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, connectPage, fixtureCopy } from './daemon-harness.ts';
+import { startDaemon, connectPage, fixtureCopy, scripted } from './daemon-harness.ts';
 import type { Msg } from './daemon-harness.ts';
 
 const GOLDEN = new URL('./golden/', import.meta.url).pathname;
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S4 = '44444444-0000-4000-8000-000000000004';
 const AGENT = 'aaaa0001', LATE = 'aaaa0005';
 
-// Clock-relative values (a status's or a request's start, set by the fake script's `ago`) and the temp
+// Clock-relative values (a status's or a request's start, set by the script's `ago` or the run's clock) and the temp
 // folder are the only parts that differ between runs.
 function normal(m: Msg, claudeDir: string): unknown {
   const walk = (v: unknown, key: string): unknown => {
@@ -39,11 +39,11 @@ function golden(name: string, got: unknown) {
 test('protocol: the fixture tree\'s frames equal the goldens', async (t) => {
   const claude = fixtureCopy();
   // one more scripted request, 4 s in: it arrives as a pending frame on the connected page
-  const scriptFile = join(claude, 'fake-script.json');
+  const scriptFile = join(claude, 'sdk-script.json');
   const script = JSON.parse(readFileSync(scriptFile, 'utf8'));
-  script.steps.push({ at: 4000, sid: S1, pending: { id: 'req-golden-1', kind: 'permission', toolName: 'Bash', toolUseId: 'toolu_golden1', agentId: null, input: { command: 'ls', description: 'List the folder.' } } });
+  script.sessions[S1].steps = [{ after: 4000, ask: { id: 'req-golden-1', tool: 'Bash', toolUseId: 'toolu_golden1', input: { command: 'ls', description: 'List the folder.' } } }];
   writeFileSync(scriptFile, JSON.stringify(script));
-  const d = await startDaemon(['--fake', '--claude-dir', claude, '--no-parent']);
+  const d = await startDaemon([...scripted(claude), '--no-parent']);
   t.after(() => d.stop());
   await new Promise((ok) => setTimeout(ok, 1500)); // the script's first steps (streams at 300 and 600 ms) have played
   const p = await connectPage(d.info);
@@ -57,9 +57,9 @@ test('protocol: the fixture tree\'s frames equal the goldens', async (t) => {
   p.send({ t: 'view', sid: S4, agent: AGENT });
   golden('items-agent', n(await p.next('items', (m) => m.agent === AGENT)));
 
-  // an answer: the fake clears the request and the session works
+  // an answer: Sessions settles the request and the session works
   let at = p.frames.length;
-  p.send({ t: 'answer', sid: S2, requestId: 'req-question-1', answer: {} });
+  p.send({ t: 'answer', sid: S2, requestId: 'req-question-1', answer: { questions: [{ picks: ['Yes (recommended)'] }, { picks: ['Home', 'Docs'] }] } });
   golden('pending-cleared', n(await p.next('pending', (m) => m.sid === S2, 5000, at)));
   golden('session', n(await p.next('session', (m) => m.id === S2, 5000, at)));
 

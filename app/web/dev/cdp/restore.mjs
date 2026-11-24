@@ -35,7 +35,7 @@ async function restart() {
   process.kill(pid, 'SIGTERM');
   for (let i = 0; i < 50; i++) { try { process.kill(pid, 0); await sleep(100); } catch { break; } }
   const port = new URL(url0).port;
-  execFileSync(path.join(here, 'backend.sh'), [port, stateDir, '--fake', '--claude-dir', claudeDir], { stdio: ['ignore', 'pipe', 'inherit'] });
+  execFileSync(path.join(here, 'backend.sh'), [port, stateDir, '--claude-dir', claudeDir, '--sdk-script', path.join(claudeDir, 'sdk-script.json')], { stdio: ['ignore', 'pipe', 'inherit'] });
   url = fs.readFileSync(path.join(stateDir, 'url'), 'utf8').trim();
 }
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEklEQVR4nGP4z8CAFTEMWwkAWi4/wW2YgD8AAAAASUVORK5CYII=';

@@ -11,18 +11,40 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
 | `app/web/dev/cdp/run.sh all` | every suite one after the other, a table of suite and result, failures under it; each suite's full output stays in the folder it prints |
 | `SYNOPIA_CDP_THEME=dark app/web/dev/cdp/run.sh <suite>` | the suite with the system appearance dark |
-| `app/dev.sh --fake` | the backend on the fixture tree below, for looking at the page by hand; prints the URL to open |
+| `app/dev.sh --script` | the backend on the scripted SDK over a copy of the fixture tree below (`--claude-dir <tree>` for another), for looking at the page by hand; prints the URL to open |
 | `app/web/dev/compare.sh` | screenshots of `prototype/app.html` and the port side by side in `/tmp/synopia-compare/shots/` |
 
 - Each `run.sh` run starts its own headless browser (a temp `--user-data-dir`, `--remote-debugging-port=0`, the port read from `DevToolsActivePort`) and its own backend (`--port 0`, the port read from the ready line) on a fresh state folder. A `trap` stops both on exit, Ctrl-C too, and only its own pids. So two runs, other agents' runs and an open app never share anything.
 - A run prints `N/M pass`, the failures and where its shots are. Its exit code is the result: 0 only when every check passed and at least one ran.
-- The backend under the suites is `--fake` over `app/backend/test/fixtures/claude/` and its `fake-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), a session with diffs (`#11111111`), and the menu (models and slash commands). `--claude-dir <dir>` points it at another tree with its own `fake-script.json`.
-- `states` and `rail` use the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `preview`, `extcard` and `steps` write their own tree into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`).
+- The backend under the suites runs the real Sessions, status, writer and menu code on the scripted SDK (below), over a copy of `app/backend/test/fixtures/claude/` in the run's state folder with its `sdk-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), an idle session with diffs whose process gives the menu (`#11111111`). `run.sh` passes `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`, and `--dry-run` for `preview`.
+- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `preview`, `extcard` and `steps` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
 - Page hooks: `?agent=<id>` opens a subagent, `&open=1` expands the last diff. `rail.mjs` and `restore.mjs` use them.
+
+## The scripted SDK
+
+`app/backend/dev/scripted-sdk.ts`, loaded by `main.ts` only with `--sdk-script <file>` (which needs `--claude-dir`). The SDK facts it reproduces are in docs/Agent SDK.md, "The scripted SDK". The script is `<tree>/sdk-script.json`; a missing file is an empty script.
+
+| Field | Meaning |
+|---|---|
+| `home` | `~` in paths shown (the fixtures use `/Users/fixture`) |
+| `menu` | `{commands, models}` in the SDK's `SlashCommand` and `ModelInfo` shapes: what a process and the menu probe answer |
+| `writer` | `{title, now}`: the writer's reply; without it every writer call fails and nothing is written |
+| `onSend` | steps for a message that starts a turn, in sessions with no `onSend` of their own |
+| `sessions.<id>.state` | seeded into a fresh state folder: `status` and `ago` (ms), `cwd` (the open entry's folder, else the records'), `endedAgo` (Synopia's last process for it ended then: a tool or ask it left reads as stopped) |
+| `sessions.<id>.start` | its process starts at load, with no message (`Sessions.startIdle`, test-only, no folder check), as a resumed session waiting for input |
+| `sessions.<id>.steps` | played once, when its first process starts in this daemon |
+| `sessions.<id>.onSend` | played on each message that starts a turn |
+
+A step has one or more of: `message` (an SDK message the query yields; `session_id` and `uuid` filled in), `ask` (a `canUseTool` call: `tool`, `input`, `id` the request id, `toolUseId`, `suggestions`, `agentId`; the next step waits for its answer), `append` (records written to the transcript), `send` (a message you send, through `Sessions.send`), plus `after` (ms after the step before) and `ago` (ms: the step plays in the past).
+- The clock: while a step with `ago` plays, Sessions' clock reads that much earlier, so a status, a card's `since` or a stale timer starts in the past. Steps play one at a time across sessions, each handled before the clock moves back.
+- Seeding: a state folder whose `state.json` has no `open` list gets every `projects/*/<id>.jsonl` of the tree in id order, each with the script's status, else "your turn" since its last record. Fields already there stay (titles.mjs writes `written` first). A restart on the same folder seeds nothing and plays the steps again.
+- Terminals: every `<tree>/sessions/<pid>.json` is a live Claude Code in a terminal that isn't Synopia's (`helpers.mjs` `terminal`); its process is never asked. A take-over's signal is logged as `scripted.kill` and the pretend CLI exits. Nothing real is signalled and no login shell runs.
+- What reads as whose: a session with its own process is `driven`; one a terminal holds, or whose turn or question the transcript alone shows (no process of Synopia's), is not (`status.ts` `detail.external`). A transcript turn left open with recent records reads as another process's: a "driven, idle" session of a check has `start: true`.
+- The script writes to the tree's transcripts as a CLI would, so `run.sh`, `dev.sh --script` and the backend tests run on a copy.
 
 ## Comparing with the prototype
 
-`compare.sh` starts `dev.sh --fake` on a temp state folder, builds `transcripts.js` and `menu.js` for a temp copy of `prototype/app.html` from the same fixtures (`build-proto-fixture.ts`, through the backend's reader and the page's `card.js`), and screenshots both at 1280 by 820 with reduced motion. States: waiting (question card), permission, plan, busy (subagent wave), diff, agent (subagent view). It never touches `prototype/transcripts.js`.
+`compare.sh` starts `dev.sh --script` on a temp state folder, builds `transcripts.js` and `menu.js` for a temp copy of `prototype/app.html` from the same fixtures (`build-proto-fixture.ts`: the backend's Views and Sessions on the scripted SDK in one process, and the page's `card.js`), and screenshots both at 1280 by 820 with reduced motion. States: waiting (question card), permission, plan, busy (subagent wave), diff, agent (subagent view). It never touches `prototype/transcripts.js`.
 
 Expected differences, all deliberate:
 - no "N open sessions" footer;
@@ -130,7 +152,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 - `daemon.test.ts` spawns the real `main.ts` with `--experimental-strip-types`. The restart test leaves a detached successor that the test must kill (232-268).
 - The contract tests run a real daemon through `test/daemon-harness.ts` (`startDaemon`, `connectPage`, `api`, `fixtureCopy`): `protocol-golden.test.ts` (the server's frames on the fixture tree against `test/golden/*.json`; `SYNOPIA_GOLDEN=update` rewrites them, then read the diff), `router.test.ts` (page frames and what they change), `shell-contract.test.ts` (what `Backend.swift` and `AppDelegate.swift` decode) and `handover.test.ts`.
 - `handover.test.ts` runs on a copy of `app/backend` whose `main.ts` each case replaces, and takes about 35 s: the 20 s successor timeout and two 10 s code-hash reads (`daemon.ts` `startSuccessor`, `UPDATE_READ_MS`) are fixed in the code. Its three cases run concurrently.
-- Under `--fake` an `answer` frame for any request id sets that session working for 3 s (`fake-driver.ts` `onMessage`); the handover test uses it to make work start on cue.
+- The handover test makes work start on cue with `send` frames: under the main fixture's script a message that starts a turn is worked on for 3 s (`sdk-script.json` `onSend`).
 
 ## Date-relative fixtures
 

@@ -1,0 +1,9 @@
+{
+  "about": "Script for the scripted SDK (app/backend/dev/scripted-sdk.ts) over the rail fixture: a session whose subagents started their own background shells and monitors (R7.1), working for a minute. Made up. Run: app/dev.sh --script --claude-dir app/backend/test/fixtures/claude-rail, or app/web/dev/cdp/run.sh rail.",
+  "home": "/Users/fixture",
+  "sessions": {
+    "66666666-0000-4000-8000-000000000006": { "start": true, "steps": [
+      { "ago": 60000, "message": { "type": "system", "subtype": "session_state_changed", "state": "running" } }
+    ] }
+  }
+}

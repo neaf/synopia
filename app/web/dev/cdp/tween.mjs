@@ -1,4 +1,4 @@
-// Sidebar sub-line tweens (R8.1, R4.3, R4.4), on the fake driver. Puts two sessions in a group (so the guides
+// Sidebar sub-line tweens (R8.1, R4.3, R4.4), on the scripted SDK. Puts two sessions in a group (so the guides
 // show), then adds and removes a running background shell and a "to review" subagent on the first one, and
 // samples every frame (requestAnimationFrame) while the sidebar re-renders every 40 ms. Asserts: coming, the
 // height opens first and the line stays transparent until it is full, then it fades in; going, the line fades

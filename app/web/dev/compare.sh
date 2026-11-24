@@ -1,7 +1,7 @@
 #!/bin/sh
 # Screenshots of the prototype and the port in the same states, for comparing by eye.
 # Usage: app/web/dev/compare.sh [out-dir]   (default /tmp/synopia-compare)
-# The port runs on `app/dev.sh --fake` (the backend fixture tree and its fake script) with a temp state folder.
+# The port runs on `app/dev.sh --script` (the scripted SDK over a copy of the backend fixture tree) with a temp state folder.
 # The prototype gets the same data as transcripts.js and menu.js, built by build-proto-fixture.ts in a temp folder.
 # It never reads or writes prototype/transcripts.js.
 set -eu
@@ -20,7 +20,7 @@ cp "$ROOT/prototype/app.html" "$OUT/proto/prototype/app.html"
 cp -R "$WEB/icon" "$OUT/proto/app/web/icon" # app.html links ../app/web/icon
 node --experimental-strip-types --disable-warning=ExperimentalWarning "$DEV/build-proto-fixture.ts" "$FIXTURE" "$OUT/proto/prototype" >/dev/null
 
-SYNOPIA_DEV_PORT=$PORT SYNOPIA_DEV_STATE="$OUT/state" "$APP/dev.sh" --fake >"$OUT/backend.out" 2>&1 &
+SYNOPIA_DEV_PORT=$PORT SYNOPIA_DEV_STATE="$OUT/state" "$APP/dev.sh" --script >"$OUT/backend.out" 2>&1 &
 trap 'pkill -f -- "--state-dir $OUT/state" 2>/dev/null || true' EXIT
 i=0
 until grep -q "Open in Chrome" "$OUT/backend.out" 2>/dev/null; do
@@ -28,7 +28,7 @@ until grep -q "Open in Chrome" "$OUT/backend.out" 2>/dev/null; do
   sleep 0.1
 done
 URL=$(sed -n 's/^Open in Chrome: //p' "$OUT/backend.out")
-sleep 1 # the fake script's last step is at 600 ms
+sleep 1 # the script's last step at load plays 600 ms in
 
 shot() { # name url
   prof=$(mktemp -d)

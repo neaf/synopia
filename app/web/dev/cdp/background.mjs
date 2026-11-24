@@ -1,4 +1,4 @@
-// b, b (R9): send the running foreground steps to the background, on a made-up fixture with the fake driver.
+// b, b (R9): send the running foreground steps to the background, on a made-up fixture with the scripted SDK.
 // usage: node background.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node background.mjs <url> <state-dir> <claude-dir>
 // Checks: the first b marks the steps that can go (a foreground Bash, a foreground Agent; not a background
@@ -7,10 +7,10 @@
 // doesn't drive; b types in insert mode. Writes background-asking.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, fresh, keyTable, spySent } from './helpers.mjs';
+import { records, fresh, keyTable, spySent, writeScript, running } from './helpers.mjs';
 
-const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: the fake driver gives it a status
-const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its status comes from the transcript
+const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: Synopia's process runs its turn
+const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its turn runs in another process (the transcript)
 const ts = fresh; // fresh: the turn reads running
 const { rec, you, tool } = records('/tmp/synopia-background');
 
@@ -26,13 +26,9 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${B}.jsonl`),
     you(B, 'b-u1', 0, 'Run the slow tests.')
     + tool(B, 'b-a1', 1, 'toolu_bother', 'Bash', { command: 'sleep 60', description: 'Run the slow tests' }));
-  fs.writeFileSync(path.join(process.argv[3], 'fake-script.json'), JSON.stringify({ about: 'background.mjs: made up', steps: [
-    { at: 0, sid: A, status: 'busy', ago: 60000 },
-    // the CLI registers a foreground step as a task about 2 s in: only then can it go
-    { at: 0, sid: A, task: { toolUseId: 'toolu_bsleep', taskId: 'bsl1' } },
-    { at: 0, sid: A, task: { toolUseId: 'toolu_bfg', taskId: 'abfg1' } },
-    { at: 0, sid: B, task: { toolUseId: 'toolu_bother', taskId: 'bot1' } },
-  ] }));
+  const task = (tool_use_id, task_id) => ({ message: { type: 'system', subtype: 'task_started', tool_use_id, task_id, description: 'made-up' } });
+  // the CLI registers a foreground step as a task about 2 s in: only then can it go
+  writeScript(process.argv[3], 'background.mjs: made up', { [A]: { start: true, steps: [running(60000), task('toolu_bsleep', 'bsl1'), task('toolu_bfg', 'abfg1')] } });
   process.exit(0);
 }
 
@@ -106,10 +102,11 @@ await K.i(); await K.b();
 check('insert mode: b types', (await ev('document.getElementById("msg").value')) === 'b' && (await asking()) === null);
 await ev('document.getElementById("msg").value = ""'); await K.esc();
 
-// a session Synopia doesn't drive: the first b does nothing
+// a session Synopia doesn't drive: the first b does nothing. Its Bash runs in the other process's
+// foreground (no SDK task of Synopia's marks it `fg`: task_started reaches only the process that runs it)
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`); await ev('document.activeElement.blur()');
-check('the other session: not driven, its Bash runs in the foreground', await c.until(`(s => s?.id === '${B}' && s.driven === false && s.items.some(i => i.id === 'toolu_bother' && i.fg && i.state === 'running'))(__synopia.cur())`),
-  JSON.stringify(await ev(`(s => ({ current: __synopia.current(), driven: s?.driven, items: s?.items.map(i => [i.id, i.fg, i.state]) }))(__synopia.cur())`)));
+check('the other session: not driven, its Bash runs in the foreground', await c.until(`(s => s?.id === '${B}' && s.driven === false && s.items.some(i => i.id === 'toolu_bother' && i.state === 'running') && !s.background.some(b => b.toolUseId === 'toolu_bother'))(__synopia.cur())`),
+  JSON.stringify(await ev(`(s => ({ current: __synopia.current(), driven: s?.driven, items: s?.items.map(i => [i.id, i.fg, i.state]), background: s?.background.map(b => b.toolUseId) }))(__synopia.cur())`)));
 await K.b();
 check('not driven: b asks nothing and sends nothing', (await asking()) === null && (await marked()).length === 0 && (await sent()).length === 1);
 await sleep(50);

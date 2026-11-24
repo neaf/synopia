@@ -89,3 +89,18 @@ export function records(cwd, ts = fresh) {
     tool: (sid, uuid, s, id, name, input) => reply(sid, uuid, s, [{ type: 'tool_use', id, name, input }]),
   };
 }
+
+// The scripted SDK's script for a check's tree: <claude-dir>/sdk-script.json (app/backend/dev/scripted-sdk.ts).
+export function writeScript(claudeDir, about, sessions) {
+  fs.writeFileSync(`${claudeDir}/sdk-script.json`, JSON.stringify({ about, sessions }));
+}
+// A step: a turn of Synopia's process that started `ago` ms before the backend.
+export const running = (ago) => ({ ago, message: { type: 'system', subtype: 'session_state_changed', state: 'running' } });
+// The pid file of a Claude Code in a terminal that holds `sid` (docs/Claude Code terminals.md). Under the
+// scripted SDK every pid file in the tree is a live CLI that isn't Synopia's; no real process is asked.
+export function terminal(claudeDir, pid, sid, cwd, status = 'idle') {
+  fs.mkdirSync(`${claudeDir}/sessions`, { recursive: true });
+  fs.writeFileSync(`${claudeDir}/sessions/${pid}.json`, JSON.stringify({
+    pid, sessionId: sid, cwd, procStart: 'Mon Nov 23 09:00:00 2026', kind: 'interactive', entrypoint: 'cli', status, statusUpdatedAt: Date.now(),
+  }));
+}

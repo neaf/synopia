@@ -1,18 +1,18 @@
-// The page's frames through a real daemon's socket (main.ts onMessage), on the fixture tree under --fake:
+// The page's frames through a real daemon's socket (main.ts onMessage), on the fixture tree under the scripted SDK:
 // what each one changes, as the next hello or a reply shows it, and the log line of one it ignores.
 // A characterization of the dispatch as it is.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startDaemon, connectPage, waitFor, FIXTURES, tmp } from './daemon-harness.ts';
+import { startDaemon, connectPage, waitFor, scripted, tmp } from './daemon-harness.ts';
 import type { Daemon } from './daemon-harness.ts';
 
 const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002', S3 = '33333333-0000-4000-8000-000000000003';
 const S4 = '44444444-0000-4000-8000-000000000004', S5 = '55555555-0000-4000-8000-000000000005';
 
 let d: Daemon;
-test.before(async () => { d = await startDaemon(['--fake', '--claude-dir', FIXTURES, '--no-parent', '--dry-open']); });
+test.before(async () => { d = await startDaemon([...scripted(), '--no-parent', '--dry-run']); });
 test.after(() => d.stop());
 
 // frames from one page, then what a second page's hello holds

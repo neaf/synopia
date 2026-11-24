@@ -1,19 +1,17 @@
-// x, x closes the session (R3.6, R9), on a made-up fixture with the fake driver.
+// x, x closes the session (R3.6, R9), on a made-up fixture with the scripted SDK.
 // usage: node close.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node close.mjs <url> <state-dir> <claude-dir>
 // Checks: no Close button; the first x turns the message box into the prompt, with what will stop, or the
 // "Remove it from Synopia?" prompt for a session another process drives; another key, a click and a session
 // switch cancel it; Esc and x replace each other's prompt; x types in insert mode; the second x sends
 // `close {sid}` with no dialog, the row goes, and the Open list brings it back in its place in its group.
-// The fake driver doesn't close or list sessions: the check answers `close`, `listRecent` and `openSession`
-// through __synopia.inject, as the real backend does (`removed`, `recent`, `session`). Writes close-asking.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, fresh, line, keyTable, spySent, inject, serverSend } from './helpers.mjs';
+import { records, fresh, line, keyTable, spySent, serverSend, writeScript, running, terminal } from './helpers.mjs';
 
 const A = 'c1c1c1c1-0000-4000-8000-0000000000c1'; // driven, working: a turn, two subagents and a shell
 const C = 'c1c1c1c1-0000-4000-8000-0000000000c2'; // driven, idle
-const B = 'c1c1c1c1-0000-4000-8000-0000000000c3'; // not driven: its status comes from the transcript
+const B = 'c1c1c1c1-0000-4000-8000-0000000000c3'; // not driven: a terminal's Claude Code holds it
 const ts = fresh;
 const { rec, you, said } = records('/tmp/synopia-close');
 const result = (sid, uuid, s, id, toolUseResult, content) => rec(sid, { type: 'user', uuid, timestamp: ts(s), toolUseResult, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content }] } });
@@ -36,10 +34,8 @@ if (process.argv[2] === 'make') {
   }
   fs.writeFileSync(path.join(dir, `${C}.jsonl`), you(C, 'c-u1', 0, 'Rename the demo notes.') + said(C, 'c-a1', 1, 'Renamed them.'));
   fs.writeFileSync(path.join(dir, `${B}.jsonl`), you(B, 'b-u1', 0, 'Read the demo notes.') + said(B, 'b-a1', 1, 'Read them.'));
-  fs.writeFileSync(path.join(process.argv[3], 'fake-script.json'), JSON.stringify({ about: 'close.mjs: made up', steps: [
-    { at: 0, sid: A, status: 'busy', ago: 60000 },
-    { at: 0, sid: C, status: 'idle', ago: 60000 },
-  ] }));
+  writeScript(process.argv[3], 'close.mjs: made up', { [A]: { start: true, steps: [running(60000)] }, [C]: { start: true, state: { status: 'idle', ago: 60000 } } });
+  terminal(process.argv[3], 90003, B, '/tmp/synopia-close'); // B: a terminal's Claude Code holds it
   process.exit(0);
 }
 
@@ -53,12 +49,6 @@ const dialogs = [];
 c.onEvent((m) => { if (m.method === 'Page.javascriptDialogOpening') { dialogs.push(m.params.type); c.cdp('Page.handleJavaScriptDialog', { accept: false }); } });
 await c.load(`${url}#${A.slice(0, 8)}`, `(s => s?.id === '${A}' && s.driven === true && s.agents.length === 2)(__synopia.cur()) && __synopia.data().filter(s => s.id === '${B}' || s.id === '${C}').length === 2`);
 const sent = await spySent(c);
-// the backend's side of close and the Open list, as the real one answers (the fake driver doesn't):
-// wait for the frame the page sends, then inject the reply made from it
-const reply = async (t, answer) => {
-  if (!(await c.until(`__synopia.sent('${t}').length > 0`))) return check(`the page sends ${t}`, false);
-  await inject(c, answer((await sent(t)).at(-1)));
-};
 const K = keyTable(key);
 const asking = () => ev(`(() => { const p = document.querySelector('.composer.asking .int-ask'); return p && getComputedStyle(p).display !== 'none' ? p.textContent : null; })()`);
 const closes = () => sent('close');
@@ -115,21 +105,18 @@ check('cancelled, nothing sent', (await asking()) === null && (await closes()).l
 await ev(`document.querySelector('.row[data-id="${A}"]').click()`); await ev('document.activeElement.blur()');
 await c.until(`__synopia.current() === '${A}' && !!__synopia.mounted()`);
 await ev(`window.confirm = () => { window.__confirmed = true; return true; }`);
-const { items, ...saved } = await ev('__synopia.cur()'); // what the backend would send when it opens again
+const { title } = await ev('__synopia.cur()'); // the Open list names it so
 await K.x(); await K.x();
 const s1 = await closes();
 check('second x: sends close {sid}', s1.length === 1 && s1[0].sid === A, JSON.stringify(s1));
 check('no confirm dialog', dialogs.length === 0 && (await ev('window.__confirmed === undefined')), JSON.stringify(dialogs));
-await reply('close', (m) => ({ t: 'removed', id: m.sid }));
 check('the row is gone from the sidebar and another session shows', await c.until(`!document.querySelector('.row[data-id="${A}"]') && !!__synopia.current() && __synopia.current() !== '${A}'`));
 check('the group keeps its place for it', JSON.stringify(await group()) === JSON.stringify([C, B]) && (await ev(`__synopia.layout().groups[0].ids.includes('${A}')`)));
 
 // back through the Open list, in its place in its group
 await ev(`document.getElementById('open').click()`);
-await reply('listRecent', (m) => ({ t: 'recent', filter: m.filter, sessions: [{ id: saved.id, title: saved.title, cwd: saved.cwd, lastModified: Date.now() }] }));
-check('the Open list lists it', await c.until(`[...document.querySelectorAll('#ol-list .ol-it .n')].some(n => n.textContent === ${JSON.stringify(saved.title)})`));
+check('the Open list lists it', await c.until(`[...document.querySelectorAll('#ol-list .ol-it .n')].some(n => n.textContent === ${JSON.stringify(title)})`));
 await key('Enter', { code: 'Enter', vk: 13 });
-await reply('openSession', () => ({ t: 'session', ...saved }));
 check('opening it shows it', await c.until(`__synopia.current() === '${A}' && !!__synopia.mounted()`));
 check('it is back between the same two sessions', JSON.stringify(await group()) === JSON.stringify([C, A, B]), JSON.stringify(await group()));
 await sleep(50);

@@ -1,4 +1,4 @@
-// Title changes in the transcript (R5.12c), on a made-up fixture with the fake driver.
+// Title changes in the transcript (R5.12c), on a made-up fixture with the scripted SDK.
 // usage: node titles.mjs make <claude-dir>   writes the fixture and a state.json beside it (run.sh does this first)
 //        node titles.mjs <url> <state-dir> <claude-dir>
 // The fixture has two ai-title records, a written title (state.json history) equal to the second but
@@ -9,7 +9,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { records } from './helpers.mjs';
+import { records, writeScript } from './helpers.mjs';
 
 const S = 'd1d1d1d1-0000-4000-8000-0000000000d1';
 const t0 = Date.now() - 30 * 60_000;
@@ -32,7 +32,7 @@ if (process.argv[2] === 'make') {
     + rec({ type: 'custom-title', customTitle: 'Demo notes, links checked' })
     + you('u3', 60, 'Thanks.')
     + said('a3', 64, 'Done.') + done(64));
-  fs.writeFileSync(path.join(claudeDir, 'fake-script.json'), JSON.stringify({ about: 'titles.mjs: made up', steps: [{ at: 0, sid: S, status: 'idle', ago: 60000 }] }));
+  writeScript(claudeDir, 'titles.mjs: made up', { [S]: { state: { status: 'idle', ago: 60000 } } });
   // the writer's history: the second title again, case and spaces aside, during the second turn
   fs.writeFileSync(path.join(path.dirname(claudeDir), 'state.json'), JSON.stringify({ version: 1, written: { [S]: { title: 'draft and check the  demo notes', now: 'Your turn', at: t0 + 25_000, history: [{ title: 'draft and check the  demo notes', at: t0 + 25_000 }] } } }));
   process.exit(0);
@@ -49,7 +49,7 @@ async function restart() {
   const pid = +fs.readFileSync(path.join(stateDir, 'pid'), 'utf8');
   process.kill(pid, 'SIGTERM');
   for (let i = 0; i < 50; i++) { try { process.kill(pid, 0); await sleep(100); } catch { break; } }
-  execFileSync(path.join(here, 'backend.sh'), [new URL(url0).port, stateDir, '--fake', '--claude-dir', claudeDir], { stdio: ['ignore', 'pipe', 'inherit'] });
+  execFileSync(path.join(here, 'backend.sh'), [new URL(url0).port, stateDir, '--claude-dir', claudeDir, '--sdk-script', path.join(claudeDir, 'sdk-script.json')], { stdio: ['ignore', 'pipe', 'inherit'] });
   url = fs.readFileSync(path.join(stateDir, 'url'), 'utf8').trim();
 }
 const WANT = ['Retitled “Draft and check the demo notes”', 'Retitled “Demo notes, links checked” by you'];

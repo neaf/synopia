@@ -1,4 +1,4 @@
-// Motion and mark geometry (R8.1, R8.2, R8.5, R8.6), on the fake driver.
+// Motion and mark geometry (R8.1, R8.2, R8.5, R8.6), on the scripted SDK.
 // Draws every mark in marks.js's table in the three colour sets (light panel, dark sidebar, open row), then:
 // every running mark (CSS animations, anything in a mark, the running bar, the spinner) is linear, infinite, never alternates and never animates opacity; it moves only
 // shapes; the sidebar sub-line tween (R8.1) is one run, height then a linear fade, and none with reduced motion; with prefers-reduced-motion: reduce (CDP emulation) nothing

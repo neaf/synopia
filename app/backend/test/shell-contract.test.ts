@@ -8,12 +8,12 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { once } from 'node:events';
-import { startDaemon, api, FIXTURES } from './daemon-harness.ts';
+import { startDaemon, api, scripted } from './daemon-harness.ts';
 
 const isInt = (v: unknown) => typeof v === 'number' && Number.isInteger(v);
 
 test('shell contract: discovery, ping, badge, quit-check and stop on a --no-parent daemon', async (t) => {
-  const d = await startDaemon(['--fake', '--claude-dir', FIXTURES, '--no-parent']);
+  const d = await startDaemon([...scripted(), '--no-parent']);
   t.after(() => d.stop());
   let out = '', err = '';
   d.child.stdout!.on('data', (c) => { out += c; });
@@ -43,13 +43,15 @@ test('shell contract: discovery, ping, badge, quit-check and stop on a --no-pare
   const b = await badge.json() as Record<string, unknown>;
   assert.ok(isInt(b.badge) && (b.badge as number) >= 0, JSON.stringify(b));
 
-  // quit-check: running [String], background [{kind: String}] (empty here: --fake runs no process)
+  // quit-check: running [String], background [{kind: String}]: the script runs four turns (three wait on cards), a
+  // monitor in 33333333 and two subagents in 44444444
   const qc = await api(i, 'quit-check');
   assert.equal(qc.status, 200);
   const q = await qc.json() as { running: unknown[]; background: { kind: unknown }[] };
   assert.ok(Array.isArray(q.running) && q.running.every((x) => typeof x === 'string'));
   assert.ok(Array.isArray(q.background) && q.background.every((x) => typeof x.kind === 'string'));
-  assert.deepEqual(q, { running: [], background: [] });
+  assert.deepEqual(q.running, ['22222222-0000-4000-8000-000000000002', '33333333-0000-4000-8000-000000000003', '44444444-0000-4000-8000-000000000004', '55555555-0000-4000-8000-000000000005']);
+  assert.deepEqual(q.background.map((x) => x.kind), ['monitor', 'subagent', 'subagent']);
 
   // what the shell gets as "no answer": a wrong token, GET on stop, restart under --no-parent
   assert.equal((await fetch(`http://127.0.0.1:${i.port}/api/ping?token=${'0'.repeat(64)}`)).status, 403);

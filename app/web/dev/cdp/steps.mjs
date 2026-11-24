@@ -4,14 +4,14 @@
 // Checks: a step inside "2 Bash commands, …" opens with a click to its command and output, a long
 // result shows 20 lines and "Show all 32 lines", which loads the rest from the server (`toolOutput`),
 // a live update of the block keeps both, a click closes it, and a single inline step opens too.
-// A running Bash step of a driven session (the fake's tool_progress: 42 s) expands from the live line
+// A running Bash step of a driven session (the SDK's tool_progress: 42 s) expands from the live line
 // and from its own line, one open state: the command, a ticking "Running, 42s" and "Output shows when
 // it finishes"; it stays open through a redraw and a reload, and turns into the finished view in place
 // when its result lands. A session Synopia doesn't drive shows the command and "Running".
 // Writes steps.png and steps-running.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, fresh, shot } from './helpers.mjs';
+import { records, fresh, shot, running } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 
 const S = 'b7b7b7b7-0000-4000-8000-0000000000c1'; // driven, its Bash runs
@@ -28,9 +28,10 @@ if (process.argv[2] === 'make') {
   fs.mkdirSync(path.dirname(fileOf(dst, S)), { recursive: true });
   fs.writeFileSync(fileOf(dst, S), you(S, 's-u1', 0, 'Check the ability builder.') + bashRec(S, 's-a1', 2, 'toolu_live1', CMD, DESC));
   fs.writeFileSync(fileOf(dst, N), you(N, 'n-u1', 0, 'Wait for the demo build.') + bashRec(N, 'n-a1', 2, 'toolu_ext1', 'sleep 30; echo built', 'Wait for the build'));
-  const script = JSON.parse(fs.readFileSync(path.join(dst, 'fake-script.json'), 'utf8'));
-  script.steps.push({ at: 0, sid: S, status: 'busy', ago: 58000 }, { at: 0, sid: S, progress: { toolUseId: 'toolu_live1', elapsed: 42 } });
-  fs.writeFileSync(path.join(dst, 'fake-script.json'), JSON.stringify(script));
+  // S's turn runs in Synopia's process, its Bash 42 s in (the SDK's tool_progress); N's in another process
+  const script = JSON.parse(fs.readFileSync(path.join(dst, 'sdk-script.json'), 'utf8'));
+  script.sessions[S] = { start: true, steps: [running(58000), { message: { type: 'tool_progress', tool_use_id: 'toolu_live1', tool_name: 'Bash', parent_tool_use_id: null, elapsed_time_seconds: 42 } }] };
+  fs.writeFileSync(path.join(dst, 'sdk-script.json'), JSON.stringify(script));
   process.exit(0);
 }
 

@@ -26,11 +26,17 @@ export async function waitFor<T>(get: () => T | null | undefined | false, ms = 1
   }
 }
 
-// A copy of a fixture tree, so a test can change its files and its fake script.
+// A copy of a fixture tree, so a test can change its files and its script.
 export function fixtureCopy(src = FIXTURES): string {
   const dir = join(tmp('claude'), 'claude');
   cpSync(src, dir, { recursive: true });
   return dir;
+}
+
+// The flags for the scripted SDK over a claude tree (dev/scripted-sdk.ts): a copy of the fixture tree
+// unless given, since the script writes to the transcripts as a CLI would.
+export function scripted(claude = fixtureCopy()): string[] {
+  return ['--claude-dir', claude, '--sdk-script', join(claude, 'sdk-script.json')];
 }
 
 export type Daemon = { child: ChildProcess; info: DaemonInfo; stateDir: string; log: () => string; stop: () => Promise<void> };

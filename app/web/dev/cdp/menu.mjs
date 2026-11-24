@@ -1,5 +1,5 @@
 // S5-3 and S5-4 on the page: the slash menu (R5.14) and the model picker with its effort row (R3.7),
-// with real key events, on the fake driver's menu. Writes menu-picker.png in the state folder.
+// with real key events, on the scripted SDK's menu. Writes menu-picker.png in the state folder.
 // usage: run.sh menu (or node menu.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
 import { keyTable } from './helpers.mjs';

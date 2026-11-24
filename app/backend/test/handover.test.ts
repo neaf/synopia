@@ -7,18 +7,19 @@ import assert from 'node:assert/strict';
 import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readDaemonInfo } from '../src/daemon.ts';
-import { startDaemon, connectPage, waitFor, fixtureCopy, api, tmp } from './daemon-harness.ts';
+import { startDaemon, connectPage, waitFor, fixtureCopy, scripted, api, tmp } from './daemon-harness.ts';
 import type { Daemon } from './daemon-harness.ts';
 
 const BACKEND = new URL('..', import.meta.url).pathname;
 const WEB = new URL('../../web', import.meta.url).pathname;
+const S1 = '11111111-0000-4000-8000-000000000001', S2 = '22222222-0000-4000-8000-000000000002';
 const TOAST = "The new backend didn't start, so this one goes on. See daemon.log.";
 
-// app/backend/{src, package.json, package-lock.json, node_modules} and app/web, as main.ts finds them
+// app/backend/{src, dev, package.json, package-lock.json, node_modules} and app/web, as main.ts finds them
 function backendCopy(): { main: string; dir: string } {
   const app = join(tmp('handover'), 'app'), dir = join(app, 'backend');
   mkdirSync(dir, { recursive: true });
-  cpSync(join(BACKEND, 'src'), join(dir, 'src'), { recursive: true });
+  for (const d of ['src', 'dev']) cpSync(join(BACKEND, d), join(dir, d), { recursive: true });
   for (const f of ['package.json', 'package-lock.json']) cpSync(join(BACKEND, f), join(dir, f));
   symlinkSync(join(BACKEND, 'node_modules'), join(dir, 'node_modules'));
   symlinkSync(WEB, join(app, 'web'));
@@ -82,9 +83,14 @@ test('handover', { concurrency: true }, async (t) => {
 
   runs.push(t.test('update: pending while work runs, put off when work starts as the new daemon loads, then handed over', async () => {
     const { main } = backendCopy();
-    // the fixture's script leaves three cards waiting: the daemon is busy until they are answered
+    // the fixture with two scripted sessions: S1's process waits idle, S2's waits on a question card,
+    // so the daemon is busy until it is answered; a message that starts a turn is worked on for 3 s
     const claude = fixtureCopy();
-    const d = await daemonOf(main, ['--fake', '--claude-dir', claude]);
+    const scriptFile = join(claude, 'sdk-script.json');
+    const script = JSON.parse(readFileSync(scriptFile, 'utf8'));
+    script.sessions = { [S1]: { start: true }, [S2]: script.sessions[S2] };
+    writeFileSync(scriptFile, JSON.stringify(script));
+    const d = await daemonOf(main, scripted(claude));
     let next: number | undefined;
     try {
       const page = await connectPage(d.info);
@@ -94,18 +100,12 @@ test('handover', { concurrency: true }, async (t) => {
       // the same new hash on two 10 s reads: pending, and the page says so
       assert.equal((await page.next('update', (m) => m.pending === true, 30_000)).pending, true);
       await new Promise((ok) => setTimeout(ok, 1500));
-      assert.doesNotMatch(d.log(), /handover\.start/, 'not while cards wait');
-      // answered: the fake works 3 s on each, then nothing runs and the handover starts (an answer to
-      // nothing ends the script's working session the same way)
-      for (const [sid, id] of [['22222222-0000-4000-8000-000000000002', 'req-question-1'], ['33333333-0000-4000-8000-000000000003', 'req-permission-1'],
-        ['55555555-0000-4000-8000-000000000005', 'req-plan-1'], ['44444444-0000-4000-8000-000000000004', 'none']]) {
-        page.send({ t: 'answer', sid, requestId: id, answer: {} });
-      }
+      assert.doesNotMatch(d.log(), /handover\.start/, 'not while a card waits');
+      // answered: the script works 3 s, then nothing runs and the handover starts
+      page.send({ t: 'answer', sid: S2, requestId: 'req-question-1', answer: { questions: [{ picks: ['No'] }, { picks: ['Blog'] }] } });
       await waitFor(() => /handover\.start reason=update/.test(d.log()), 15_000, 'handover.start');
-      // work starts while the new daemon loads (answers keep sessions working 3 s each): put off
-      const sids = ['11111111-0000-4000-8000-000000000001', '22222222-0000-4000-8000-000000000002', '33333333-0000-4000-8000-000000000003', '44444444-0000-4000-8000-000000000004', '55555555-0000-4000-8000-000000000005'];
-      let k = 0;
-      const work = setInterval(() => page.send({ t: 'answer', sid: sids[k++ % sids.length], requestId: 'none', answer: {} }), 300);
+      // work starts while the new daemon loads (a message to S1 every 300 ms, each turn 3 s): put off
+      const work = setInterval(() => page.send({ t: 'send', sid: S1, text: 'One more pass over the demo notes.' }), 300);
       try { await waitFor(() => /handover\.deferred/.test(d.log()), 20_000, 'handover.deferred'); } finally { clearInterval(work); }
       assert.equal(d.child.exitCode, null, 'the old daemon goes on');
       assert.equal(readDaemonInfo(d.stateDir)?.pid, d.info.pid);

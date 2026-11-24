@@ -1,4 +1,4 @@
-// Messages sent while a turn runs show pending (R5.5), on a made-up fixture with the fake driver.
+// Messages sent while a turn runs show pending (R5.5), on a made-up fixture with the scripted SDK.
 // usage: node queued.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node queued.mjs <url> <state-dir> <claude-dir>
 // Checks: two messages sent during a turn show in order as dimmed prompt bands with "Queued" and the
@@ -8,7 +8,7 @@
 // A message sent while nothing runs isn't queued. Writes queued-two.png and queued-landed.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records } from './helpers.mjs';
+import { records, writeScript, running } from './helpers.mjs';
 
 const A = 'a9a9a9a9-0000-4000-8000-0000000000a1'; // driven, working
 const B = 'a9a9a9a9-0000-4000-8000-0000000000b2'; // driven, idle
@@ -23,10 +23,8 @@ if (process.argv[2] === 'make') {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${A}.jsonl`), you(A, 'q-u1', 0, 'Run the demo tests.') + said(A, 'q-a1', 1, 'Running them now.') + tool(A, 'q-a2', 2, 'toolu_q1', 'npm test'));
   fs.writeFileSync(path.join(dir, `${B}.jsonl`), you(B, 'b-u1', 0, 'Read the demo notes.') + said(B, 'b-a1', 1, 'Read them.'));
-  fs.writeFileSync(path.join(process.argv[3], 'fake-script.json'), JSON.stringify({ about: 'queued.mjs: made up', steps: [
-    { at: 0, sid: A, status: 'busy', ago: 58000 },
-    { at: 0, sid: B, status: 'idle', ago: 58000 },
-  ] }));
+  // A's turn runs in Synopia's process; B's process waits idle, so a message to it starts a turn
+  writeScript(process.argv[3], 'queued.mjs: made up', { [A]: { start: true, steps: [running(58000)] }, [B]: { start: true, state: { status: 'idle', ago: 58000 } } });
   process.exit(0);
 }
 

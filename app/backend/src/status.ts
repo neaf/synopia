@@ -49,7 +49,9 @@ type Outcome = 'idle' | 'stopped' | 'failed';
 export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string };
 // queued: messages waiting for the running turn. retry: the attempt, its cap and when it goes (ms).
 export type Takeover = 'waiting' | 'taking';
-export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover };
+// external: the status is another process's, read from the transcript (its main turn, or its question
+// or plan), not Synopia's own process's: views.ts sends the session as not `driven`.
+export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover; external?: true };
 export type StatusEntry = { status: Status; at: number; detail?: StatusDetail };
 
 // 15 min: longer than the Bash tool's longest timeout (10 min), the longest a foreground tool
@@ -279,6 +281,7 @@ export class SessionStatus {
     if (next === 'retrying' && this.retry) detail.retry = { ...this.retry };
     if (this.terminal) detail.terminal = this.terminal;
     if (this.takeover) detail.takeover = this.takeover;
+    if (!this.running && this.pending === 0 && (this.ask || this.external)) detail.external = true;
     this.armStale(next, silentFor - (now - this.last));
     // another process's card: its age counts from the tool_use, a new card's from its own
     const askAt = next === 'waiting' && this.pending === 0 && this.ask ? this.ask.since || now : null;
@@ -324,5 +327,5 @@ function uuidsOf(m: Loose): string[] {
 }
 
 function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
-  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
+  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.external === b.external && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
 }

@@ -329,9 +329,10 @@ export class Views {
       status,
       statusAt,
       statusDetail: s.statusDetail,
-      // whether this status comes from Synopia's own process (the driver) rather than the transcript:
-      // only then can the page offer Esc, Esc to interrupt
-      driven: s.status !== null,
+      // whether this status comes from Synopia's own process rather than another process's (the
+      // transcript alone, or a terminal that holds it): only then can the page offer Esc, Esc, b, b
+      // and bash mode
+      driven: s.status !== null && !s.statusDetail.terminal && !s.statusDetail.external,
       // R6.8: the question or plan another process asks, which the page shows read-only. Only while
       // it is what makes the session need you: not with a request of ours, nor for an ask our own
       // process left behind (status.ts gives that no waiting, and the page reads "Not answered").
@@ -608,7 +609,7 @@ export class Views {
     return Boolean(s?.status && RUNNING.has(s.status));
   }
 
-  // A message the driver took while a turn ran (main.ts, the fake driver): it is queued, and the
+  // A message the driver took while a turn ran (main.ts): it is queued, and the
   // page shows it pending (R5.5) until its prompt lands in the transcript. Not one held behind a card.
   sent(sid: string, uuid: string, text: string, images = 0, queued = true): void {
     const s = this.live.get(sid);

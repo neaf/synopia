@@ -4,6 +4,7 @@
   "request": {
     "id": "req-golden-1",
     "kind": "permission",
+    "since": "<time>",
     "toolName": "Bash",
     "toolUseId": "toolu_golden1",
     "agentId": null,
@@ -11,7 +12,13 @@
       "command": "ls",
       "description": "List the folder."
     },
-    "since": "<time>",
+    "cwd": "~/dev/demo",
+    "description": "",
+    "title": "",
+    "decisionReason": "",
+    "defaultToNo": false,
+    "suppressAlwaysAllowRule": false,
+    "suggestions": [],
     "always": null
   }
 }

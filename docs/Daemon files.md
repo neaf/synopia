@@ -52,7 +52,7 @@ The files the Node daemon and the Swift shell share, and the rules each side fol
 
 | Code | Meaning | Shell reaction |
 |---|---|---|
-| 2 | bad arguments (`--port`, `--fake` without `--claude-dir`) | error view with daemon.log's last line |
+| 2 | bad arguments (`--port`, `--sdk-script` without `--claude-dir`) | error view with daemon.log's last line |
 | 3 | another daemon holds the lock; daemon.json left alone | waits for the other daemon's daemon.json |
 | 4 | cannot listen on 127.0.0.1 | error view |
 
@@ -67,7 +67,7 @@ Code: `main.ts` 64-72, 86-93, 286-289. Test: `daemon.test.ts` 184-185, 195-196.
 
 ## Starting the daemon from the shell
 
-- `posix_spawn` of the baked-in node path (`config.json` in the app bundle, written by `app/build.sh`) with `--disable-warning=ExperimentalWarning --experimental-strip-types <backend>/src/main.ts`, plus `--state-dir`, `--fake --claude-dir` or `--exit-idle-ms` from `SYNOPIA_STATE_DIR`, `SYNOPIA_FAKE`, `SYNOPIA_EXIT_IDLE_MS`.
+- `posix_spawn` of the baked-in node path (`config.json` in the app bundle, written by `app/build.sh`) with `--disable-warning=ExperimentalWarning --experimental-strip-types <backend>/src/main.ts`, plus `--state-dir`, `--claude-dir <dir> --sdk-script <dir>/sdk-script.json` or `--exit-idle-ms` from `SYNOPIA_STATE_DIR`, `SYNOPIA_SDK_SCRIPT`, `SYNOPIA_EXIT_IDLE_MS`.
 - stdin `/dev/null`; stdout `daemon.log` opened `O_WRONLY | O_CREAT | O_APPEND` 0600; stderr dup'd to stdout.
 - Flags `POSIX_SPAWN_SETSID` (its own session, so the app's end never reaches it), `POSIX_SPAWN_CLOEXEC_DEFAULT` (none of the app's descriptors), `POSIX_SPAWN_SETSIGDEF` with every signal but SIGKILL and SIGSTOP, and `POSIX_SPAWN_SETSIGMASK` with an empty mask. The app ignores SIGTERM (it quits through a dispatch source), and ignored signals are inherited, so SETSIGDEF is required for the daemon to honour SIGTERM.
 - While the app runs it reaps the child on a thread, so a zombie never passes for alive.

@@ -18,7 +18,7 @@ import type { SDKSessionInfo, SlashCommand } from '@anthropic-ai/claude-agent-sd
 import { SessionProcess, imageError, realSdk, userContent } from './sdk.ts';
 import type { Content, Image, InterruptResult, MenuSource, Sdk, StartOptions } from './sdk.ts';
 import { SessionStatus, restored } from './status.ts';
-import type { Running, StatusEntry, Takeover } from './status.ts';
+import type { Running, StatusEntry, Takeover, Timer } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
 import { takeoverNote } from './cli-terminals.ts';
 import { NeedsYou } from './pending.ts';
@@ -136,6 +136,7 @@ export type SessionsOptions = {
   sdk?: Sdk; // tests inject a fake query and listSessions; the default is the SDK
   home?: string;
   now?: () => number;
+  timer?: Timer; // the status's stale timer, on the same clock as `now` (the scripted SDK moves both)
   idleMs?: number;
   // Slice 6 (the writer): a session's turn ended, and a stored session was opened.
   onTurnEnded?: (sid: string) => void;
@@ -714,7 +715,7 @@ export class Sessions {
     const a: Active = {
       id, cwd, placeholder, proc: null, stream: new StreamPreview(), streamTimer: null, idleTimer: null, choice: null, interrupting: false, afterExit: [], bang: null, quietOnly: false, ownEnd: 0, askId: '',
       terminal: placeholder ? null : this.opts.registry?.holder(id) ?? null, takeover: null,
-      status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now),
+      status: new SessionStatus(init, (e) => this.statusChanged(a, e), this.now, { timer: this.opts.timer }),
       needs: new NeedsYou({
         show: (r) => { this.views.setPending(a.id, r); this.opts.onWaiting?.(a.id); },
         clear: (rid) => { this.views.clearPending(a.id, rid); this.opts.onWaiting?.(a.id); },
@@ -778,10 +779,23 @@ export class Sessions {
     };
   }
 
+  // Test-only (the scripted SDK, app/backend/dev/scripted-sdk.ts): the session's process starts now
+  // with no message, as a resumed session waiting for input, and the script plays its messages. Its
+  // init starts no turn. No folder check: no CLI runs. False when it isn't open, a process runs, or
+  // a terminal holds it.
+  startIdle(sid: string): boolean {
+    const a = this.live.get(this.resolve(sid));
+    if (!a || a.proc || a.terminal) return false;
+    if (this.startProcess(a, true)) return false;
+    a.quietOnly = true;
+    this.armIdle(a);
+    return true;
+  }
+
   // Starts the session's process, or says why not: '' started, 'terminal' a live terminal holds it
-  // (one writer: the caller keeps the message), else the error for the toast.
-  private startProcess(a: Active): string {
-    if (!isDir(a.cwd)) {
+  // (one writer: the caller keeps the message), else the error for the toast. `anyFolder`: startIdle's.
+  private startProcess(a: Active, anyFolder = false): string {
+    if (!anyFolder && !isDir(a.cwd)) {
       a.status.failed();
       this.log('driver.noFolder', { sid: a.id });
       return `Folder ${this.tilde(a.cwd)} no longer exists`;

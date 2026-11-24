@@ -1,8 +1,8 @@
 #!/bin/bash
 # Runs the backend alone on a fixed port for Chrome, with its own state folder
 # (app/.dev-state/, or $SYNOPIA_DEV_STATE), so it never shares state with the app.
-# Extra flags are passed on. --fake plays the fake driver's script over the backend
-# fixture tree (app/backend/test/fixtures/claude), unless --claude-dir is given.
+# Extra flags are passed on. --script runs the scripted SDK (no model calls) over a copy of a
+# fixture tree in the state folder: app/backend/test/fixtures/claude, or the --claude-dir given.
 # Stop it with Ctrl-C.
 set -euo pipefail
 app="$(cd "$(dirname "$0")" && pwd)"
@@ -14,16 +14,25 @@ if [ ! -d "$app/backend/node_modules" ]; then
   exit 1
 fi
 
-extra=()
-fake=0; dir=0
-for a in "$@"; do
-  [ "$a" = "--fake" ] && fake=1
-  [ "$a" = "--claude-dir" ] && dir=1
+script=0; tree="$app/backend/test/fixtures/claude"; args=()
+for a in "$@"; do [ "$a" = "--script" ] && script=1; done
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --script) ;;
+    --claude-dir) tree="$2"; [ "$script" = 1 ] || args+=("$1" "$2"); shift ;;
+    *) args+=("$1") ;;
+  esac
+  shift
 done
-if [ "$fake" = 1 ] && [ "$dir" = 0 ]; then extra=(--claude-dir "$app/backend/test/fixtures/claude"); fi
+if [ "$script" = 1 ]; then
+  # the script appends to the transcripts as a CLI would: to a copy, made once per state folder
+  mkdir -p "$state"
+  [ -d "$state/claude" ] || cp -R "$tree" "$state/claude"
+  args=(--claude-dir "$state/claude" --sdk-script "$state/claude/sdk-script.json" ${args[@]+"${args[@]}"})
+fi
 
 node --experimental-strip-types --disable-warning=ExperimentalWarning \
-  "$app/backend/src/main.ts" --no-parent --port "$port" --state-dir "$state" ${extra[@]+"${extra[@]}"} "$@" |
+  "$app/backend/src/main.ts" --no-parent --port "$port" --state-dir "$state" ${args[@]+"${args[@]}"} |
   while IFS= read -r line; do
     token="$(printf '%s' "$line" | sed -n 's/.*"token":"\([0-9a-f]*\)".*/\1/p')"
     if [ -n "$token" ]; then

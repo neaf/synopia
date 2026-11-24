@@ -1,4 +1,4 @@
-// S5-2: keys and modes (R9) with real key events (CDP Input), on the fake driver.
+// S5-2: keys and modes (R9) with real key events (CDP Input), on the scripted SDK.
 // usage: run.sh keys (or node keys.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
 import { keyTable } from './helpers.mjs';

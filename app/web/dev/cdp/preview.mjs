@@ -1,5 +1,5 @@
 // The file preview (R5.9) on a generated session whose Files changed point at a real repo file, a binary
-// and an HTML file, never committed. The backend runs with --dry-open, so `open` only logs its branch.
+// and an HTML file, never committed. The backend runs with --dry-run, so `open` only logs its branch.
 // usage: node preview.mjs make <claude-dir>   writes the session and the files (run.sh does this first)
 //        node preview.mjs <url> <state-dir> <claude-dir>
 // Checks: the overlay, bat's colours, aligned line numbers, the diff's first changed line, j/k/g/G, find

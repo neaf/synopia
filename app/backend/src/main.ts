@@ -15,9 +15,9 @@ import { openLog } from './log.ts';
 import { openStore, reconcileLayout } from './store.ts';
 import { startServer } from './server.ts';
 import { Views } from './views.ts';
-import { FakeDriver, loadScript } from './fake-driver.ts';
 import { Sessions } from './sessions.ts';
-import { CliTerminals } from './cli-terminals.ts';
+import { CliTerminals, realEnd } from './cli-terminals.ts';
+import { realSdk } from './sdk.ts';
 import { openTarget } from './open.ts';
 import { loadBat, previewFile, themeOf } from './preview.ts';
 import { loadLoginEnv } from './login-env.ts';
@@ -35,7 +35,7 @@ import type { CardAnswer } from './answers.ts';
 import type { Lock } from './lock.ts';
 import type { Successor } from './daemon.ts';
 import type { BadgeSession } from './badge.ts';
-import type { Layout, OpenEntry } from './store.ts';
+import type { Layout } from './store.ts';
 import type { Client, Server } from './server.ts';
 
 const expand = (p: string) => resolve(p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p);
@@ -46,10 +46,10 @@ const { values: flags } = parseArgs({
     'state-dir': { type: 'string' },
     port: { type: 'string' },
     'no-parent': { type: 'boolean', default: false },
-    fake: { type: 'boolean', default: false },
+    'sdk-script': { type: 'string' }, // dev and checks: the scripted SDK (dev/scripted-sdk.ts) over --claude-dir
     'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
     'exit-idle-ms': { type: 'string' }, // test-only: a shorter daemon idle exit than 30 min
-    'dry-open': { type: 'boolean', default: false }, // `open` logs its branch and runs nothing (checks)
+    'dry-run': { type: 'boolean', default: false }, // `open` and a take-over's signal log and act on nothing (checks)
     after: { type: 'string' }, // set by the daemon this one replaces: wait for its pid to go first
   },
   strict: true,
@@ -66,9 +66,9 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
   process.stderr.write(`Synopia backend: bad --port ${flags.port}\n`);
   process.exit(2);
 }
-if (flags.fake && flags['claude-dir'] === undefined) {
-  // The fake driver opens every session it finds: keep it on a fixture tree.
-  process.stderr.write('Synopia backend: --fake needs --claude-dir (a fixture tree)\n');
+if (flags['sdk-script'] !== undefined && flags['claude-dir'] === undefined) {
+  // The script opens every session it finds and writes to their transcripts: keep it on a fixture tree.
+  process.stderr.write('Synopia backend: --sdk-script needs --claude-dir (a fixture tree)\n');
   process.exit(2);
 }
 mkdirSync(stateDir, { recursive: true, mode: 0o700 });
@@ -94,11 +94,16 @@ try {
   throw e;
 }
 
-log('backend.start', { pid: process.pid, fake: flags.fake, daemon: !flags['no-parent'] });
+log('backend.start', { pid: process.pid, scripted: flags['sdk-script'] !== undefined, daemon: !flags['no-parent'] });
+// The scripted SDK (dev and checks, no model call). It seeds a fresh state folder: before openStore.
+const scripted = flags['sdk-script'] === undefined ? null
+  : (await import('../dev/scripted-sdk.ts')).openScripted({ file: expand(flags['sdk-script']), claudeDir, stateDir, log });
+const sdk = scripted?.sdk ?? realSdk;
+const home = scripted?.home ?? homedir();
 // The user's login PATH and its kin (login-env.ts), before anything spawns: an app started from
 // the Dock gives the daemon launchd's short PATH, and every session's tools need the real one.
-// Not under --fake (no sessions run), nor in a successor (it inherits the merged environment).
-if (!flags.fake) await loadLoginEnv({ log });
+// Not under the script (no CLI runs), nor in a successor (it inherits the merged environment).
+if (!scripted) await loadLoginEnv({ log });
 removeDaemonInfo(stateDir); // the lock is ours, so a daemon.json left there is stale
 const store = openStore(stateDir, { log });
 const token = randomBytes(32).toString('hex');
@@ -107,113 +112,97 @@ const VERSION = String(JSON.parse(readFileSync(new URL('../package.json', import
 const updates = new UpdateCheck(CODE);
 let server: Server | undefined;
 const noClients = new Set<Client>();
-const script = flags.fake ? loadScript(claudeDir) : null;
-let sessions: Sessions | null = null;
 let badge: Badge | null = null;
 const views = new Views({
-  claudeDir, clients: () => server?.clients ?? noClients, home: script?.home, log,
-  onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types),
+  claudeDir, clients: () => server?.clients ?? noClients, home, log,
+  onAssistant: (sid, mid, types) => sessions.landed(sid, mid, types),
   written: (sid) => store.state.written[sid],
   answerOf: (toolUseId) => store.state.answers[toolUseId],
   planOf: (toolUseId) => store.state.plans[toolUseId],
-  choice: (sid) => (sessions ? sessions.choiceOf(sid) : store.state.models[sid]),
+  choice: (sid) => sessions.choiceOf(sid),
   defaultModel: () => store.state.settings.model,
   onChange: () => badge?.changed(),
-  onRunning: (sid, r) => sessions?.runningChanged(sid, r),
-  onWorkEnded: (sid) => writer?.workEnded(sid),
+  onRunning: (sid, r) => sessions.runningChanged(sid, r),
+  onWorkEnded: (sid) => writer.workEnded(sid),
 });
 // bat for the file preview, found once (plain text without it)
 const bat = loadBat({ log });
-const fake = script ? new FakeDriver(views, script, { log }) : null;
-// Slice 5: the slash menu and the model list per folder (the fake driver has its own).
-const menus = fake ? null : new Menus({ clients: () => server?.clients ?? noClients, log, cacheFile: join(stateDir, 'menu-cache.json') });
+// Slice 5: the slash menu and the model list per folder.
+const menus = new Menus({ clients: () => server?.clients ?? noClients, log, cacheFile: join(stateDir, 'menu-cache.json'), sdk });
 const idleMs = flags['idle-ms'] === undefined ? undefined : Number(flags['idle-ms']);
 // Slice 6: Claude-written titles and Now lines, after each turn and on open.
-const writer = fake ? null : new Writer({
-  store, stateDir, log,
+const writer = new Writer({
+  store, stateDir, log, sdk,
   source: {
     title: (sid) => views.meta(sid)?.title,
     turns: (sid) => views.turns(sid),
-    resolve: (sid) => sessions?.resolve(sid) ?? sid,
+    resolve: (sid) => sessions.resolve(sid),
     changed: (sid) => views.refresh(sid),
     work: (sid) => views.work(sid),
   },
 });
-// FR-SES-08: the terminals that hold sessions, from the CLI's pid files (cli-terminals.ts).
-const registry = fake ? null : new CliTerminals({ dir: join(claudeDir, 'sessions'), log });
-if (!fake) {
-  sessions = new Sessions({
-    store, views, log, idleMs: idleMs && idleMs > 0 ? idleMs : undefined, registry: registry ?? undefined,
-    onTurnEnded: (sid) => writer?.turnEnded(sid),
-    onOpened: (sid) => writer?.opened(sid),
-    onWaiting: (sid) => writer?.waitingChanged(sid),
-    onCommands: (sid, commands) => {
-      const folder = views.meta(sid)?.cwd;
-      if (folder) menus?.commandsChanged(folder, commands);
-    },
-  });
-}
-
-// The open sessions: state.json's open list, or every fixture session under --fake.
-function openEntries(): OpenEntry[] {
-  if (!fake) return sessions ? sessions.layoutEntries() : store.state.open;
-  return views.ids().map((id) => ({ id, cwd: views.meta(id)?.cwd ?? '', openedAt: 0, closedAt: null }));
-}
+// FR-SES-08: the terminals that hold sessions, from the CLI's pid files (cli-terminals.ts). Under the
+// script, its pretend CLIs; with --dry-run a take-over's signal is only logged.
+const dryEnd = { ...realEnd, kill: (pid: number, signal: string) => log('terminals.dryKill', { pid, signal }) };
+const terminals = new CliTerminals({
+  dir: join(claudeDir, 'sessions'), log, probe: scripted?.probe, end: scripted?.end ?? (flags['dry-run'] ? dryEnd : undefined),
+});
+const sessions = new Sessions({
+  store, views, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer,
+  idleMs: idleMs && idleMs > 0 ? idleMs : undefined, registry: terminals,
+  onTurnEnded: (sid) => writer.turnEnded(sid),
+  onOpened: (sid) => writer.opened(sid),
+  onWaiting: (sid) => writer.waitingChanged(sid),
+  onCommands: (sid, commands) => {
+    const folder = views.meta(sid)?.cwd;
+    if (folder) menus.commandsChanged(folder, commands);
+  },
+});
 
 const badgeSource = { sessions: () => views.sessions() as BadgeSession[], pending: () => views.pending(), reviewed: () => store.state.reviewed };
 
 // Something runs that the idle exit must not end: a turn, a subagent, a background shell or
-// monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer. Under --fake, a session the
-// script left working counts as a running turn. The update restart waits on the same.
-const RUNNING = new Set(['busy', 'retrying', 'compacting']);
+// monitor (the ⌥⌘Q confirm's list), or a card waiting on an answer. The update restart waits on the same.
 function busy(): boolean {
-  const q = sessions?.quitCheck();
-  if (fake && (views.sessions() as { status?: string }[]).some((s) => RUNNING.has(s.status ?? ''))) return true;
-  return (q ? q.running.length + q.background.length : 0) > 0 || views.pending().length > 0;
+  const q = sessions.quitCheck();
+  return q.running.length + q.background.length > 0 || views.pending().length > 0;
 }
 
 function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
   if (msg.t === 'view' && typeof msg.sid === 'string') {
-    const sid = sessions ? sessions.resolve(msg.sid) : msg.sid;
+    const sid = sessions.resolve(msg.sid);
     views.view(client, sid, typeof msg.agent === 'string' ? msg.agent : null, typeof msg.from === 'string' ? msg.from : null);
-    const folder = views.meta(sid)?.cwd, abs = sessions?.cwdOf(sid);
-    if (menus && sessions && folder && abs) void menus.viewed(client, folder, abs, sessions.menuSource(sid));
+    const folder = views.meta(sid)?.cwd, abs = sessions.cwdOf(sid);
+    if (folder && abs) void menus.viewed(client, folder, abs, sessions.menuSource(sid));
   } else if (msg.t === 'earlier' && typeof msg.sid === 'string' && typeof msg.before === 'string') {
-    const sid = sessions ? sessions.resolve(msg.sid) : msg.sid;
+    const sid = sessions.resolve(msg.sid);
     views.earlier(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.before);
   } else if (msg.t === 'toolOutput' && typeof msg.sid === 'string' && typeof msg.toolUseId === 'string') {
-    const sid = sessions ? sessions.resolve(msg.sid) : msg.sid;
+    const sid = sessions.resolve(msg.sid);
     views.toolOutput(client, sid, typeof msg.agent === 'string' ? msg.agent : null, msg.toolUseId);
   } else if (msg.t === 'setModel' && typeof msg.sid === 'string' && typeof msg.model === 'string') {
     const effort = typeof msg.effort === 'string' && msg.effort ? msg.effort : null;
-    if (sessions) {
-      void sessions.setModel(msg.sid, msg.model, effort).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
-    } else { // the fake driver: stored and shown, nothing runs
-      store.state.models[msg.sid] = { model: msg.model, effort };
-      store.changed();
-      views.refresh(msg.sid);
-    }
-  } else if (sessions && msg.t === 'newSession') {
+    void sessions.setModel(msg.sid, msg.model, effort).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
+  } else if (msg.t === 'newSession') {
     sessions.newSession();
-  } else if (sessions && msg.t === 'listRecent') {
-    const s = sessions;
-    s.listRecent(typeof msg.filter === 'string' ? msg.filter : '').then(
+  } else if (msg.t === 'listRecent') {
+    sessions.listRecent(typeof msg.filter === 'string' ? msg.filter : '').then(
       (list) => client.send({ t: 'recent', filter: msg.filter ?? '', sessions: list }),
       (e) => { log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') }); client.send({ t: 'recent', filter: msg.filter ?? '', sessions: [], error: true }); },
     );
-  } else if (sessions && msg.t === 'openSession' && typeof msg.id === 'string') {
+  } else if (msg.t === 'openSession' && typeof msg.id === 'string') {
     sessions.openSession(msg.id).then(
       (r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); },
       () => client.send({ t: 'toast', text: "Synopia couldn't read the list of past sessions." }),
     );
-  } else if (sessions && msg.t === 'close' && typeof msg.sid === 'string') {
+  } else if (msg.t === 'close' && typeof msg.sid === 'string') {
     const r = sessions.close(msg.sid);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
-  } else if (sessions && msg.t === 'cancelTakeover' && typeof msg.sid === 'string') {
+  } else if (msg.t === 'cancelTakeover' && typeof msg.sid === 'string') {
     sessions.cancelTakeover(msg.sid);
-  } else if (sessions && msg.t === 'interrupt' && typeof msg.sid === 'string') {
+  } else if (msg.t === 'interrupt' && typeof msg.sid === 'string') {
     void sessions.interrupt(msg.sid);
-  } else if (sessions && msg.t === 'send' && typeof msg.sid === 'string') {
+  } else if (msg.t === 'send' && typeof msg.sid === 'string') {
     const images = Array.isArray(msg.images)
       ? (msg.images as Image[]).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string')
       : [];
@@ -224,33 +213,33 @@ function onMessage(client: Client, msg: { t: string; [k: string]: unknown }) {
     if (!r.ok) client.send({ t: 'toast', text: r.error });
     // shown at once: sent while idle it is the new turn's prompt; sent during a turn it's queued (R5.5)
     else if (uuid && !sessions.terminalHolds(msg.sid)) views.sent(r.sid, uuid, text, images.length, queues);
-  } else if (sessions && msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') { // bash mode (R5.13)
+  } else if (msg.t === 'bang' && typeof msg.sid === 'string' && typeof msg.command === 'string') { // bash mode (R5.13)
     const r = sessions.bang(msg.sid, msg.command, typeof msg.uuid === 'string' ? msg.uuid : undefined);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
-  } else if (sessions && msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
+  } else if (msg.t === 'answer' && typeof msg.sid === 'string' && typeof msg.requestId === 'string') {
     const r = sessions.answer(msg.sid, msg.requestId, (msg.answer && typeof msg.answer === 'object' ? msg.answer : {}) as CardAnswer);
     if (!r.ok) client.send({ t: 'toast', text: r.error });
   } else if (msg.t === 'reviewed' && typeof msg.agentId === 'string') {
     if (!store.state.reviewed.includes(msg.agentId)) store.state.reviewed.push(msg.agentId);
     store.changed();
     badge?.changed();
-  } else if (sessions && msg.t === 'background' && typeof msg.sid === 'string') { // b, b (R9): a toast only when nothing moved
+  } else if (msg.t === 'background' && typeof msg.sid === 'string') { // b, b (R9): a toast only when nothing moved
     void sessions.background(msg.sid).then((r) => { if (!r.ok) client.send({ t: 'toast', text: r.error }); });
   } else if (msg.t === 'open') {
-    openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-open'], log, onError: (text) => client.send({ t: 'toast', text }) });
+    openTarget({ path: msg.path, url: msg.url }, { dryRun: flags['dry-run'], log, onError: (text) => client.send({ t: 'toast', text }) });
   } else if (msg.t === 'preview') { // a text file's read-only preview; anything else opens as `open` does
     const toast = (text: string) => client.send({ t: 'toast', text });
     void bat.then((b) => previewFile(msg.path, {
-      bat: b, theme: themeOf(msg.theme), log, display: (p) => displayPath(p, script?.home ?? homedir()), reply: (r) => client.send(r), toast,
-      open: (p) => openTarget({ path: p }, { dryRun: flags['dry-open'], log, onError: toast }),
+      bat: b, theme: themeOf(msg.theme), log, display: (p) => displayPath(p, home), reply: (r) => client.send(r), toast,
+      open: (p) => openTarget({ path: p }, { dryRun: flags['dry-run'], log, onError: toast }),
     }));
   } else if (msg.t === 'ui') { // the page's UI state (R3.9): stored, returned in hello, never broadcast
-    patchUi(store, msg.patch, { resolve: (id) => sessions?.resolve(id) ?? id, known: (id) => views.meta(id) !== undefined, toast: (text) => client.send({ t: 'toast', text }) });
+    patchUi(store, msg.patch, { resolve: (id) => sessions.resolve(id), known: (id) => views.meta(id) !== undefined, toast: (text) => client.send({ t: 'toast', text }) });
   } else if (msg.t === 'layout' && msg.layout && typeof msg.layout === 'object') {
-    store.state.layout = reconcileLayout(msg.layout as Layout, store.state.layout, openEntries());
+    store.state.layout = reconcileLayout(msg.layout as Layout, store.state.layout, sessions.layoutEntries());
     store.changed();
-  } else if (!fake?.onMessage(client, msg)) {
-    log('ws.ignored', { t: msg.t }); // the rest of section 5 comes with later tasks
+  } else {
+    log('ws.ignored', { t: msg.t });
   }
 }
 
@@ -264,19 +253,19 @@ try {
       sessions: views.sessions(),
       layout: store.state.layout,
       reviewed: store.state.reviewed,
-      menu: fake ? fake.menu() : menus?.all() ?? {},
+      menu: menus.all(),
       settings: store.state.settings,
       pending: views.pending(),
       ui: store.state.ui,
       update: updates.pending,
     }),
-    quitCheck: () => sessions?.quitCheck() ?? { running: [], background: [] },
+    quitCheck: () => sessions.quitCheck(),
     badge: () => badgeCount(badgeSource),
     ping: () => ({ code: CODE }),
     onStop: () => void shutdown('stopAll'),
     // "Restart Backend Now…": a handover at once, whatever runs (the shell asked first). Not under dev.sh.
     onRestart: flags['no-parent'] ? undefined : () => void handOver('restart'),
-    image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions ? sessions.resolve(sid) : sid, ref) : views.image(sessions ? sessions.resolve(sid) : sid, agent, ref),
+    image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions.resolve(sid), ref) : views.image(sessions.resolve(sid), agent, ref),
     // Nothing reaches the sessions once the daemon is stopping (a handover's new daemon takes over).
     onMessage: (client, msg) => { if (!stopping) onMessage(client, msg); },
   });
@@ -300,12 +289,11 @@ async function shutdown(reason: string) {
   if (idleTimer) clearInterval(idleTimer);
   if (updateTimer) clearInterval(updateTimer);
   removeDaemonInfo(stateDir, process.pid);
-  fake?.stop();
   badge?.stop();
-  writer?.stop();
-  menus?.stop();
-  registry?.stop();
-  sessions?.stop();
+  writer.stop();
+  menus.stop();
+  terminals.stop();
+  sessions.stop();
   views.stop();
   store.close();
   await server?.close();
@@ -333,11 +321,9 @@ process.on('SIGUSR2', () => {
 if (flags['no-parent']) process.stdout.write(JSON.stringify({ port: (server as Server).port, token }) + '\n');
 writeDaemonInfo(stateDir, { pid: process.pid, procStart: await ownStart(), port: (server as Server).port, token, version: VERSION, code: CODE });
 log('daemon.ready', { port: (server as Server).port, code: CODE });
-if (fake) fake.start(claudeDir);
-else {
-  registry?.start();
-  sessions?.start();
-}
+terminals.start();
+sessions.start();
+scripted?.attach(sessions); // the scripted sessions' processes start
 // The Dock badge (requirements R2.6): the shell polls GET /api/badge; each change is logged.
 badge = new Badge({ source: badgeSource, emit: (n) => log('badge', { n }) });
 badge.changed();

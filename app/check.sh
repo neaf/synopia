@@ -52,7 +52,7 @@ else
   fi
 fi
 
-# Page checks: headless Chrome against the fake driver, each in its own Chrome and backend
+# Page checks: headless Chrome against the scripted SDK, each in its own Chrome and backend
 if [ $page -eq 1 ]; then
   if "$app"/web/dev/cdp/run.sh all >"$out" 2>&1; then
     echo "page: pass ($(grep -c '^[a-z]* *pass ' "$out") checks)"

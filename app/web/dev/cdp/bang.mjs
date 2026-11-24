@@ -1,6 +1,6 @@
 // Bash mode (R5.13): `!` in the message box runs a shell command, as in the Claude Code CLI, on a made-up
-// fixture with the fake driver (which runs the command for real through bang.ts and appends the CLI's
-// records to the fixture file, so they land as a real session's do).
+// fixture with the scripted SDK (the command runs for real through bang.ts; the scripted SDK appends the CLI's
+// records Synopia shares with it to the fixture file, so they land as a real session's do).
 // usage: node bang.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node bang.mjs <url> <state-dir> <claude-dir>
 // Checks: `!` as the first character turns the mark into a pink `!` and the placeholder into "Run a shell
@@ -10,10 +10,10 @@
 // ends a `sleep 30` ("Stopped"); a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records } from './helpers.mjs';
+import { records, writeScript, terminal } from './helpers.mjs';
 
 const D = 'b4b4b4b4-0000-4000-8000-0000000000d1'; // driven, idle
-const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: another process runs it
+const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: a terminal's Claude Code holds it
 const dirOf = (claude) => path.join(claude, 'projects', '-tmp-synopia-bang');
 const { rec, you, said } = records('/tmp/synopia-bang');
 
@@ -24,9 +24,9 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${D}.jsonl`), you(D, 'd-u1', 0, 'Read the demo notes.') + said(D, 'd-a1', 1, 'Read them.')
     + you(D, 'd-b1', 2, '<bash-input>ls demo</bash-input>') + you(D, 'd-b2', 2, '<bash-stdout>notes.md\n</bash-stdout><bash-stderr></bash-stderr>'));
   fs.writeFileSync(path.join(dir, `${N}.jsonl`), you(N, 'n-u1', 0, 'Rename the demo folder.') + said(N, 'n-a1', 1, 'Renamed it.'));
-  fs.writeFileSync(path.join(process.argv[3], 'fake-script.json'), JSON.stringify({ about: 'bang.mjs: made up', steps: [
-    { at: 0, sid: D, status: 'idle', ago: 58000 },
-  ] }));
+  writeScript(process.argv[3], 'bang.mjs: made up', { [D]: { start: true, state: { status: 'idle', ago: 58000 } } });
+  terminal(process.argv[3], 90002, N, '/tmp/synopia-bang'); // N: a terminal's Claude Code holds it
+  fs.mkdirSync('/tmp/synopia-bang', { recursive: true }); // the command really runs in the session's folder
   process.exit(0);
 }
 
