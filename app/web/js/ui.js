@@ -135,6 +135,8 @@ function uiItems(m) {
     return;
   }
   if (!m.reset && !m.prepend) return;
+  if (m.reset && uiRestoring.reset) delete u.earlier[uiView()]; // a second reset: the file was rewritten, the range loaded is gone
+  if (m.reset) uiRestoring.reset = true;
   const want = u.earlier[uiView()];
   if (want && items.length && !items.some(i => i.id === want) && (t.total || 0) > items.length && uiRestoring.tries++ < 20) { loadEarlier(); return; }
   clearTimeout(uiRestoring.timer); uiRestoring = null;

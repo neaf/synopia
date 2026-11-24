@@ -100,8 +100,15 @@ check('subagent: in order, no duplicates', sub[0] === 's-start' && inOrder(sub.s
 check('subagent: the earlier message names it', (await ev(`__sent.filter(m => m.t === 'earlier').pop().agent`)) === AID);
 
 // Back to the main view: the earlier items it had loaded are asked for again (R3.9); a rewrite resets to the last 160.
+// The store still holds the 602 items from before the subagent view: wait for the restore to finish
+// (the reset reply, then the earlier pages asked again), not for those.
+const sentBefore = await ev(`__sent.length`);
 await ev(`view = null; renderConv()`);
-check('back: the earlier items it had come back', await until(`cur().items.length === 602 && cur().items[0].id === 'm0'`) && (await link()) === null && await noDupKeys());
+const asked = () => ev(`__sent.slice(${sentBefore}).map(m => m.t + ' ' + m.agent + (m.before ? ' ' + m.before : ''))`);
+check('back: the earlier items it had come back', await until(`!uiRestoring && cur().items.length === 602 && cur().items[0].id === 'm0'`)
+  && (await link()) === null && await noDupKeys()
+  && JSON.stringify((await asked()).filter(x => !x.startsWith('ui '))) === JSON.stringify(['view null', 'earlier null m442', 'earlier null m282', 'earlier null m122']),
+  JSON.stringify(await asked()));
 fs.writeFileSync(mainFile(claudeDir) + '.new', body(400));
 fs.renameSync(mainFile(claudeDir) + '.new', mainFile(claudeDir));
 check('a reset: the last 160 of the new file', await until(`cur().items.length === 160 && cur().items[0].id === 'm240'`, 5000) && (await link()) === 'Show 160 earlier (240 more)', await link());
