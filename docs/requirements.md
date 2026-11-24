@@ -311,7 +311,7 @@ These requirements come from a day of prototyping against the user's real sessio
 
 - Light theme, with visible panels: header, transcript, message box, background work. The canvas is `#EDEFF2` and the panels are white.
 - UI font: Atkinson Hyperlegible Next. Transcript: JetBrains Mono NL.
-  - Both fonts ship with the app in `app/web` (both OFL). The page loads no font from the network, so offline and blocked runs keep the transcript grid (2026-11-24).
+  - Both fonts ship with the app in `app/web/fonts` (both OFL, license beside each). The page loads no font from the network, so offline and blocked runs keep the transcript grid (2026-11-24).
 - Sizes are 81% of the first draft (two 90% steps); the transcript is 12px.
 - Colours: GitHub-like on light.
   - red `#CF222E`: needs you only

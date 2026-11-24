@@ -1,6 +1,6 @@
 /* Theme (requirements section 11): light or dark, on <html data-theme>. With nothing chosen the page follows
    the system's appearance (prefers-color-scheme, live). The switch in the sidebar footer picks the other
-   theme and keeps it; Alt-click goes back to following the system. The choice is UI state (ui.js `theme`:
+   theme and keeps it; Alt-click goes back to following the system. The choice is UI state (ui-state.js `theme`:
    "light", "dark" or null), stored by the backend and applied from the first hello; localStorage holds a
    copy only so the first paint before that hello is already in the right theme. Loaded in <head>. */
 let themePref = null; // "light" | "dark" | null: follow the system

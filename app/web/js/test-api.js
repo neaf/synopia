@@ -1,50 +1,59 @@
 /* Test API: window.__synopia, the one surface the page checks read besides the DOM (docs/Page checks.md).
    Getters return copies, so a check cannot change the page through them; inject() hands a message to the
    page as if the server sent it, and render(), redraw() and resetTweens() re-render on demand. Nothing is
-   recorded until a check calls spy(), so in use it costs nothing. A classic script: it reads the other scripts' globals when called. bridge.js calls testSent and testGot. */
-let testSpy = null; // { sent, got } since spy()
-const testCopy = x => x === undefined || x === null ? null : structuredClone(x);
-function testSent(m) { if (testSpy) testSpy.sent.push(testCopy(m)); }
-function testGot(m) { if (testSpy) testSpy.got.push(testCopy(m)); }
-const testOf = (list, types) => testCopy(types.length ? list.filter(m => types.includes(m.t)) : list);
+   recorded until a check calls spy(), so in use it costs nothing. The only module that writes `window`
+   besides legacy.js's accessors; main.js installs it with the message handler and the panel render. */
+import * as state from "./state.js";
+import { tap } from "./connection.js";
+import * as ui from "./ui-state.js";
+import { classic as C } from "./legacy.js";
+
+const copy = x => x === undefined || x === null ? null : structuredClone(x);
+const of = (list, types) => copy(types.length ? list.filter(m => types.includes(m.t)) : list);
+let spied = null; // { sent, got } since spy()
 
 /* the parts of ready(): the first hello applied, the sidebar drawn, the message box there, the current view
    mounted, no UI restore in flight (the harness adds the socket counts, visibility and focus) */
-const testReadiness = () => ({
-  connected: store.ui.connected, uiLoaded, restoring: !!uiRestoring,
+const readiness = () => ({
+  connected: state.store.ui.connected, uiLoaded: ui.loaded(), restoring: ui.isRestoring(),
   rows: document.querySelectorAll("#groups .row").length, box: !!document.getElementById("msg"),
-  current, mounted,
+  current: state.current, mounted: C.mounted,
 });
 
-window.__synopia = Object.freeze({
-  ready: () => { const r = testReadiness(); return r.connected && r.uiLoaded && !r.restoring && r.rows > 0 && r.box && (!r.current || !!r.mounted); },
-  readiness: testReadiness,
-  current: () => current, // the shown session's id
-  view: () => view, // the subagent shown, null for the main conversation
-  mode: () => mode, // "normal" | "insert"
-  mounted: () => mounted, // "<sid>|<agent>" of the view on screen
-  restoring: () => !!uiRestoring, // a restored view still waits for its items
-  cur: () => testCopy(store.sessions.get(current)),
-  data: () => testCopy(data), // every session, in the server's order
-  pending: sid => testCopy(store.pending.get(sid) || []), // the session's requests, oldest first
-  layout: () => testCopy(layout), // the sidebar's groups, hidden (closed) ids included
-  spy: () => { testSpy = { sent: [], got: [] }; },
-  sent: (...types) => testOf(testSpy?.sent || [], types), // frames the page sent since spy(), of these types
-  received: (...types) => testOf(testSpy?.got || [], types), // frames the server sent since spy()
-  inject: m => { onMessage(testCopy(m)); },
-  /* the UI around the transcript */
-  anchor: () => testCopy(uiAnchor(document.getElementById("log"))), // the log's scroll anchor: {id, off} or {bottom: true}
-  from: (sid, agent) => uiFrom(sid, agent), // the oldest item id that view had loaded, or null
-  attachments: () => attachments.map(a => ({ id: a.id, n: a.n, mediaType: a.mediaType, url: a.url, data: a.data })), // pasted images
-  prompt: () => interruptAsk ? "interrupt" : bgAsk ? "background" : closeAsk ? "close" : null, // the Esc, b or x prompt shown
-  card: sid => { const s = store.sessions.get(sid ?? current), a = s && pendingAsk(s); return a ? testCopy(qstate[askKey(s, a)]) : null; },
-  cards: () => testCopy(qstate), // every card's state, by "<sid>:<request id>"
-  preview: () => ({ shown: previewShown(), path: pv.path }),
-  openList: () => ({ shown: openListShown(), filter: openList.filter }),
-  marks: () => Object.keys(P), // every mark kind
-  mark: (kind, size) => ind(kind, size), // a mark's markup
-  /* renders on demand, as a server message would: for checks that a render keeps something */
-  render: (...parts) => { render(...parts); }, // "side", "conv", "header", "log", "card", "rail"
-  redraw: () => { document.querySelectorAll("#log .log-inner > *").forEach(e => { e._sig = ""; }); renderLog(); }, // every log block replaced
-  resetTweens: () => { tweens.clear(); }, // the sidebar forgets its sub-line tweens
-});
+export function installTestApi({ inject, render }) {
+  window.__synopia = Object.freeze({
+    ready: () => { const r = readiness(); return r.connected && r.uiLoaded && !r.restoring && r.rows > 0 && r.box && (!r.current || !!r.mounted); },
+    readiness,
+    current: () => state.current, // the shown session's id
+    view: () => state.view, // the subagent shown, null for the main conversation
+    mode: () => C.mode, // "normal" | "insert"
+    mounted: () => C.mounted, // "<sid>|<agent>" of the view on screen
+    restoring: () => ui.isRestoring(), // a restored view still waits for its items
+    cur: () => copy(state.cur()),
+    data: () => copy(state.data), // every session, in the server's order
+    pending: sid => copy(state.store.pending.get(sid) || []), // the session's requests, oldest first
+    layout: () => copy(C.layout), // the sidebar's groups, hidden (closed) ids included
+    spy: () => {
+      spied = { sent: [], got: [] };
+      tap.sent = m => spied.sent.push(copy(m)); tap.got = m => spied.got.push(copy(m));
+    },
+    sent: (...types) => of(spied?.sent || [], types), // frames the page sent since spy(), of these types
+    received: (...types) => of(spied?.got || [], types), // frames the server sent since spy()
+    inject: m => { inject(copy(m)); },
+    /* the UI around the transcript */
+    anchor: () => copy(ui.anchor(document.getElementById("log"))), // the log's scroll anchor: {id, off} or {bottom: true}
+    from: (sid, agent) => ui.from(sid, agent), // the oldest item id that view had loaded, or null
+    attachments: () => C.attachments.map(a => ({ id: a.id, n: a.n, mediaType: a.mediaType, url: a.url, data: a.data })), // pasted images
+    prompt: () => C.interruptAsk ? "interrupt" : C.bgAsk ? "background" : C.closeAsk ? "close" : null, // the Esc, b or x prompt shown
+    card: sid => { const s = state.store.sessions.get(sid ?? state.current), a = s && C.pendingAsk(s); return a ? copy(C.qstate[C.askKey(s, a)]) : null; },
+    cards: () => copy(C.qstate), // every card's state, by "<sid>:<request id>"
+    preview: () => ({ shown: C.previewShown(), path: C.pv.path }),
+    openList: () => ({ shown: C.openListShown(), filter: C.openList.filter }),
+    marks: () => Object.keys(C.marks), // every mark kind
+    mark: (kind, size) => C.ind(kind, size), // a mark's markup
+    /* renders on demand, as a server message would: for checks that a render keeps something */
+    render: (...parts) => { render(...parts); }, // "side", "conv", "header", "log", "card", "rail"
+    redraw: () => { document.querySelectorAll("#log .log-inner > *").forEach(e => { e._sig = ""; }); C.renderLog(); }, // every log block replaced
+    resetTweens: () => { C.tweens.clear(); }, // the sidebar forgets its sub-line tweens
+  });
+}

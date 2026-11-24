@@ -289,7 +289,7 @@ check('deleting a tag\'s text dims its thumbnail, with a dashed line; it stays i
 await shot('composer-tags', dock);
 // the draft, its tags and its images survive a reload (R3.9)
 await until(`__synopia.attachments().every(a => a.data)`);
-await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(500); // the UI state goes now (ui.js flushes on pagehide)
+await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(500); // the UI state goes now (ui-state.js flushes on pagehide)
 await ev(`window.__before = 1`);
 await c.load(url, `__synopia.current() === '${SID}' && typeof __before === 'undefined'`); // no hash: a real reload, the restored state picks the session
 check('after a reload: the text with its tags, the three images with their numbers, #6 still dimmed',

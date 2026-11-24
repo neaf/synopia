@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs every check: the backend unit tests, a type check of the shell, and a
-# syntax check of the page scripts. Prints one pass or fail line per part, plus
+# check of the page scripts (classic and modules). Prints one pass or fail line per part, plus
 # the names of failing tests, and exits nonzero if any part fails.
 #   app/check.sh          the fast parts, no Chrome
 #   app/check.sh --page   then every headless page check (app/web/dev/cdp/run.sh all)
@@ -35,21 +35,14 @@ else
   grep -E 'error:' "$out" | head -20
 fi
 
-# Page scripts
-js=("$app"/web/js/*.js)
-if [ ${#js[@]} -eq 0 ]; then
-  echo "web: skip (no app/web/js yet)"
+# Page scripts: each parses as index.html loads it (classic or module), and module imports resolve
+if node "$app"/web/dev/check-web.mjs >"$out" 2>&1; then
+  read -r n c m < <(tail -1 "$out")
+  echo "web: pass ($n files: $c classic, $m modules)"
 else
-  bad=()
-  for f in "${js[@]}"; do
-    node --check "$f" >/dev/null 2>&1 || bad+=("$(basename "$f")")
-  done
-  if [ ${#bad[@]} -eq 0 ]; then
-    echo "web: pass (${#js[@]} files)"
-  else
-    failed=1
-    echo "web: fail (${bad[*]})"
-  fi
+  failed=1
+  echo "web: fail"
+  sed '$d' "$out" | sed 's/^/  /' | head -20
 fi
 
 # Page checks: headless Chrome against the scripted SDK, each in its own Chrome and backend

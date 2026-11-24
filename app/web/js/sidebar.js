@@ -82,7 +82,7 @@ function renderSide() {
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
   if (drag?.started) { const r = [...el.querySelectorAll(".row")].find(x => x.dataset.id === dragId); if (r) { r.classList.add("dragging"); drag.row = r; } } // a re-render keeps the dragged row dimmed
-  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { current = b.dataset.id; view = null; openBg = null; renderAll(); }; });
+  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); openBg = null; renderAll(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
   if (inp) {

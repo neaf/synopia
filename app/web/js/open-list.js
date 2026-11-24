@@ -2,7 +2,7 @@
    Newest first, with the title, folder and age. ↑↓ move (j/k too while the filter is empty, after that
    they type), Enter opens, Esc closes, typing filters. Opening adds the session to the sidebar and shows
    it; it resumes on your first message. */
-let wantOpen = null; // the id asked for; bridge.js shows it when its session message arrives
+let wantOpen = null; // the id asked for; main.js shows it when its session message arrives
 const openList = { el: null, rows: [], sel: 0, filter: "", loading: false, failed: false, timer: null };
 
 function showOpenList() {

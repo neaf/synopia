@@ -27,7 +27,7 @@ const load = () => c.load(url);
 const goTo = async (sid) => { await ev(`document.querySelector('.side .row[data-id="${sid}"]').click()`); return wait(`__synopia.current() === '${sid}' && __synopia.mounted() === '${sid}|' && !__synopia.restoring() && __synopia.cur().items.length > 0`); };
 const anchor = () => ev(`JSON.stringify(__synopia.anchor())`);
 const near = (a, b) => { const x = JSON.parse(a), y = JSON.parse(b); return !x.bottom && x.id === y.id && Math.abs(x.off - y.off) <= 2; };
-// the UI state goes to the backend now (ui.js flushes on pagehide), not after its debounce
+// the UI state goes to the backend now (ui-state.js flushes on pagehide), not after its debounce
 const flush = async () => { await ev(`dispatchEvent(new Event('pagehide'))`); await sleep(300); };
 async function restart() {
   await flush();
@@ -140,6 +140,21 @@ await goTo(S2); await flush();
 await serverSend(url, { t: 'ui', patch: { sessions: { [S1]: { scroll: { '': { id: 'gone:item', off: 30 } } } } } });
 check('a reload after the anchor changed', await load());
 check('a stale anchor falls back to the bottom', await goTo(S1) && (await anchor()) === '{"bottom":true}', await anchor());
+// a reconnect is a second hello (sessions without items) on the view on screen: the log keeps its blocks
+// until the view's reset comes, not one frame blank (web-ui#B4), and then shows the same blocks
+await goTo(S1);
+const recon = await ev(`(async () => {
+  const inner = document.querySelector('#log .log-inner'), keys = () => [...inner.children].map(e => e.dataset.key).join(' ');
+  const k0 = keys(), first = inner.firstElementChild;
+  const ss = __synopia.data().map(s => ({ ...s, items: [] }));
+  __synopia.inject({ t: 'hello', sessions: ss, layout: __synopia.layout(), menu: {}, ui: null,
+    pending: ss.flatMap(s => __synopia.pending(s.id).map(request => ({ sid: s.id, request }))) });
+  const held = keys() === k0 && inner.firstElementChild === first && __synopia.restoring();
+  for (let i = 0; i < 50 && __synopia.restoring(); i++) await new Promise(r => setTimeout(r, 100));
+  return { held, after: keys() === k0 && !__synopia.restoring(), k0: k0.slice(0, 80), k1: keys().slice(0, 80) };
+})()`);
+check('a reconnect keeps the log as it was until its reset', recon?.held === true, JSON.stringify(recon));
+check('after the reset the log shows the same blocks', recon?.after === true, JSON.stringify(recon));
 // the Open list, with its filter
 await ev(`(() => { document.getElementById('open').click(); const i = document.getElementById('ol-filter'); i.value = 'demo'; i.dispatchEvent(new Event('input')); })()`);
 await flush();

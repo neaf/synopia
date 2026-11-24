@@ -7,14 +7,21 @@ import { join } from 'node:path';
 import vm from 'node:vm';
 
 const JS = join(import.meta.dirname, '..', '..', 'web', 'js');
-const FILES = ['marks.js', 'md.js', 'store.js', 'tween.js', 'sidebar.js', 'images.js', 'transcript.js', 'rail.js', 'card.js'];
+// The store is an ES module (js/state.js); the classic builders read its bindings as window globals
+// (main.js publishes them), so a stand-in of those comes first.
+const STORE = `const store = { sessions: new Map(), layout: null, menu: {}, settings: {}, pending: new Map(), ui: { connected: false } };
+let data = [], current = null, view = null;
+const syncData = () => { data = [...store.sessions.values()]; };
+const requestsOf = (s) => store.pending.get(s.id) || [];
+const cur = () => store.sessions.get(current);`;
+const FILES = ['marks.js', 'md.js', 'tween.js', 'sidebar.js', 'images.js', 'transcript.js', 'rail.js', 'card.js'];
 
 function page() {
   const el = (): Record<string, unknown> => ({ addEventListener() {}, querySelector: () => null, querySelectorAll: () => [], classList: { toggle() {}, add() {}, remove() {} }, dataset: {}, style: {} });
   const document = { getElementById: el, querySelector: el, querySelectorAll: () => [], addEventListener() {}, body: { dataset: {} } };
   const ctx = vm.createContext({ document, window: {}, location: { search: '', hash: '' }, CSS: { escape: (s: string) => s }, MutationObserver: class { observe() {} }, console, TOKEN: 't' });
   const names = ['md', 'esc', 'rowHTML', 'railHTML', 'filesHTML', 'itemsHTML', 'qaHTML', 'askOf', 'store', 'syncData', 'heldHTML', 'thumbsHTML'];
-  vm.runInContext(FILES.map((f) => readFileSync(join(JS, f), 'utf8')).join('\n;\n') + `\n;globalThis.P = { ${names.join(', ')} };`, ctx);
+  vm.runInContext([STORE, ...FILES.map((f) => readFileSync(join(JS, f), 'utf8'))].join('\n;\n') + `\n;globalThis.P = { ${names.join(', ')} };`, ctx);
   return (ctx as unknown as { P: Record<string, (...a: unknown[]) => string> & { store: { sessions: Map<string, unknown>; pending: Map<string, unknown> } } }).P;
 }
 

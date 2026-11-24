@@ -60,7 +60,7 @@ function openViewer(thumb) {
   const row = [...thumb.closest(".thumbs").querySelectorAll(".thumb[data-full-src]")];
   showViewer(row.map(b => b.dataset.fullSrc), row.indexOf(thumb), row.map(b => b.dataset.from || ""));
 }
-/* the viewer on these images at i (also how a reload puts it back, ui.js) */
+/* the viewer on these images at i (also how a reload puts it back, ui-state.js) */
 function showViewer(srcs, i, froms = []) {
   closeViewer();
   const el = document.createElement("div");

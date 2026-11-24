@@ -1,8 +1,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { request } from 'node:http';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
@@ -15,6 +15,9 @@ const webRoot = join(base, 'web');
 mkdirSync(join(webRoot, 'css'), { recursive: true });
 writeFileSync(join(webRoot, 'index.html'), '<p>index</p>');
 writeFileSync(join(webRoot, 'css', 'app.css'), 'body{}');
+mkdirSync(join(webRoot, 'fonts'));
+writeFileSync(join(webRoot, 'fonts', 'a.woff2'), 'wOF2');
+writeFileSync(join(webRoot, 'fonts', 'a.ttf'), 'true');
 writeFileSync(join(base, 'secret.txt'), 'SECRET');
 
 let server: Server;
@@ -30,12 +33,12 @@ before(async () => {
 after(() => server.close());
 
 type Res = { status: number; body: string };
-function get(path: string, headers: Record<string, string> = {}): Promise<Res> {
+function get(path: string, headers: Record<string, string> = {}): Promise<Res & { type: string }> {
   return new Promise((ok, fail) => {
     const req = request({ host: '127.0.0.1', port: server.port, path, headers }, (res) => {
       let body = '';
       res.on('data', (c) => (body += c));
-      res.on('end', () => ok({ status: res.statusCode ?? 0, body }));
+      res.on('end', () => ok({ status: res.statusCode ?? 0, body, type: String(res.headers['content-type'] ?? '') }));
     });
     req.on('error', fail);
     req.end();
@@ -86,6 +89,11 @@ test('serves the page', async () => {
   assert.equal((await get('/nope.js')).status, 404);
 });
 
+test('serves the bundled fonts with their font types', async () => {
+  assert.equal((await get('/fonts/a.woff2')).type, 'font/woff2');
+  assert.equal((await get('/fonts/a.ttf')).type, 'font/ttf');
+});
+
 test('every response carries the strict CSP, naming its own origin', async () => {
   const csp = await new Promise<string>((ok, fail) => {
     request({ host: '127.0.0.1', port: server.port, path: '/' }, (res) => {
@@ -99,11 +107,11 @@ test('every response carries the strict CSP, naming its own origin', async () =>
   assert.ok(!/unsafe-(inline|eval)/.test(dir('script-src')));
   assert.equal(dir('connect-src'), `connect-src 'self' ${server.origin} ws://127.0.0.1:${server.port}`);
   assert.equal(dir('img-src'), "img-src 'self' data: blob:");
-  assert.match(dir('style-src'), /fonts\.googleapis\.com/);
-  assert.match(dir('font-src'), /fonts\.gstatic\.com/);
+  assert.equal(dir('style-src'), "style-src 'self'");
+  assert.equal(dir('font-src'), "font-src 'self'");
 });
 
-test('the real page has no inline script and repeats the CSP as a meta tag', () => {
+test('the real page has no inline script, no meta CSP and no other host', () => {
   const web = join(import.meta.dirname, '..', '..', 'web');
   for (const f of ['index.html']) {
     const html = readFileSync(join(web, f), 'utf8');
@@ -111,8 +119,21 @@ test('the real page has no inline script and repeats the CSP as a meta tag', () 
     assert.ok(!/<style/i.test(html), `${f}: inline style element`);
     assert.ok(!/\son[a-z]+=/i.test(html), `${f}: inline handler`);
   }
-  const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(readFileSync(join(web, 'index.html'), 'utf8'));
-  assert.ok(meta && meta[1].includes("script-src 'self';") && meta[1].includes("default-src 'self'"));
+  const html = readFileSync(join(web, 'index.html'), 'utf8');
+  assert.ok(!/http-equiv="Content-Security-Policy"/i.test(html), 'a meta CSP would have to repeat the header');
+  assert.ok(!/https?:\/\//.test(html.replace(/<!--[\s\S]*?-->/g, '')), 'index.html loads nothing from another host');
+  assert.match(html, /<script type="module" src="js\/main\.js"><\/script>/);
+});
+
+test('every font app.css names is bundled, with its license beside it', () => {
+  const web = join(import.meta.dirname, '..', '..', 'web');
+  const css = readFileSync(join(web, 'css', 'app.css'), 'utf8');
+  const urls = [...css.matchAll(/url\("\.\.\/(fonts\/[^"]+)"\)/g)].map((m) => m[1]);
+  assert.ok(urls.length >= 5, String(urls));
+  for (const u of urls) {
+    assert.ok(existsSync(join(web, u)), u);
+    assert.ok(existsSync(join(web, dirname(u), 'OFL.txt')), `${u}: no OFL.txt beside it`);
+  }
 });
 
 test('path traversal is refused', async () => {

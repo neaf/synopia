@@ -47,21 +47,22 @@ const TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
 };
 
-// The page's Content-Security-Policy, sent on every response. Scripts from the page's own files only (no
-// inline script, no eval); the socket and http to this backend's own origin; Google Fonts for the CSS and
-// the font files the page loads; images from /api/image, and pasted ones as data: or object (blob:) URLs. Style attributes stay allowed
-// (style-src-attr): the markup sets positions and marks with them, and they can't run script.
-// index.html repeats it as a meta tag, without the port, for when the header is missing.
+// The page's Content-Security-Policy, sent on every response. Scripts, styles and fonts from the page's
+// own files only (no inline script, no eval; the fonts are bundled in app/web/fonts); the socket and http
+// to this backend's own origin; images from /api/image, and pasted ones as data: or object (blob:) URLs.
+// Style attributes stay allowed (style-src-attr): the markup sets positions and marks with them, and they
+// can't run script. The page is only ever served from here, so index.html has no meta copy.
 export function contentSecurityPolicy(origin: string): string {
   const ws = origin.replace(/^http/, 'ws');
   return [
     "default-src 'self'",
     "script-src 'self'",
-    "style-src 'self' https://fonts.googleapis.com",
+    "style-src 'self'",
     "style-src-attr 'unsafe-inline'",
-    "font-src 'self' https://fonts.gstatic.com",
+    "font-src 'self'",
     "img-src 'self' data: blob:",
     `connect-src 'self' ${origin} ${ws}`,
     "object-src 'none'",

@@ -22,6 +22,10 @@ check('the sidebar has its sessions', (await ev(`document.querySelectorAll('#gro
 check('a session view is shown', await ev(`!!document.querySelector('#conv .c-title') && !!document.getElementById('msg')`));
 check('the socket is authenticated', await ev(`__synopia.readiness().connected === true`));
 check('style attributes still apply (marks spin)', await ev(`(() => { const r = document.querySelector('[style*="--d"]'); return !r || getComputedStyle(r).getPropertyValue('--d').trim() !== ''; })()`));
+// the fonts are bundled (app/web/fonts): both families load from the page's own origin, none fails
+const fonts = await ev(`document.fonts.ready.then(() => [...document.fonts].map(f => \`\${f.family.replace(/"/g, '')} \${f.weight} \${f.status}\`))`);
+check('the UI and transcript fonts load from the bundle', Array.isArray(fonts) && ['Atkinson Hyperlegible Next', 'JetBrains Mono NL'].every((n) => fonts.some((f) => f.startsWith(n + ' ') && f.endsWith(' loaded'))) && !fonts.some((f) => f.endsWith(' error')), JSON.stringify(fonts));
+check('the page loads nothing from another host', await ev(`performance.getEntriesByType('resource').every(r => new URL(r.name).origin === location.origin)`), JSON.stringify(await ev(`performance.getEntriesByType('resource').map(r => r.name).filter(n => new URL(n).origin !== location.origin)`)));
 check('no CSP violation while loading', (await ev(`__csp.length`)) === 0, JSON.stringify(await ev(`__csp`)));
 check('no CSP or script error in the console', !logs.some((l) => /Content Security Policy|Refused to|Uncaught/i.test(l)), JSON.stringify(logs));
 

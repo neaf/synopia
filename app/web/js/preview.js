@@ -51,7 +51,7 @@ function pvBuild() {
 }
 const previewShown = () => Boolean(pv.el && !pv.el.hidden);
 
-/* the backend's reply (bridge.js); one for a file asked before the last is dropped */
+/* the backend's reply (main.js); one for a file asked before the last is dropped */
 function showPreview(m) {
   if (!pv.want || m.path !== pv.want.path) return;
   if (!pv.el) pvBuild();
@@ -73,7 +73,7 @@ function showPreview(m) {
   code.scrollLeft = 0;
   code.scrollTop = 0; // just the file, from the top: the diff is where changes show
   pv.el.querySelector(".pv-panel").focus({ preventScroll: true });
-  if (want.restore) uiPreviewRestored(want.restore); // reopened after a reload: its find and scroll (ui.js)
+  if (want.restore) uiPreviewRestored(want.restore); // reopened after a reload: its find and scroll (ui-state.js)
 }
 const pvSize = b => b >= 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 function hidePreview() {

@@ -182,7 +182,6 @@ function tookLive(ms) {
   return h ? `${h}h ${m}m` : m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
 }
 const live = (startIso, ms) => `<span data-live="${esc(startIso)}">${tookLive(ms)}</span>`;
-let view = null; // null = the session; otherwise an agent id inside the current session
 const agentsOf = s => s.agents || [];
 const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
 const agentByTool = (s, tid) => agentsOf(s).find(a => a.toolUseId === tid);
@@ -362,7 +361,6 @@ function statusLine(s) {
 
 /* ---------- the session view, rendered per panel: header, log, card (in the dock), rail ---------- */
 const conv = document.getElementById("conv");
-const cur = () => store.sessions.get(current);
 let mounted = null; // "<sid>|<agent id>" of the view on screen
 /* Builds the view's frame when the session or the subagent changed (the composer is made here, once
    per view, so data never resets typing, focus or attachments), then renders every panel. */
@@ -373,10 +371,10 @@ function renderConv() {
     conv.innerHTML = `<div class="missing"><p>${store.ui.connected ? "No open sessions." : "Connecting to the Synopia backend…"}</p></div>`;
     return;
   }
-  if (view && !agentById(s, view)) view = null;
+  if (view && !agentById(s, view)) selectView(null);
   const key = `${s.id}|${view || ""}`;
   if (mounted !== key) {
-    uiLeave(); // the draft of the view going away is kept (ui.js)
+    uiLeave(); // the draft of the view going away is kept (ui-state.js)
     mounted = key;
     conv.innerHTML = `
     <header class="c-head panel"></header>
@@ -454,11 +452,11 @@ function renderLogKeepingPlace() {
 }
 /* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
 function renderLog() {
-  const s = cur(); if (!s || !mounted || uiHolding()) return; // a view just mounted waits for its reset (ui.js)
+  const s = cur(); if (!s || !mounted || uiHolding()) return; // a view just mounted waits for its reset (ui-state.js)
   const log = document.getElementById("log");
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   patchChildren(log.querySelector(".log-inner"), logEntries(s, view && agentById(s, view)));
-  uiAfterLog(); // open diffs and folds stay open (ui.js)
+  uiAfterLog(); // open diffs and folds stay open (ui-state.js)
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
 /* live times tick in place, so they don't count as a change */
@@ -512,9 +510,9 @@ conv.addEventListener("click", e => {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
   } else if (t.dataset.agent) {
     e.preventDefault(); e.stopPropagation();
-    view = t.dataset.agent; renderConv();
+    selectView(t.dataset.agent); renderConv();
   }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; view = null; renderConv(); } // leaving a subagent folds its card
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) openBg = null; selectView(null); renderConv(); } // leaving a subagent folds its card
   else if (t.dataset.reviewed) { e.stopPropagation(); send({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { openBg = openBg === t.dataset.bg ? null : t.dataset.bg; renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)

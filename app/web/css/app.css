@@ -1,4 +1,14 @@
 /* Light theme with visible panels. Sizes are 81% of the first draft (two 90% steps). */
+/* The fonts are bundled (decision Q8), both under the SIL Open Font License (OFL.txt beside them), so
+   the page looks the same offline. Atkinson Hyperlegible Next: googlefonts/atkinson-hyperlegible-next at
+   7925f50, fonts/webfonts. JetBrains Mono NL (no ligatures): JetBrains/JetBrainsMono release v2.304,
+   fonts/ttf (the release has no NL web font). Local files load before the first paint, so `block`
+   shows no fallback text that rewraps later. */
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 400; font-display: block; src: url("../fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 500; font-display: block; src: url("../fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 700; font-display: block; src: url("../fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Bold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono NL"; font-weight: 400; font-display: block; src: url("../fonts/jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf") format("truetype"); }
+@font-face { font-family: "JetBrains Mono NL"; font-weight: 700; font-display: block; src: url("../fonts/jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf") format("truetype"); }
 :root {
   /* one speed for every moving mark (R8.1); a monitor only watches, so its sweep is slower */
   --mark-period: 2s; --mark-watch: 3s;

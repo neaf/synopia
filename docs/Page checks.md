@@ -84,8 +84,8 @@ A script added with `Page.addScriptToEvaluateOnNewDocument` is not subject to th
 ### Web-font swap
 
 - Symptom: a block moves about 52 px between a measurement and a click.
-- Cause: fonts load with `display=swap`; the swap rewraps text after first paint.
-- Workaround: checks that measure position wait for `document.fonts.ready`.
+- Cause: a font face loads only when text first needs it, and text set before it arrives rewraps when it does. The bundled faces (`app/web/fonts`, `app.css` `@font-face`, `font-display: block`) are local, so this is rare, but a weight first used by a later render still loads then.
+- Workaround: checks that measure position wait for `document.fonts.ready`. `csp.mjs` checks that both families load from the bundle and nothing comes from another host.
 - Code: `earlier.mjs` 57-59. Commit 844aba1.
 
 ### One browser at a time for animation suites
@@ -108,7 +108,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 
 ## Test API: `window.__synopia`
 
-`app/web/js/test-api.js` defines it; `index.html` loads it before `bridge.js`. Page modules may change freely behind it. A getter returns a copy (`structuredClone`), so a check cannot change the page through it. Write `__synopia.cur()` inside a page expression; `page(c).cur()` from the suite.
+`app/web/js/test-api.js` defines it, an ES module that `main.js` installs before it connects. Page modules may change freely behind it. A getter returns a copy (`structuredClone`), so a check cannot change the page through it. Write `__synopia.cur()` inside a page expression; `page(c).cur()` from the suite.
 
 | Member | Returns |
 |---|---|
@@ -141,11 +141,11 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `redraw()` | re-renders the transcript with every block replaced |
 | `resetTweens()` | the sidebar forgets its sub-line tweens, so the next render is a fresh one |
 
-- Nothing is recorded until `spy()`; in use the API costs a null check per frame. `bridge.js` calls `testSent` in `send` and `testGot` before `onMessage`.
-- No suite reads a page global. State goes in by `inject` (a server message) or `serverSend` (stored before a load), actions by the DOM: a click, a key, a `pagehide` event (`ui.js` flushes the UI state on it).
+- Nothing is recorded until `spy()`; in use the API costs a null check per frame. While spying, `connection.js` hands each frame to `tap.sent` in `send` and to `tap.got` before the message handler.
+- No suite reads a page global. State goes in by `inject` (a server message) or `serverSend` (stored before a load), actions by the DOM: a click, a key, a `pagehide` event (`ui-state.js` flushes the UI state on it).
 - Switch views the way a user does: click `#conv [data-agent="<id>"]` for a subagent, `#conv [data-back]` for the main conversation, a `#groups .row` for a session.
 - Open things as a user does: `#open` for the Open list, `#theme` for the theme (Alt-click follows the system), a clicked `a[data-path]` for the file preview and a clicked `.thumb[data-full-src]` for the image viewer. Both are document-level click handlers (`transcript.js`, `images.js`), so a link or thumbnail the check adds works too.
-- The protocol has no message that drops a background entry or a subagent. `tween` and `motion` inject a `session` message with the shorter list; `applySession` copies every field it gets (`store.js`).
+- The protocol has no message that drops a background entry or a subagent. `tween` and `motion` inject a `session` message with the shorter list; `applySession` copies every field it gets (`state.js`).
 
 ## Backend tests
 

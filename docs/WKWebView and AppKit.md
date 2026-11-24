@@ -65,7 +65,7 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 - Symptom: open `<details>` and expanded diffs close on every update.
 - Cause: keyed blocks are rebuilt from HTML strings; the new elements have default state.
 - Workaround: `carryState` copies open state by position and id; open steps are kept in a set keyed `sid|view|itemId`.
-- Code: `transcript.js` 487-494, `ui.js` 152-169.
+- Code: `transcript.js` 487-494, `ui-state.js` `afterLog`.
 
 ### Quirk: native drag on buttons
 
@@ -78,16 +78,17 @@ WKWebView shows no `alert()` or `confirm()` itself: without a `WKUIDelegate` `ru
 
 - Pasted images: an object URL for the thumbnail, a `FileReader` data URL for sending; PNG and JPEG only, 5 MB each. Code: `composer.js` 274-304.
 - `crypto.randomUUID` exists only in secure contexts; `http://127.0.0.1` is one, other hosts may not be, so a fallback is present. Code: `composer.js` 4.
-- `<img>` requests can't carry headers, so image URLs carry the token in the query (`/api/image?token=`). The stored viewer state strips it and adds it back on restore. Code: `images.js` 9, `ui.js` 79, 205.
+- `<img>` requests can't carry headers, so image URLs carry the token in the query (`/api/image?token=`). The stored viewer state strips it and adds it back on restore. Code: `images.js` 9, `ui-state.js` `afterRender` and `top`.
 
 ## Content Security Policy
 
-- The daemon sends the CSP header on every response; `index.html` repeats a looser `<meta>` copy (no port) for when the header is missing.
+- The daemon sends the CSP header on every response; every page response comes from it, so `index.html` has no `<meta>` copy.
 - `script-src 'self'`: no inline script, no eval. `style-src-attr 'unsafe-inline'` is needed: the markup sets positions and mark sizes in style attributes (`--iw`, `--dn`), which can't run script.
-- `style-src` and `font-src` allow `https://fonts.googleapis.com` and `https://fonts.gstatic.com`: the page loads Atkinson Hyperlegible Next and JetBrains Mono from Google Fonts at run time (`display=swap`); JetBrains Mono NL comes only from a local install. Offline or blocked, it falls back to `system-ui` and Menlo, and the `ch`-based transcript grids change width. The swap itself rewraps text after load; see [Page checks](Page%20checks.md#web-font-swap). R11 bundles the fonts (decision Q8), which removes both hosts.
+- `style-src 'self'` and `font-src 'self'`: the fonts are bundled (decision Q8) in `app/web/fonts`, Atkinson Hyperlegible Next as woff2 and JetBrains Mono NL as TrueType (its release has no NL web font), each with its `OFL.txt`. Offline or behind a proxy the transcript's `ch`-based grids keep their width. See [Page checks](Page%20checks.md#web-font-swap) for a weight first used late.
 - `img-src 'self' data: blob:` for `/api/image` and pasted images.
-- Code: `server.ts` `contentSecurityPolicy` (52-72), `index.html` 6-14.
+- Scripts: the classic files plus one module entry, `<script type="module" src="js/main.js">`. A module needs only `script-src 'self'` and the `text/javascript` type `server.ts` sends for `.js`. Module scripts are deferred, so every classic script has run when a module runs and its globals exist (`js/legacy.js` relies on it).
+- Code: `server.ts` `contentSecurityPolicy` (58-73), `app.css` `@font-face` (2-11), `csp.mjs`.
 
 ## WebKit features used
 
-The page uses CSS `subgrid`, the CSS Custom Highlight API (`CSS.highlights`, feature-detected: without it find marks are absent), `inert`, `Array.prototype.findLast` and a writable `CSSAnimation.startTime`. The minimum WebKit (and so macOS) version that has all of them is `unverified`. Code: `app.css` 783 (subgrid), `preview.js` 97, `tween.js` 42 (inert), `store.js` 40 (findLast), `marks.js` 109.
+The page uses CSS `subgrid`, the CSS Custom Highlight API (`CSS.highlights`, feature-detected: without it find marks are absent), `inert` and a writable `CSSAnimation.startTime`. The minimum WebKit (and so macOS) version that has all of them is `unverified`. Code: `app.css` 783 (subgrid), `preview.js` 97, `tween.js` 42 (inert), `marks.js` 109.

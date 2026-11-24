@@ -302,7 +302,7 @@ function mountComposer(s) {
       const r = new FileReader(); r.onload = () => { a.data = r.result; uiChanged(); }; r.readAsDataURL(file); // then kept with the draft
     }
   });
-  uiEnterComposer(s, ta); // this session's draft: its text, cursor and pasted images (ui.js)
+  uiEnterComposer(s, ta); // this session's draft: its text, cursor and pasted images (ui-state.js)
   tagLoose(s, ta);
   takeRestored(s.id);
   mountTakeover(s, ta);
@@ -313,7 +313,7 @@ function mountComposer(s) {
    runs the command in the session's folder (`bang`); its output shows in the transcript and goes to Claude as
    context, with no turn. Not in a session another process runs, nor one a terminal holds. */
 const bashOk = s => Boolean(s) && s.state.driven && !termPid(s);
-/* the box's text as a draft keeps it: with the `!` of bash mode (ui.js) */
+/* the box's text as a draft keeps it: with the `!` of bash mode (ui-state.js) */
 const boxValue = ta => (ta.dataset.bash ? "!" : "") + ta.value;
 function setBash(ta, on) {
   if (on) ta.dataset.bash = "1"; else delete ta.dataset.bash;
