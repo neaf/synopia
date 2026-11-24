@@ -249,6 +249,77 @@ test('earlier: pages of 160 before an id, down to the first, then nothing', () =
   views.stop();
 });
 
+test('view from: one reset from the oldest item the page had loaded, else the last 160', () => {
+  const id = 'edededed-0000-4000-8000-0000000000ed';
+  let body = '';
+  for (let i = 0; i < 400; i++) body += you(i);
+  const dir = tempSession(id, body);
+  const { clients, views } = setup(dir);
+  const c = client();
+  clients.add(c);
+  views.open(id);
+  views.check();
+  c.take();
+  const ids = (m: Msg) => (m.upsert as { id: string }[]).map((i) => i.id);
+
+  // From u50: one reset with u50 to u399, and nothing else.
+  views.view(c, id, null, 'u50');
+  const got = c.take();
+  assert.equal(got.length, 1);
+  assert.equal(got[0].reset, true);
+  assert.equal(got[0].total, 400);
+  assert.deepEqual(ids(got[0]), Array.from({ length: 350 }, (_, i) => `u${50 + i}`));
+  // Earlier items go on before u50.
+  assert.equal(views.earlier(c, id, null, 'u50'), 50);
+  assert.equal(ids(c.take('items')[0])[0], 'u0');
+
+  // An id within the last 160, an unknown id, none: the last 160.
+  for (const from of ['u300', 'nope', null, undefined]) {
+    views.view(c, id, null, from);
+    const [r] = c.take('items');
+    assert.equal(r.reset, true);
+    assert.equal(ids(r).length, 160, String(from));
+    assert.equal(ids(r)[0], 'u240', String(from));
+  }
+  // The first item: everything.
+  views.view(c, id, null, 'u0');
+  assert.equal(ids(c.take('items')[0]).length, 400);
+  // A rewrite after that resets to the last 160 of the new file, as before.
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  let again = '';
+  for (let i = 0; i < 300; i++) again += you(i);
+  fs.writeFileSync(file + '.new', again);
+  fs.renameSync(file + '.new', file);
+  views.check();
+  assert.equal(ids(c.take('items')[0])[0], 'u140');
+  views.stop();
+});
+
+test('view from: an item loaded through from gets its upserts', () => {
+  const id = 'edededed-0000-4000-8000-0000000000ee';
+  let body = line({
+    type: 'assistant', uuid: 'a0', timestamp: '2026-11-20T10:00:00.000Z',
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_old', name: 'Bash', input: { command: 'sleep 1' } }] },
+  });
+  for (let i = 1; i < 200; i++) body += you(i);
+  const dir = tempSession(id, body);
+  const { clients, views } = setup(dir);
+  const c = client();
+  clients.add(c);
+  views.open(id);
+  views.check();
+  c.take();
+  views.view(c, id, null, 'toolu_old');
+  assert.equal((c.take('items')[0].upsert as { id: string }[]).length, 200);
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), line({
+    type: 'user', uuid: 'r0', timestamp: '2026-11-20T10:00:01.000Z',
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_old', content: 'ok' }] },
+  }));
+  views.check();
+  assert.deepEqual((c.take('items')[0].upsert as { id: string; state: string }[]).map((i) => [i.id, i.state]), [['toolu_old', 'done']]);
+  views.stop();
+});
+
 test('earlier: an item loaded earlier gets its upserts, only on the page that loaded it', () => {
   const id = 'efefefef-0000-4000-8000-0000000000ef';
   let body = line({

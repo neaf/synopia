@@ -345,7 +345,7 @@ function renderLogKeepingPlace() {
 }
 /* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
 function renderLog() {
-  const s = cur(); if (!s || !mounted) return;
+  const s = cur(); if (!s || !mounted || uiHolding()) return; // a view just mounted waits for its reset (ui.js)
   const log = document.getElementById("log");
   const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
   patchChildren(log.querySelector(".log-inner"), logEntries(s, view && agentById(s, view)));

@@ -104,12 +104,17 @@ function uiEnterComposer(s, ta) {
 }
 /* an object URL a draft not on screen still shows: not freed (composer.js) */
 const uiHeld = url => [...uiDrafts.values()].some(d => d.atts.some(a => a.url === url));
-/* the view asked the server for its items: its scroll waits for them */
+/* the view asked the server for its items: its scroll waits for them, and its log for their reset */
 function uiExpectReset() {
   clearTimeout(uiRestoring?.timer);
   const key = mounted;
-  uiRestoring = { key, tries: 0, timer: setTimeout(() => { if (uiRestoring?.key === key) uiRestoring = null; }, 5000) };
+  uiRestoring = { key, tries: 0, got: !store.ui.connected, timer: setTimeout(() => { if (uiRestoring?.key === key) { uiRestoring = null; renderLog(); } }, 5000) };
 }
+/* the oldest item a view had loaded, sent with `view` so its reset starts there (bridge.js) */
+const uiFrom = (sid, agent) => uiS[sid]?.earlier[agent || ""] || null;
+/* a view just mounted shows nothing until its reset: no stale items, no short window first */
+const uiHolding = () => !!uiRestoring && uiRestoring.key === mounted && !uiRestoring.got;
+function uiResetIn(m) { if (m.reset && uiRestoring && uiRestoring.key === mounted) uiRestoring.got = true; }
 
 /* ---------- the log: the anchor, the earlier items, open diffs and folds (bridge.js, transcript.js) ---------- */
 const UI_NOT_ANCHOR = /^(earlier|day:|live|stream|held:)/;

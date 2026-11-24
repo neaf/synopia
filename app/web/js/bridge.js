@@ -8,7 +8,12 @@ let viewing = null; // the {sid, agent} this page asked the server for
 const hooks = { agent: params.get("agent"), open: params.get("open") }; // one-shot: open a subagent, expand the last diff
 
 function send(msg) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg)); }
-function requestView(sid, agent) { viewing = { sid, agent: agent || null }; send({ t: "view", sid, agent: agent || null }); }
+/* `from`: the oldest item this view had loaded, so the reply is one reset with all of it (ui.js) */
+function requestView(sid, agent) {
+  viewing = { sid, agent: agent || null };
+  const from = uiFrom(sid, agent);
+  send({ t: "view", sid, agent: agent || null, ...(from ? { from } : {}) });
+}
 
 /* render(part): side, header, log, card, rail, or conv (all of the view) */
 function render(...parts) {
@@ -53,6 +58,7 @@ function onMessage(m) {
     case "items": {
       if (!applyItems(m)) break;
       if (!isViewed(m.sid, m.agent)) break;
+      uiResetIn(m); // the log a view switch held back renders now, once
       if (m.prepend) { renderLogKeepingPlace(); uiItems(m); break; } // earlier items: the card and header don't change
       render("log", "card", "header"); // the header drops its Now line while a new session is empty
       uiItems(m); // a restored scroll waits for these (ui.js)
