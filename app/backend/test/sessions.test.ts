@@ -8,6 +8,7 @@ import { Sessions, StreamPreview, renameInLayout } from '../src/sessions.ts';
 import { STATE_FLAG } from '../src/driver.ts';
 import type { QueryFn } from '../src/driver.ts';
 import { openStore, reconcileLayout } from '../src/store.ts';
+import { patchUi } from '../src/ui.ts';
 import type { Client } from '../src/server.ts';
 import type { CanUseTool, Options, SDKMessage, SDKSessionInfo, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
 
@@ -208,6 +209,29 @@ test('sessions: conversation_reset moves the id in the open list, layout, models
   const s = take('session');
   assert.equal(s[0].replaces, REAL);
   assert.equal(s[0].id, RESET);
+});
+
+test('sessions: the page ui state follows init and a reset, and goes when the session closes (R3.9)', async () => {
+  const { sessions, store, q } = setup();
+  const drafts = (id: string) => path.join(path.dirname(store.path), 'drafts', id);
+  const ph = sessions.newSession();
+  patchUi(store, { current: ph, sessions: { [ph]: { draft: { text: 'typed before init', images: [{ id: 'i1', mediaType: 'image/png', data: Buffer.from('made-up').toString('base64') }] } } } });
+  sessions.send(ph, 'hi');
+  emit(q.calls[0], init(REAL));
+  await tick();
+  const ui = store.state.ui;
+  assert.equal(ui.current, REAL);
+  assert.equal(ui.sessions[REAL].draft?.text, 'typed before init');
+  assert.ok(fs.existsSync(path.join(drafts(REAL), 'i1.png')));
+  emit(q.calls[0], { type: 'conversation_reset', new_conversation_id: RESET, uuid: 'u-r', session_id: REAL });
+  await tick();
+  assert.equal(ui.current, RESET);
+  assert.deepEqual(Object.keys(ui.sessions), [RESET]);
+  assert.ok(fs.existsSync(path.join(drafts(RESET), 'i1.png')));
+  assert.equal(sessions.close(RESET).ok, true);
+  assert.deepEqual(ui.sessions, {});
+  assert.equal(ui.current, null);
+  assert.ok(!fs.existsSync(drafts(RESET)));
 });
 
 test('sessions: the open list is stored, and the session resumes on the first message after a restart', async () => {

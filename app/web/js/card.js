@@ -182,6 +182,7 @@ function renderCard() {
   document.getElementById("qa-send").onclick = () => answerAsk(s, pa);
   const own = document.getElementById("qa-own");
   if (own) { const q0 = pa.qs[st.target]; if (st.noteRow == null && q0.otherPrefix && own.value.startsWith(q0.otherPrefix + ": ")) own.value = own.value.slice(q0.otherPrefix.length + 2); else if (own.value === q0.otherPrefix) own.value = "";
+    const typed = uiTakeTyping(askKey(s, pa)); if (typed != null) own.value = typed; // what it held before a reload (ui.js)
     const stop = save => {
       const q = pa.qs[st.target];
       if (st.noteRow != null) { if (save) { if (own.value.trim()) st.notes[st.target] = own.value.trim(); else delete st.notes[st.target]; } st.target = null; st.noteRow = null; mode = "normal"; renderCard(); paintMode(); return; }

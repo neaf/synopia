@@ -99,11 +99,9 @@ const sub = await ids();
 check('subagent: in order, no duplicates', sub[0] === 's-start' && inOrder(sub.slice(1), 's', 0, SUB - 1) && await noDupKeys());
 check('subagent: the earlier message names it', (await ev(`__sent.filter(m => m.t === 'earlier').pop().agent`)) === AID);
 
-// Back to the main view: a fresh view gives the last 160; a rewrite resets to the last 160.
+// Back to the main view: the earlier items it had loaded are asked for again (R3.9); a rewrite resets to the last 160.
 await ev(`view = null; renderConv()`);
-check('back: the last 160 again', await until(`cur().items.length === 160 && cur().items[0].id === 'm442'`));
-await ev(`document.querySelector('#log .earlier button').click()`);
-await until(`cur().items.length === 320`);
+check('back: the earlier items it had come back', await until(`cur().items.length === 602 && cur().items[0].id === 'm0'`) && (await link()) === null && await noDupKeys());
 fs.writeFileSync(mainFile(claudeDir) + '.new', body(400));
 fs.renameSync(mainFile(claudeDir) + '.new', mainFile(claudeDir));
 check('a reset: the last 160 of the new file', await until(`cur().items.length === 160 && cur().items[0].id === 'm240'`, 5000) && (await link()) === 'Show 160 earlier (240 more)', await link());
