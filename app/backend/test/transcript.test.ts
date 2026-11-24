@@ -39,6 +39,7 @@ test('tools: verbs, states, ids and skipped records', () => {
   assert.deepEqual(t.items.map((i) => i.id), [
     't-u1', 't-a1:1', 'toolu_bash1', 'toolu_read1', 'toolu_edit1', 'toolu_write1', 'toolu_write2',
     'toolu_bashedit1', 'toolu_grep1', 'toolu_mcp1', 'toolu_ts1', 'toolu_fetch1', 't-a5:1', 't-u9', 't-u10',
+    'title@21', // the rename (custom-title) after the prompts; the first ai-title only named it
   ]);
   assert.deepEqual(byId(t, 't-u1'), {
     id: 't-u1', k: 'you', ts: '2026-11-20T10:00:00.000Z', text: 'Tidy the demo notes and add a changelog.', images: 0,
@@ -143,7 +144,8 @@ test('tools: title, PRs, model, effort and mode', () => {
   assert.equal(t.effort, 'high');
   assert.equal(t.permissionMode, 'auto');
   assert.equal(t.view(3).items.length, 3);
-  assert.equal(t.view(3).total, 15);
+  assert.equal(t.view(3).total, 16);
+  assert.deepEqual(byId(t, 'title@21'), { id: 'title@21', k: 'title', ts: null, title: 'Demo notes cleanup', by: 'you' });
 });
 
 test('a tool result updates the same item, and takeChanges lists it', () => {

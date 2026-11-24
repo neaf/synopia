@@ -29,7 +29,8 @@ export type State = {
   ended: Record<string, number>;
   // Final: that end was a process failure, so a tool left without a result reads as failed.
   endedFailed: Record<string, boolean>;
-  written: Record<string, { title?: string; now?: string; at: number }>;
+  // `history`: the titles the writer gave, oldest first (at most 50), for the transcript's title items.
+  written: Record<string, { title?: string; now?: string; at: number; history?: { title: string; at: number }[] }>;
   settings: Settings;
   // The page's UI state, restored after a reload, a crash or a quit (ui.ts).
   ui: UiState;
@@ -91,6 +92,10 @@ export function normalize(raw: unknown): State {
   if (isStrArr(raw.reviewed)) s.reviewed = [...raw.reviewed];
   for (const k of ['models', 'rules', 'answers', 'plans', 'status', 'written', 'ended', 'endedFailed'] as const) {
     if (isObj(raw[k])) (s as Record<string, unknown>)[k] = raw[k];
+  }
+  for (const w of Object.values(s.written)) {
+    if (!isObj(w) || w.history === undefined) continue;
+    w.history = Array.isArray(w.history) ? w.history.filter((h) => isObj(h) && typeof h.title === 'string' && typeof h.at === 'number') : [];
   }
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
