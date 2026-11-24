@@ -1,4 +1,4 @@
-// H1 on the page: the page works under its Content-Security-Policy (header and meta tag) with no CSP
+// H1 on the page: the page works under its Content-Security-Policy (a header from server.ts; no meta copy) with no CSP
 // error in the console, a hostile link in a transcript renders as a plain link, and an injected inline
 // handler is blocked. usage: run.sh csp (or node csp.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';

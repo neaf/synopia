@@ -5,6 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { getEventListeners } from 'node:events';
 import { Cards, DENIED, alwaysText, kindOf, sessionRules, settle } from '../src/cards.ts';
+import type { CardsHooks } from '../src/cards.ts';
+import { displayPath } from '../src/paths.ts';
+import { ANSWERS_MAX, PLANS_MAX, normalize } from '../src/store.ts';
 import { openStore } from '../src/store.ts';
 import type { Asked } from '../src/cards.ts';
 import type { PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
@@ -109,7 +112,7 @@ test('cards: the Always allow text has one clause per update entry, with where a
   assert.equal(alwaysText([{ type: 'addRules', rules: [{ toolName: 'WebSearch' }, { toolName: 'Read', ruleContent: '//tmp/**' }], behavior: 'allow', destination: 'session' }]),
     'Always allow WebSearch, Read(//tmp/**) for this session.');
   assert.equal(alwaysText([{ type: 'setMode', mode: 'acceptEdits', destination: 'session' }]), 'Switch to accept edits for this session.');
-  assert.equal(alwaysText([rule('localSettings'), { type: 'setMode', mode: 'acceptEdits', destination: 'session' }, { type: 'addDirectories', directories: ['/Users/me/dev/other'], destination: 'session' }], '/Users/me'),
+  assert.equal(alwaysText([rule('localSettings'), { type: 'setMode', mode: 'acceptEdits', destination: 'session' }, { type: 'addDirectories', directories: ['/Users/me/dev/other'], destination: 'session' }], (p) => displayPath(p, '/Users/me')),
     'Always allow Bash(npm run test:*) in this project (.claude/settings.local.json), and switch to accept edits for this session, and allow access to ~/dev/other for this session.');
   assert.equal(alwaysText([{ type: 'removeDirectories', directories: ['/tmp/a'], destination: 'session' }]), 'Remove access to /tmp/a for this session.');
   assert.equal(alwaysText([{ type: 'replaceRules', rules: [{ toolName: 'Edit' }], behavior: 'ask', destination: 'localSettings' }]), 'Always ask before Edit in this project (.claude/settings.local.json).');
@@ -137,6 +140,7 @@ function cards() {
   const c = new Cards({
     store, sid: () => SID, show: (r) => shown.push(r.id), clear: (id) => cleared.push(id), count: (n) => counts.push(n),
     context: () => ({ cwd: '~/x', modeBefore: 'auto' }), drained: () => drained++, now: () => 1,
+    tilde: (p) => displayPath(p, '/Users/me'),
   });
   return { c, store, shown, cleared, counts, get drained() { return drained; } };
 }
@@ -166,4 +170,34 @@ test('cards: Always allow stores the session rules; close ends the requests and 
   assert.equal(t.c.rules(), undefined);
   assert.equal(SID in t.store.state.rules, false, 'gone from state.json too');
   assert.equal(t.drained, 1, 'an abort is no drain');
+});
+
+test('cards: the Always allow text shows folders with ~ (final-session#B6)', () => {
+  const shown: unknown[] = [];
+  const hooks: CardsHooks = {
+    store: cards().store, sid: () => SID, show: (r) => shown.push(r.always), clear: () => {}, count: () => {},
+    context: () => ({ cwd: '~/x', modeBefore: 'auto' }), drained: () => {}, now: () => 1, tilde: (p) => displayPath(p, '/Users/me'),
+  };
+  const c = new Cards(hooks);
+  void c.park('Read', { file_path: '/Users/me/dev/other/a' }, opts('rq-1', new AbortController().signal, {
+    suggestions: [{ type: 'addDirectories', directories: ['/Users/me/dev/other'], destination: 'session' }],
+  }));
+  assert.deepEqual(shown, ['Allow access to ~/dev/other for this session.']);
+});
+
+test('cards: answer labels and plans keep the newest ANSWERS_MAX and PLANS_MAX (final-session#B5)', async () => {
+  const t = cards();
+  for (let i = 0; i < PLANS_MAX + 2; i++) t.store.state.plans[`old-${i}`] = 'p';
+  for (let i = 0; i < ANSWERS_MAX; i++) t.store.state.answers[`old-${i}`] = 'Allow once';
+  void t.c.park('ExitPlanMode', { plan: 'The plan' }, opts('rq-p', new AbortController().signal));
+  assert.ok(!('error' in t.c.answer('rq-p', { choice: 'approve' })));
+  assert.equal(Object.keys(t.store.state.answers).length, ANSWERS_MAX);
+  assert.equal(t.store.state.answers['tu-rq-p'], 'Approved', 'the newest is in');
+  assert.equal('old-0' in t.store.state.answers, false, 'the oldest went');
+  assert.equal(Object.keys(t.store.state.plans).length, PLANS_MAX);
+  assert.equal(t.store.state.plans['tu-rq-p'], 'The plan');
+  // and a state.json past the caps loads with the newest only
+  const big = normalize({ answers: Object.fromEntries(Array.from({ length: ANSWERS_MAX + 5 }, (_, i) => [`a${i}`, 'x'])) });
+  assert.equal(Object.keys(big.answers).length, ANSWERS_MAX);
+  assert.equal(Object.keys(big.answers)[0], 'a5');
 });

@@ -579,7 +579,7 @@ test("toolProgress: a running tool's start (now minus the elapsed time) goes wit
   transcripts.stop(); publisher.stop();
 });
 
-test('toolOutput: the full result read again from its line, also after the file grew; a toast when it is gone', () => {
+test('toolOutput: the full result read again from its line, also after the file grew; a toast when it is gone', async () => {
   const id = 'abababab-0000-4000-8000-00000000000b';
   const out = Array.from({ length: 30 }, (_, i) => `out ${i}`).join('\n');
   const dir = tempSession(id, you(1) + line({
@@ -597,20 +597,20 @@ test('toolOutput: the full result read again from its line, also after the file 
   const item = (c.take('items')[0].upsert as Msg[]).find((i) => i.id === 'toolu_o') as Msg;
   assert.equal(item.input, 'seq 30');
   assert.deepEqual(item.out, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true });
-  assert.equal(publisher.toolOutput(c, id, null, 'toolu_o'), true);
+  assert.equal(await publisher.toolOutput(c, id, null, 'toolu_o'), true);
   assert.deepEqual(c.take(), [{ t: 'toolOutput', sid: id, agent: null, toolUseId: 'toolu_o', text: out }]);
   fs.appendFileSync(file, you(4) + you(5));
   transcripts.poll();
   c.take();
-  assert.equal(publisher.toolOutput(c, id, null, 'toolu_o'), true, 'the offset holds after the file grew');
+  assert.equal(await publisher.toolOutput(c, id, null, 'toolu_o'), true, 'the offset holds after the file grew');
   assert.equal(c.take('toolOutput')[0].text, out);
-  assert.equal(publisher.toolOutput(c, id, null, 'toolu_none'), false);
+  assert.equal(await publisher.toolOutput(c, id, null, 'toolu_none'), false);
   assert.equal(c.take('toast').length, 1, 'an unknown tool gets a toast');
   fs.writeFileSync(file, you(9) + you(9) + you(9) + you(9)); // rewritten, not yet re-read
-  assert.equal(publisher.toolOutput(c, id, null, 'toolu_o'), false);
+  assert.equal(await publisher.toolOutput(c, id, null, 'toolu_o'), false);
   assert.equal(c.take('toast').length, 1, 'a rewritten file gets a toast');
   fs.rmSync(file);
-  assert.equal(publisher.toolOutput(c, id, null, 'toolu_o'), false);
+  assert.equal(await publisher.toolOutput(c, id, null, 'toolu_o'), false);
   assert.match(String(c.take('toast')[0].text), /gone or was rewritten/);
 });
 
@@ -647,13 +647,13 @@ test('restore and toast: to the page that acted while it is connected, else to e
   clients.add(a);
   clients.add(b);
   transcripts.open(id);
-  publisher.restore(id, ['hi'], a);
+  publisher.restore(id, [{ text: 'hi', images: [] }], a);
   publisher.toast('Not sent', a);
   assert.deepEqual([a.take().map((m) => m.t), b.take().length], [['restore', 'toast'], 0]);
   publisher.toast('Claude stopped');
   assert.deepEqual([a.take().length, b.take().length], [1, 1], 'no page acted: every page');
   clients.delete(a);
-  publisher.restore(id, ['hi'], a);
+  publisher.restore(id, [{ text: 'hi', images: [] }], a);
   assert.deepEqual([a.take().length, b.take('restore').map((m) => m.texts)], [0, [['hi']]], 'gone: every page left gets it');
   publisher.restore(id, [], b);
   assert.equal(b.take().length, 0, 'nothing to give back: no frame');
@@ -695,7 +695,7 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   fs.writeFileSync(path.join(claudeDir, 'projects', '-tmp-x', `${REAL}.jsonl`), line({
     type: 'attachment', uuid: 'att1', timestamp: new Date().toISOString(), attachment: { type: 'queued_command', prompt: 'First, **then**', commandMode: 'prompt' },
   }));
-  transcripts.poll();
+  await transcripts.poll(); // its file is new: found async
   assert.ok(outbox().includes('First, **then**@att1'), 'landed, still sent once so the page swaps it with its prompt');
   const order = a.got.map((m) => m.t);
   assert.ok(order.includes('items') && order.indexOf('session') < order.indexOf('items'), 'the meta naming it landed, then the prompt item');

@@ -61,7 +61,7 @@ The files the Node daemon and the Swift shell share, and the rules each side fol
 |---|---|---|
 | 0 | a stop: "Stop All Work", SIGTERM, SIGINT, the idle exit, or a handover | a handover: waits for the successor; else starts one on the next need |
 | 1 | an uncaught error: state.json written first, daemon.json removed, the trace on stderr | restarts it once; a second loss within 60 s shows the error view |
-| 2 | bad arguments (`--port`, `--sdk-script` without `--claude-dir`) | error view with daemon.log's last line |
+| 2 | bad arguments (an unknown flag or a missing value, `--port`, `--sdk-script` without `--claude-dir`) | error view with daemon.log's last line |
 | 3 | another daemon holds the lock; daemon.json left alone | waits for the other daemon's daemon.json |
 | 4 | cannot listen on 127.0.0.1 | error view |
 
@@ -87,7 +87,8 @@ Code: `daemon-files.ts` `EXIT`; `daemon.ts` `startDaemon` (3, 1), `cannotListen`
 
 ## Stop All Work and Restart Backend Now
 
-- Both ask `GET /api/quit-check` first. Its `summary` is the confirm's sentence after the question (`Stop all work?`, `Restart the backend?`), empty when nothing runs; `background` counts the work per kind. The backend names the kinds (`status.ts` `quitSummary`); the shell shows `summary` as it is.
+- Both ask `GET /api/quit-check` first. Its `summary` is the confirm's sentence after the question (`Stop all work?`, `Restart the backend?`), empty when nothing runs; `counts` counts the work per kind, and `background` lists it, one `{sid, kind}` each. The backend names the kinds (`status.ts` `quitSummary`); the shell shows `summary` as it is.
+- `background` stays a list because the shells built before `summary` decode `{running: [String], background: [{kind}]}` and, when that fails, stop without asking. Such a shell can still be open when its daemon updates itself to this code.
 - An empty `summary` acts at once. A check with no answer, or a reply without `summary` (an older daemon), asks with "Synopia could not tell what is running." One check or sheet at a time.
 - Stop: `POST /api/stop`, then the shell waits 15 s for the pid to go, checking each second that the pid still has the recorded `procStart`. Only the same process gets SIGTERM, then 3 s more; a reused pid counts as gone.
 - Code: `AppDelegate.swift` `confirmIfRunning`; `Backend.swift` `stopDaemon`, `waitGone`, `same`; `status.ts` `quitSummary`. Test: `status.test.ts` "quitSummary…", `shell-contract.test.ts`, `DaemonFilesTest.swift`.
@@ -114,7 +115,7 @@ Code: `daemon.ts` `startDaemon`; `main.ts` (the module list for `Parts`). Test: 
 
 ## Handover
 
-An update (the checkout's code hash changed, read twice the same, nothing running) or "Restart Backend Now…" (`POST /api/restart`) replaces the daemon without the shell starting one.
+An update (the checkout's code hash changed, read twice the same, nothing running; the hash covers `app/backend/src/**/*.ts`, `package-lock.json` and `app/web/js/protocol.js`, which the backend imports too) or "Restart Backend Now…" (`POST /api/restart`) replaces the daemon without the shell starting one.
 
 | Step | Old daemon | New daemon | Shell |
 |---|---|---|---|
@@ -127,8 +128,20 @@ An update (the checkout's code hash changed, read twice the same, nothing runnin
 - The successor inherits the merged login environment (`SYNOPIA_LOGIN_ENV=1`) and does not ask the login shell again.
 - An action sent while the old daemon stops is acked `{ok: false}`; the page keeps it and says so.
 - A successor that loads but fails later is a lost daemon: the shell starts one after its 20 s wait.
+- The daemon serves the page files from disk, so while an old daemon waits for its work to end it serves the new page. A page whose protocol version differs from its daemon's (`hello.v`, or no `v` at all) shows "Updating…" in place of "Reconnecting…", retries with the reconnect backoff, and reloads once a daemon of its own version answers; a newer daemon reloads it at once, once per version. The version is checked before the schema, which may differ too. Code: `connection.js` `receive`, `otherVersion`. Test: `app/web/test/connection.test.js`.
 - The 10 s reading and the 20 s wait have test-only flags, `--update-read-ms` and `--successor-ms`; a successor inherits them.
 - Code: `daemon.ts` `successorArgs`, `startSuccessor`, `awaitHandover`, `UpdateCheck.defer`, `startDaemon` (`handOver`, `stop`); `daemon-files.ts` `markHandover`, `clearStaleDaemonInfo`; `DaemonFiles.swift` `handedOver`; `Backend.swift` `lost`. Test: `handover.test.ts` (a new daemon that exits, one that stays silent, the deferred update), `daemon.test.ts` and `shell-contract.test.ts` (a restart's `handover`).
+
+### The one update from a daemon before these files
+
+The daemons before this format (git tag `rearch-base`) lock with a pid file, write daemon.json without `v` or `handover`, hash only `src/**/*.ts` and `package-lock.json`, and take `--fake` and `--dry-open`. Such a daemon still updates itself to this code, once:
+
+- It starts the new `main.ts` with its own command line plus `--after <pid>`. The new daemon accepts `--fake` (the scripted SDK with no script, so a check's daemon makes no model call) and `--dry-open` (as `--dry-run`); without them its flag parse would exit and the old daemon would stay.
+- `{t: 'loaded'}` over IPC is the same message. The old daemon removes daemon.json and its `backend.lock`, and exits; the new one waits for its pid, then takes the kernel lock on the same file. A pid file never blocks the kernel lock, so nothing may start a second daemon meanwhile, and nothing does: the old shell waits for the successor, the new shell adopts the old daemon.json while it is live.
+- An old shell tells this handover from a crash by daemon.log's last line, `… stop (update)`. The new daemon writes nothing to stderr while it starts, so that line stays last.
+- An old shell decodes the quit check as `{running: [String], background: [{kind}]}`; `background` keeps that shape (see Stop All Work).
+- A new shell with an old daemon: the old daemon.json decodes (`v` and `code` are optional), the page gets an old `hello` and shows "Updating…" until the update. When that daemon hands over, its daemon.json is gone with no `handover`, so the shell may count a crash and start a daemon; that one or the successor gets exit 3, and one daemon remains.
+- Code: `main.ts` (`OPTIONS`, the old flags). Test: `app/backend/test/upgrade.sh` (opt-in, about 25 s, not in `check.sh`): a `rearch-base` daemon on a temp state folder in its fake mode, its checkout replaced by this tree's code; one daemon after, the new daemon.json fields, `/api/ping`, the quit check's list, state.json kept, daemon.log's last line.
 
 ## Connection checks
 
@@ -139,4 +152,4 @@ An update (the checkout's code hash changed, read twice the same, nothing runnin
 | a frame over `MAX_PAYLOAD` (32 MB), before auth too | close 1009 |
 | HTTP: `Host` exact; `/api/*` needs `?token=` | 403 |
 
-Code: `server.ts` 119-126, 177-216. Test: `server.test.ts` 145, 148-196.
+Code: `server.ts` `startServer` (`serve` for HTTP, the `upgrade` and `connection` handlers for the socket). Test: `server.test.ts`.

@@ -20,7 +20,7 @@ const golden = (name: string) => JSON.parse(readFileSync(join(GOLDEN, name), 'ut
 const kind = (v: unknown) => (v === null ? 'null' : Array.isArray(v) ? 'array' : typeof v);
 
 // `live` has the golden's shape: the same keys, the same JSON types, arrays' items like the golden's
-// first, and at a `records` key (a map such as quit-check's `background`) every value like the golden's.
+// first, and at a `records` key (a map such as quit-check's `counts`) every value like the golden's.
 function sameShape(live: unknown, gold: unknown, at = '$', records: string[] = []): void {
   assert.equal(kind(live), kind(gold), `${at}: ${kind(live)}, golden ${kind(gold)}`);
   if (Array.isArray(live) && Array.isArray(gold)) {
@@ -108,10 +108,12 @@ test('shell contract: discovery, ping, badge, quit-check and stop on a --no-pare
   // subagents in 44444444; per-kind counts, and the sentence the shell shows after its question
   const qc = await api(i, 'quit-check');
   assert.equal(qc.status, 200);
-  const q = await qc.json() as { running: string[]; background: Record<string, number>; summary: string };
-  sameShape(q, golden('quit-check.json'), '$', ['background']);
+  const q = await qc.json() as { running: string[]; background: { sid: string; kind: string }[]; counts: Record<string, number>; summary: string };
+  sameShape(q, golden('quit-check.json'), '$', ['counts']);
   assert.deepEqual(q.running, ['22222222-0000-4000-8000-000000000002', '33333333-0000-4000-8000-000000000003', '44444444-0000-4000-8000-000000000004', '55555555-0000-4000-8000-000000000005']);
-  assert.deepEqual(q.background, { monitor: 1, subagent: 2 });
+  assert.deepEqual(q.counts, { monitor: 1, subagent: 2 });
+  // the list a shell from before `summary` decodes (running: [String], background: [{kind}])
+  assert.deepEqual(q.background.map((w) => w.kind).sort(), ['monitor', 'subagent', 'subagent']);
   assert.equal(q.summary, '4 sessions are working and 2 subagents and 1 monitor will stop.');
 
   // what the shell gets as "no answer": a wrong token, GET on stop, restart under --no-parent

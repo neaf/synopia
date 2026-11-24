@@ -7,7 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { request } from 'node:http';
 import { deflateSync, crc32 } from 'node:zlib';
-import { Transcript, imageSize, imageRefs, parseRef, readImage } from '../src/transcript.ts';
+import { Transcript, imageSize, imageRefs, parseRef } from '../src/transcript.ts';
+import { readImage } from '../src/transcripts.ts';
 import { imageBlocks } from '../src/claude-jsonl.ts';
 import { Tailer } from '../src/tail.ts';
 import type { JsonRecord, Span } from '../src/tail.ts';
@@ -90,7 +91,7 @@ function session(): { dir: string; file: string } {
   return { dir, file };
 }
 
-test('readImage: the block read again from its line; null when gone or rewritten', () => {
+test('readImage: the block read again from its line; null when gone or rewritten', async () => {
   const { file } = session();
   const recs: JsonRecord[] = [];
   const spans: Span[] = [];
@@ -98,21 +99,21 @@ test('readImage: the block read again from its line; null when gone or rewritten
   const t = new Transcript();
   t.pushAll(recs, spans);
   const at = t.imageAt('u1:0')!;
-  assert.deepEqual(readImage(file, at.span, at.recordId, at.path), { mediaType: 'image/png', data: PNG });
+  assert.deepEqual(await readImage(file, at.span, at.recordId, at.path), { mediaType: 'image/png', data: PNG });
   const tool = t.imageAt(t.get('toolu_s')!.imgs![0].ref)!;
-  assert.equal(readImage(file, tool.span, tool.recordId, tool.path)?.data.readUInt32BE(16), 3000, 'inside the tool_result');
-  assert.equal(readImage(file, at.span, at.recordId, [2]), null, 'a text block');
-  assert.equal(readImage(file, at.span, 'u9', at.path), null, 'another record there');
+  assert.equal((await readImage(file, tool.span, tool.recordId, tool.path))?.data.readUInt32BE(16), 3000, 'inside the tool_result');
+  assert.equal(await readImage(file, at.span, at.recordId, [2]), null, 'a text block');
+  assert.equal(await readImage(file, at.span, 'u9', at.path), null, 'another record there');
   assert.equal(t.imageAt('u9:0'), null);
   fs.writeFileSync(file, line({ type: 'user', uuid: 'zz', message: { role: 'user', content: [img('image/png', b64(PNG))] } }).padEnd(at.span.length + 10, ' '));
-  assert.equal(readImage(file, at.span, at.recordId, at.path), null, 'rewritten');
+  assert.equal(await readImage(file, at.span, at.recordId, at.path), null, 'rewritten');
   fs.rmSync(file);
-  assert.equal(readImage(file, at.span, at.recordId, at.path), null, 'gone');
+  assert.equal(await readImage(file, at.span, at.recordId, at.path), null, 'gone');
 });
 
 // Real shapes (facts, 2026-11-24): a Read of an image repeats the base64 in toolUseResult.file (614 of
 // 614 seen); a message with a pasted image sent during a turn is a queued_command whose prompt is blocks.
-test('real shapes: a Read of a PNG, and a queued message with an image, read again from its line', () => {
+test('real shapes: a Read of a PNG, and a queued message with an image, read again from its line', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-images-'));
   const file = path.join(dir, `${SID}.jsonl`);
   const data = b64(PNG);
@@ -132,7 +133,7 @@ test('real shapes: a Read of a PNG, and a queued message with an image, read aga
     const q = t.get('q1')!;
     assert.deepEqual([q.k, q.text, q.images, q.imgs], ['you', 'And this one?', 1, [{ ref: 'q1:1', mediaType: 'image/png', w: 20, h: 20 }]]);
     const at = t.imageAt('q1:1')!;
-    assert.deepEqual(readImage(file, at.span, at.recordId, at.path), { mediaType: 'image/png', data: PNG });
+    assert.deepEqual(await readImage(file, at.span, at.recordId, at.path), { mediaType: 'image/png', data: PNG });
     assert.ok(!JSON.stringify(t.items).includes(data.slice(0, 40)), 'no base64 in the items');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -145,7 +146,7 @@ fs.writeFileSync(path.join(base, 'index.html'), '<p>index</p>');
 const s = session();
 const transcripts = new Transcripts({ claudeDir: s.dir, home: '/Users/fixture', pollMs: 0, watch: false });
 transcripts.open(SID);
-const server = await startServer({ port: 0, token: TOKEN, webRoot: base, quitCheck: () => ({ running: [], background: {}, summary: '' }), image: (sid, agent, ref) => transcripts.image(sid, agent, ref) });
+const server = await startServer({ port: 0, token: TOKEN, webRoot: base, quitCheck: () => ({ running: [], background: [], counts: {}, summary: '' }), image: (sid, agent, ref) => transcripts.image(sid, agent, ref) });
 after(() => { transcripts.stop(); return server.close(); });
 
 type Res = { status: number; headers: Record<string, unknown>; body: Buffer };

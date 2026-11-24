@@ -162,6 +162,25 @@ test('an error result is logged as a failed call, not as a bad reply (sessions-s
   store.close();
 });
 
+test('no scratch folder: logged as a failed call with its code, no call, and the next one still runs (final-adapters#B4)', async () => {
+  const dir = tmp('synopia-writer-');
+  const store = openStore(dir);
+  fs.writeFileSync(path.join(dir, 'writer'), 'a file where the folder goes');
+  const logs: [string, Record<string, unknown>][] = [];
+  const q = writerFake(good);
+  const w = new Writer({ store, source: source(turns3).src, stateDir: dir, sdk: q.sdk, debounceMs: 5, log: (e, f) => logs.push([e, f as Record<string, unknown>]) });
+  w.turnEnded('s1');
+  await wait(40);
+  assert.deepEqual(logs.find(([e]) => e === 'writer.failed')?.[1], { sid: 's1', error: 'EEXIST' });
+  assert.equal(q.calls.length, 0);
+  fs.rmSync(path.join(dir, 'writer'));
+  w.turnEnded('s1');
+  await wait(40);
+  assert.equal(q.calls.length, 1, 'the queue goes on');
+  w.stop();
+  store.close();
+});
+
 test('on open: written once when nothing is stored, not when text is', async () => {
   const dir = tmp('synopia-writer-');
   const store = openStore(dir);

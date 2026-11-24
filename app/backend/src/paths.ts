@@ -54,3 +54,12 @@ export function displayIn(text: string, home: string): string {
 }
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// Whether `p` is a folder now (a session's, the menu probe's).
+export function isDir(p: string): boolean {
+  try {
+    return fs.statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}

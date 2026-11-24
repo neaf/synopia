@@ -1,6 +1,6 @@
-// One status per session (plan section 8), from the SDK's events and the driver's own state,
+// One status per session (FR-STAT-02), from the SDK's events and the session's own state,
 // in the page's vocabulary:
-//   busy       working: `session_state_changed: running`, or the driver started a turn
+//   busy       working: `session_state_changed: running`, or the session started a turn
 //   waiting    needs you: a pending canUseTool request, which wins over everything
 //   idle       your turn: idle after a normal `result`, or the process isn't running
 //   stopped    stopped by you: idle after a turn that ended by interrupt
@@ -26,7 +26,7 @@
 // A turn in another process (2026-11-23): with no process of Synopia's, a main turn the transcript
 // shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
 // and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
-// QUIET_MS) is working too. Sessions with no driver status use transcriptStatus().
+// QUIET_MS) is working too. Sessions with no status of our process use transcriptStatus().
 // A card in another process (R6.8, 2026-11-24): with no process of Synopia's, a transcript whose
 // thread (main or a running subagent's) ends on an AskUserQuestion or ExitPlanMode with no result
 // (Transcript.pendingAsk) is needs you, over working; its age counts from the tool_use. It clears
@@ -132,7 +132,12 @@ export class SessionStatus {
     return this.running;
   }
 
-  // The driver pushed a message, or a turn began (system/init comes at the start of each turn).
+  // Another process runs the main turn, or asks its question, by the transcript (no process of ours).
+  get externalTurn(): boolean {
+    return this.external || this.ask !== null;
+  }
+
+  // The session pushed a message, or a turn began (system/init comes at the start of each turn).
   turnStarted(): void {
     this.running = true;
     this.resulted = false;
@@ -141,7 +146,7 @@ export class SessionStatus {
     this.update();
   }
 
-  // The driver pushed a message: during a turn it is queued until a reply lists its uuid.
+  // The session pushed a message: during a turn it is queued until a reply lists its uuid.
   pushed(uuid: string): void {
     if (!this.running) return;
     this.queued.push(uuid);
@@ -315,7 +320,7 @@ export function queuesBehind(s: Status): boolean {
   return s === 'busy' || s === 'retrying' || s === 'compacting';
 }
 
-// The status of a session no driver set (the transcript alone): working while its subagents or
+// The status of a session no process of ours set (the transcript alone): working while its subagents or
 // forks or its main turn run, else your turn. A question or plan waiting there is needs you.
 export function transcriptStatus(r: Running): Status {
   return r.ask ? 'waiting' : r.agents > 0 || r.turn ? 'busy' : 'idle';
@@ -428,10 +433,12 @@ export class BadgeCounter {
 }
 
 // GET /api/quit-check, what "Stop All Work…" and "Restart Backend Now…" ask with (FR-PLAT-06): the
-// running turns, the background work counted per kind, and `summary`, the alert's sentence after its
-// question ("2 sessions are working and 1 background shell will stop."), empty when nothing runs. The
-// shell shows `summary` as it is and knows no kind: a new kind is counted and named here.
-export type QuitCheck = { running: string[]; background: Record<string, number>; summary: string };
+// running turns, the background work (one `{sid, kind}` each), `counts` per kind, and `summary`, the
+// alert's sentence after its question ("2 sessions are working and 1 background shell will stop."),
+// empty when nothing runs. The shell shows `summary` as it is and knows no kind: a new kind is counted
+// and named here. `background` keeps the list shape of the daemons before `summary`: a shell of that
+// time still decodes it and asks first (final-daemon#B2, docs/Daemon files.md).
+export type QuitCheck = { running: string[]; background: { sid: string; kind: string }[]; counts: Record<string, number>; summary: string };
 
 const KIND_WORDS: Record<string, [string, string]> = {
   subagent: ['subagent', 'subagents'],
@@ -439,12 +446,12 @@ const KIND_WORDS: Record<string, [string, string]> = {
   monitor: ['monitor', 'monitors'],
 };
 
-export function quitSummary(q: { running: string[]; background: { kind: string }[] }): QuitCheck {
-  const background: Record<string, number> = {};
-  for (const { kind } of q.background) background[kind] = (background[kind] ?? 0) + 1;
-  const kinds = [...Object.keys(KIND_WORDS).filter((k) => background[k]), ...Object.keys(background).filter((k) => !KIND_WORDS[k]).sort()];
+export function quitSummary(q: { running: string[]; background: { sid: string; kind: string }[] }): QuitCheck {
+  const counts: Record<string, number> = {};
+  for (const { kind } of q.background) counts[kind] = (counts[kind] ?? 0) + 1;
+  const kinds = [...Object.keys(KIND_WORDS).filter((k) => counts[k]), ...Object.keys(counts).filter((k) => !KIND_WORDS[k]).sort()];
   const work = kinds.map((k) => {
-    const n = background[k];
+    const n = counts[k];
     const [one, many] = KIND_WORDS[k] ?? [`background ${k}`, `background ${k}s`];
     return `${n} ${n === 1 ? one : many}`;
   });
@@ -452,5 +459,5 @@ export function quitSummary(q: { running: string[]; background: { kind: string }
   const turns = n === 0 ? '' : n === 1 ? '1 session is working' : `${n} sessions are working`;
   const list = work.length > 1 ? `${work.slice(0, -1).join(', ')} and ${work.at(-1)}` : (work[0] ?? '');
   const summary = turns && list ? `${turns} and ${list} will stop.` : turns ? `${turns} and will stop.` : list ? `${list} will stop.` : '';
-  return { running: q.running, background, summary };
+  return { running: q.running, background: q.background.map(({ sid, kind }) => ({ sid, kind })), counts, summary };
 }

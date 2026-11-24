@@ -1,5 +1,5 @@
-// The slash menu and the model list (plan sections 3 and 5), per folder. They come from the
-// session's running process when it has one; otherwise from a cache filled once per folder by
+// The slash menu and the model list, per folder. They come from the session's running process when
+// it has one; otherwise from a cache filled once per folder by
 // sdk.ts's idle probe, which makes no model call but runs the folder's SessionStart hooks. A failed
 // probe waits before the next try, longer after each failure, so views don't re-run the hooks each
 // time. A page gets `menu` for a folder the first time it views a session there (once per
@@ -9,6 +9,7 @@ import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import type { Client } from './server.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { isDir } from './paths.ts';
 import { probeMenu, readMenu, realSdk, toCommands } from './sdk.ts';
 import type { FolderMenu, MenuModel, MenuSource, Sdk } from './sdk.ts';
 
@@ -62,6 +63,7 @@ export class Menus {
   private sentTo = new WeakMap<Client, Set<string>>();
   private aborts = new Set<AbortController>(); // the idle probes running, aborted at quit
   private seed: Map<string, MenuModel[]>; // the model lists of the last launch (cacheFile)
+  private probed = new Set<string>(); // folders an idle probe read (a cache entry without models may lack one)
 
   constructor(opts: MenusOptions) {
     this.opts = opts;
@@ -93,9 +95,12 @@ export class Menus {
   // For `hello`: every folder's menu so far. The page then holds them all.
   // A folder read only at a past launch has its models and no commands yet: the menu read on
   // the first view replaces it.
+  // A folder whose commands came from commands_changed alone keeps its seeded models.
   all(): Record<string, FolderMenu> {
-    const seeded = [...this.seed].filter(([f]) => !this.cache.has(f)).map(([f, models]) => [f, { commands: [], models }]);
-    return { ...Object.fromEntries(seeded), ...Object.fromEntries(this.cache) };
+    const out: Record<string, FolderMenu> = {};
+    for (const [f, models] of this.seed) out[f] = { commands: [], models };
+    for (const [f, m] of this.cache) out[f] = m.models.length ? m : { commands: m.commands, models: this.seed.get(f) ?? [] };
+    return out;
   }
 
   // A page views a session in `folder` (`abs` is the absolute path). With a running process the
@@ -109,7 +114,9 @@ export class Menus {
         this.log('menu.processFailed', { error: (e as Error)?.message === 'timeout' ? 'timeout' : 'error' });
       }
     }
-    if (!this.cache.has(folder)) await this.fill(folder, abs);
+    // no menu yet, or only commands (commands_changed before any view): the idle probe reads it
+    const had = this.cache.get(folder);
+    if (!had || (!had.models.length && !this.probed.has(folder))) await this.fill(folder, abs);
     const m = this.cache.get(folder);
     const sent = this.sentTo.get(client) ?? new Set<string>();
     this.sentTo.set(client, sent);
@@ -119,10 +126,11 @@ export class Menus {
     }
   }
 
-  // commands_changed from a running process: the folder's commands are replaced.
+  // commands_changed from a running process: the folder's commands are replaced. The models stay
+  // (the last launch's, when the folder has no menu yet).
   commandsChanged(folder: string, commands: SlashCommand[]): void {
     const m = this.cache.get(folder);
-    this.put(folder, { commands: toCommands(commands), models: m?.models ?? [] });
+    this.put(folder, { commands: toCommands(commands), models: m?.models.length ? m.models : this.seed.get(folder) ?? [] });
   }
 
   // Stores a folder's menu; pages that had the old one get the new one.
@@ -150,10 +158,14 @@ export class Menus {
         this.failed.set(folder, { at: this.now(), n });
         return null;
       }
-      if (m && !this.cache.has(folder)) {
-        this.cache.set(folder, m);
-        this.failed.delete(folder);
-        this.save();
+      if (m) {
+        this.probed.add(folder);
+        const cur = this.cache.get(folder);
+        if (!cur) {
+          this.cache.set(folder, m);
+          this.failed.delete(folder);
+          this.save();
+        } else if (!cur.models.length && m.models.length) this.put(folder, { commands: cur.commands, models: m.models }); // the process's commands stay
       }
       return m;
     }).finally(() => this.loading.delete(folder));
@@ -178,13 +190,5 @@ export class Menus {
     } finally {
       this.aborts.delete(ac);
     }
-  }
-}
-
-function isDir(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    return false;
   }
 }

@@ -8,11 +8,10 @@
 //   takingOver  that terminal's CLI is being ended, then your message goes
 // Every message to the process goes through `input`. Messages sent while a card waits are held
 // behind it (cards.ts) and go once the last card is answered, or back to the box when the turn ends.
-import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
-import { SessionProcess, imageError, userContent } from './sdk.ts';
-import type { Content, Image, InterruptResult, MenuSource, Sdk, StartOptions } from './sdk.ts';
+import { SessionProcess, imageError, imagesIn, userContent } from './sdk.ts';
+import type { Content, Image, InterruptResult, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
 import { SessionStatus, queuesBehind } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
@@ -26,6 +25,7 @@ import type { Client } from './server.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
+import { isDir } from './paths.ts';
 import type { BangRun } from './bang.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
@@ -48,13 +48,15 @@ export const OUTBOX_GRACE_MS = 5000;
 // its records land. `landed`: the id of the bash item it became; the page shows that item instead.
 export type ShownBang = BangRun & { landed?: string };
 
-export type SessionState = 'idle' | 'starting' | 'running' | 'ending' | 'yielded' | 'takingOver';
+// The process side of a session (the header comment's states). status.ts SessionState is what the page shows.
+export type Phase = 'idle' | 'starting' | 'running' | 'ending' | 'yielded' | 'takingOver';
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
 // A message for the process: your prompt (a turn), or bash mode's context (`shouldQuery: false`, no
 // turn). `inBox`: the page still holds the prompt (a take-over), so a refusal leaves it there.
 // `by`: the page that sent it, which gets it back in its box if it can't go (backend-core#B8).
-type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; inBox?: boolean; by?: By };
+// `images`: the pasted images the content carries, which go back with the text.
+type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By };
 type Context = { kind: 'context'; text: string; uuid: string };
 type Input = Prompt | Context;
 
@@ -104,7 +106,7 @@ export class Session {
   readonly status: SessionStatus;
   readonly cards: Cards;
   private d: SessionDeps;
-  private state: SessionState = 'idle';
+  private state: Phase = 'idle';
   private proc: SessionProcess | null = null;
   private queue: Input[] = []; // sent while it starts or ends: the next process takes them, in order
   private held: Prompt[] = []; // sent while a card waits
@@ -138,11 +140,12 @@ export class Session {
       count: (n) => this.status.setPending(n),
       drained: () => this.releaseHeld(),
       context: () => ({ cwd: d.tilde(this.cwd), modeBefore: d.transcripts.facts(this.id)?.modeBeforePlan || 'auto' }),
+      tilde: d.tilde,
       now: d.now,
     });
   }
 
-  get phase(): SessionState {
+  get phase(): Phase {
     return this.state;
   }
 
@@ -194,7 +197,7 @@ export class Session {
     if (bad) return { ok: false, error: bad };
     const content: Content = userContent(text, images); // the text, then the images whose tags it holds
     if (typeof content === 'string' && !text.trim()) return { ok: false, error: 'Nothing to send.' };
-    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, by };
+    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, images: imagesIn(content, images), by };
     if (this.terminal) return this.queueTakeover(m);
     const queues = queuesBehind(this.status.status); // a turn runs: it shows queued until it lands (R5.5)
     const r = this.deliver(m);
@@ -210,7 +213,7 @@ export class Session {
       if (why === 'terminal') return this.refusedText([m]);
       if (why) return { ok: false, error: why };
     }
-    if (this.cards.size) { // queued behind the card (plan section 6), pushed once it is answered
+    if (this.cards.size) { // queued behind the card, pushed once it is answered
       this.held.push(m);
       this.d.publisher.setHeld(this.id, this.held.map((h) => h.text));
       this.d.log('sessions.held', { sid: this.id });
@@ -233,7 +236,7 @@ export class Session {
     const proc = this.proc;
     if (!proc) return;
     for (const m of list) {
-      if (m.kind === 'prompt') proc.push(m.content, m.uuid);
+      if (m.kind === 'prompt') proc.push(m.content, m.uuid, m.images);
       else proc.pushQuiet(m.text, m.uuid);
     }
     if (prompt) {
@@ -264,25 +267,26 @@ export class Session {
 
   // Prompts that didn't go, back to the box of the page that sent each (and out of the outbox).
   private giveBack(prompts: Prompt[]): void {
-    const by = new Map<By, string[]>();
+    const by = new Map<By, Returned[]>();
     for (const m of prompts) {
-      if (!m.text.trim()) continue;
+      if (!m.text.trim() && !m.images.length) continue;
       const list = by.get(m.by ?? null) ?? [];
-      list.push(m.text);
+      list.push({ text: m.text, images: m.images });
       by.set(m.by ?? null, list);
     }
-    for (const [to, texts] of by) this.restore(texts, to);
+    for (const [to, back] of by) this.restore(back, to);
   }
 
-  private restore(texts: string[], to: By): void {
-    if (!texts.length) return;
+  // Messages back to the box, with their images (an image-only one too).
+  private restore(back: Returned[], to: By): void {
+    if (!back.length) return;
     let gone = false;
-    for (const text of texts) {
+    for (const { text } of back) {
       const i = this.outbox.findIndex((o) => !o.landed && o.text === text);
       if (i >= 0) { this.outbox.splice(i, 1); gone = true; }
     }
     if (gone) this.d.publisher.changed(this.id);
-    this.d.publisher.restore(this.id, texts, to);
+    this.d.publisher.restore(this.id, back, to);
   }
 
   private toast(text: string, to: By = null): void {
@@ -309,6 +313,8 @@ export class Session {
   runBang(cmd: string, uuid?: string, by: By = null): SendResult {
     if (!cmd.trim()) return { ok: false, error: 'Type a shell command after the !.' };
     if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}). Run the command there.` };
+    // one writer: a turn another process runs would get the command's context in the middle of it
+    if (!this.proc && this.status.externalTurn) return { ok: false, error: 'Another Claude Code process is running this session\'s turn. Run the command once it ends.' };
     if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
     if (!isDir(this.cwd)) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
@@ -358,14 +364,14 @@ export class Session {
   private start(anyFolder = false): string {
     if (!anyFolder && !isDir(this.cwd)) {
       this.status.failed();
-      this.d.log('driver.noFolder', { sid: this.id });
+      this.d.log('session.noFolder', { sid: this.id });
       return `Folder ${this.d.tilde(this.cwd)} no longer exists`;
     }
     const terminals = this.placeholder ? null : this.d.terminals;
     const held = terminals?.recheck(this.id) ?? null;
     if (held) {
       this.yieldTo(held);
-      this.d.log('driver.refused', { sid: this.id, pid: held.pid });
+      this.d.log('session.refused', { sid: this.id, pid: held.pid });
       return 'terminal';
     }
     this.state = 'starting';
@@ -379,7 +385,7 @@ export class Session {
   private confirmed(t: Terminal | null): void {
     if (this.closed || this.state !== 'starting') return; // closed, or yielded meanwhile
     if (!t) { this.launch(); return; }
-    this.d.log('driver.refused', { sid: this.id, pid: t.pid, late: true });
+    this.d.log('session.refused', { sid: this.id, pid: t.pid, late: true });
     const waiting = this.queue.splice(0);
     this.state = 'idle';
     this.yieldTo(t);
@@ -397,9 +403,11 @@ export class Session {
         this.onMessage(m as Msg);
       },
       onPush: (uuid) => this.status.pushed(uuid),
+      // a message the session couldn't take: logged, and the process reads on
+      onError: (where, e, m) => this.d.log('session.messageFailed', { sid: this.id, where, type: (m as Msg | undefined)?.type ?? null, error: String((e as Error)?.name ?? 'error') }),
       onExit: (error, ended) => this.onExit(proc, error, ended),
       canUseTool: (name, input, o) => {
-        this.d.log('driver.ask', { sid: this.id, tool: name, agent: Boolean(o.agentID) });
+        this.d.log('session.ask', { sid: this.id, tool: name, agent: Boolean(o.agentID) });
         return this.cards.park(name, input, o);
       },
     }, this.d.sdk.query);
@@ -407,7 +415,7 @@ export class Session {
     this.state = 'running';
     this.contextOnly = true; // until a prompt goes in
     this.feedRunning(); // our process drives it now: the transcript's open turn is ours
-    this.d.log('driver.start', { sid: this.id, resume: Boolean(start.resume), model: start.model ?? null, plan: Boolean(start.plan) });
+    this.d.log('session.start', { sid: this.id, resume: Boolean(start.resume), model: start.model ?? null, plan: Boolean(start.plan) });
     this.armIdle(); // a prompt clears it; context alone starts no turn that would
     this.input(this.queue.splice(0));
   }
@@ -434,7 +442,7 @@ export class Session {
     this.clearIdle();
     this.clearStream();
     const failed = !ended;
-    this.d.log('driver.exit', { sid: this.id, ended, error: Boolean(error) });
+    this.d.log('session.exit', { sid: this.id, ended, error: Boolean(error) });
     this.ended(failed);
     this.endCards();
     this.status.processEnded(failed);
@@ -462,11 +470,11 @@ export class Session {
     } else if (m.type === 'system' && m.subtype === 'session_state_changed') {
       this.status.stateChanged(String(m.state));
     } else if (m.type === 'system' && m.subtype === 'status' && typeof m.permissionMode === 'string') {
-      log('driver.mode', { sid: this.id, mode: m.permissionMode }); // after a plan approval (back to auto), or a model switch
+      log('session.mode', { sid: this.id, mode: m.permissionMode }); // after a plan approval (back to auto), or a model switch
     } else if (m.type === 'system' && m.subtype === 'task_notification' && typeof m.tool_use_id === 'string') {
       // A task ended. The CLI writes its notification to the JSONL only when a turn runs, so
       // between turns this is the only sign that it ended (docs/Agent SDK.md, "Task notifications").
-      log('driver.task', { sid: this.id, status: String(m.status) });
+      log('session.task', { sid: this.id, status: String(m.status) });
       transcripts.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
     } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {
       // A subagent's shell or monitor: its file has no task id when the SDK drives the CLI (docs/Agent SDK.md).
@@ -474,7 +482,7 @@ export class Session {
     } else if (m.type === 'system' && m.subtype === 'background_tasks_changed' && Array.isArray(m.tasks)) {
       // The whole live set (b, b moves steps into it): running or ended at once. Ambient tasks aren't work.
       const ids = (m.tasks as { task_id?: unknown; ambient?: unknown }[]).filter((t) => t && typeof t.task_id === 'string' && t.ambient !== true).map((t) => t.task_id as string);
-      log('driver.bgTasks', { sid: this.id, n: ids.length });
+      log('session.bgTasks', { sid: this.id, n: ids.length });
       transcripts.backgroundTasks(this.id, ids);
     } else if (m.type === 'tool_progress' && typeof m.tool_use_id === 'string' && typeof m.elapsed_time_seconds === 'number') {
       // A running tool's elapsed time, no output (sdk.d.ts SDKToolProgressMessage): its expanded step's timer (R5.6).
@@ -531,7 +539,7 @@ export class Session {
       this.idleTimer = null;
       if (!this.proc || this.state !== 'running' || this.status.working) return;
       if (this.d.transcripts.facts(this.id)?.working) { this.armIdle(); return; }
-      this.d.log('driver.idleEnd', { sid: this.id });
+      this.d.log('session.idleEnd', { sid: this.id });
       this.state = 'ending';
       this.proc.end();
     }, this.d.idleMs);
@@ -564,12 +572,12 @@ export class Session {
     } catch (e) {
       this.interrupting = false;
       this.status.interruptFailed(); // the next turn's result is its own, not "stopped"
-      this.d.log('driver.interruptFailed', { sid: this.id });
+      this.d.log('session.interruptFailed', { sid: this.id });
       this.toast(`Synopia couldn't interrupt Claude: ${String((e as Error)?.message ?? e).slice(0, 200)}`, by);
       return;
     }
     this.interrupting = false;
-    this.d.log('driver.interrupt', { sid: this.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
+    this.d.log('session.interrupt', { sid: this.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
     this.endCards();
     this.restore(r.restored, by);
     if (r.stillQueued) {
@@ -598,7 +606,7 @@ export class Session {
       if (model !== was.model) await proc.setModel(model === 'default' ? undefined : model);
       if ((choice.effort ?? null) !== was.effort || model !== was.model) await proc.setEffort(choice.effort ?? null);
     } catch (e) {
-      this.d.log('driver.setModelFailed', { sid: this.id });
+      this.d.log('session.setModelFailed', { sid: this.id });
       return { ok: false, error: `Synopia stored the model, but Claude didn't take it now: ${String((e as Error)?.message ?? e).slice(0, 200)}. It applies when the session starts again.` };
     }
     return { ok: true, sid: this.id };
@@ -923,7 +931,7 @@ function landsAs(q: Outbox, it: Item): boolean {
   return text ? sent === text || (sent.startsWith(text) && it.text !== text) : q.images > 0 && !sent && Boolean(it.images);
 }
 
-// The streaming preview (plan section 7): text deltas of the main conversation, per message id
+// The streaming preview: text deltas of the main conversation, per message id
 // and block index, until that block's record lands in the JSONL.
 export class StreamPreview {
   private blocks: { msg: string; index: number; type: string; text: string }[] = [];
@@ -973,13 +981,5 @@ export class StreamPreview {
   text(): string | null {
     const t = this.blocks.filter((b) => b.type === 'text' && b.text).map((b) => b.text).join('\n\n');
     return t || null;
-  }
-}
-
-export function isDir(p: string): boolean {
-  try {
-    return fs.statSync(p).isDirectory();
-  } catch {
-    return false;
   }
 }

@@ -16,7 +16,7 @@
   --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
   --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
   --bash: #BF3989; /* bash mode's mark: the CLI's bash pink, on this palette */
-  --dot-red: #CF222E; --dot-amber: #D4A72C; --dot-green: #2DA44E; --dot-off: #AFB8C1;
+  --dot-amber: #D4A72C; --dot-green: #2DA44E;
   --add-bg: #DAFBE1; --del-bg: #FFEBE9;
   --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
   --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
@@ -52,7 +52,6 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .side-foot .btn { margin-left: auto; }
 .group { margin-top: 11px; }
 .g-name { font-weight: 700; font-size: 12px; display: flex; gap: 7px; align-items: baseline; }
-.g-name .link { margin-left: auto; font-weight: 400; font-size: 11px; }
 .row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; align-items: start;
   width: 100%; padding: 7px 12.5px 8px; cursor: pointer; border-top: 1px solid transparent; border-bottom: 1px solid transparent; }
 .row:hover { background: linear-gradient(to left, var(--line) 1px, #D8DCE1 1px); }
@@ -70,10 +69,6 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .r-agent { font-size: 10.5px; color: var(--ink-3); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .r-agent b { color: var(--kc, var(--green)); font-weight: 500; }
 .r-side { width: 12.5px; height: 16px; display: flex; align-items: center; justify-content: center; }
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--dot-off); display: inline-block; flex: none; }
-.row[data-state="red"] .dot, .dot.red { background: var(--dot-red); }
-.row[data-state="amber"] .dot, .dot.amber { background: var(--dot-amber); }
-.row[data-state="green"] .dot, .dot.green { background: var(--dot-green); }
 
 /* ---------- main area: four panels on the canvas ---------- */
 .conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
@@ -219,11 +214,11 @@ details.step[open] > summary .res.run { display: none; }
 .status b { font-weight: 700; }
 .status[data-state="red"] b { color: var(--red); }
 .status span { color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 12.5px 7px; }
+.composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); align-items: center; padding: 9px 14px; cursor: text; } /* the whole box focuses the field */
 .composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
 .composer.bash > .g { color: var(--bash); font-weight: 700; } /* bash mode (R5.13): `!` in place of `❯` */
 .composer .attach { grid-column: 2; }
-.composer textarea { width: 100%; background: none; border: 0; resize: none; outline: none; min-height: 36px; max-height: 198px; padding: 0; }
+.composer textarea { width: 100%; background: none; border: 0; resize: none; outline: none; min-height: 3lh; height: auto; max-height: 198px; padding: 0; display: block; } /* three transcript lines at least, growing as you type */
 .composer .attach { grid-row: 2; } /* the pasted images sit below the text */
 .composer .attach:not(:empty) { margin: 5.5px 0 2px; }
 
@@ -331,9 +326,8 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .rail h3 .cnt { margin-left: auto; font-weight: 400; color: var(--ink-3); font-size: 11px; }
 .past h3 { color: var(--faint); }
 .past > * { flex: none; }
-.pr { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; width: 100%; padding: 2.5px 12.5px; cursor: pointer; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
+.pr { all: unset; box-sizing: border-box; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; width: 100%; padding: 2.5px 12.5px; cursor: pointer; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
 .pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
-.pr .k { color: var(--faint); }
 .pr .in { color: var(--faint); } /* the subagent a shell or monitor ran in */
 .pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
 .pr.failed .d, .pr.failed .k { color: var(--red); }
@@ -420,8 +414,6 @@ body.is-dragging, body.is-dragging * { user-select: none; cursor: grabbing !impo
 body:not(.is-dragging) .g-empty { display: none; }
 
 /* ---------- marks (marks.js): a 1em box, every part in em so the 64px view is the 12px mark enlarged ---------- */
-:root { --fork: #8250DF; }
-
 @keyframes spinback { to { transform: rotate(-360deg); } }
 @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
 @keyframes shrink { from { transform: scale(1); } to { transform: scale(.06); } }
@@ -431,10 +423,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 .ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
 
 /* no updates: a frozen arc; compacting: rings shrinking; rate limited: dashes turning back */
-.ind .arc { width: 1em; height: 1em; border-radius: 50%; border: .17em solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin var(--mark-period) linear infinite; }
-.ind .arc.frozen { animation: none; border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); transform: rotate(-20deg); }
+.ind .arc.frozen { width: 1em; height: 1em; border-radius: 50%; border: .17em solid var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); transform: rotate(-20deg); }
 .ind .cr { width: 1em; height: 1em; border-radius: 50%; border: .13em solid var(--green); animation: shrink var(--mark-period) linear infinite; }
-.ind .cr:nth-child(2) { animation-delay: -.6s; } .cr:nth-child(3) { animation-delay: -1.2s; }
+.ind .cr:nth-child(2) { animation-delay: -.6s; } .ind .cr:nth-child(3) { animation-delay: -1.2s; }
 .ind .rl { animation: spinback var(--mark-period) linear infinite; }
 .ind .rl circle { stroke: var(--amber); }
 
@@ -455,12 +446,11 @@ body:not(.is-dragging) .g-empty { display: none; }
 /* reduced motion: every mark keeps its shape and stops */
 @media (prefers-reduced-motion: reduce) { .ind *, .ind *::before { animation: none !important; } }
 .ind { font-size: 11px; }
-.kind { --kc: #57606A; --kb: #EAEEF2; display: inline-flex; align-items: center; gap: 3px; font: 500 11.5px/16px var(--sans); padding: 0 5px 0 3px; border-radius: 4px;
+.kind { --kc: #57606A; --kb: #EAEEF2; display: inline-flex; align-items: center; gap: 3px; font: 500 10px/14px var(--sans); padding: 0 5px 0 3px; border-radius: 4px;
   color: var(--kc); background: var(--kb); white-space: nowrap; vertical-align: 1px; flex: none; }
 .kind svg { width: 11px; height: 11px; flex: none; display: block; }
 .kind.g { padding: 0 2px; }
 .kd-sub { --kc: #1A7F37; --kb: #DAFBE1; } .kd-fork { --kc: #8250DF; --kb: #F3EEFE; } .kd-shell { --kc: #0B7A82; --kb: #DCF1F2; } .kd-mon { --kc: #0E6BA8; --kb: #DDEEF8; }
-.kind { font-size: 10px; line-height: 14px; }
 .kind .ind { font-size: 10px; }
 
 /* placing the marks */
@@ -470,7 +460,6 @@ body:not(.is-dragging) .g-empty { display: none; }
 .r-review { color: var(--link); }
 .status .ind { font-size: 11px; margin-right: .3ch; vertical-align: -1px; }
 .main-row .ind { font-size: 11px; }
-.pr { grid-template-columns: auto minmax(0, 1fr) auto; }
 .pr .pm { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
 .pr .pm .ind { font-size: 9px; }
 .pr .k { color: var(--ink-3); }
@@ -623,10 +612,6 @@ body:not(.is-dragging) .g-empty { display: none; }
 .r-main > .tw { overflow: hidden; }
 .r-main > .r-gone { pointer-events: none; }
 
-.composer { padding: 9px 14px; }
-.composer { align-items: center; }
-.composer textarea { min-height: 3lh; height: auto; display: block; } /* three transcript lines at least, growing as you type */
-.composer { cursor: text; } /* the whole box focuses the field */
 .composer button, .composer .attach img, .composer .slash { cursor: default; }
 .composer > .g { align-self: start; }
 .model-btn { font-size: 12px; color: var(--ink-2); }

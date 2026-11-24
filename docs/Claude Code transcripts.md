@@ -29,8 +29,8 @@ Pid files under `~/.claude/sessions/` are in [Claude Code terminals](Claude%20Co
 
 - Symptom: after an ExitPlanMode approval the JSONL shrinks or changes inode; offsets past the old end read garbage.
 - Cause: the CLI rewrites the session file on plan approval.
-- Workaround: the tailer resets (reads from 0, rebuilds state) on a shrink, an inode change or a same-size rewrite. A same-size file with a new mtime whose first and last 4 KB are unchanged is a bare touch: nothing is read again. A same-size rewrite that changes only the middle is missed.
-- Code: `tail.ts` `step`, `sigOf`, `resetState`; `transcript.ts` `reset` (a new `ReadState`). Test: `tail.test.ts` "formats#B5". Source: live run S3.
+- Workaround: the tailer resets (reads from 0, rebuilds state) on a shrink, an inode change or a rewrite in place. A same-size file with a new mtime whose first and last 4 KB are unchanged is a bare touch: nothing is read again. A file that grew is an append while the first 4 KB and the 4 KB before the old end are unchanged, else a rewrite. A rewrite in place that changes only the middle is missed.
+- Code: `tail.ts` `step`, `sigOf`, `resetState`; `transcript.ts` `reset` (a new `ReadState`). Test: `tail.test.ts` "formats#B5", "final-adapters#B2". Source: live run S3.
 
 ## Record types
 

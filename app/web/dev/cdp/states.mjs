@@ -1,5 +1,5 @@
 // The session states of R8.2 that status.ts wires (queued, compacting, rate limited, signed out,
-// no updates), on the states fixture's fake script: the sidebar's word and mark per row, the
+// no updates), on the states fixture's SDK script: the sidebar's word and mark per row, the
 // transcript's last line, and the signed-out status line. Writes states-<n>.png in the state folder.
 // usage: run.sh states (or node states.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
@@ -17,7 +17,7 @@ const want = [
   ['c3c3', 'amber', /^Rate limited, retrying in \d+s$/, 'class="rl"', 'attempt 3 of 10'],
   ['d4d4', 'red', /^Signed out, \d+ min$/, 'class="lock"', null],
   ['e5e5', 'grey', /^No updates for 1[56] min$/, 'arc frozen', 'the session may be gone'],
-  // no driver status: the main turn is over and background subagents run, so it is working (R8.2)
+  // a session Synopia doesn't drive: the main turn is over and background subagents run, so it is working (R8.2)
   ['f6f6', 'green', /^Working$/, 'class="rot"', 'Working'],
   // the author's mix: a turned-down tool earlier, a subagent, a shell and a monitor running, and
   // its main turn open in another process (a foreground tool waiting): working, not stopped

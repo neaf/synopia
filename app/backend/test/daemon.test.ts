@@ -32,8 +32,8 @@ test('idle exit: only after the timeout with no page and nothing running', () =>
   assert.equal(b.check({ pages: 0, busy: false }, 6000), true);
 });
 
-test('code hash: every src .ts file and package-lock.json, nothing else', async () => {
-  const dir = tmp();
+test('code hash: every src .ts file, package-lock.json and the page\'s protocol.js, nothing else', async () => {
+  const dir = join(tmp(), 'backend');
   mkdirSync(join(dir, 'src', 'sub'), { recursive: true });
   writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
   writeFileSync(join(dir, 'src', 'sub', 'b.ts'), 'export const b = 2;\n');
@@ -55,12 +55,19 @@ test('code hash: every src .ts file and package-lock.json, nothing else', async 
   writeFileSync(join(dir, 'package-lock.json'), '{"lockfileVersion":3}\n');
   writeFileSync(join(dir, 'src', 'c.ts'), '');
   assert.notEqual(await codeHash(dir), h, 'a new file counts');
+  const h3 = (await codeHash(dir))!;
+  mkdirSync(join(dir, '..', 'web', 'js'), { recursive: true });
+  writeFileSync(join(dir, '..', 'web', 'js', 'protocol.js'), 'export const VERSION = 2;\n');
+  const h4 = (await codeHash(dir))!;
+  assert.notEqual(h4, h3, 'the page\'s protocol.js counts');
+  writeFileSync(join(dir, '..', 'web', 'js', 'protocol.js'), 'export const VERSION = 3;\n');
+  assert.notEqual(await codeHash(dir), h4, 'a protocol.js change alone is new code (final-daemon#B3)');
   assert.match((await codeHash(new URL('..', import.meta.url).pathname))!, /^[0-9a-f]{16}$/, 'the backend itself');
 });
 
 test('code hash: async, and an unchanged file is not read again (NFR-06)', async () => {
-  const dir = tmp();
-  mkdirSync(join(dir, 'src'));
+  const dir = join(tmp(), 'backend');
+  mkdirSync(join(dir, 'src'), { recursive: true });
   writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
   writeFileSync(join(dir, 'src', 'b.ts'), 'export const b = 1;\n');
   writeFileSync(join(dir, 'package-lock.json'), '{}\n');

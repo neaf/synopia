@@ -33,16 +33,19 @@ test('sdk: interrupt passes cancelQueued only with the capability, and maps the 
   const p = new SessionProcess({ cwd: '/w' }, { onMessage: () => {}, onExit: (e, ended) => exits.push([e, ended]), canUseTool: noAsk }, q.fn);
   p.push('first', 'u1');
   p.push([{ type: 'text', text: 'second' }], 'u2');
+  const png = { mediaType: 'image/png', data: 'iVBORw0K' };
+  p.push([{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png.data } }], 'u3', [png]);
   let r = await p.interrupt();
   assert.deepEqual(q.calls[0].interrupts, [undefined], 'a plain interrupt without the capability');
   assert.equal(r.cancelQueued, false);
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: 's', capabilities: [CANCEL_QUEUED, 7] });
   await tick();
   assert.deepEqual(p.capabilities, [CANCEL_QUEUED]);
-  q.calls[0].reply = { still_queued: ['u1', 'not-ours'], cancelled: ['u2', 'unknown'] };
+  q.calls[0].reply = { still_queued: ['u1', 'not-ours'], cancelled: ['u2', 'u3', 'unknown'] };
   r = await p.interrupt();
   assert.deepEqual(q.calls[0].interrupts[1], { cancelQueued: true });
-  assert.deepEqual(r, { cancelQueued: true, restored: ['second'], stillQueued: 1 });
+  // an image-only message comes back with its image (final-adapters#B5)
+  assert.deepEqual(r, { cancelQueued: true, restored: [{ text: 'second', images: [] }, { text: '', images: [png] }], stillQueued: 1 });
   p.close();
   await tick();
   assert.deepEqual(exits, [[null, true]]);

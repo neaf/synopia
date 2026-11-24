@@ -148,7 +148,7 @@ await serverSend(url, { t: 'ui', patch: { sessions: { [S1]: { scroll: { '': { id
 check('a reload after the anchor changed', await load());
 check('a stale anchor falls back to the bottom', await goTo(S1) && (await anchor()) === '{"bottom":true}', await anchor());
 // a reconnect is a second hello (sessions without items) on the view on screen: the log keeps its blocks
-// until the view's reset comes, not one frame blank (web-ui#B4), and then shows the same blocks
+// until the view's reset comes, not one frame blank, and then shows the same blocks
 await goTo(S1);
 const recon = await ev(`(async () => {
   const inner = document.querySelector('#log .log-inner'), keys = () => [...inner.children].map(e => e.dataset.key).join(' ');
@@ -167,7 +167,7 @@ await ev(`(() => { document.getElementById('open').click(); const i = document.g
 await flush();
 check('the Open list comes back with its filter', await load() && await wait(`__synopia.openList().shown && document.getElementById('ol-filter').value === 'demo' && __synopia.openList().filter === 'demo'`));
 
-// ---------- the card answered while the backend is down (web-ui#B1, requirements Q9) ----------
+// ---------- the card answered while the backend is down (requirements Q9) ----------
 check('4: session 2 shows its card', await goTo(S2) && await wait(`!!document.querySelector('#qa-send')`));
 const card2 = await card();
 await stopBackend('SIGKILL'); // a crash: the page keeps what it showed

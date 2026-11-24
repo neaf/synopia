@@ -1,8 +1,8 @@
 // Byte-offset tailing of one JSONL file, and a watcher for a session's subagents folder.
-// Plan section 7: read from the last offset, keep the partial last line, skip bad JSON,
-// reset on a shrink, an inode change or a same-size rewrite, triggered by fs.watch plus a poll.
-// A same-size file with a new mtime is a rewrite only when its first or last bytes changed: a bare
-// touch reads nothing (docs/Claude Code transcripts.md#quirk-plan-approval-rewrites-the-file).
+// It reads from the last offset, keeps the partial last line, skips bad JSON, and starts again on a
+// shrink, an inode change or a rewrite in place, triggered by fs.watch plus a poll. A rewrite in
+// place (the same size, or grown) shows as changed bytes at the start or the end of what was read
+// so far; a bare touch reads nothing (docs/Claude Code transcripts.md#quirk-plan-approval-rewrites-the-file).
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -114,6 +114,10 @@ export class Tailer {
       const sig = this.sigOf(st.size);
       if (sig && this.sig && sig.equals(this.sig)) this.mtimeMs = st.mtimeMs; // touched, same bytes
       else rewritten = true;
+    } else if (!rewritten && this.sig && st.size > this.offset && this.size === this.offset) {
+      // Grown: an append keeps the bytes read so far, a rewrite in place that grew doesn't.
+      const sig = this.sigOf(this.offset);
+      if (sig && !sig.equals(this.sig)) rewritten = true;
     }
     if (this.ino !== -1 && rewritten) {
       this.resetState();

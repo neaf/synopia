@@ -229,3 +229,20 @@ test('formats#B5: a bare touch (same bytes, new mtime) reads nothing and resets 
   assert.equal(resets(), 1);
   assert.deepEqual(got.slice(3), [{ n: 7 }, { n: 8 }, { n: 9 }]);
 });
+
+test('final-adapters#B2: a rewrite in place that grows resets; an append with the same start does not', (t) => {
+  const file = path.join(tmp(t), 's.jsonl');
+  fs.writeFileSync(file, '{"n":1,"plan":"old"}\n{"n":2}\n');
+  const ino = fs.statSync(file).ino;
+  const { tail, got, resets } = tailer(file);
+  tail.check();
+  fs.appendFileSync(file, '{"n":3}\n');
+  tail.check();
+  assert.equal(resets(), 0, 'an append is no rewrite');
+  // the same inode, rewritten longer (a plan approval edits a record and the file goes on)
+  fs.writeFileSync(file, '{"n":1,"plan":"new, longer"}\n{"n":2}\n{"n":3}\n{"n":4}\n');
+  assert.equal(fs.statSync(file).ino, ino, 'rewritten in place');
+  tail.check();
+  assert.equal(resets(), 1);
+  assert.deepEqual(got.slice(3), [{ n: 1, plan: 'new, longer' }, { n: 2 }, { n: 3 }, { n: 4 }], 'read again from the start, not mid-record');
+});

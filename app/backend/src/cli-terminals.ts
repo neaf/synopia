@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Log, LogFields } from './log.ts';
 import { nullLog } from './log.ts';
-import { findTranscript } from './transcript.ts';
+import { findTranscript } from './transcripts.ts';
 import * as macos from './macos.ts';
 
 export type Terminal = { pid: number; sessionId: string; procStart: string; cwd: string; status: string; statusUpdatedAt: number };

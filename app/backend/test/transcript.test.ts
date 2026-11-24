@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Tailer, SubagentWatcher } from '../src/tail.ts';
 import type { JsonRecord, Span } from '../src/tail.ts';
-import { Transcript, findTranscript, sessionDirOf, clip, previewOf, readResult } from '../src/transcript.ts';
+import { Transcript, sessionDirOf, clip, previewOf } from '../src/transcript.ts';
+import { findTranscript, readLine } from '../src/transcripts.ts';
+import { resultTextIn } from '../src/claude-jsonl.ts';
 import { ASK_STALE_MS, transcriptStatus } from '../src/status.ts';
 import type { Item } from '../src/transcript.ts';
 
@@ -116,7 +118,7 @@ test('previewOf: 20 lines, 4 KB at most, the count of all lines', () => {
   assert.equal(wide.lines, 1);
 });
 
-test('tool steps: input and result preview, the span of the result record, and the full read', () => {
+test('tool steps: input and result preview, the span of the result record, and the full read', async () => {
   const file = findTranscript(CLAUDE, ID.tools) as string;
   const recs: JsonRecord[] = [];
   const spans: Span[] = [];
@@ -130,10 +132,11 @@ test('tool steps: input and result preview, the span of the result record, and t
   assert.equal(byId(t, 'toolu_grep1').input, 'pattern: TODO');
   assert.equal(byId(t, 'toolu_edit1').input, undefined, 'an edit shows its diff instead');
   const span = t.resultSpan('toolu_read1')!;
-  assert.equal(readResult(file, span, 'toolu_read1'), 'File does not exist.', 'a record holding two results, read across 512-byte chunks');
-  assert.equal(readResult(file, span, 'toolu_bash1'), 'notes.md\nREADME.md');
-  assert.equal(readResult(file, { offset: span.offset + 1, length: span.length }, 'toolu_bash1'), null, 'not a record there');
-  assert.equal(readResult(file + '.gone', span, 'toolu_bash1'), null);
+  const readResult = async (f: string, sp: Span, id: string) => resultTextIn(await readLine(f, sp), id);
+  assert.equal(await readResult(file, span, 'toolu_read1'), 'File does not exist.', 'a record holding two results, read across 512-byte chunks');
+  assert.equal(await readResult(file, span, 'toolu_bash1'), 'notes.md\nREADME.md');
+  assert.equal(await readResult(file, { offset: span.offset + 1, length: span.length }, 'toolu_bash1'), null, 'not a record there');
+  assert.equal(await readResult(file + '.gone', span, 'toolu_bash1'), null);
 });
 
 test('tools: title, PRs, model, effort and mode', () => {
@@ -302,14 +305,14 @@ test('a turned-down tool marker (not a stop), permission-mode plan and turn_dura
   assert.deepEqual([plan.verb, plan.obj, plan.state], ['Plan', 'shown for approval', 'running']);
 });
 
-test('long text is clipped as in the reference parser', () => {
+test('long text is clipped at MAX_TEXT, with the cut marked', () => {
   const t = new Transcript({ home: HOME });
   t.push({ type: 'user', uuid: 'long', message: { content: 'x'.repeat(7000) } });
   assert.equal(byId(t, 'long').text, 'x'.repeat(6000) + '\n\n[cut: message continues]');
   assert.equal(clip('short'), 'short');
 });
 
-test('slice 3: a plan shows as Claude\'s reply, and a stored card answer lands on the tool once its result does', () => {
+test('a plan shows as Claude\'s reply, and a stored card answer lands on the tool once its result does', () => {
   const answers: Record<string, string> = { 'tu-bash': 'Allow once' };
   const t = new Transcript({ home: HOME, answerOf: (id) => answers[id] });
   t.push({ type: 'assistant', uuid: 'a1', message: { id: 'm1', content: [
@@ -929,4 +932,27 @@ test("seams#B3: a turned-down tool is not a stop; the turn keeps your prompt's t
   assert.equal(byId(t, 'u2').workedMs, undefined);
   t.pushAll([typed('u3', 'Again', ago(7)), typed('u4', '[Request interrupted by user]', ago(6))]);
   assert.deepEqual([byId(t, 'u4').interrupted, byId(t, 'u4').turnedDown], [true, undefined]);
+});
+
+// The CLI writes one block per assistant record (docs/Claude Code transcripts.md); an older or other
+// writer may put a response's blocks in one record. Both reduce alike, apart from the text items' ids
+// (`<record uuid>:<block index>`).
+test('a multi-block assistant record reduces like its split form', () => {
+  const blocks = [
+    { type: 'thinking', thinking: 'Look first.' },
+    { type: 'text', text: 'Checking the folder.' },
+    bashUse('toolu_ls'),
+    { type: 'tool_use', id: 'toolu_bg', name: 'Bash', input: { command: 'npm test', run_in_background: true } },
+    { type: 'text', text: 'Both started.' },
+  ];
+  const before = [typed('u1', 'Go', ago(10))];
+  const after = [toolResult('r1', ago(8), 'toolu_ls'), toolResult('r2', ago(8), 'toolu_bg'), typed('u2', 'And now?', ago(7))];
+  const split = new Transcript({ home: HOME });
+  split.pushAll([...before, ...blocks.map((b, i) => block(`a${i}`, ago(9), 'msg_1', b)), ...after]);
+  const one = new Transcript({ home: HOME });
+  one.pushAll([...before, { type: 'assistant', uuid: 'a', timestamp: ago(9), message: { id: 'msg_1', role: 'assistant', content: blocks } }, ...after]);
+  const shape = (t: Transcript) => t.items.map((it) => (it.k === 'claude' ? { ...it, id: 'text' } : it));
+  assert.deepEqual(shape(one), shape(split));
+  assert.deepEqual(one.items.filter((i) => i.k === 'claude').map((i) => i.text), ['Checking the folder.', 'Both started.']);
+  assert.deepEqual([one.background(), one.agents(), one.turnRunning(NOW, QUIET)], [split.background(), split.agents(), split.turnRunning(NOW, QUIET)]);
 });

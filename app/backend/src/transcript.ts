@@ -2,14 +2,12 @@
 // the typed records of claude-jsonl.ts, which reads every raw field. Records arrive in file order,
 // and a later record (a tool result, a task notification) updates an earlier item in place. Every
 // item has a stable id; takeChanges() lists what changed since the last call.
-import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
 import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
 import { BANG_CAP } from './bang.ts';
 import type { BashOutput } from './bang.ts';
-import { classify, agentMetaOf, resultTextIn, imageIn } from './claude-jsonl.ts';
+import { classify, agentMetaOf } from './claude-jsonl.ts';
 import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
 
 export type { Question } from './claude-jsonl.ts';
@@ -181,34 +179,9 @@ export function inputOf(name: string, input: JsonRecord): string {
   return out.join('\n');
 }
 
-// Reads one record line again (`span`, from the tailer) and parses it; undefined when the file is
-// gone or the bytes there aren't one JSON value.
-function readLine(file: string, span: Span): unknown {
-  let fd: number;
-  try {
-    fd = fs.openSync(file, 'r');
-  } catch {
-    return undefined;
-  }
-  try {
-    const buf = Buffer.alloc(span.length);
-    if (fs.readSync(fd, buf, 0, span.length, span.offset) !== span.length) return undefined;
-    return JSON.parse(buf.toString('utf8'));
-  } catch {
-    return undefined;
-  } finally {
-    fs.closeSync(fd);
-  }
-}
-
-// The full text of the tool_result for `toolUseId` in the record at `span`; null when the file is
-// gone or no longer has that record there (rewritten, rotated).
-export function readResult(file: string, span: Span, toolUseId: string): string | null {
-  return resultTextIn(readLine(file, span), toolUseId);
-}
-
-// The image types the page is served (GET /api/image); any other gets a 415.
-export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+// The image types the page is served (GET /api/image); any other gets a 415. protocol.js
+// IMAGE_TYPES is the other set: what a message you send may carry.
+export const SERVED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
 const JPEG_SCAN = 64 * 1024; // how far into a JPEG to look for its size (EXIF can come first)
 const sized = (w: number, h: number) => (w > 0 && h > 0 ? { w, h } : null);
 
@@ -217,8 +190,8 @@ const sized = (w: number, h: number) => (w > 0 && h > 0 ? { w, h } : null);
 // type goes first, then the other served types: a record can label a JPEG a PNG, and the browser goes
 // by the bytes, so this still gives the thumbnail its shape before it loads.
 export function imageSize(mediaType: string, b64: string): { w: number; h: number } | null {
-  if (!IMAGE_TYPES.includes(mediaType)) return null;
-  for (const t of [mediaType, ...IMAGE_TYPES.filter((x) => x !== mediaType)]) {
+  if (!SERVED_IMAGE_TYPES.includes(mediaType)) return null;
+  for (const t of [mediaType, ...SERVED_IMAGE_TYPES.filter((x) => x !== mediaType)]) {
     const size = sizeAs(t, b64);
     if (size) return size;
   }
@@ -274,13 +247,6 @@ export function imageRefs(recordId: string, blocks: ImageBlock[], at = ''): Imag
 export function parseRef(ref: string): { recordId: string; path: number[] } | null {
   const m = /^(.+):(\d{1,4}(?:\.\d{1,4})?)$/.exec(ref);
   return m ? { recordId: m[1], path: m[2].split('.').map(Number) } : null;
-}
-
-// Reads one record line again (`span`) and decodes the image block at `path` in it. null when the file
-// is gone, the line no longer holds that record (rewritten), or there is no base64 image there.
-export function readImage(file: string, span: Span, recordId: string, at: number[]): { mediaType: string; data: Buffer } | null {
-  const img = imageIn(readLine(file, span), recordId, at);
-  return img ? { mediaType: img.mediaType, data: Buffer.from(img.data, 'base64') } : null;
 }
 
 type ToolUseRef = { id: string; ts: string | null; name: string };
@@ -376,7 +342,7 @@ export class Transcript {
   private titlesOf: () => WrittenTitle[] | undefined;
 
   // `answerOf`: the card answer Synopia stored for a tool use ("Allow once", "Denied: …"), shown as
-  // your turn before the tool (slice 3). The JSONL holds no text for an allowed permission.
+  // your turn before the tool. The JSONL holds no text for an allowed permission.
   // `planOf`: the plan text an answered plan card showed; the JSONL's ExitPlanMode input can be an
   // older revision (the CLI reads the plan file when it asks).
   // `titlesOf`: the writer's title history, placed among the records by time (title items).
@@ -736,7 +702,7 @@ export class Transcript {
     this.refreshTool(tid);
   }
 
-  // Slice 5: the session's process ended at `at` (close, idle end, quit, failure). Background shells,
+  // The session's process ended at `at` (close, idle end, quit, failure). Background shells,
   // monitors and subagents live inside it, so those started before then and still running read as
   // stopped. A notification that arrives later still wins. A foreground tool started before then
   // with no result reads as failed when the process failed (`failed`), else as stopped.
@@ -878,7 +844,7 @@ export class Transcript {
   }
 
   // Recomputes everything a tool id feeds: the item's state, patch or answer, the background
-  // entry and the subagents linked to it. Order-independent, like the reference parser's final pass.
+  // entry and the subagents linked to it. Order-independent: records can come in any order.
   private refreshTool(tid: string): void {
     const r = this.r;
     const it = r.byId.get(tid);
@@ -1116,22 +1082,6 @@ export class Transcript {
     return [...this.agentMeta.keys()].sort().map((id) => this.getAgent(id) as Agent);
   }
 }
-// The first `projects/*/<id>.jsonl` under the claude dir, or null.
-export function findTranscript(claudeDir: string, sessionId: string): string | null {
-  const projects = path.join(claudeDir, 'projects');
-  let dirs: string[];
-  try {
-    dirs = fs.readdirSync(projects).sort();
-  } catch {
-    return null;
-  }
-  for (const d of dirs) {
-    const p = path.join(projects, d, `${sessionId}.jsonl`);
-    if (fs.existsSync(p)) return p;
-  }
-  return null;
-}
-
 // `<session>.jsonl` -> `<session>/`, the folder that holds `subagents/`.
 export function sessionDirOf(transcriptPath: string): string {
   return transcriptPath.replace(/\.jsonl$/, '');

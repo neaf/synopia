@@ -17,13 +17,13 @@ import { mode, setMode } from "./mode.js";
 import { themePref, themeSet } from "./theme-switch.js";
 import { openList, openListShown, restoreOpenList } from "./open-list.js";
 
-const uiS = {}; // sid -> { scroll: {view: anchor}, earlier: {view: oldest item id}, diffs: Set, folds: Set, rail }
+const uiS = {}; // sid -> { scroll: {view: anchor}, earlier: {view: oldest item id}, diffs: Set, folds: Set }
 const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not on screen
 const stored = new Set(); // pasted image ids the backend has as files
 let sentTop = {}, sentSess = {}; // what the backend has, as JSON per field
 let uiLoaded = false, timer = null, firstChange = 0, restoring = null, typing = null, afterFirst = null;
 const TOP = ["current", "view", "mode", "openBg", "openList", "preview", "viewer", "theme"];
-const sess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set(), rail: undefined });
+const sess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set() });
 const viewKey = () => view || "";
 /* the steps opened by a click, "<sid>|<view>|<item id>" (transcript.js): a redraw and a reload keep them */
 export const openSteps = new Set();
@@ -57,7 +57,7 @@ export function applyHello(u) {
     const s = sess(sid);
     sentSess[sid] = Object.fromEntries(Object.keys(x).map(k => [k, "?"])); // the backend has these: the next patch sets or clears them
     s.scroll = { ...(x.scroll || {}) }; s.earlier = { ...(x.earlier || {}) };
-    s.diffs = new Set(x.diffs || []); s.folds = new Set(x.folds || []); s.rail = x.rail;
+    s.diffs = new Set(x.diffs || []); s.folds = new Set(x.folds || []);
     for (const k of x.steps || []) openSteps.add(`${sid}|${k}`);
     const ids = new Set(requestsOf({ id: sid }).map(r => r.id));
     for (const [rid, st] of Object.entries(x.cards || {})) {
@@ -239,7 +239,7 @@ function sessionNow(sid, fresh) {
     earlier: or(u?.earlier, !u || !Object.keys(u.earlier).length),
     steps: or(steps, !steps.length), diffs: or(u && [...u.diffs], !u?.diffs.size), folds: or(u && [...u.folds], !u?.folds.size),
     draft: d && (d.text || images.length) ? { text: d.text, cursor: d.cursor, images } : null,
-    cards: or(mine, !Object.keys(mine).length), rail: u?.rail ?? null,
+    cards: or(mine, !Object.keys(mine).length),
   };
 }
 export function flush() {

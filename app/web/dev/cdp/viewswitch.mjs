@@ -1,4 +1,4 @@
-// A view switch renders once (R3.9, plan section 5): back from a subagent, the page sends `view` with
+// A view switch renders once (R3.9, R5.12a): back from a subagent, the page sends `view` with
 // the oldest item it had loaded (`from`), gets one reset from there to the end, asks for no earlier
 // pages, and the log shows nothing until then: never the stale items or the last 160 first.
 // usage: run.sh viewswitch (or node viewswitch.mjs <url> <state-dir> <claude-dir>), on the long transcript

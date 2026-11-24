@@ -46,7 +46,7 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 
 - Symptom: a plain `interrupt()` leaves queued messages; they run after the abort as their own turn (spike row 10, `still_queued: [uuid]`).
 - Cause: `Query.interrupt()` is typed without arguments; only the wire field `cancel_queued` shows (sdk.d.ts 5090).
-- Workaround: when `system/init` `capabilities` lists `interrupt_cancel_queued_v1`, call `interrupt({cancelQueued: true})` through a cast. The receipt's `cancelled` uuids map to the texts Synopia pushed (last 100 kept) and go back to the message box. Without the capability: the plain call, and a toast when `still_queued` lists Synopia's messages.
+- Workaround: when `system/init` `capabilities` lists `interrupt_cancel_queued_v1`, call `interrupt({cancelQueued: true})` through a cast. The receipt's `cancelled` uuids map to the texts and pasted images Synopia pushed (last 100 kept) and go back to the message box (`restore` with `images`), an image-only message too. Without the capability: the plain call, and a toast when `still_queued` lists Synopia's messages.
 - Code: `sdk.ts` `QueryLike`, `realSdk` (the one cast), `CANCEL_QUEUED`, `SessionProcess.interrupt`. Test: `sdk.test.ts`. Source: live run S2-2 (CLI 2.1.330).
 - An interrupted turn ends `result/error_during_execution` with `terminal_reason` `aborted_streaming` or `aborted_tools`. The subtype is not a reliable "stopped", so `SessionStatus.interrupted()` forces the turn's result to stopped. Code: `session.ts` `interrupt`, `status.ts`.
 

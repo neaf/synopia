@@ -1,4 +1,4 @@
-// Opens files and URLs for the page (plan sections 2 and 12): `/usr/bin/open` through execFile,
+// Opens files and URLs for the page: `/usr/bin/open` through execFile,
 // never a shell. Paths must be absolute and exist; URLs must be http or https. Only documents,
 // media and source code (OPEN_EXT, on a regular file without an execute bit, by its own name and by
 // its real path's) open with their default app. Everything else, folders and bundles included, is

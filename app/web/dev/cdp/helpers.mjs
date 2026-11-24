@@ -54,15 +54,21 @@ export async function spySent(c) {
 // A server message, handed to the page as if the server sent it.
 export const inject = (c, msg) => c.ev(`__synopia.inject(${JSON.stringify(msg)})`);
 // Frames sent to the backend from a client of its own (the page's token, from `url`), after its hello.
+// It may run before connect() arms the suite's watchdog, so it has its own: 20 s, then the check fails.
 export async function serverSend(url, ...msgs) {
   const { WebSocket } = await import('../../../backend/node_modules/ws/wrapper.mjs');
   const u = new URL(url), ws = new WebSocket(`ws://${u.host}/ws`, { origin: u.origin }); // the upgrade checks Origin
-  await new Promise((r, j) => { ws.on('open', r); ws.on('error', j); });
-  const hello = new Promise((r) => ws.on('message', (d) => { if (JSON.parse(d).t === 'hello') r(); }));
-  ws.send(JSON.stringify({ t: 'auth', token: u.searchParams.get('token') }));
-  await hello;
-  for (const m of msgs) ws.send(JSON.stringify(m));
-  await new Promise((r) => { ws.on('close', r); ws.close(); });
+  const dog = setTimeout(() => { console.log('FAIL serverSend: no hello from the backend in 20 s'); process.exit(2); }, 20_000);
+  try {
+    await new Promise((r, j) => { ws.on('open', r); ws.on('error', j); });
+    const hello = new Promise((r) => ws.on('message', (d) => { if (JSON.parse(d).t === 'hello') r(); }));
+    ws.send(JSON.stringify({ t: 'auth', token: u.searchParams.get('token') }));
+    await hello;
+    for (const m of msgs) ws.send(JSON.stringify(m));
+    await new Promise((r) => { ws.on('close', r); ws.close(); });
+  } finally {
+    clearTimeout(dog);
+  }
 }
 
 // A PNG of the page, or of `clip` ({ x, y, width, height }, scale 1 unless given), written to `file`.

@@ -39,14 +39,14 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
   const q = fakeQuery();
   const logs: string[] = [];
   const checks: ((t: Terminal | null) => void)[] = [];
-  const registry: TerminalSource = {
+  const terminals: TerminalSource = {
     holder: () => null,
     recheck: () => null,
     onChange: () => {},
     end: async () => true,
     ...(o.confirm ? { confirm: () => new Promise<Terminal | null>((r) => checks.push(r)) } : {}),
   };
-  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, registry, log: (e) => logs.push(e) });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, terminals, log: (e) => logs.push(e) });
   sessions.start();
   const take = (t: string) => { const out = got.filter((m) => m.t === t); for (const m of out) got.splice(got.indexOf(m), 1); return out; };
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;

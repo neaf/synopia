@@ -3,7 +3,7 @@
 import { closeSync, cpSync, mkdirSync, mkdtempSync, openSync, readFileSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess, StdioOptions } from 'node:child_process';
 import { once } from 'node:events';
 import { WebSocket } from 'ws';
@@ -112,7 +112,7 @@ export async function shellDaemon(args: string[], main = MAIN): Promise<Daemon &
   }
 }
 
-// Every distinct daemon.json seen until `until` settles, read every 5 ms: a handover's mark lives
+// Every distinct daemon.json seen until `until` settles, read every 20 ms: a handover's mark lives
 // only until the new daemon listens.
 export async function watchDaemonJson(stateDir: string, until: Promise<unknown>): Promise<DaemonInfo[]> {
   const seen: DaemonInfo[] = [];
@@ -121,7 +121,7 @@ export async function watchDaemonJson(stateDir: string, until: Promise<unknown>)
   while (!done) {
     const i = readDaemonInfo(stateDir);
     if (i && JSON.stringify(i) !== JSON.stringify(seen.at(-1))) seen.push(i);
-    await new Promise((ok) => setTimeout(ok, 5));
+    await new Promise((ok) => setTimeout(ok, 20));
   }
   return seen;
 }
@@ -129,3 +129,14 @@ export async function watchDaemonJson(stateDir: string, until: Promise<unknown>)
 // GET or POST /api/<path> with the daemon's token.
 export const api = (info: Pick<DaemonInfo, 'port' | 'token'>, path: string, init?: RequestInit) =>
   fetch(`http://127.0.0.1:${info.port}/api/${path}${path.includes('?') ? '&' : '?'}token=${info.token}`, init);
+
+// Every process whose command line names `stateDir` (a daemon and each new daemon it started, which
+// inherits its flags), SIGKILLed: a test that fails halfway leaves no daemon behind.
+export function killAll(stateDir: string): void {
+  const ps = spawnSync('ps', ['-ax', '-o', 'pid=,command='], { encoding: 'utf8' }).stdout ?? '';
+  for (const line of ps.split('\n')) {
+    if (!line.includes(stateDir)) continue;
+    const pid = Number(line.trim().split(/\s+/)[0]);
+    if (pid > 0 && pid !== process.pid) try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
+  }
+}

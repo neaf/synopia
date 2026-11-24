@@ -63,7 +63,7 @@ struct DaemonFilesTest {
     let q = DaemonFiles.decode(DaemonFiles.QuitCheck.self, read("quit-check.json"))
     check("quit-check decodes", q?.summary == "1 session is working and 2 subagents and 1 monitor will stop.")
     check("quit-check with nothing running", DaemonFiles.decode(DaemonFiles.QuitCheck.self,
-      Data("{\"running\":[],\"background\":{},\"summary\":\"\"}".utf8))?.summary == "")
+      Data("{\"running\":[],\"background\":[],\"counts\":{},\"summary\":\"\"}".utf8))?.summary == "")
     // an older daemon's reply has no summary: no answer, so the shell asks rather than stop unasked
     check("quit-check without summary is nil", DaemonFiles.decode(DaemonFiles.QuitCheck.self,
       Data("{\"running\":[],\"background\":[{\"kind\":\"shell\"}]}".utf8)) == nil)

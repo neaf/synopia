@@ -6,10 +6,11 @@
 // turn, the subagent folders, every tailer. fs.watch wakes a tailer sooner.
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 import { Tailer, SubagentWatcher } from './tail.ts';
-import type { JsonRecord } from './tail.ts';
-import { Transcript, findTranscript, sessionDirOf, readResult, readImage, IMAGE_TYPES } from './transcript.ts';
-import { landedBlocks, cwdOfRecords } from './claude-jsonl.ts';
+import type { JsonRecord, Span } from './tail.ts';
+import { Transcript, sessionDirOf, SERVED_IMAGE_TYPES } from './transcript.ts';
+import { landedBlocks, cwdOfRecords, resultTextIn, imageIn } from './claude-jsonl.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { QUIET_MS, ASK_STALE_MS } from './status.ts';
@@ -58,6 +59,7 @@ type Reading = {
   id: string; path: string | null; cwd: string; t: Transcript;
   tailer: Tailer | null; watcher: SubagentWatcher | null; children: Map<string, Child>;
   reset: boolean; dirty: boolean;
+  finding?: boolean; // poll's look for a new session's file is on its way
 };
 
 // The transcript's effort: a level, or {level} on some records.
@@ -130,15 +132,18 @@ export class Transcripts {
   }
 
   // The read timer's tick: a new session's file, the subagent folders (which read their subagents'
-  // files), every main file. Then the sessions that changed are told at once.
-  poll(): void {
+  // files), every main file. Then the sessions that changed are told at once. A new session's file
+  // is looked for async; the promise settles once those looks are done (tests wait for it).
+  poll(): Promise<void> {
+    const finds: Promise<void>[] = [];
     for (const s of [...this.live.values()]) {
       if (this.live.get(s.id) !== s) continue;
-      if (!s.path) this.find(s);
+      if (!s.path) finds.push(this.find(s));
       s.watcher?.scan();
       s.tailer?.check();
     }
     for (const s of [...this.live.values()]) if (s.dirty) this.emit(s);
+    return Promise.all(finds).then(() => {});
   }
 
   stop(): void {
@@ -258,20 +263,20 @@ export class Transcripts {
 
   // The full result of one tool, read again from its record's line (only its preview is kept in
   // memory). Null when the file is gone or was rewritten.
-  resultText(sid: string, agent: string | null, toolUseId: string): string | null {
+  async resultText(sid: string, agent: string | null, toolUseId: string): Promise<string | null> {
     const file = this.fileOf(sid, agent);
     const span = this.get(sid, agent)?.resultSpan(toolUseId);
-    return file && span ? readResult(file, span, toolUseId) : null;
+    return file && span ? resultTextIn(await readLine(file, span), toolUseId) : null;
   }
 
   // `GET /api/image`: one image block, read again from its record's line and decoded (items carry only
   // its ref). 404 for an unknown ref or a file that is gone or was rewritten, 415 for a type not served.
-  image(sid: string, agent: string | null, ref: string): { status: 200; type: string; body: Buffer } | { status: 404 | 415 } {
+  async image(sid: string, agent: string | null, ref: string): Promise<{ status: 200; type: string; body: Buffer } | { status: 404 | 415 }> {
     const file = this.fileOf(sid, agent);
     const at = this.get(sid, agent)?.imageAt(ref);
-    const img = file && at ? readImage(file, at.span, at.recordId, at.path) : null;
+    const img = file && at ? await readImage(file, at.span, at.recordId, at.path) : null;
     if (!img) return { status: 404 };
-    if (!IMAGE_TYPES.includes(img.mediaType)) return { status: 415 };
+    if (!SERVED_IMAGE_TYPES.includes(img.mediaType)) return { status: 415 };
     return { status: 200, type: img.mediaType, body: img.data };
   }
 
@@ -328,12 +333,17 @@ export class Transcripts {
     return (agent ? s?.children.get(agent)?.tailer.path : s?.path) ?? null;
   }
 
-  // A new session's file appears with its first turn.
-  private find(s: Reading): void {
-    const file = findTranscript(this.opts.claudeDir, s.id);
-    if (!file) return;
+  // A new session's file appears with its first turn: looked for without blocking the loop, one
+  // look at a time per session.
+  private async find(s: Reading): Promise<void> {
+    if (s.finding) return;
+    s.finding = true;
+    const file = await findTranscriptLater(this.opts.claudeDir, s.id);
+    s.finding = false;
+    if (!file || s.path || this.live.get(s.id) !== s) return; // found meanwhile, closed or moved
     this.log('transcripts.found', { sid: s.id });
     this.attach(s, file);
+    if (s.dirty) this.emit(s);
   }
 
   private attach(s: Reading, file: string): void {
@@ -405,6 +415,72 @@ function landed(records: JsonRecord[], fn: (messageId: string, blockTypes: strin
     const l = landedBlocks(r);
     if (l) fn(l.messageId, l.types);
   }
+}
+
+// ---------- the files (the only I/O of the reading, with tail.ts) ----------
+
+// The first `projects/*/<id>.jsonl` under the claude dir, or null. Synchronous: a session that
+// opens shows its transcript at once (open, rekey; cli-terminals.ts on a pid file's change).
+export function findTranscript(claudeDir: string, sessionId: string): string | null {
+  const projects = path.join(claudeDir, 'projects');
+  let dirs: string[];
+  try {
+    dirs = fs.readdirSync(projects).sort();
+  } catch {
+    return null;
+  }
+  for (const d of dirs) {
+    const p = path.join(projects, d, `${sessionId}.jsonl`);
+    if (fs.existsSync(p)) return p;
+  }
+  return null;
+}
+
+// The same, async: the poll's look for a new session's file, each second until it appears (NFR-06).
+export async function findTranscriptLater(claudeDir: string, sessionId: string): Promise<string | null> {
+  const projects = path.join(claudeDir, 'projects');
+  let dirs: string[];
+  try {
+    dirs = (await fs.promises.readdir(projects)).sort();
+  } catch {
+    return null;
+  }
+  for (const d of dirs) {
+    const p = path.join(projects, d, `${sessionId}.jsonl`);
+    try {
+      await fs.promises.access(p);
+      return p;
+    } catch { /* not in this folder */ }
+  }
+  return null;
+}
+
+// Reads one record line again (`span`, from the tailer) and parses it; undefined when the file is
+// gone or the bytes there aren't one JSON value. Async: a line with an image can be megabytes (NFR-06).
+export async function readLine(file: string, span: Span): Promise<unknown> {
+  let fh: fs.promises.FileHandle;
+  try {
+    fh = await fs.promises.open(file, 'r');
+  } catch {
+    return undefined;
+  }
+  try {
+    const buf = Buffer.alloc(span.length);
+    const { bytesRead } = await fh.read(buf, 0, span.length, span.offset);
+    if (bytesRead !== span.length) return undefined;
+    return JSON.parse(buf.toString('utf8'));
+  } catch {
+    return undefined;
+  } finally {
+    await fh.close();
+  }
+}
+
+// Reads one record line again (`span`) and decodes the image block at `path` in it. null when the file
+// is gone, the line no longer holds that record (rewritten), or there is no base64 image there.
+export async function readImage(file: string, span: Span, recordId: string, at: number[]): Promise<{ mediaType: string; data: Buffer } | null> {
+  const img = imageIn(await readLine(file, span), recordId, at);
+  return img ? { mediaType: img.mediaType, data: Buffer.from(img.data, 'base64') } : null;
 }
 
 export function mtimeOf(file: string | null): number {

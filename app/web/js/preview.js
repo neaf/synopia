@@ -5,7 +5,7 @@
    top and bottom, / or Cmd+F find, Enter or n the next match (Shift or N the previous). A click outside
    closes it. It always opens at the top. Lines the turn changed get quiet gutter marks (a green bar for added, a red
    mark where lines were removed); the diff is where the change itself shows. */
-import { send } from "./connection.js";
+import { send, request } from "./connection.js";
 import { esc } from "./format.js";
 import { setMode } from "./mode.js";
 import { themeNow } from "./theme-switch.js";
@@ -18,7 +18,7 @@ export function previewClick(a, e) {
   const p = a.dataset.path;
   if (!p || (PV_HTML.test(p) && !e.altKey)) return false;
   pv.want = { path: p, back: a, ...pvChanges(a) };
-  send({ t: "preview", path: p, theme: themeNow() });
+  if (!request({ t: "preview", path: p, theme: themeNow() })) pv.want = null; // offline: a toast, and nothing waits
   return true;
 }
 /* the file the stored UI state had open (ui-state.js, after a reload): asked again, its find and scroll put back once shown */
@@ -59,7 +59,7 @@ function pvBuild() {
     </div>`);
   pv.el = document.getElementById("preview");
   document.getElementById("pv-close").addEventListener("click", hidePreview);
-  document.getElementById("pv-open").addEventListener("click", () => { if (pv.path) send({ t: "open", path: pv.path }); });
+  document.getElementById("pv-open").addEventListener("click", () => { if (pv.path) request({ t: "open", path: pv.path }); });
   const q = document.getElementById("pv-q");
   q.addEventListener("input", () => pvFind(q.value));
 }

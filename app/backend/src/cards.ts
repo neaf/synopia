@@ -6,12 +6,15 @@
 // (Q6), so reopening asks again.
 import type { CanUseTool, PermissionResult, PermissionUpdate } from '@anthropic-ai/claude-agent-sdk';
 import { planApproval } from './sdk.ts';
+import { capRecord, ANSWERS_MAX, PLANS_MAX } from './store.ts';
 import type { Store } from './store.ts';
 
 export type Kind = 'question' | 'permission' | 'plan';
 export type PendingRequest = { id: string; kind: Kind; since: number; [k: string]: unknown };
 export const DENIED = 'Denied by the user';
-export const INTERRUPTED = 'Interrupted by the user';
+const INTERRUPTED = 'Interrupted by the user';
+// A request that ends without an answer (an interrupt, the process ending).
+const interrupted = (): PermissionResult => ({ behavior: 'deny', message: INTERRUPTED, interrupt: true });
 const MAX_INPUT_TEXT = 4000; // a Write's content and the like: the card shows the path, not the body
 
 // What the page sends in `answer` (one shape per card):
@@ -43,6 +46,7 @@ export type CardsHooks = {
   clear: (id: string) => void; // `pending` with `cleared`
   count: (n: number) => void; // the status: needs you while n > 0
   context: () => { cwd: string; modeBefore: string }; // the session's folder (with ~) and the mode before plan mode
+  tilde?: (p: string) => string; // a path as the card shows it (paths.ts displayPath)
   // The last request ended by an answer or its own signal (a stopped subagent, a cancelled tool):
   // messages held behind it may go. Not called from abortAll.
   drained: () => void;
@@ -83,15 +87,14 @@ export class Cards {
       defaultToNo: options.defaultToNo === true,
       suppressAlwaysAllowRule: options.suppressAlwaysAllowRule === true,
       suggestions,
-      always: alwaysAllowed ? alwaysText(suggestions) : null,
+      always: alwaysAllowed ? alwaysText(suggestions, this.hooks.tilde) : null,
     };
     const asked: Asked = { toolName, input, suggestions, alwaysAllowed, modeBefore: ctx.modeBefore };
-    const interrupted: PermissionResult = { behavior: 'deny', message: INTERRUPTED, interrupt: true };
     return new Promise<PermissionResult>((resolve) => {
       const signal = options.signal;
-      if (signal?.aborted) { resolve(interrupted); return; }
+      if (signal?.aborted) { resolve(interrupted()); return; }
       const parked: Parked = { request, asked, toolUseId: options.toolUseID, resolve, off: () => {} };
-      const onAbort = () => this.drop(parked, interrupted);
+      const onAbort = () => this.drop(parked, interrupted());
       signal?.addEventListener('abort', onAbort, { once: true });
       parked.off = () => signal?.removeEventListener('abort', onAbort); // answered: the signal keeps no hold on it
       this.list.push(parked);
@@ -109,9 +112,10 @@ export class Cards {
     if ('error' in s) return s;
     const st = this.hooks.store.state, sid = this.hooks.sid();
     if (s.rules.length) st.rules[sid] = [...new Set([...(st.rules[sid] ?? []), ...s.rules])];
-    if (s.label) st.answers[p.toolUseId] = s.label;
+    // the newest ANSWERS_MAX labels and PLANS_MAX plans are kept (final-session#B5)
+    if (s.label) capRecord(st.answers, p.toolUseId, s.label, ANSWERS_MAX);
     // the plan you answered, as the card showed it (the JSONL's ExitPlanMode input can be older)
-    if (p.asked.toolName === 'ExitPlanMode' && typeof p.asked.input.plan === 'string') st.plans[p.toolUseId] = p.asked.input.plan;
+    if (p.asked.toolName === 'ExitPlanMode' && typeof p.asked.input.plan === 'string') capRecord(st.plans, p.toolUseId, p.asked.input.plan, PLANS_MAX);
     this.hooks.store.changed();
     this.drop(p, s.result);
     return s;
@@ -126,7 +130,7 @@ export class Cards {
   abortAll(): void {
     this.aborting = true;
     try {
-      for (const p of [...this.list]) this.drop(p, { behavior: 'deny', message: INTERRUPTED, interrupt: true });
+      for (const p of [...this.list]) this.drop(p, interrupted());
     } finally {
       this.aborting = false;
     }
@@ -187,10 +191,6 @@ const MODES: Record<string, string> = {
 type Rule = { toolName: string; ruleContent?: string };
 export const ruleText = (r: Rule): string => (r.ruleContent ? `${r.toolName}(${r.ruleContent})` : r.toolName);
 
-function tilde(p: string, home: string): string {
-  return home && (p === home || p.startsWith(home + '/')) ? '~' + p.slice(home.length) : p;
-}
-
 // Neighbouring addRules entries with the same behaviour and place read as one clause (the CLI
 // suggests a path and its /private realpath as two entries).
 function mergeRules(suggestions: PermissionUpdate[]): PermissionUpdate[] {
@@ -204,8 +204,9 @@ function mergeRules(suggestions: PermissionUpdate[]): PermissionUpdate[] {
   return out;
 }
 
-// What "Always allow" remembers and for how long (R6.5): one clause per update entry.
-export function alwaysText(suggestions: PermissionUpdate[], home = ''): string {
+// What "Always allow" remembers and for how long (R6.5): one clause per update entry. `tilde` shows
+// a folder as the card does (`~/…`).
+export function alwaysText(suggestions: PermissionUpdate[], tilde: (p: string) => string = (p) => p): string {
   const clauses = mergeRules(suggestions).map((u) => {
     const where = WHERE[u.destination] ?? '';
     const w = where ? ` ${where}` : '';
@@ -215,8 +216,8 @@ export function alwaysText(suggestions: PermissionUpdate[], home = ''): string {
     }
     if (u.type === 'removeRules') return `forget ${u.rules.map((r) => ruleText(r)).join(', ')}${w}`;
     if (u.type === 'setMode') return `switch to ${MODES[u.mode] ?? u.mode}${w}`;
-    if (u.type === 'addDirectories') return `allow access to ${u.directories.map((d) => tilde(d, home)).join(', ')}${w}`;
-    if (u.type === 'removeDirectories') return `remove access to ${u.directories.map((d) => tilde(d, home)).join(', ')}${w}`;
+    if (u.type === 'addDirectories') return `allow access to ${u.directories.map(tilde).join(', ')}${w}`;
+    if (u.type === 'removeDirectories') return `remove access to ${u.directories.map(tilde).join(', ')}${w}`;
     return '';
   }).filter(Boolean);
   if (!clauses.length) return '';

@@ -17,6 +17,19 @@ export type Settings = { newSessionCwd?: string; writerModel: string; model?: st
 
 // The subagents marked reviewed (R10.2), newest last: the oldest go past this many (backend-core#B5).
 export const REVIEWED_MAX = 1000;
+// The answer labels and answered plans kept, newest last: the oldest go past these (final-session#B5).
+// They label tool items of open or reopened sessions; a plan can be long.
+export const ANSWERS_MAX = 2000;
+export const PLANS_MAX = 100;
+
+// Sets `rec[key]` as the newest entry and drops the oldest past `max` (key order is insertion order).
+export function capRecord<T>(rec: Record<string, T>, key: string, value: T, max: number): void {
+  delete rec[key];
+  rec[key] = value;
+  const keys = Object.keys(rec);
+  for (const k of keys.slice(0, Math.max(0, keys.length - max))) delete rec[k];
+}
+const newest = <T>(rec: Record<string, T>, max: number): Record<string, T> => Object.fromEntries(Object.entries(rec).slice(-max));
 
 export type State = {
   version: 1;
@@ -104,8 +117,8 @@ export function normalize(raw: unknown): State {
   s.models = entries(raw.models, (v) => isObj(v) && typeof v.model === 'string'
     ? { model: v.model, ...(typeof v.effort === 'string' || v.effort === null ? { effort: v.effort } : {}) } : undefined);
   s.rules = entries(raw.rules, (v) => (isStrArr(v) ? [...v] : undefined));
-  s.answers = entries(raw.answers, (v) => (typeof v === 'string' ? v : undefined));
-  s.plans = entries(raw.plans, (v) => (typeof v === 'string' ? v : undefined));
+  s.answers = newest(entries(raw.answers, (v) => (typeof v === 'string' ? v : undefined)), ANSWERS_MAX);
+  s.plans = newest(entries(raw.plans, (v) => (typeof v === 'string' ? v : undefined)), PLANS_MAX);
   s.status = entries(raw.status, (v) => (isObj(v) && typeof v.status === 'string' && isNum(v.at) ? { status: v.status, at: v.at } : undefined));
   s.ended = entries(raw.ended, (v) => (isNum(v) ? v : undefined));
   s.endedFailed = entries(raw.endedFailed, (v) => (typeof v === 'boolean' ? v : undefined));

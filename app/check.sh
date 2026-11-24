@@ -26,7 +26,8 @@ fi
 shopt -s nullglob
 swift=("$app"/shell/*.swift)
 if [ ${#swift[@]} -eq 0 ]; then
-  echo "shell: skip (no app/shell yet)"
+  failed=1
+  echo "shell: fail (no Swift files in app/shell)"
 elif ! swiftc -typecheck "${swift[@]}" >"$out" 2>&1; then
   failed=1
   echo "shell: fail (typecheck)"

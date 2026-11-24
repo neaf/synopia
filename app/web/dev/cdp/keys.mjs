@@ -1,4 +1,4 @@
-// S5-2: keys and modes (R9) with real key events (CDP Input), on the scripted SDK.
+// Keys and modes (R9) with real key events (CDP Input), on the scripted SDK.
 // usage: run.sh keys (or node keys.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
 import { keyTable } from './helpers.mjs';
@@ -106,7 +106,7 @@ await K.esc();
 check('Open list: Esc closes it', !(await ev('document.getElementById("open-list")?.hidden === false')));
 check('Esc that closed the Open list asked nothing', !(await ev('!!document.querySelector(".composer.asking")')));
 
-// web-ui#B3: an open the backend refuses clears what the page waits for, so a later frame of that id doesn't switch the view
+// An open the backend refuses clears what the page waits for, so a later frame of that id doesn't switch the view
 const GONE = 'c0ffee00-0000-4000-8000-00000000b3b3';
 await ev(`document.getElementById('open').click()`); await sleep(400);
 const was = await ev('__synopia.current()');

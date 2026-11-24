@@ -1,6 +1,6 @@
 // A question or plan asked in another Claude Code process (R6.8), on the ext fixture: the row reads
 // needs you, the read-only card shows the questions, their options and the quiet footer, keys and
-// the message box stay the page's, a driver's session keeps "Not answered", the Dock badge counts
+// the message box stay the page's, a session Synopia drives keeps "Not answered", the Dock badge counts
 // them, and the card goes once the answer lands. Writes extcard-<n>.png in the state folder.
 // usage: node extcard.mjs make <fixture-dir> <claude-dir>   copies the fixture, its cards 4 min old (run.sh does this)
 //        node extcard.mjs <url> <state-dir> <claude-dir>
@@ -85,11 +85,11 @@ const pw = await text('.log .waitln');
 check('plan: transcript line', pw === 'Waiting for you: your approval of the plan above, asked in another process', JSON.stringify(pw));
 await shot();
 
-// 4. a driver's session whose ask has no request: Not answered, as before
+// 4. a session Synopia drives, whose ask has no request: Not answered, as before
 await open(D);
-check('driver: no card', !(await ev(`!!document.querySelector('.dock .qa-card')`)));
-check('driver: Not answered (Synopia quit)', (await ev(`document.querySelector('.log').textContent.includes('Not answered (Synopia quit)')`)));
-check('driver: row your turn', (await row(D))?.state === 'amber', JSON.stringify(await row(D)));
+check('driven: no card', !(await ev(`!!document.querySelector('.dock .qa-card')`)));
+check('driven: Not answered (Synopia quit)', (await ev(`document.querySelector('.log').textContent.includes('Not answered (Synopia quit)')`)));
+check('driven: row your turn', (await row(D))?.state === 'amber', JSON.stringify(await row(D)));
 
 // 5. the Dock badge counts the two (the shell polls GET /api/badge)
 const badge = async () => { const u = new URL(url); u.pathname = '/api/badge'; return (await (await fetch(u)).json()).badge; };

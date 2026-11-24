@@ -10,7 +10,7 @@ import type { Store } from './store.ts';
 
 export const DRAFT_IMAGE_MAX = 5 * 1024 * 1024;
 export const DRAFT_SESSION_MAX = 20 * 1024 * 1024;
-const BLOB_MAX = 64 * 1024; // a card's or the rail's state, as JSON
+const BLOB_MAX = 64 * 1024; // a card's state, as JSON
 const TEXT_MAX = 1024 * 1024; // a draft's text
 const LIST_MAX = 2000;
 
@@ -25,7 +25,6 @@ export type UiSession = {
   folds?: string[]; // "<agent>|<block key>#<n>"
   draft?: Draft;
   cards?: Record<string, unknown>; // per request id
-  rail?: unknown; // the background panel's expansion state (rail.js)
 };
 export type UiState = {
   current?: string | null;
@@ -89,7 +88,6 @@ function cleanSession(v: unknown): UiSession {
     for (const [k, c] of Object.entries(v.cards)) { const b = blob(c); if (b !== undefined && str(k, 256)) cards[k] = b; }
     out.cards = cards;
   }
-  const r = blob(v.rail); if (r !== undefined) out.rail = r;
   return out;
 }
 function draftOf(v: unknown): Draft | undefined {
@@ -226,6 +224,21 @@ export function pruneUi(store: Store, sid: string): void {
   if (had) store.changed();
 }
 
+// At start: the ui data and draft images of every session that isn't open go, and a `current`
+// that isn't open is no longer the one on screen.
+export function pruneUiTo(store: Store, open: (sid: string) => boolean): void {
+  const ui = store.state.ui;
+  let had = false;
+  for (const sid of Object.keys(ui.sessions)) if (!open(sid)) had = dropSession(store, sid) || had;
+  if (ui.current && !open(ui.current)) { ui.current = null; ui.view = null; had = true; }
+  let folders: string[] = [];
+  try {
+    folders = fs.readdirSync(path.join(path.dirname(store.path), 'drafts'));
+  } catch { /* no drafts yet */ }
+  for (const sid of folders) if (SAFE_ID.test(sid) && !(sid in ui.sessions)) fs.rmSync(draftsDir(store, sid), { recursive: true, force: true });
+  if (had) store.changed();
+}
+
 // The session's id changed (a new session's real id, a /clear): its ui data and draft move with it.
 export function rekeyUi(store: Store, oldId: string, newId: string): void {
   const ui = store.state.ui;
@@ -243,12 +256,12 @@ export function rekeyUi(store: Store, oldId: string, newId: string): void {
 }
 
 // GET /api/image with ref `draft:<id>`: a draft's pasted image, for its thumbnail after a restore.
-export function draftImage(store: Store, sid: string, ref: string): { status: 200; type: string; body: Buffer } | { status: 404 } {
+export async function draftImage(store: Store, sid: string, ref: string): Promise<{ status: 200; type: string; body: Buffer } | { status: 404 }> {
   const id = ref.startsWith('draft:') ? ref.slice(6) : '';
   const im = store.state.ui.sessions[sid]?.draft?.images.find((x) => x.id === id);
   if (!im || !SAFE_ID.test(sid)) return { status: 404 };
   try {
-    return { status: 200, type: im.mediaType, body: fs.readFileSync(imageFile(store, sid, im)) };
+    return { status: 200, type: im.mediaType, body: await fs.promises.readFile(imageFile(store, sid, im)) };
   } catch {
     return { status: 404 };
   }

@@ -254,9 +254,11 @@ function giveBack(sid, texts, atts = []) {
   returned.set(sid, r);
   if (mounted && mounted.startsWith(sid + "|")) takeReturned(sid);
 }
-export function restoreTexts(sid, texts) {
+export function restoreTexts(sid, texts, images = []) {
   if (!texts?.length) return;
-  giveBack(sid, texts);
+  // the backend's restore carries a queued message's images as base64 (protocol.js): back into pasted-image form
+  const atts = (images || []).map(im => { const url = `data:${im.mediaType};base64,${im.data}`; return { id: ui.newId(), n: im.n, mediaType: im.mediaType, url, data: url }; });
+  giveBack(sid, texts, atts);
   toast(texts.length === 1 ? "Your queued message is back in the message box." : `Your ${texts.length} queued messages are back in the message box.`);
 }
 function takeReturned(sid) {
@@ -273,7 +275,7 @@ function takeReturned(sid) {
 /* ---------- sending: Enter sends the text and the tagged images (R5.13) ---------- */
 /* the images a send carries, in the shape the backend reads (sdk.ts userContent: the text, then these in tag
    order), or null after a toast when one can't go; the backend checks the same caps (sdk.ts imageError), but
-   a frame over the socket's cap would close the socket instead of answering (seams#B2) */
+   a frame over the socket's cap would close the socket instead of answering */
 function imagesOf(going) {
   const images = []; let total = 0;
   for (const a of going) {
@@ -338,7 +340,7 @@ export function mountComposer(s) {
     for (const item of e.clipboardData?.items || []) if (item.type.startsWith("image/")) {
       e.preventDefault(); const file = item.getAsFile(), a = { id: ui.newId(), n: nextImageNumber(cur(), ta.value), mediaType: file.type, url: URL.createObjectURL(file), data: null };
       attachments.push(a); insertTag(ta, a.n); renderAttachments();
-      /* then kept with the draft; an image removed (or sent away) before the read ends leaves nothing to keep (web-ui#B7) */
+      /* then kept with the draft; an image removed (or sent away) before the read ends leaves nothing to keep */
       const r = new FileReader(); r.onload = () => { a.data = r.result; if (attachments.includes(a) || ui.held(a.url)) ui.changed(); }; r.readAsDataURL(file);
     }
   });

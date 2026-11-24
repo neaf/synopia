@@ -1,4 +1,4 @@
-// Loading earlier items (plan sections 5 and 7) on a generated long transcript, never committed.
+// Loading earlier items (R5.12a) on a generated long transcript, never committed.
 // usage: node earlier.mjs make <claude-dir>   writes the transcript (run.sh does this first)
 //        node earlier.mjs <url> <state-dir> <claude-dir>
 // Checks: the link's text, the place kept on screen, items in order with no duplicates, `g` at the
@@ -55,7 +55,7 @@ await ev(`document.getElementById('log').scrollTop = 0`);
 fs.writeFileSync(path.join(stateDir, 'earlier-link.png'), Buffer.from((await c.cdp('Page.captureScreenshot', { clip: { x: 0, y: 0, width: 1280, height: 300, scale: 1 } })).result.data, 'base64'));
 
 // Scrolled a little below the top, so the block read sits mid-screen; then a click.
-// The web fonts first (index.html, display=swap): their swap rewraps the text and moves every block.
+// The web fonts first (app.css, font-display: block): their arrival rewraps the text and moves every block.
 await ev(`document.fonts.ready.then(() => true)`);
 await ev(`document.getElementById('log').scrollTop = 0`);
 await ev(`document.getElementById('log').scrollTop = 120`);

@@ -19,8 +19,8 @@ type Msg = { t: string; [k: string]: unknown };
 const tick = () => new Promise((r) => setTimeout(r, 5));
 const SID = '11111111-2222-4333-8444-555555555555';
 
-// A registry whose terminals the test sets. `fresh` answers the last check before acting.
-function fakeRegistry(events: string[]) {
+// A terminal source whose terminals the test sets. `fresh` answers the last check before acting.
+function fakeTerminals(events: string[]) {
   const held = new Map<string, Terminal>();
   const listeners: (() => void)[] = [];
   const r = {
@@ -64,9 +64,9 @@ function setup(opts: { terminal?: Terminal | null; past?: SDKSessionInfo[] } = {
   const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: root, recheckMs: 0 });
   const events: string[] = [];
   const q = fakeQuery({ events, sessions: opts.past });
-  const reg = fakeRegistry(events);
+  const reg = fakeTerminals(events);
   if (opts.terminal) reg.set(opts.terminal);
-  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, registry: reg.source });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, terminals: reg.source });
   sessions.start();
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;
   const take = (t: string) => { const out = got.filter((m) => m.t === t); got.length = 0; return out; };

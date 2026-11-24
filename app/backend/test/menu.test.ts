@@ -165,3 +165,28 @@ test('menu: the model lists are kept across launches, so hello names the model a
   fs.writeFileSync(cacheFile, '{nope');
   assert.deepEqual(new Menus({ reply: (c, m) => c.send(m), clients: () => new Set(), cacheFile }).all(), {});
 });
+
+test('menu: commands_changed before any view keeps the models, and the first view still reads them (final-adapters#B3)', async () => {
+  const dir = tmp();
+  const cacheFile = path.join(tmp(), 'menu-cache.json');
+  const a = client();
+  await new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: idleFake().sdk, cacheFile }).viewed(a.c, '~/x', dir, null);
+  // the next launch: a resumed process pushes its commands before any page views it
+  const seeded = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set(), sdk: idleFake().sdk, cacheFile });
+  seeded.commandsChanged('~/x', CMDS);
+  assert.deepEqual(seeded.all()['~/x'].models.map((m) => m.value), ['default', 'haiku'], 'the last launch\'s models stay in hello');
+  assert.equal(seeded.all()['~/x'].commands.length, 2);
+  // no models known at all: the first view probes for them, and the process's commands stay
+  const q = idleFake(async () => []);
+  const fresh = new Menus({ reply: (c, m) => c.send(m), clients: () => new Set([a.c]), sdk: q.sdk });
+  fresh.commandsChanged('~/y', CMDS);
+  assert.deepEqual(fresh.all()['~/y'].models, []);
+  a.got.length = 0;
+  await fresh.viewed(a.c, '~/y', dir, null);
+  assert.equal(q.calls.length, 1, 'probed for the models');
+  const sent = a.got.find((m) => m.t === 'menu') as { models: unknown[]; commands: unknown[] };
+  assert.equal(sent.models.length, 2);
+  assert.equal(sent.commands.length, 2, 'the commands the process sent, not the probe\'s empty list');
+  await fresh.viewed(a.c, '~/y', dir, null);
+  assert.equal(q.calls.length, 1, 'once');
+});

@@ -24,13 +24,11 @@ import { Layouts } from './layout.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath } from './paths.ts';
-import { pruneUi, rekeyUi } from './ui-state.ts';
+import { pruneUi, pruneUiTo, rekeyUi } from './ui-state.ts';
 
 export const RECENT = 50;
 export type Recent = { id: string; title: string; cwd: string; lastModified: number; terminal?: number };
-export type { Image } from './sdk.ts';
-export type { ModelChoice, SendResult, TerminalSource } from './session.ts';
-export { IDLE_MS } from './session.ts';
+export type { TerminalSource } from './session.ts';
 
 export type SessionsOptions = {
   store: Store;
@@ -50,7 +48,7 @@ export type SessionsOptions = {
   // A running process pushed a new command list (commands_changed).
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
   // The terminals that hold sessions (cli-terminals.ts); none without it.
-  registry?: TerminalSource;
+  terminals?: TerminalSource;
 };
 
 const gone: SendResult = { ok: false, error: "That session isn't open any more." };
@@ -80,13 +78,16 @@ export class Sessions {
     this.layout = new Layouts({ store: this.store, entries: () => this.layoutEntries(), publish: (l) => this.publisher.layout(l) });
   }
 
-  // Opens every session of the open list that isn't closed. None has a process yet.
+  // Opens every session of the open list that isn't closed. None has a process yet. The page's UI
+  // state of any other session (closed while state.json was edited, a new session that never got its
+  // id) goes, with its draft images (final-daemon#L5).
   start(): void {
-    this.opts.registry?.onChange(() => this.terminalsChanged());
+    this.opts.terminals?.onChange(() => this.terminalsChanged());
     for (const e of this.store.state.open) {
       if (e.closedAt !== null || this.live.has(e.id)) continue;
       this.add(e.id, e.cwd, false, restored(this.store.state.status[e.id]));
     }
+    pruneUiTo(this.store, (sid) => this.live.has(sid));
     this.layout.sync();
   }
 
@@ -151,7 +152,7 @@ export class Sessions {
       const written = this.store.state.written[s.sessionId]?.title;
       const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
       if (q && !title.toLowerCase().includes(q) && !this.tilde(s.cwd).toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
-      const term = this.opts.registry?.holder(s.sessionId);
+      const term = this.opts.terminals?.holder(s.sessionId);
       out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified, ...(term ? { terminal: term.pid } : {}) });
       if (out.length === RECENT) break;
     }
@@ -177,9 +178,10 @@ export class Sessions {
     }
     const st = this.store.state;
     const e = st.open.find((x) => x.id === id);
-    if (e) {
+    if (e) { // reopened: the most recently opened again, for the new-session folder (R3.3)
       e.closedAt = null;
       e.cwd = r.cwd;
+      e.openedAt = this.now();
     } else {
       st.open.push({ id, cwd: r.cwd, openedAt: this.now(), closedAt: null });
     }
@@ -229,14 +231,14 @@ export class Sessions {
   // ---------- the set ----------
 
   private terminalsChanged(): void {
-    const reg = this.opts.registry;
+    const reg = this.opts.terminals;
     if (!reg) return;
     for (const s of [...this.live.values()]) s.terminalChanged(reg.holder(s.id));
   }
 
   private add(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null): Session {
     const s = new Session(id, cwd, placeholder, init, {
-      store: this.store, transcripts: this.transcripts, publisher: this.publisher, log: this.log, sdk: this.opts.sdk ?? realSdk, terminals: this.opts.registry ?? null,
+      store: this.store, transcripts: this.transcripts, publisher: this.publisher, log: this.log, sdk: this.opts.sdk ?? realSdk, terminals: this.opts.terminals ?? null,
       now: this.now, timer: this.opts.timer, idleMs: this.opts.idleMs ?? IDLE_MS, tilde: (p) => this.tilde(p),
       onTurnEnded: this.opts.onTurnEnded, onWaiting: this.opts.onWaiting, onCommands: this.opts.onCommands,
       rekey: (x, newId, why) => this.rekey(x, newId, why),
@@ -296,7 +298,7 @@ export class Sessions {
   }
 }
 
-// The Open list's title (plan section 6): the custom title, else the summary, else the first prompt.
+// The Open list's title: the custom title, else the summary, else the first prompt.
 export function titleOf(s: SDKSessionInfo): string {
   const t = [s.customTitle, s.summary, s.firstPrompt].find((x) => typeof x === 'string' && x.trim()) ?? '';
   return t.trim().split('\n')[0].slice(0, 120) || 'Untitled session';

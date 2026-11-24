@@ -1,14 +1,14 @@
-/* Open list: past sessions from the backend's listSessions(), over the main area (plan section 4).
+/* Open list: past sessions from the backend's listSessions(), over the main area (requirements R3.2).
    Newest first, with the title, folder and age. ↑↓ move (j/k too while the filter is empty, after that
    they type), Enter opens, Esc closes, typing filters. Opening adds the session to the sidebar and shows
    it; it resumes on your first message. New session (the footer's other button) is here too: both ask the
    backend for a session and show it when its `session` frame arrives (main.js, `want`). */
-import { send, act } from "./connection.js";
+import { request, act } from "./connection.js";
 import { esc } from "./format.js";
 import { setMode } from "./mode.js";
 
 /* the session asked for, until it arrives: a new one (any `new-` id) or the id opened. A refused or
-   failed ack clears it, so a later frame doesn't switch the view (web-ui#B3). */
+   failed ack clears it, so a later frame doesn't switch the view. */
 export const want = { new: false, open: null };
 export const openList = { el: null, rows: [], sel: 0, filter: "", loading: false, failed: false, timer: null };
 
@@ -17,7 +17,7 @@ document.getElementById("new").onclick = () => {
 };
 document.getElementById("open").onclick = () => showOpenList();
 
-export function showOpenList() {
+function showOpenList() {
   if (!openList.el) {
     document.querySelector(".app").insertAdjacentHTML("beforeend", `
       <div class="open-list" id="open-list" role="dialog" aria-label="Open session">
@@ -58,7 +58,14 @@ function hideOpenList() {
   openList.el.hidden = true; clearTimeout(openList.timer);
   document.getElementById("ol-filter").blur();
 }
-function askRecent() { openList.loading = true; openList.failed = false; drawOpenList(); send({ t: "listRecent", filter: openList.filter }); }
+/* asks for the list; offline the list says it could not be read (a toast says why), so it never stays on "Reading…" */
+function askRecent() {
+  openList.failed = !request({ t: "listRecent", filter: openList.filter }); openList.loading = !openList.failed;
+  drawOpenList();
+}
+
+/* a new hello: a list still reading or refused offline asks again (a reply lost with the old socket never comes) */
+export function recentAgain() { if (openListShown() && (openList.loading || openList.failed)) askRecent(); }
 
 /* the backend's reply; a reply for an older filter is dropped */
 export function applyRecent(m) {

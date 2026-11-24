@@ -137,8 +137,8 @@ test('actions: one ack each, to the page that sent it, with the error when not d
   const p = await connectPage(d.info), q = await connectPage(d.info);
   p.send({ t: 'close', id: 'c1', sid: 'not-a-session' });
   assert.deepEqual(await p.next('ack', (m) => m.id === 'c1'), { t: 'ack', id: 'c1', ok: false, error: "That session isn't open any more." });
-  p.send({ t: 'reviewed', id: 'r1', agentId: 'no-such-agent' });
-  assert.deepEqual(await p.next('ack', (m) => m.id === 'r1'), { t: 'ack', id: 'r1', ok: true });
+  p.send({ t: 'reviewed', id: 'r1', agentId: 'no-such-agent' }); // not stored (final-daemon#B7)
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'r1'), { t: 'ack', id: 'r1', ok: false, error: "That subagent isn't in an open session any more." });
   p.send({ t: 'answer', id: 'a1', sid: S2 }); // no requestId
   assert.deepEqual(await p.next('ack', (m) => m.id === 'a1'), { t: 'ack', id: 'a1', ok: false, error: UNREADABLE });
   await logged(/ router\.invalid t=answer problem="?answer\.requestId missing/);

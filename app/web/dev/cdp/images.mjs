@@ -12,7 +12,7 @@ import { deflateSync, crc32 } from 'node:zlib';
 
 const SID = 'c0c0c0c0-0000-4000-8000-0000000000c0';
 // A made-up w x h RGB PNG: a hue ramp left to right, darker in a band at the centre (so a crop shows).
-export function png(w, h) {
+function png(w, h) {
   const chunk = (type, data) => {
     const t = Buffer.concat([Buffer.from(type, 'latin1'), data]);
     const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
@@ -336,7 +336,7 @@ check('and its text and image are back in the box', (await ev(MSG)) === refusedT
 await click(await centre('.composer .unattach', 0));
 await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
 
-// over 20 MB of images together: the page says so and sends nothing, so the frame never passes the socket's cap (seams#B2)
+// over 20 MB of images together: the page says so and sends nothing, so the frame never passes the socket's cap
 await ev(SPY);
 await ev(`(() => { const t = document.getElementById('msg'); t.value = 'big'; t.dispatchEvent(new Event('input')); t.focus(); t.setSelectionRange(3, 3);
   const dt = new DataTransfer(); for (let i = 0; i < 5; i++) dt.items.add(new File([new Uint8Array(4.5 * 1048576)], 'big' + i + '.png', { type: 'image/png' }));

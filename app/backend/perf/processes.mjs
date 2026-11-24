@@ -48,7 +48,7 @@ ws.on('message', (d) => {
   if (m.t === 'session') {
     if (m.replaces) replaced.set(m.replaces, m.id);
     else if (!status.has(m.id) && ![...replaced.values()].includes(m.id) && m.title === 'New session') placeholders.push(m.id);
-    if (m.status) status.set(m.id, m.status);
+    if (m.state?.status) status.set(m.id, m.state.status); // protocol v2: the status is in `state`
   }
   if (m.t === 'toast') console.log('toast received');
 });
@@ -85,8 +85,8 @@ for (const s of samples) {
 }
 const names = new Set(samples.flatMap((s) => s.t.map((k) => k.name)));
 console.log(`child names seen: ${[...names].join(',')}`);
-const idleEnds = fs.readFileSync(path.join(stateDir, 'backend.log'), 'utf8').split('\n').filter((l) => l.includes('driver.idleEnd')).length;
-console.log(`driver.idleEnd lines: ${idleEnds}`);
+const idleEnds = fs.readFileSync(path.join(stateDir, 'backend.log'), 'utf8').split('\n').filter((l) => l.includes('session.idleEnd')).length;
+console.log(`session.idleEnd lines: ${idleEnds}`);
 ws.close();
 child.kill('SIGTERM');
 await new Promise((r) => child.on('exit', r));

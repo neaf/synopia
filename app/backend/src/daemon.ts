@@ -52,8 +52,12 @@ const realIo: HashIo = {
   readFile: (f) => readFile(f),
 };
 
-// The backend's code version: a SHA-256 over `src/**/*.ts` and `package-lock.json` (each path and
-// its content's digest, in path order), its first 16 hex digits. null while a file can't be read (a
+// The page's protocol schema, which the backend imports too (main.ts, router.ts, publisher.ts): a
+// change to it alone is new backend code. Relative to the backend folder; a missing one is a state.
+export const PROTOCOL_FILE = '../web/js/protocol.js';
+
+// The backend's code version: a SHA-256 over `src/**/*.ts`, `package-lock.json` and PROTOCOL_FILE
+// (each path and its content's digest), its first 16 hex digits. null while a file can't be read (a
 // save or a checkout in progress). Async, and a file whose size, times and inode are unchanged since
 // the last reading isn't read again (NFR-06).
 export class CodeHasher {
@@ -69,8 +73,15 @@ export class CodeHasher {
       const files = (await this.io.readdir(join(this.dir, 'src'))).filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
       const h = createHash('sha256');
       const next = new Map<string, { key: string; digest: string }>();
-      for (const f of [...files, 'package-lock.json']) {
-        const st = await this.io.stat(join(this.dir, f));
+      for (const f of [...files, 'package-lock.json', PROTOCOL_FILE]) {
+        let st;
+        try {
+          st = await this.io.stat(join(this.dir, f));
+        } catch (e) {
+          if (f !== PROTOCOL_FILE || (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          h.update(f).update('\0-\0'); // a backend without the page beside it (a test's copy)
+          continue;
+        }
         const key = `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}`;
         let e = this.seen.get(f);
         if (!e || e.key !== key) e = { key, digest: createHash('sha256').update(await this.io.readFile(join(this.dir, f))).digest('hex') };

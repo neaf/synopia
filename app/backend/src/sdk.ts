@@ -61,11 +61,15 @@ export type ProcessEvents = {
   canUseTool: CanUseTool;
   // A message went into the input queue (status.ts counts the ones sent during a turn as queued).
   onPush?: (uuid: string) => void;
+  // onMessage or onExit threw: the stream reads on (one odd message doesn't end a live session).
+  onError?: (where: 'message' | 'exit', e: unknown, m?: SDKMessage) => void;
 };
 
-// What an interrupt did: the texts of the messages it cancelled (they go back to the message
-// box) and how many of our queued messages still run, as the SDK lists them.
-export type InterruptResult = { cancelQueued: boolean; restored: string[]; stillQueued: number };
+// A message that goes back to the message box: its text and the pasted images it carried.
+export type Returned = { text: string; images: Image[] };
+// What an interrupt did: the messages it cancelled (they go back to the message box) and how many
+// of our queued messages still run, as the SDK lists them.
+export type InterruptResult = { cancelQueued: boolean; restored: Returned[]; stillQueued: number };
 
 // The menu calls of a query: a running process's, or the idle probe's.
 export type MenuSource = { supportedCommands(): Promise<SlashCommand[]>; supportedModels(): Promise<ModelInfo[]> };
@@ -132,7 +136,7 @@ export class SessionProcess {
   private stderr: string[] = [];
   private partial = '';
   private ended = false;
-  private sent = new Map<string, string>();
+  private sent = new Map<string, Returned>();
   capabilities: string[] = []; // from system/init
   done = false;
 
@@ -143,10 +147,11 @@ export class SessionProcess {
     void this.read();
   }
 
-  push(content: Content, uuid: string): void {
+  // `images`: the pasted images the content carries, as the page sent them (an interrupt gives them back).
+  push(content: Content, uuid: string, images: Image[] = []): void {
     const text = typeof content === 'string' ? content
       : content.map((b) => (b.type === 'text' ? b.text : '')).filter(Boolean).join('\n');
-    this.sent.set(uuid, text);
+    this.sent.set(uuid, { text, images });
     if (this.sent.size > KEEP_SENT) this.sent.delete(this.sent.keys().next().value as string);
     this.input.push(userMessage(content, uuid));
     this.events.onPush?.(uuid);
@@ -165,7 +170,7 @@ export class SessionProcess {
   async interrupt(): Promise<InterruptResult> {
     const cancelQueued = this.capabilities.includes(CANCEL_QUEUED);
     const r = await this.q.interrupt?.(cancelQueued ? { cancelQueued: true } : undefined);
-    const restored = (r?.cancelled ?? []).map((u) => this.sent.get(u) ?? '').filter((t) => t.trim());
+    const restored = (r?.cancelled ?? []).map((u) => this.sent.get(u)).filter((m): m is Returned => Boolean(m && (m.text.trim() || m.images.length)));
     return { cancelQueued, restored, stillQueued: (r?.still_queued ?? []).filter((u) => this.sent.has(u)).length };
   }
 
@@ -210,14 +215,22 @@ export class SessionProcess {
         if (s.type === 'system' && s.subtype === 'init' && Array.isArray(s.capabilities)) {
           this.capabilities = s.capabilities.filter((c): c is string => typeof c === 'string');
         }
-        this.events.onMessage(m);
+        try {
+          this.events.onMessage(m);
+        } catch (e) {
+          this.events.onError?.('message', e, m);
+        }
       }
     } catch (e) {
       error = e instanceof Error ? e : new Error(String(e));
     }
     this.done = true;
     this.input.end();
-    this.events.onExit(error, this.ended);
+    try {
+      this.events.onExit(error, this.ended);
+    } catch (e) {
+      this.events.onError?.('exit', e);
+    }
   }
 
   // The slash menu and the model list from this process, while it runs.
@@ -401,6 +414,13 @@ export function imageError(images: Image[]): string | null {
 }
 
 const tagOf = (n: number) => `[Image #${n}]`;
+
+// The images of `images` that `content` (userContent's) carries: an image whose tag was deleted isn't.
+export function imagesIn(content: Content, images: Image[]): Image[] {
+  if (typeof content === 'string') return [];
+  const sent = new Set(content.flatMap((b) => (b.type === 'image' && b.source.type === 'base64' ? [b.source.data] : [])));
+  return images.filter((im) => sent.has(im.data));
+}
 
 // The text and the pasted images (R5.13), in the shape the Claude Code CLI writes for a prompt with
 // pasted images: one text block with an `[Image #N]` tag at the caret of each paste, then the images

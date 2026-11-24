@@ -1,4 +1,4 @@
-// S5-1: every R4.5 drop rule with real pointer events (CDP Input), then the stored layout.
+// Every R4.5 drop rule with real pointer events (CDP Input), then the stored layout.
 // usage: run.sh dnd (or node dnd.mjs <url> <state-dir> [after-restart])
 import { connect, sleep } from './cdp.mjs';
 import { readFileSync } from 'node:fs';

@@ -3,7 +3,7 @@
    then closes; TW ms a step, instant with reduced motion. The panels rebuild their markup on every render, so
    each tween is keyed by its group (a session id) and line (data-line) and re-applied at its elapsed time on
    the document timeline after every render. A line whose text changes keeps its key and doesn't move. ---------- */
-export const TW = 150;
+const TW = 150;
 /* o: { sel: a line, inside a group; groups: el => Map(group key -> group element); id: the animations' id;
    cls: { tw: class while it tweens, gone: class of a going line put back };
    box: n => { open, shut }: keyframe values of the tweened box; fade: n => the elements that fade (default n);
@@ -63,7 +63,7 @@ export function lineTweens(o) {
 /* ---------- the finish grace: a running item that finishes (done, failed, stopped, timed out) stays where it was
    for GRACE ms with its final status, then leaves with the tween. Kept per item in the page, by "session|item",
    from when the page saw it stop running, so a session switch or a re-render neither restarts nor cuts it. ---------- */
-export const GRACE = 5000;
+const GRACE = 5000;
 const graceSeen = new Set(), graceAt = new Map(); // seen running; "sid|key" -> when the page saw it finish (ms)
 let graceTimer = null, graceEnd = () => {};
 /* what re-renders once a grace is over (main.js: the sidebar and the panel) */

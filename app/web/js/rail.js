@@ -7,7 +7,7 @@ import { ind, kind, KG, kindKey, bgMarkKey, sessionMark } from "./marks.js";
 import { lineTweens, graceScan, inGrace } from "./tween.js";
 
 export const bgOf = s => s.background || [];
-export const hasBackground = s => agentsOf(s).length || bgOf(s).length;
+const hasBackground = s => agentsOf(s).length || bgOf(s).length;
 export function bgState(b) {
   if (b.status && b.status !== "running") return b.status === "completed" ? "done" : b.status;
   if (b.kind === "monitor" && b.timeout && !b.persistent && new Date(b.start).getTime() + b.timeout < nowish) return "timed out";

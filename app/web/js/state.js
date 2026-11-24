@@ -20,9 +20,8 @@ export let nowish = Date.now();
 export function tick(now) { nowish = now; }
 
 const syncData = () => { data = [...store.sessions.values()]; };
-const agentIn = (s, id) => (s?.agents || []).find(a => a.id === id);
 /* a session's subagents and forks */
-export const agentsOf = s => s.agents || [];
+export const agentsOf = s => s?.agents || [];
 export const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
 /* how long a subagent ran, or runs (to the ticker's time) */
 export const agentMs = a => a.start ? (a.finished ? new Date(a.end) : nowish) - new Date(a.start) : 0;
@@ -36,10 +35,10 @@ export const requestsOf = s => store.pending.get(s.id) || [];
 /* Show a session, at its main conversation or at one of its subagents (dropped if the session has no such one). */
 export function select(sid, agent = null) {
   current = sid || null;
-  view = agent && agentIn(store.sessions.get(current), agent) ? agent : null;
+  view = agent && agentById(store.sessions.get(current), agent) ? agent : null;
 }
 /* Show a subagent of the current session, or its main conversation (null). */
-export function selectView(agent) { view = agent && agentIn(cur(), agent) ? agent : null; }
+export function selectView(agent) { view = agent && agentById(cur(), agent) ? agent : null; }
 
 /* The session to show: the one in the hash (an id prefix), else the current one, else the first that needs you or waits. */
 export function pickCurrent() {
@@ -97,7 +96,7 @@ export function applyRemoved(m) {
 }
 export function applyItems(m) {
   const s = store.sessions.get(m.sid); if (!s) return null;
-  const target = m.agent ? agentIn(s, m.agent) : s; if (!target) return null;
+  const target = m.agent ? agentById(s, m.agent) : s; if (!target) return null;
   if (m.reset) target.items = m.upsert.slice();
   else if (m.prepend) { // `earlier`: the items before the oldest shown, never twice
     const have = new Set(target.items.map(i => i.id));
@@ -110,7 +109,7 @@ export function applyAgents(m) {
   const s = store.sessions.get(m.sid); if (!s) return null;
   upsertById(s.agents, m.upsert, true);
   s.agents.forEach(a => { a.items ||= []; });
-  if (m.sid === current && view && !agentIn(s, view)) view = null;
+  if (m.sid === current && view && !agentById(s, view)) view = null;
   return s;
 }
 export function applyBackground(m) { const s = store.sessions.get(m.sid); if (s) upsertById(s.background, m.upsert); return s; }

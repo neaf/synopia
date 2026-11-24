@@ -1,1 +1,1 @@
-{"running":["22222222-0000-4000-8000-000000000002"],"background":{"monitor":1,"subagent":2},"summary":"1 session is working and 2 subagents and 1 monitor will stop."}
+{"running":["22222222-0000-4000-8000-000000000002"],"background":[{"sid":"22222222-0000-4000-8000-000000000002","kind":"subagent"}],"counts":{"monitor":1,"subagent":2},"summary":"1 session is working and 2 subagents and 1 monitor will stop."}

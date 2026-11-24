@@ -42,7 +42,7 @@ export type ServerOptions = {
   ping?: () => object;
   onMessage?: (client: Client, msg: { t: string; [k: string]: unknown }) => void;
   // GET /api/image?sid&agent&ref: one image of a transcript, decoded (transcripts.ts); 404 when there is none.
-  image?: (sid: string, agent: string | null, ref: string) => { status: number; type?: string; body?: Buffer };
+  image?: (sid: string, agent: string | null, ref: string) => Promise<{ status: number; type?: string; body?: Buffer }>;
   log?: Log;
   // The backpressure limits, in bytes (tests set small ones).
   sendSoft?: number;
@@ -185,7 +185,7 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
       }
       if (req.method === 'GET' && url.pathname === '/api/image' && opts.image) {
         const q = url.searchParams;
-        const r = opts.image(q.get('sid') ?? '', q.get('agent') || null, q.get('ref') ?? '');
+        const r = await opts.image(q.get('sid') ?? '', q.get('agent') || null, q.get('ref') ?? '');
         if (r.status !== 200 || !r.type || !r.body) return deny(res, r.status === 200 ? 404 : r.status);
         res.writeHead(200, { 'Content-Type': r.type, 'Content-Length': r.body.length, 'Cache-Control': 'private, max-age=3600' });
         res.end(r.body);

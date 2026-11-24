@@ -22,7 +22,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const REAL = '11111111-2222-4333-8444-555555555555';
 const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
-function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void } = {}) {
+function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void; now?: () => number } = {}) {
   const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const claudeDir = path.join(root, 'claude');
   const stateDir = path.join(root, 'state');
@@ -441,7 +441,7 @@ test('sessions: statuses go working, then your turn; a failed process is failed 
   assert.equal(q.calls[1].options.resume, REAL);
 });
 
-test('sessions: the driver passes every message to the status: compacting, queued, signed out', async () => {
+test('sessions: the process passes every message to the status: compacting, queued, signed out', async () => {
   const { sessions, q, take } = setup();
   const ph = sessions.newSession();
   sessions.get(ph)!.send('hi');
@@ -628,7 +628,8 @@ test('interrupt: with interrupt_cancel_queued_v1 it cancels the queued messages 
   await t.sessions.get(REAL)!.interrupt();
   assert.deepEqual(t.q.calls[0].interrupts, [{ cancelQueued: true }]);
   const got = t.take();
-  assert.deepEqual(got.filter((m) => m.t === 'restore'), [{ t: 'restore', sid: REAL, texts: ['and then this'] }], 'an image-only message and unknown uuids give no text');
+  // an image-only message comes back with its image (final-adapters#B5); an unknown uuid gives nothing
+  assert.deepEqual(got.filter((m) => m.t === 'restore'), [{ t: 'restore', sid: REAL, texts: ['and then this'], images: [{ mediaType: 'image/png', data: Buffer.from('png').toString('base64') }] }]);
   assert.equal(got.filter((m) => m.t === 'toast').length, 0);
   emit(t.q.calls[0], { ...RESULT, subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' });
   emit(t.q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle', uuid: 'u-i', session_id: REAL });
@@ -752,7 +753,7 @@ test('quitCheck: running turns and the background work of running processes', as
   assert.deepEqual(t.sessions.quitCheck(), { running: [], background: [{ sid: BG, kind: 'monitor' }] });
 });
 
-test("stop task: the SDK's task_notification ends the task between turns", async () => {
+test("task notification: the SDK's task_notification ends the task between turns", async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const BG = '33333333-0000-4000-8000-000000000003';
   const dir = path.join(root, 'claude', 'projects', '-tmp-fixture');
@@ -1114,4 +1115,62 @@ test('sessions: a session whose turn runs in another process reads working, unti
   add({ type: 'system', subtype: 'turn_duration', durationMs: 60000, timestamp: '2026-11-20T10:02:01.000Z' });
   transcripts.poll();
   assert.equal(take('session').at(-1)?.state.status, 'idle');
+});
+
+test('bash mode: refused while another process runs the turn, as with a terminal (final-session#B3)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  const file = writePast(path.join(root, 'claude'), cwd);
+  const base = { sessionId: PAST, cwd, isSidechain: false };
+  const add = (r: object) => fs.appendFileSync(file, JSON.stringify({ ...base, ...r }) + '\n');
+  add({ type: 'user', uuid: 'p-3', timestamp: new Date().toISOString(), message: { role: 'user', content: 'Now run the tests' } });
+  add({ type: 'assistant', uuid: 'p-4', timestamp: new Date().toISOString(), message: { id: 'm-2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_ext', name: 'Bash', input: { command: 'npm test' } }] } });
+  const { sessions, transcripts } = setup(root, [info(PAST, { cwd })]);
+  await sessions.openSession(PAST);
+  transcripts.poll();
+  const r = sessions.get(PAST)!.runBang('ls');
+  assert.equal(r.ok, false);
+  assert.match((r as { error: string }).error, /Another Claude Code process is running this session's turn/);
+  add({ type: 'user', uuid: 'p-5', timestamp: new Date().toISOString(), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_ext', content: 'ok' }] } });
+  add({ type: 'system', subtype: 'turn_duration', durationMs: 1000, timestamp: new Date().toISOString() });
+  transcripts.poll();
+  const ok = sessions.get(PAST)!.runBang('true');
+  assert.equal(ok.ok, true, 'once that turn ended');
+  sessions.stop();
+});
+
+test('openSession: reopening makes it the most recently opened, for the new-session folder (final-session#B1)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  writePast(path.join(root, 'claude'), cwd);
+  let now = 1000;
+  const t = setup(root, [info(PAST, { cwd })], { now: () => now });
+  const other = path.join(root, 'other');
+  fs.mkdirSync(other);
+  delete t.store.state.settings.newSessionCwd;
+  await t.sessions.openSession(PAST);
+  t.store.state.open.push({ id: RESET, cwd: other, openedAt: 2000, closedAt: null }); // opened after it
+  t.sessions.close(PAST);
+  now = 3000;
+  await t.sessions.openSession(PAST);
+  assert.equal(t.store.state.open.find((e) => e.id === PAST)?.openedAt, 3000);
+  const ph = t.sessions.newSession();
+  assert.equal(t.publisher.meta(ph)?.cwd, '~/scratch', 'the reopened one\'s folder');
+});
+
+test('start: the page ui state of a session that is not open goes, with its draft images (final-daemon#L5)', () => {
+  const t = setup();
+  const OPEN = REAL, CLOSED = RESET, GONE = '77777777-0000-4000-8000-000000000007';
+  t.store.state.open.push({ id: OPEN, cwd: t.cwd, openedAt: 1, closedAt: null }, { id: CLOSED, cwd: t.cwd, openedAt: 1, closedAt: 2 });
+  const png = Buffer.from('png').toString('base64');
+  for (const sid of [OPEN, CLOSED, GONE]) patchUi(t.store, { sessions: { [sid]: { draft: { text: 'x', images: [{ id: 'i1', mediaType: 'image/png', data: png }] } } } });
+  const drafts = (id: string) => path.join(path.dirname(t.store.path), 'drafts', id);
+  fs.mkdirSync(drafts('88888888-0000-4000-8000-000000000008'), { recursive: true }); // a folder with no entry
+  t.store.state.ui.current = GONE;
+  t.sessions.start();
+  assert.deepEqual(Object.keys(t.store.state.ui.sessions), [OPEN]);
+  assert.equal(t.store.state.ui.current, null);
+  assert.ok(fs.existsSync(drafts(OPEN)));
+  assert.deepEqual(fs.readdirSync(path.join(path.dirname(t.store.path), 'drafts')), [OPEN]);
+  t.sessions.stop();
 });

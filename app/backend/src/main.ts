@@ -30,22 +30,36 @@ import type { Client, Server } from './server.ts';
 
 const expand = (p: string) => resolve(p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p);
 
-const { values: flags } = parseArgs({
-  options: {
-    'claude-dir': { type: 'string' },
-    'state-dir': { type: 'string' },
-    port: { type: 'string' },
-    'no-parent': { type: 'boolean', default: false },
-    'sdk-script': { type: 'string' }, // dev and checks: the scripted SDK (dev/scripted-sdk.ts) over --claude-dir
-    'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
-    'exit-idle-ms': { type: 'string' }, // test-only: a shorter daemon idle exit than 30 min
-    'update-read-ms': { type: 'string' }, // test-only: a shorter update reading than 10 s
-    'successor-ms': { type: 'string' }, // test-only: a shorter wait for a new daemon than 20 s
-    'dry-run': { type: 'boolean', default: false }, // `open` and a take-over's signal log and act on nothing (checks)
-    after: { type: 'string' }, // set by the daemon this one replaces: wait for its pid to go first
-  },
-  strict: true,
-});
+const OPTIONS = {
+  'claude-dir': { type: 'string' },
+  'state-dir': { type: 'string' },
+  port: { type: 'string' },
+  'no-parent': { type: 'boolean', default: false },
+  'sdk-script': { type: 'string' }, // dev and checks: the scripted SDK (dev/scripted-sdk.ts) over --claude-dir
+  'idle-ms': { type: 'string' }, // test-only: a shorter idle end than 30 min
+  'exit-idle-ms': { type: 'string' }, // test-only: a shorter daemon idle exit than 30 min
+  'update-read-ms': { type: 'string' }, // test-only: a shorter update reading than 10 s
+  'successor-ms': { type: 'string' }, // test-only: a shorter wait for a new daemon than 20 s
+  'dry-run': { type: 'boolean', default: false }, // `open` and a take-over's signal log and act on nothing (checks)
+  after: { type: 'string' }, // set by the daemon this one replaces: wait for its pid to go first
+  // The flags of the daemons before the scripted SDK. A successor gets its old daemon's command
+  // line, so the one update from such a daemon (a check's, never the app's) must start:
+  // --fake is the scripted SDK with no script, --dry-open is --dry-run.
+  fake: { type: 'boolean', default: false },
+  'dry-open': { type: 'boolean', default: false },
+} as const;
+// An unknown flag or a missing value is a bad argument (exit 2), as a bad --port is.
+function parseFlags() {
+  try {
+    return parseArgs({ options: OPTIONS, strict: true }).values;
+  } catch (e) {
+    process.stderr.write(`Synopia backend: ${(e as Error).message}\n`);
+    process.exit(EXIT.badArgs);
+  }
+}
+const flags = parseFlags();
+const dryRun = flags['dry-run'] || flags['dry-open'];
+const legacyFake = flags.fake && flags['sdk-script'] === undefined;
 
 const claudeDir = expand(flags['claude-dir'] ?? '~/.claude');
 const stateDir = expand(flags['state-dir'] ?? '~/Library/Application Support/Synopia');
@@ -59,7 +73,7 @@ const ms = (name: 'idle-ms' | 'exit-idle-ms' | 'update-read-ms' | 'successor-ms'
   const n = flags[name] === undefined ? NaN : Number(flags[name]);
   return n > 0 ? n : undefined;
 };
-if (flags['sdk-script'] !== undefined && flags['claude-dir'] === undefined) {
+if ((flags['sdk-script'] !== undefined || legacyFake) && flags['claude-dir'] === undefined) {
   // The script opens every session it finds and writes to their transcripts: keep it on a fixture tree.
   process.stderr.write('Synopia backend: --sdk-script needs --claude-dir (a fixture tree)\n');
   process.exit(EXIT.badArgs);
@@ -78,10 +92,10 @@ const daemon = await startDaemon({
 });
 const CODE = daemon.code;
 
-log('backend.start', { pid: process.pid, scripted: flags['sdk-script'] !== undefined, daemon: !flags['no-parent'] });
+log('backend.start', { pid: process.pid, scripted: flags['sdk-script'] !== undefined || legacyFake, daemon: !flags['no-parent'] });
 // The scripted SDK (dev and checks, no model call). It seeds a fresh state folder: before openStore.
-const scripted = flags['sdk-script'] === undefined ? null
-  : (await import('../dev/scripted-sdk.ts')).openScripted({ file: expand(flags['sdk-script']), claudeDir, stateDir, log });
+const scripted = flags['sdk-script'] === undefined && !legacyFake ? null
+  : (await import('../dev/scripted-sdk.ts')).openScripted({ file: flags['sdk-script'] === undefined ? null : expand(flags['sdk-script']), claudeDir, stateDir, log });
 const sdk = scripted?.sdk ?? realSdk;
 const home = scripted?.home ?? homedir();
 // The user's login PATH and its kin (login-env.ts), before anything spawns: an app started from
@@ -139,11 +153,11 @@ const writer = new Writer({
 // script, its pretend CLIs; with --dry-run a take-over's signal is only logged.
 const dryEnd = { ...realEnd, kill: (pid: number, signal: string) => log('terminals.dryKill', { pid, signal }) };
 const terminals = new CliTerminals({
-  dir: join(claudeDir, 'sessions'), log, probe: scripted?.probe, end: scripted?.end ?? (flags['dry-run'] ? dryEnd : undefined),
+  dir: join(claudeDir, 'sessions'), log, probe: scripted?.probe, end: scripted?.end ?? (dryRun ? dryEnd : undefined),
 });
 const sessions = new Sessions({
   store, transcripts, publisher, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer,
-  idleMs: ms('idle-ms'), registry: terminals,
+  idleMs: ms('idle-ms'), terminals,
   onTurnEnded: (sid) => writer.turnEnded(sid),
   onOpened: (sid) => writer.opened(sid),
   onWaiting: (sid) => writer.waitingChanged(sid),
@@ -161,7 +175,7 @@ function busy(): boolean {
 }
 
 // Page frames (router.ts): checked, one module acts, actions acked.
-const router = new Router({ sessions, transcripts, publisher, menus, store, marks, bat, home, log, dryRun: flags['dry-run'] });
+const router = new Router({ sessions, transcripts, publisher, menus, store, marks, bat, home, log, dryRun });
 
 try {
   server = await startServer({

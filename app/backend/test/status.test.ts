@@ -31,7 +31,7 @@ test('status: working from the state flag, your turn on idle after a normal resu
   assert.deepEqual(seen, ['busy', 'idle']);
 });
 
-test('status: the driver starting a turn is working', () => {
+test('status: a turn our process starts is working', () => {
   const { s } = tracker();
   s.turnStarted();
   assert.equal(s.status, 'busy');
@@ -299,7 +299,7 @@ test('status: subagents of a session with no process make it working; a failed t
   assert.equal(s.status, 'busy');
   s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'failed');
-  assert.equal(transcriptStatus({ agents: 1, turn: false, lastAt: 0 }), 'busy', 'a session no driver set reads its transcript');
+  assert.equal(transcriptStatus({ agents: 1, turn: false, lastAt: 0 }), 'busy', 'a session no process of ours set reads its transcript');
   assert.equal(transcriptStatus({ agents: 0, turn: false, lastAt: 0 }), 'idle');
 });
 
@@ -335,7 +335,7 @@ test('status: a question another process asks is needs you over working, aged fr
   assert.equal(s.status, 'busy', 'answered there: the turn goes on');
   s.setRunning({ agents: 1, turn: false, lastAt: clock.t, ask: { ...ask, kind: 'plan', agentId: 'ag1' } }, true);
   assert.equal(s.status, 'waiting', "a subagent's plan too");
-  assert.equal(transcriptStatus(asking), 'waiting', 'a session no driver set reads it from its transcript');
+  assert.equal(transcriptStatus(asking), 'waiting', 'a session no process of ours set reads it from its transcript');
   assert.equal(transcriptStatus({ ...asking, ask: null }), 'busy');
 });
 
@@ -429,10 +429,10 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   transcripts.open(ASKS);
   transcripts.open(AGENTS);
   await tick();
-  // its transcript ends on a question with no answer and no driver set a status: another process asks (R6.8)
+  // its transcript ends on a question with no answer and no process of ours set a status: another process asks (R6.8)
   assert.equal(badge.count, 2, 'the finished For review subagent and the question the transcript waits on');
   publisher.setStatus(ASKS, 'busy');
-  assert.equal(badge.count, 1, 'the driver says working: only the For review subagent');
+  assert.equal(badge.count, 1, 'our process says working: only the For review subagent');
 
   publisher.setPending(ASKS, { id: 'q1', kind: 'question', since: 1 });
   await tick();
@@ -492,15 +492,16 @@ test('badge: a question or plan another process asks counts, with its ask for th
 });
 
 test('quitSummary: counts per kind and the alert sentence, a kind it has no words for too', () => {
-  assert.deepEqual(quitSummary({ running: [], background: [] }), { running: [], background: {}, summary: '' });
+  assert.deepEqual(quitSummary({ running: [], background: [] }), { running: [], background: [], counts: {}, summary: '' });
   const bg = (...kinds: string[]) => kinds.map((kind) => ({ sid: 's', kind }));
+  // `background` keeps the older daemons' list, so a shell of that time still asks (final-daemon#B2)
   assert.deepEqual(quitSummary({ running: ['a', 'b'], background: bg('shell') }),
-    { running: ['a', 'b'], background: { shell: 1 }, summary: '2 sessions are working and 1 background shell will stop.' });
+    { running: ['a', 'b'], background: [{ sid: 's', kind: 'shell' }], counts: { shell: 1 }, summary: '2 sessions are working and 1 background shell will stop.' });
   assert.equal(quitSummary({ running: ['a'], background: [] }).summary, '1 session is working and will stop.');
   assert.equal(quitSummary({ running: [], background: bg('monitor', 'subagent', 'subagent', 'shell', 'shell') }).summary,
     '2 subagents, 2 background shells and 1 monitor will stop.');
   // a new kind: counted and named, so the confirm still shows (seams#A7)
   const q = quitSummary({ running: [], background: bg('task') });
-  assert.deepEqual(q.background, { task: 1 });
+  assert.deepEqual(q.counts, { task: 1 });
   assert.equal(q.summary, '1 background task will stop.');
 });

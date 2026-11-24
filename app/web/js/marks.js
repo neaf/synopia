@@ -44,8 +44,7 @@ export const KG = { sub: ["subagent"], fork: ["fork"], shell: ["shell"], mon: ["
 export const kind = (k, glyphOnly) => `<span class="kind kd-${k}${glyphOnly ? " g" : ""}"${glyphOnly ? ` title="${KG[k][0]}" aria-label="${KG[k][0]}" role="img"` : ""}>${ind("s_" + k)}${glyphOnly ? "" : KG[k][0]}</span>`;
 
 /* which mark each thing shows: a session's comes with its state (status.ts sessionState) */
-export const sessionMarkKey = s => s.state.mark;
-export const sessionMark = s => ind(sessionMarkKey(s));
+export const sessionMark = s => ind(s.state.mark);
 export const kindKey = x => x.agent ? (x.agent.fork ? "fork" : "sub") : x.bg ? (x.bg.kind === "monitor" ? "mon" : "shell") : "sub";
 export function bgMarkKey(x) {
   if (x.running) return "k_" + kindKey(x);

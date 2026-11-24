@@ -13,7 +13,7 @@ const [url] = process.argv.slice(2);
 const c = await connect();
 const { check, mouse } = c;
 const ev = c.ev;
-// a background tab gets no animation frames (this Chrome sometimes opens a settings tab over the page): bring it to front first
+// a background tab gets no animation frames: bring it to front first
 const sample = async (change, key, ms) => { await c.cdp('Page.bringToFront');
   const r = await ev(`Promise.race([TW_SAMPLE('${change}', '${key}', ${ms}), new Promise(r => setTimeout(() => r({ before: TW_GEO(), frames: [], anims: -1, hidden: document.visibilityState }), ${ms} + 3000))])`);
   if (!r.frames?.length) console.log('no frames sampled: ' + JSON.stringify(r).slice(0, 200));

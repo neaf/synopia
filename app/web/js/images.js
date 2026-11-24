@@ -84,7 +84,7 @@ const vImg = () => viewer.el.querySelector(".v-stage img");
 /* 100% only means something when the image is larger than the window at fit */
 const vZoomable = () => { const im = vImg(); return !!im && im.naturalWidth > 0 && (im.naturalWidth > im.clientWidth + 0.5 || im.naturalHeight > im.clientHeight + 0.5); };
 function drawViewer() {
-  const { srcs, froms, i, el } = viewer, n = srcs.length;
+  const { srcs, i, el } = viewer, n = srcs.length;
   const name = n > 1 ? `Image ${i + 1} of ${n}` : "Image";
   el.setAttribute("aria-label", name);
   viewer.full = false; el.classList.remove("full", "panning");

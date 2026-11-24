@@ -64,18 +64,18 @@ test('ui: it survives a restart through state.json, and a damaged ui field loads
   assert.deepEqual(normalizeUi({ sessions: { [SID]: 3 } }), { sessions: { [SID]: {} } });
 });
 
-test('ui: draft images are files, served back, and removed when the draft drops them or is sent', () => {
+test('ui: draft images are files, served back, and removed when the draft drops them or is sent', async () => {
   const { store, drafts } = setup();
   patchUi(store, { sessions: { [SID]: { draft: { text: 'hello', cursor: [2, 3], images: [{ id: 'img1', mediaType: 'image/png', data: png(100) }, { id: 'img2', mediaType: 'image/jpeg', data: png(50) }] } } } });
   const d = store.state.ui.sessions[SID].draft;
   assert.deepEqual(d, { text: 'hello', cursor: [2, 3], images: [{ id: 'img1', mediaType: 'image/png', size: 100 }, { id: 'img2', mediaType: 'image/jpeg', size: 50 }] });
   assert.deepEqual(fs.readdirSync(drafts(SID)).sort(), ['img1.png', 'img2.jpg']);
   assert.ok(!JSON.stringify(store.state).includes(png(100)), 'no image bytes in state.json');
-  const r = draftImage(store, SID, 'draft:img1');
+  const r = await draftImage(store, SID, 'draft:img1');
   assert.equal(r.status, 200);
   assert.equal(r.status === 200 && r.type, 'image/png');
   assert.equal(r.status === 200 && r.body.length, 100);
-  assert.equal(draftImage(store, SID, 'draft:nope').status, 404);
+  assert.equal((await draftImage(store, SID, 'draft:nope')).status, 404);
   // the next patch lists the stored image without its bytes, and drops the other
   patchUi(store, { sessions: { [SID]: { draft: { text: 'hello!', cursor: [6, 6], images: [{ id: 'img1', mediaType: 'image/png' }] } } } });
   assert.deepEqual(fs.readdirSync(drafts(SID)), ['img1.png']);
@@ -120,7 +120,7 @@ test('ui: pruning a closed session drops its data, draft files and current sessi
   assert.deepEqual(store.state.ui.sessions, {});
 });
 
-test('ui: a new id re-keys the session data, its draft files and the current session', () => {
+test('ui: a new id re-keys the session data, its draft files and the current session', async () => {
   const { store, drafts } = setup();
   patchUi(store, { current: SID, sessions: { [SID]: { steps: ['|x'], draft: { text: 't', images: [{ id: 'i', mediaType: 'image/png', data: png(10) }] } } } });
   rekeyUi(store, SID, NEW);
@@ -129,7 +129,7 @@ test('ui: a new id re-keys the session data, its draft files and the current ses
   assert.deepEqual(store.state.ui.sessions[NEW].steps, ['|x']);
   assert.ok(!fs.existsSync(drafts(SID)));
   assert.deepEqual(fs.readdirSync(drafts(NEW)), ['i.png']);
-  assert.equal(draftImage(store, NEW, 'draft:i').status, 200);
+  assert.equal((await draftImage(store, NEW, 'draft:i')).status, 200);
   // a late patch with the old id reaches the new one through resolve
   patchUi(store, { sessions: { [SID]: { folds: ['|run:a#0'] } } }, { resolve: (id) => (id === SID ? NEW : id) });
   assert.deepEqual(store.state.ui.sessions[NEW].folds, ['|run:a#0']);

@@ -42,12 +42,12 @@ test('poll: a new session\'s file is found once it appears, read, and told once 
   const id = 'aaaaaaaa-0000-4000-8000-0000000000f1';
   const { transcripts, heard } = reading(dir);
   transcripts.open(id, { cwd: '/tmp/x' });
-  transcripts.poll();
+  await transcripts.poll();
   assert.deepEqual([transcripts.pathOf(id), heard], [null, []], 'no file yet: nothing to tell');
   fs.mkdirSync(path.join(dir, 'projects', '-tmp-x'), { recursive: true });
   fs.writeFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), you(1) + you(2));
-  transcripts.poll();
-  assert.deepEqual(heard, [`changed ${id}`], 'told at the end of the poll');
+  await transcripts.poll(); // the look for a new file is async (NFR-06)
+  assert.deepEqual(heard, [`changed ${id}`], 'told once the file is found');
   assert.deepEqual(transcripts.get(id)?.items.map((i) => i.id), ['u1', 'u2']);
   assert.deepEqual(transcripts.takeChanges(id)?.items, ['u1', 'u2']);
   await Promise.resolve();
@@ -143,7 +143,7 @@ test("taskStarted: the SDK's task id reaches the shell when the file has none", 
   transcripts.stop();
 });
 
-test('resultText: the full result read again from its line, after the file grew; null when it is gone', () => {
+test('resultText: the full result read again from its line, after the file grew; null when it is gone', async () => {
   const id = 'abababab-0000-4000-8000-00000000000c';
   const out = Array.from({ length: 30 }, (_, i) => `out ${i}`).join('\n');
   const dir = tempSession(id, you(1) + line({
@@ -158,9 +158,9 @@ test('resultText: the full result read again from its line, after the file grew;
   transcripts.open(id);
   fs.appendFileSync(file, you(4));
   transcripts.poll();
-  assert.equal(transcripts.resultText(id, null, 'toolu_o'), out);
-  assert.equal(transcripts.resultText(id, null, 'toolu_none'), null);
+  assert.equal(await transcripts.resultText(id, null, 'toolu_o'), out);
+  assert.equal(await transcripts.resultText(id, null, 'toolu_none'), null);
   fs.rmSync(file);
-  assert.equal(transcripts.resultText(id, null, 'toolu_o'), null);
+  assert.equal(await transcripts.resultText(id, null, 'toolu_o'), null);
   transcripts.stop();
 });

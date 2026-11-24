@@ -28,6 +28,7 @@ export const STOPPING = 'Synopia is restarting, so that wasn\'t done. Do it agai
 export const FAILED = 'Something went wrong in Synopia, so that wasn\'t done. backend.log has the details.';
 export const UNREADABLE = 'Synopia couldn\'t read that message from the page.';
 const GONE: SendResult = { ok: false, error: "That session isn't open any more." };
+const NO_AGENT = "That subagent isn't in an open session any more.";
 
 export type RouterOptions = {
   sessions: Sessions;
@@ -149,7 +150,7 @@ export class Router {
         if (folder && s) void menus.viewed(client, folder, s.cwd, s.menuSource());
       },
       earlier: (client, m) => { publisher.earlier(client, sessions.resolve(m.sid as string), agent(m), m.before as string); },
-      toolOutput: (client, m) => { publisher.toolOutput(client, sessions.resolve(m.sid as string), agent(m), m.toolUseId as string); },
+      toolOutput: async (client, m) => { await publisher.toolOutput(client, sessions.resolve(m.sid as string), agent(m), m.toolUseId as string); },
       listRecent: (client, m) => {
         const filter = str(m.filter) ?? '';
         return sessions.listRecent(filter).then(
@@ -185,7 +186,13 @@ export class Router {
       newSession: () => { sessions.newSession(); },
       openSession: (_client, m) => sessions.openSession(m.sid as string)
         .catch((): SendResult => ({ ok: false, error: "Synopia couldn't read the list of past sessions." })),
-      reviewed: (_client, m) => { if (marks.mark(m.agentId as string)) publisher.reviewed(m.agentId as string); },
+      // a mark only for a subagent an open session has: an unknown id would be stored for nothing
+      // (final-daemon#B7); the 1000 newest marks are kept (store.ts REVIEWED_MAX)
+      reviewed: (_client, m) => {
+        const id = m.agentId as string;
+        if (!transcripts.ids().some((sid) => transcripts.get(sid)?.getAgent(id))) return { ok: false, error: NO_AGENT };
+        if (marks.mark(id)) publisher.reviewed(id);
+      },
       // the sidebar's layout (layout.ts): every session id through its aliases, so an intent sent
       // before a new session got its real id still moves that session (seams#A6)
       moveSession: (_client, m) => {

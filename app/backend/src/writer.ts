@@ -1,4 +1,4 @@
-// Claude-written titles and Now lines (plan section 10, R3.4). After a session's turn ends
+// Claude-written titles and Now lines (FR-SES-06, R3.4). After a session's turn ends
 // (debounced 20 s), and once when a session opens with no stored text, a one-shot `query()`
 // reads the last turns and writes a title and a Now line. The call can't act: no tools, no MCP
 // servers, no hooks, its own system prompt, no saved session, and a scratch folder of its own.
@@ -212,7 +212,12 @@ export class Writer {
     const turns = this.src.turns(sid);
     if (title === undefined || !turns?.length) return;
     const cwd = path.join(this.opts.stateDir, 'writer');
-    fs.mkdirSync(cwd, { recursive: true });
+    try {
+      fs.mkdirSync(cwd, { recursive: true });
+    } catch (e) { // no scratch folder (EACCES, ENOSPC): no call, and the log says why
+      this.log('writer.failed', { sid, error: (e as NodeJS.ErrnoException).code ?? 'mkdir' });
+      return;
+    }
     const options = writerOptions(this.store.state.settings.writerModel || 'haiku', cwd, SYSTEM_PROMPT);
     const ac = new AbortController();
     options.abortController = ac;

@@ -1,7 +1,7 @@
 /* Card: the needs-you card for questions, permissions and plans, and its keys (split from prototype/app.html).
    It renders the oldest pending request of the session (`pending` from the server), turned into the ask shape
    the card reads, above the message box. Questions one at a time; j/k and Space, i types in place. */
-import { store, data, current, view, cur, mounted, agentById, requestsOf } from "./state.js";
+import { view, cur, mounted, agentById, requestsOf } from "./state.js";
 import { act } from "./connection.js";
 import { esc, age, still } from "./format.js";
 import { md } from "./md.js";
@@ -17,7 +17,7 @@ ui.useCards(qstate);
    decisionReason, defaultToNo, always (the "Always allow" text, null when hidden), suggestions} ---------- */
 const FILE_TOOLS = ["Edit", "Write", "NotebookEdit", "Read"];
 /* who asks: Claude, or the subagent the request came from */
-const askerOf = r => { const s = store.sessions.get(current), A = r.agentId && s && agentById(s, r.agentId); return A ? `Subagent “${esc(A.description)}”` : r.agentId ? "A subagent" : "Claude"; };
+const askerOf = (s, r) => { const A = r.agentId && s && agentById(s, r.agentId); return A ? `Subagent “${esc(A.description)}”` : r.agentId ? "A subagent" : "Claude"; };
 const wantsTo = r => r.toolName === "Bash" ? "run a command" : r.toolName === "Read" ? "read a file" : FILE_TOOLS.includes(r.toolName) ? "change a file" : `use ${esc(r.toolName)}`;
 export function askOf(r) {
   const base = { id: r.id, k: "ask", ts: new Date(r.since).toISOString(), state: "pending", kind: r.kind === "question" ? undefined : r.kind, request: r };
@@ -74,7 +74,7 @@ function extHTML(s, a) {
           <span class="l">${esc(label)}${rec ? `<span class="rc-t">Recommended</span>` : ""}</span><span class="d">${esc(r.d)}</span></div>`; }).join("")}</div></div></div>`;
   };
   return `<div class="qa-card ro" aria-label="Claude's questions, asked in another process">
-    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${askerOf(a.request)} ${a.kind === "plan" ? "wrote a plan and waits for your approval" : `asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(a.request.since)}</span></div>
+    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${askerOf(s, a.request)} ${a.kind === "plan" ? "wrote a plan and waits for your approval" : `asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(a.request.since)}</span></div>
     <div class="qbody">${a.qs.map(item).join("")}</div>
     <div class="nd-foot"><span class="ext-note">Asked in another Claude Code process. Answer it there.</span></div>
   </div>`;
@@ -111,7 +111,7 @@ export function qaHTML(s, a) { // exported for the escape test
             : `<span class="d">${esc(r.d)}${r.noting ? `<input class="qa-own qa-note" id="qa-own" value="${esc(note)}" placeholder="Add a note to this answer, Enter saves, Esc cancels" aria-label="Note">` : r.note ? `<span class="qnote">Note: ${esc(r.note)}</span>` : ""}</span>`}</button>`; }).join("")}</div></div></div>`;
   };
   return `<div class="qa-card" aria-label="Claude's questions">
-    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${askerOf(a.request)} ${a.kind === "permission" ? `wants to ${wantsTo(a.request)}` : a.kind === "plan" ? "wrote a plan and waits for your approval" : `asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(a.request.since)}</span>${prog(s, a, done, n)}</div>
+    <div class="nd-head"><b>${ind("pause")} Needs you</b><span class="why">${askerOf(s, a.request)} ${a.kind === "permission" ? `wants to ${wantsTo(a.request)}` : a.kind === "plan" ? "wrote a plan and waits for your approval" : `asks ${n === 1 ? "a question" : `${n} questions`}`}, for ${age(a.request.since)}</span>${prog(s, a, done, n)}</div>
     <div class="qbody">${a.qs.map(item).join("")}</div>
     <div class="nd-foot"><span class="hint"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>Space</kbd> pick</span><span><kbd>i</kbd> type</span><span><kbd>Enter</kbd> send</span></span>
       <button class="btn ${allAnswered(st, a) ? "primary" : ""}" id="qa-send" ${allAnswered(st, a) ? "" : "disabled"}>${a.kind ? "Send" : `Send answer${n > 1 ? "s" : ""}`}</button></div>
@@ -157,7 +157,7 @@ function answerAsk(s, a) {
 }
 /* normal-mode keys while a card waits (keys.js); returns true when handled */
 export function qaKeys(e) {
-  const s = data.find(x => x.id === current); if (!s || view) return false;
+  const s = cur(); if (!s || view) return false;
   const a = pendingAsk(s); if (!a) return false;
   const st = qs(s, a);
   const k = e.key;

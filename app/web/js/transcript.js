@@ -3,12 +3,12 @@
    reports, files changed, the turn's "Worked for" line, the live line, queued and held messages, `!`
    commands. renderLog patches the blocks by key, so open steps, diffs and folds stay as they are. */
 import { store, current, view, cur, isViewed, selectView, requestsOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs } from "./state.js";
-import { send, act } from "./connection.js";
+import { request, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
 import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes } from "./md.js";
-import { ind, sessionMarkKey } from "./marks.js";
+import { ind } from "./marks.js";
 import { bgOf, bgState, openBg, setOpenBg, renderRail } from "./rail.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
@@ -31,13 +31,14 @@ function toolLine(t) {
 /* the source the viewer names for a step's images: a Read's file path, otherwise the step as its line reads */
 const imgFrom = t => t.name === "Read" && t.obj ? t.obj : `${toolName(t)}${t.obj ? `(${t.obj})` : ""}`;
 
-/* ---------- a step, expanded (R5.6): its command or input, then its result under ⎿ ----------
+/* ---------- a step, expanded (R5.6): its command or input, then its result under the drawn corner ----------
    The page has the result's first 20 lines (4 KB at most); "Show all" asks the server for the rest
    (`toolOutput`), which reads it again from the transcript file. Open steps are kept by item id. */
 const fullOut = new Map();
 let stepAsked = null; // the step whose full result was asked for, until the reply (or a toast)
-/* a toast came instead of the reply (a failed toolOutput, main.js): "Show all" may ask again */
-export function clearStepAsked() { stepAsked = null; }
+/* a toast came instead of a reply (a failed toolOutput), or a new hello (a reply lost with the old socket never comes):
+   "Show all" and "Show N earlier" may ask again (main.js) */
+export function clearAsked() { stepAsked = null; earlierAsked = null; }
 const stepKey = id => `${current}|${view || ""}|${id}`;
 const hasStep = t => !!(t.input || t.out);
 const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
@@ -85,7 +86,7 @@ function showAll(id) {
   const key = stepKey(id);
   if (id.startsWith("bang:")) { openBangs.add(key); renderLog(); return; } // a `!` command's output is all on the page
   if (stepAsked === key) return;
-  stepAsked = key; send({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id });
+  if (request({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id })) stepAsked = key;
 }
 export function applyToolOutput(m) {
   const key = `${m.sid}|${m.agent || ""}|${m.toolUseId}`;
@@ -201,7 +202,7 @@ function waveHTML(tools, s) {
   const forks = rows.every(r => r.a?.fork);
   const parallel = rows.every(r => r.a) && Math.max(...rows.map(r => +new Date(r.a.start))) - t0 < 120000;
   return `<div class="ln agent wave"><span class="g"></span><div><span class="name">${rows.length} ${forks ? "forks" : "subagents"}${parallel ? " in parallel" : ""}</span>
-    <div class="wgrid">${rows.map(({ t, a }, i) => {
+    <div class="wgrid">${rows.map(({ t, a }) => {
       return `${ind(markOf(a))}${nameOf(t, a)}<span class="adur">${time(a)}</span>`;
     }).join("")}</div></div></div>`;
 }
@@ -231,7 +232,7 @@ export function itemsHTML(items, sessionBusy, s) {
   for (const it of items) {
     /* your answer to a permission or plan card shows as your turn, before the tool it let run (R6.7) */
     if (it.k === "tool" && it.answer) { prompt(esc(it.answer), it.ts, `ans:${it.id}`); lastTs = it.ts; }
-    /* a plan whose process ended before you answered (plan section 7) */
+    /* a plan whose process ended before you answered reads "Not answered (Synopia quit)", as a question does */
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images && !it.imgs?.length ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}${thumbsHTML(it.imgs, current, view, "your message")}`, it.ts, it.id); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
@@ -320,7 +321,7 @@ function liveLine(s, A) {
   const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool"); return last && last.state === "running" ? last : null; };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
   if (s.state.light !== "green") return "";
-  return line(sessionMarkKey(s), runningStep(s.items), s.state.word, phaseText(s));
+  return line(s.state.mark, runningStep(s.items), s.state.word, phaseText(s));
 }
 /* what the state means, after its word (status.ts: the source of each) */
 function phaseText(s) {
@@ -396,7 +397,7 @@ function logEntries(s, A) {
   return out;
 }
 /* Earlier items: the server sends the page's last 160; the link asks for the 160 before the oldest
-   shown (`earlier`, plan section 5), and they come back as `items` with `prepend`. */
+   shown (`earlier`, R5.12a), and they come back as `items` with `prepend`. */
 const EARLIER = 160;
 let earlierAsked = null; // "<sid>|<agent>|<before>" until its reply, so a second click sends nothing
 const earlierHTML = hidden => `<p class="earlier"><button data-earlier>Show ${Math.min(EARLIER, +hidden)} earlier</button>${hidden > EARLIER ? ` (${+hidden} more)` : ""}</p>`;
@@ -405,7 +406,7 @@ export function loadEarlier() {
   const A = view && agentById(s, view), t = A || s, items = t.items || [];
   if (!items.length || (t.total || 0) <= items.length) return false;
   const key = `${s.id}|${view || ""}|${items[0].id}`;
-  if (earlierAsked !== key) { earlierAsked = key; send({ t: "earlier", sid: s.id, agent: view || null, before: items[0].id }); }
+  if (earlierAsked !== key && request({ t: "earlier", sid: s.id, agent: view || null, before: items[0].id })) earlierAsked = key;
   return true;
 }
 /* Renders the log after a prepend so the block you were reading stays where it was on screen. */
@@ -487,10 +488,10 @@ conv.addEventListener("toggle", e => {
   conv.querySelectorAll(`details[data-step="${CSS.escape(d.dataset.step)}"]`).forEach(o => { if (o !== d && o.open !== d.open) o.open = d.open; });
 }, true);
 /* the page never navigates: a file goes to the backend as `open` with its path, a link with its URL
-   (plan section 2), so the app and Chrome behave the same */
+   (docs/WKWebView and AppKit.md, "Links and navigation"), so the app and Chrome behave the same */
 document.addEventListener("click", e => {
   const a = e.target.closest && e.target.closest("a[href]"); if (!a) return;
   e.preventDefault();
-  if (a.dataset.path) { if (!previewClick(a, e)) send({ t: "open", path: a.dataset.path }); } // text: the preview (preview.js)
-  else if (/^https?:/i.test(a.getAttribute("href"))) send({ t: "open", url: a.href });
+  if (a.dataset.path) { if (!previewClick(a, e)) request({ t: "open", path: a.dataset.path }); } // text: the preview (preview.js)
+  else if (/^https?:/i.test(a.getAttribute("href"))) request({ t: "open", url: a.href });
 }, true);

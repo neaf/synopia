@@ -72,7 +72,8 @@ export const SERVER = {
   recent: { filter: "str", sessions: "arr", error: "bool?" },
   /* a text file's preview, or `opened` for a file the backend opened instead */
   preview: { path: "str", opened: "bool?", display: "str?", lang: "str?", html: "str?", lines: "num?", truncated: "bool?", size: "num?" },
-  restore: { sid: "str", texts: "arr" },
+  /* messages that didn't go, back in the box: their texts, and the pasted images they carried ({mediaType, data, n?}) */
+  restore: { sid: "str", texts: "arr", images: "arr?" },
   update: { pending: "bool" },
   ack: { id: "str", ok: "bool", error: "str?" },
 };

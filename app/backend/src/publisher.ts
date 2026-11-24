@@ -18,6 +18,7 @@ import { displayPath } from './paths.ts';
 import { resolveModel } from './session.ts';
 import type { ModelChoice, QueuedMessage, ShownBang } from './session.ts';
 import type { PendingRequest } from './cards.ts';
+import type { Returned } from './sdk.ts';
 import { VERSION } from '../../web/js/protocol.js';
 
 export { WINDOW } from './transcripts.ts';
@@ -135,9 +136,13 @@ export class Publisher {
     this.toActing({ t: 'toast', text }, to);
   }
 
-  // Messages that didn't go, back to the message box of the page that sent them (backend-core#B8).
-  restore(sid: string, texts: string[], to?: Client | null): void {
-    if (texts.length) this.toActing({ t: 'restore', sid, texts }, to);
+  // Messages that didn't go, back to the message box of the page that sent them (backend-core#B8):
+  // their texts, and `images` (each `{mediaType, data, n?}`) when they carried pasted ones.
+  restore(sid: string, back: Returned[], to?: Client | null): void {
+    if (!back.length) return;
+    const texts = back.map((b) => b.text).filter((t) => t.trim());
+    const images = back.flatMap((b) => b.images).map((im) => ({ mediaType: im.mediaType, data: im.data, ...(im.n !== undefined ? { n: im.n } : {}) }));
+    this.toActing({ t: 'restore', sid, texts, ...(images.length ? { images } : {}) }, to);
   }
 
   private toActing(msg: object, to?: Client | null): void {
@@ -266,8 +271,8 @@ export class Publisher {
 
   // `toolOutput` from a page: the full result of one tool (transcripts.ts reads it again). A toast
   // when the file is gone or was rewritten.
-  toolOutput(client: Client, sid: string, agent: string | null, toolUseId: string): boolean {
-    const text = this.transcripts.resultText(sid, agent, toolUseId);
+  async toolOutput(client: Client, sid: string, agent: string | null, toolUseId: string): Promise<boolean> {
+    const text = await this.transcripts.resultText(sid, agent, toolUseId);
     if (text === null) {
       client.send({ t: 'toast', text: "Synopia couldn't read that result again: the transcript file is gone or was rewritten." });
       return false;

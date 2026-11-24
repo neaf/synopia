@@ -12,7 +12,8 @@ test("web-ui#B6: the ticking spans don't change a block's signature, other text 
   assert.equal(still(block("in 1s")), still(block("now")));
   assert.equal(still(`<p>${until(at)}</p>`), still(`<p>${until(at).replace(/in \d+s/, "now")}</p>`));
   assert.equal(still(`<p>${live("2026-11-20T10:00:00.000Z", 1000)}</p>`), still(`<p>${live("2026-11-20T10:00:00.000Z", 61_000)}</p>`));
-  assert.equal(still(`<p>${age(Date.now())}</p>`), still(`<p>${age(Date.now()).replace("0 min", "1 min")}</p>`));
+  const t = Date.now(); // one time for both sides: age() writes it into data-age, which still() keeps
+  assert.equal(still(`<p>${age(t)}</p>`), still(`<p>${age(t).replace("0 min", "1 min")}</p>`));
   assert.notEqual(still(block("in 38s").replace("attempt 2", "attempt 3")), still(block("in 38s")));
   assert.notEqual(still(`<span data-until="${at}">in 3s</span>`), still(`<span data-until="${at + 1}">in 3s</span>`));
 });

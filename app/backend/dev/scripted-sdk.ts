@@ -21,6 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { CanUseTool, ModelInfo, Options, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import { CANCEL_QUEUED } from '../src/sdk.ts';
 import type { ListFn, QueryFn, QueryLike, Sdk } from '../src/sdk.ts';
 import type { Probe, EndDeps } from '../src/cli-terminals.ts';
 import type { Timer } from '../src/status.ts';
@@ -28,7 +29,6 @@ import type { Log } from '../src/log.ts';
 import { nullLog } from '../src/log.ts';
 
 export const SCRIPT_FILE = 'sdk-script.json';
-const CANCEL_QUEUED = 'interrupt_cancel_queued_v1';
 
 export type Step = {
   after?: number; // ms after the previous step (default 0)
@@ -56,8 +56,8 @@ export type Script = {
   sessions: Record<string, SessionScript>;
 };
 
-export function loadScript(file: string): Script {
-  if (!fs.existsSync(file)) return { sessions: {} };
+export function loadScript(file: string | null): Script {
+  if (!file || !fs.existsSync(file)) return { sessions: {} };
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<Script>;
   return { ...raw, sessions: raw.sessions && typeof raw.sessions === 'object' ? raw.sessions : {} };
 }
@@ -375,7 +375,7 @@ export class Scripted {
   private settled: (() => void)[] = [];
   private files = new Map<string, string>();
 
-  constructor(opts: { file: string; claudeDir: string; log?: Log }) {
+  constructor(opts: { file: string | null; claudeDir: string; log?: Log }) {
     this.script = loadScript(opts.file);
     this.claudeDir = opts.claudeDir;
     this.log = opts.log ?? nullLog;
@@ -484,7 +484,7 @@ function sessionInfo(id: string, file: string): SDKSessionInfo {
 }
 
 // main.ts's entry: the script for this run, with a fresh state folder seeded.
-export function openScripted(opts: { file: string; claudeDir: string; stateDir: string; log?: Log }): Scripted {
+export function openScripted(opts: { file: string | null; claudeDir: string; stateDir: string; log?: Log }): Scripted {
   const s = new Scripted(opts);
   if (seedState(opts.stateDir, opts.claudeDir, s.script)) opts.log?.('scripted.seeded', {});
   return s;
