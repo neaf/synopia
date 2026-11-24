@@ -76,8 +76,25 @@ check('every selected item has exactly one visible edge, no border plus ring', s
 check('the selected edge is the same 1px ink line on every kind and state', seenSel.every((x) => edgeOf(x) === 'border rgb(31, 35, 40) 1px'), JSON.stringify(seenSel.map((x) => [x.label, x.edges])));
 const g0 = seenSel[0].geo, moved = seenSel.filter((x) => x.geo.length !== g0.length || x.geo.some((b, i) => b.some((v, j) => Math.abs(v - g0[i][j]) > 0.5)));
 check('selecting changes no geometry: every card, row, mark and guide keeps its place and size', moved.length === 0, JSON.stringify(moved.map((x) => x.label)));
+// the session header has one shape in every view: the same height and line tops, the text on the same baselines
+const head = () => ev(`(() => {
+  const h = document.querySelector('.c-head'), top = h.getBoundingClientRect().top, r = (e) => e.getBoundingClientRect();
+  const lines = [...h.querySelectorAll(':scope > .c-title, :scope > .c-now, :scope > .c-meta')];
+  // a text line's baseline: the bottom of a zero-height inline-block sitting on it
+  const base = (p) => { const s = document.createElement('span'); s.style.cssText = 'display:inline-block;width:0;height:0'; p.prepend(s); const y = r(s).bottom - top; s.remove(); return y; };
+  return JSON.stringify({ h: r(h).height, tops: lines.map((l) => r(l).top - top), hs: lines.map((l) => r(l).height), bases: lines.map(base),
+    acts: [...h.querySelectorAll('.c-acts .btn')].map((b) => r(b).top - top) });
+})()`).then(JSON.parse);
+await ev(`document.querySelector('.rail .card[data-agent="bbbb0001"]').click()`);
+await sleep(300);
+const hSub = await head();
 await ev(`document.querySelector('[data-back-main]').click()`);
 await sleep(300);
+const hMain = await head();
+const near = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b[i]) <= 0.5);
+check('the header has the same height and line tops in the main and the subagent view (within 0.5 px)',
+  Math.abs(hMain.h - hSub.h) <= 0.5 && near(hMain.tops, hSub.tops) && near(hMain.hs, hSub.hs) && near(hMain.bases, hSub.bases) && near(hMain.acts, hSub.acts), JSON.stringify({ hMain, hSub }));
+check("the main conversation's header has the model button only", (await ev(`[...document.querySelectorAll('.c-head .c-acts button')].map((b) => b.id).join()`)) === 'model-label');
 check("the sidebar counts only the main thread's shells", (await ev(`document.querySelector('#groups .row[data-id^="66666666"] [data-line="bg"]')?.textContent.trim()`)) === '1 shell or monitor running');
 check("the main transcript doesn't show them", await ev(`!/Resize the images|Watch the resize log|Optimise the images/.test(document.getElementById('log').textContent)`));
 c.print();

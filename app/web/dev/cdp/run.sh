@@ -17,12 +17,13 @@
 #   app/web/dev/cdp/run.sh extcard a question and a plan asked in another process: needs you, the read-only card, then answered (R6.8), with shots
 #   app/web/dev/cdp/run.sh restore the exact UI state after a page reload and two backend restarts on the same state folder (R3.9)
 #   app/web/dev/cdp/run.sh background  b, b sends foreground steps to the background (R9): the highlight, the prompt, cancel, send, not driven, with a shot
+#   app/web/dev/cdp/run.sh close   x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background close)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -66,7 +67,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-open); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 
@@ -82,7 +83,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shot: $state/steps.png" ;;
-  extcard|preview|images|rail|background) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|background|close) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

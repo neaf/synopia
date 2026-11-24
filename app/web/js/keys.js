@@ -26,19 +26,22 @@ document.addEventListener("keydown", e => {
   if (/INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return;  // group rename, the Open list's filter, a card's field
   if (drag?.started) return; // dnd.js takes Esc; nothing else moves under a drag
   if (e.target.closest && e.target.closest("button") && e.key === " ") e.preventDefault();
-  /* Esc, Esc interrupts a running turn; b, b sends its foreground steps to the background; any other key
-     dismisses the prompt, and the other prompt's first key replaces it (composer.js) */
-  if (interruptAsk || bgAsk) {
+  /* Esc, Esc interrupts a running turn; b, b sends its foreground steps to the background; x, x closes the
+     session; any other key dismisses the prompt, and another prompt's first key replaces it (composer.js) */
+  if (interruptAsk || bgAsk || closeAsk) {
     if (/^(Shift|Meta|Control|Alt|CapsLock)$/.test(e.key)) return;
     e.preventDefault();
-    if (interruptAsk) { if (e.key === "Escape") confirmInterrupt(); else if (!(e.key === "b" && askBackground())) dismissInterrupt(); }
-    else if (e.key === "b") confirmBackground();
+    const again = interruptAsk ? "Escape" : bgAsk ? "b" : "x";
+    if (e.key === again) interruptAsk ? confirmInterrupt() : bgAsk ? confirmBackground() : confirmClose();
     else if (e.key === "Escape" && canInterrupt(cur())) askInterrupt();
-    else dismissBackground();
+    else if (e.key === "b" && askBackground()) ;
+    else if (e.key === "x") askClose();
+    else if (interruptAsk) dismissInterrupt(); else if (bgAsk) dismissBackground(); else dismissClose();
     return;
   }
   if (e.key === "Escape" && canInterrupt(cur())) { e.preventDefault(); askInterrupt(); return; }
   if (e.key === "b" && !openListShown() && askBackground()) { e.preventDefault(); return; }
+  if (e.key === "x" && !openListShown() && askClose()) { e.preventDefault(); return; }
   if (qaKeys(e)) return;
   const log = document.getElementById("log");
   switch (e.key) {

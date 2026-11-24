@@ -45,7 +45,7 @@ const { ev, check, key } = c;
 await c.load(`${url}#${A.slice(0, 8)}`, `current === '${A}' && cur().items.some(i => i.id === 'toolu_bfg') && cur().driven === true`);
 await ev(`(() => { window.__sent = []; const o = send; send = m => { __sent.push(m); o(m); }; })()`);
 const K = {
-  b: () => key('b', { code: 'KeyB', vk: 66 }), x: () => key('x', { code: 'KeyX', vk: 88 }),
+  b: () => key('b', { code: 'KeyB', vk: 66 }), l: () => key('l', { code: 'KeyL', vk: 76 }), // x has its own prompt (close.mjs)
   j: () => key('j', { code: 'KeyJ', vk: 74 }), i: () => key('i', { code: 'KeyI', vk: 73 }),
   esc: () => key('Escape', { code: 'Escape', vk: 27 }),
 };
@@ -69,7 +69,7 @@ check('the background Agent is not highlighted', !(await ev(`[...document.queryS
 await c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, 'background-asking.png'), Buffer.from(r.result.data, 'base64')));
 const before = await ev(`document.querySelector('#log .ln.tool[data-fg]').getBoundingClientRect().top`);
 
-await K.x();
+await K.l();
 check('another key: the prompt and the highlight go, nothing sent', (await asking()) === null && (await marked()).length === 0 && (await sent()).length === 0);
 check('the highlight moved nothing', (await ev(`document.querySelector('#log .ln.tool[data-fg]').getBoundingClientRect().top`)) === before);
 check('that key did nothing else (still normal, box empty)', (await ev('document.body.dataset.mode')) === 'normal' && (await ev('document.getElementById("msg").value')) === '');
@@ -90,8 +90,8 @@ await K.b();
 check('b under "Interrupt?": the background prompt replaces it', (await asking()) === PROMPT && (await marked()).length === 2);
 await K.j();
 check('j cancels it, nothing sent', (await asking()) === null && (await sent()).length === 1);
-await K.esc(); await K.x();
-check('Esc then x: the interrupt prompt alone, still nothing sent', (await asking()) === null && (await sent()).length === 1);
+await K.esc(); await K.l();
+check('Esc then l:the interrupt prompt alone, still nothing sent', (await asking()) === null && (await sent()).length === 1);
 
 // the turn ending, or the steps going to the background some other way, cancels it
 await K.b();

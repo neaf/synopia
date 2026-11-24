@@ -45,7 +45,7 @@ These requirements come from a day of prototyping against the user's real sessio
 - R3.3 New session: "New session" opens an empty session in `~/dev/demo-project` (a config value). There's no dialog and no new worktree yet. The first prompt sets the tone, and Claude names the session from there.
 - R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it.
 - R3.5 No drift detection. The user keeps one session per topic (see Rejected).
-- R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. "Close session" marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
+- R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. x, x in normal mode (R9.6) marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
 - R3.7 Model per session: the header shows the model; clicking it, or typing `/model`, opens the model picker (list from the SDK). Effort levels come from the same list.
 - R3.8 Rejected:
   - Taking over terminal sessions.
@@ -101,7 +101,8 @@ These requirements come from a day of prototyping against the user's real sessio
   - the title
   - "Now: …"
   - the folder, the PRs and the tab name
-  - a model button and "Close session"
+  - a model button (no Close button: x, x closes, R9.6)
+  - the same height and line positions in the main conversation and a subagent view
 - R5.2 No "Change group" button: dragging in the sidebar does that.
 
 ### 5.2 Transcript panel (reads like the Claude Code CLI)
@@ -279,6 +280,10 @@ These requirements come from a day of prototyping against the user's real sessio
   - With nothing that can go, or in a session another process runs, b does nothing.
   - One prompt at a time: Esc under this prompt asks "Interrupt?" instead, and b under "Interrupt?" asks this.
   - The steps then show as background work in the right panel (R7) and end there with their notification. A toast says so only when nothing could go.
+- R9.6 Close, in place of a Close button: x in normal mode, on any open session, turns the message box into "Close this session? x again. Any other key to keep it." When something runs it adds what will stop, for example "Claude's turn, 2 subagents and 1 shell will stop." A second x closes the session (R3.6). Any other key, a click or switching sessions dismisses it. The prompt is the only confirm: no dialog.
+  - For a session another process runs, it asks "Remove it from Synopia? x again. Its other process keeps running.", and closing only removes it from Synopia.
+  - One prompt at a time: Esc or b under it asks theirs instead, and x under theirs asks this.
+  - In insert mode x types.
 
 ## 10. Deliverables for review
 
