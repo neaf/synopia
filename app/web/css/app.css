@@ -127,6 +127,12 @@ details.step > summary::-webkit-details-marker { display: none; }
 .step-out .cmd { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .step-out .earlier.more { margin: 0 0 0 3ch; }
+/* runView: a quiet description over the command, stderr in red, the running row's note fainter; an open
+   running step shows "Running, 42s" in its body, so its line's own "Running" row steps aside */
+.step-out .desc { color: var(--ink-3); }
+.step-out .out.err { color: var(--red); }
+.step-out .res.note { color: var(--faint); }
+details.step[open] > summary .res.run { display: none; }
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
