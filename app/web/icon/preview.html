@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Synopia icon review</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+  :root { --canvas: #EDEFF2; --panel: #FFFFFF; --ink: #1F2328; --muted: #59636E; --line: #D1D9E0; --green: #1A7F37; --side: #22272E; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--canvas); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif; }
+  main { max-width: 1120px; margin: 0 auto; padding: 40px 32px 64px; }
+  h1 { font-size: 26px; line-height: 1.2; margin: 0 0 6px; font-weight: 650; letter-spacing: -.01em; }
+  h2 { font-size: 17px; margin: 0 0 4px; font-weight: 620; }
+  p { margin: 0; max-width: 68ch; }
+  .lede { color: var(--muted); margin-bottom: 36px; }
+  section { margin-top: 40px; }
+  section > p { color: var(--muted); margin-bottom: 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 24px; }
+
+  /* options */
+  .options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .opt { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  .opt.rec { border: 2px solid var(--green); padding: 19px; }
+  .opt .art { display: flex; gap: 14px; align-items: end; margin-bottom: 14px; }
+  .opt .art svg { display: block; }
+  .opt .gray { filter: grayscale(1); }
+  .opt h3 { font-size: 15px; margin: 0 0 4px; font-weight: 620; display: flex; gap: 8px; align-items: baseline; }
+  .badge { font-size: 12px; font-weight: 600; color: #FFFFFF; background: var(--green); border-radius: 999px; padding: 1px 8px; }
+  .opt p { font-size: 13px; color: var(--muted); }
+
+  /* sizes */
+  .sizes { display: flex; align-items: end; gap: 24px; flex-wrap: wrap; }
+  .sizes figure { margin: 0; text-align: center; }
+  .sizes img { display: block; margin: 0 auto 6px; image-rendering: auto; }
+  .sizes figcaption { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* dock */
+  .desk { border-radius: 10px; padding: 56px 24px 18px; display: flex; justify-content: center; }
+  .desk.light { background: linear-gradient(160deg, #DCE3EA, #C9D3DD); }
+  .desk.dark { background: linear-gradient(160deg, #2B3038, #15181C); margin-top: 12px; }
+  .dock { display: flex; gap: 6px; align-items: end; padding: 6px 8px; border-radius: 22px; }
+  .light .dock { background: rgba(255,255,255,.42); border: 1px solid rgba(255,255,255,.6); box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+  .dark .dock { background: rgba(60,64,72,.55); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+  .slot { width: 64px; height: 64px; position: relative; }
+  .slot img { width: 64px; height: 64px; display: block; }
+  .ph { width: 64px; height: 64px; padding: 6.25px; }
+  .ph i { display: block; width: 100%; height: 100%; border-radius: 11.6px; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .slot.on::after { content: ""; position: absolute; left: 50%; bottom: -5px; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; opacity: .7; }
+  .light .slot { color: #1F2328; } .dark .slot { color: #E6EDF3; }
+
+  /* tabs */
+  .bar { border-radius: 10px 10px 0 0; padding: 8px 10px 0; display: flex; gap: 2px; align-items: end; }
+  .bar + .bar { margin-top: 12px; }
+  .bar.light { background: #DEE1E6; }
+  .bar.dark { background: #202124; }
+  .tab { width: 220px; height: 34px; border-radius: 8px 8px 0 0; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; white-space: nowrap; overflow: hidden; }
+  .tab img { width: 16px; height: 16px; flex: none; }
+  .light .tab { color: #3C4043; } .light .tab.active { background: #FFFFFF; color: #1F1F1F; }
+  .dark .tab { color: #BDC1C6; } .dark .tab.active { background: #35363A; color: #E8EAED; }
+  .tab .dot { width: 16px; height: 16px; border-radius: 50%; flex: none; }
+  .light .tab .dot { background: #A9AEB5; } .dark .tab .dot { background: #5F6368; }
+  .zoom { display: flex; gap: 24px; align-items: center; margin-top: 18px; }
+  .zoom img { image-rendering: pixelated; width: 128px; height: 128px; border-radius: 4px; }
+  .zoom .on-light { background: #FFFFFF; padding: 12px; border-radius: 8px; border: 1px solid var(--line); }
+  .zoom .on-dark { background: #202124; padding: 12px; border-radius: 8px; }
+  .zoom p { font-size: 13px; color: var(--muted); max-width: 40ch; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Synopia app icon and favicon</h1>
+  <p class="lede">Both are built from the agent mark in the sidebar: a solid core with an orbit around it. Icons stay still, because in the app motion means a session is running.</p>
+
+  <section>
+    <h2>Options considered</h2>
+    <p>Each option at 112 and 32 px, then in greyscale to check that the shape works without colour.</p>
+    <div class="options">
+      <div class="opt">
+        <div class="art" data-opt="a"></div>
+        <h3>A. Frozen orbit</h3>
+        <p>The running mark held still on the graphite of the sidebar. Strong in the Dock and in greyscale, but darker than the rest of the app, which is mostly light.</p>
+      </div>
+      <div class="opt rec">
+        <div class="art" data-opt="b"></div>
+        <h3>B. Paper <span class="badge">Chosen</span></h3>
+        <p>The same mark in the light palette of the main window: pale track, 40% arc, solid core on a paper tile. Below 128 px it switches to a small-size master with a thicker ring, darker greens and a firmer tile edge, so it does not fade.</p>
+      </div>
+      <div class="opt">
+        <div class="art" data-opt="c"></div>
+        <h3>C. Still agent</h3>
+        <p>The idle mark: a full ring and core, with no arc. The calmest option and the clearest at tiny sizes, which is why the favicon uses this shape. As an app icon it is close to a radio button or record symbol.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Chosen icon at every export size</h2>
+    <p>The PNG exports at 1:1, except 1024 and 512, which are shown at 160. Sizes 16 to 64 come from <code>icon-small.svg</code>, 128 and up from <code>icon.svg</code>.</p>
+    <div class="panel sizes">
+      <figure><img src="icon-1024.png" width="160" height="160" alt="Icon at 1024 px, shown at 160"><figcaption>1024, at 160</figcaption></figure>
+      <figure><img src="icon-512.png" width="160" height="160" alt="Icon at 512 px, shown at 160"><figcaption>512, at 160</figcaption></figure>
+      <figure><img src="icon-256.png" width="256" height="256" alt="Icon at 256 px"><figcaption>256</figcaption></figure>
+      <figure><img src="icon-128.png" width="128" height="128" alt="Icon at 128 px"><figcaption>128</figcaption></figure>
+      <figure><img src="icon-64.png" width="64" height="64" alt="Icon at 64 px"><figcaption>64</figcaption></figure>
+      <figure><img src="icon-32.png" width="32" height="32" alt="Icon at 32 px"><figcaption>32</figcaption></figure>
+      <figure><img src="icon-16.png" width="16" height="16" alt="Icon at 16 px"><figcaption>16</figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>In the Dock</h2>
+    <p>Next to neutral placeholder icons on the same grid, on a light and a dark desktop.</p>
+    <div class="desk light"><div class="dock" data-dock></div></div>
+    <div class="desk dark"><div class="dock" data-dock></div></div>
+  </section>
+
+  <section>
+    <h2>Favicon in browser tabs</h2>
+    <p>At real size, 16 px, in the active tab and a background tab.</p>
+    <div class="bar light">
+      <div class="tab"><span class="dot"></span>Pull request #525140</div>
+      <div class="tab active"><img src="favicon.svg" alt="">Synopia</div>
+      <div class="tab"><img src="favicon.svg" alt="">Synopia: M2 execution</div>
+      <div class="tab"><span class="dot"></span>Linear</div>
+    </div>
+    <div class="bar dark">
+      <div class="tab"><span class="dot"></span>Pull request #525140</div>
+      <div class="tab active"><img src="favicon.svg" alt="">Synopia</div>
+      <div class="tab"><img src="favicon.svg" alt="">Synopia: M2 execution</div>
+      <div class="tab"><span class="dot"></span>Linear</div>
+    </div>
+    <div class="zoom">
+      <span class="on-light"><img src="favicon-16.png" alt="16 px favicon, enlarged"></span>
+      <span class="on-dark"><img src="favicon-16.png" alt="16 px favicon, enlarged"></span>
+      <p>The 16 px export enlarged eight times. A paper tile with a dark edge, so it separates from light bars and stands out on dark ones. The ring and the gap are about two pixels each and the core is four, so the centre point still sits inside its orbit.</p>
+    </div>
+  </section>
+</main>
+<script>
+  // Option art: a tile, a mark and a palette per option.
+  const opts = {
+    a: { body: ["#2D333B", "#1C2128"], track: '#1F4D2C', arc: '#3FB950', core: '#3FB950', edge: '#FFFFFF' },
+    b: { body: ["#FFFFFF", "#ECEEF1"], track: "#C6E9D0", arc: "#1A7F37", core: "#1A7F37", edge: "#1F2328" },
+    c: { body: ["#2D333B", "#1C2128"], track: '#3FB950', arc: null,      core: '#3FB950', edge: '#FFFFFF' },
+  };
+  function icon(k, size) {
+    const o = opts[k], id = k + size + Math.random().toString(36).slice(2, 6);
+    const arc = o.arc ? `<circle cx="512" cy="512" r="216" fill="none" stroke="${o.arc}" stroke-width="81" stroke-linecap="round" pathLength="100" stroke-dasharray="40 60" transform="rotate(-150 512 512)"/>` : '';
+    return `<svg width="${size}" height="${size}" viewBox="0 0 1024 1024" aria-hidden="true">
+      <defs><linearGradient id="g${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${o.body[0]}"/><stop offset="1" stop-color="${o.body[1]}"/></linearGradient>
+      <filter id="s${id}" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="10" stdDeviation="12" flood-opacity=".3"/></filter></defs>
+      <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#g${id})" filter="url(#s${id})"/>
+      <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="${o.edge}" stroke-opacity=".1" stroke-width="3"/>
+      <circle cx="512" cy="512" r="216" fill="none" stroke="${o.track}" stroke-width="81"/>${arc}
+      <circle cx="512" cy="512" r="81" fill="${o.core}"/></svg>`;
+  }
+  document.querySelectorAll('[data-opt]').forEach(el => {
+    const k = el.dataset.opt;
+    el.innerHTML = icon(k, 112) + icon(k, 32) + `<span class="gray">${icon(k, 112)}</span>`;
+  });
+  // Dock: neutral placeholders around the recommended icon.
+  const ph = ['#8A939E', '#C4CAD1', '#5B6470', '#E4E7EB', '#A7AFB8'];
+  document.querySelectorAll('[data-dock]').forEach(d => {
+    const tile = (c, on) => `<div class="slot${on ? ' on' : ''}"><div class="ph"><i style="background:${c}"></i></div></div>`;
+    d.innerHTML = tile(ph[0], true) + tile(ph[1]) + tile(ph[2], true)
+      + '<div class="slot on"><img src="icon-64.png" alt="Synopia"></div>'
+      + tile(ph[3]) + tile(ph[4], true);
+  });
+</script>
+</body>
+</html>

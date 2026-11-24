@@ -1,0 +1,642 @@
+<!-- Design history, not the spec: where this storyboard differs from docs/requirements.md (R6.4 keys, R8.3 kind marks), the requirements win. All data in it is invented. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: kind marks storyboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+    --red: #CF222E; --amber: #9A6700; --dot-amber: #D4A72C; --green: #1A7F37; --dot-green: #2DA44E; --link: #0550AE;
+    --k-agent: #1A7F37; --k-sub: #57606A; --k-fork: #8250DF; --k-shell: #0A6C74; --k-mon: #BF3989;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --ko: var(--panel);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--canvas); color: var(--ink); font: 400 14.5px/1.5 var(--sans); }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  button { font: inherit; color: inherit; cursor: pointer; }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 5px 12px; font-size: 13.5px; font-weight: 500; }
+  .btn:hover { background: var(--sub); }
+  .btn[aria-pressed="true"] { background: #DDF4FF; border-color: var(--link); color: var(--link); }
+
+  .page { max-width: 1360px; margin: 0 auto; padding: 28px 32px 80px; }
+  header.top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 24px; align-items: end; margin-bottom: 18px; }
+  header.top h1 { font-size: 30px; line-height: 1.15; margin: 0; letter-spacing: -.01em; }
+  header.top p { margin: 0; color: var(--ink-2); max-width: 76ch; }
+  header.top .acts { grid-row: 1 / 3; grid-column: 2; display: flex; gap: 8px; align-items: center; }
+  h2 { font-size: 21px; margin: 44px 0 4px; line-height: 1.25; }
+  h2 + .lede { margin: 0 0 16px; color: var(--ink-2); max-width: 80ch; }
+  h3 { font-size: 16px; margin: 0; }
+
+  /* ---------- marks: a 1em box, drawn on a 12-unit grid, so the 64px view is the 9px mark enlarged ---------- */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes flow { to { stroke-dashoffset: var(--o); } }
+  @keyframes tx { to { transform: translateX(var(--tx)); } }
+  @keyframes ty { to { transform: translateY(var(--ty)); } }
+  @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+  .ind { display: inline-block; width: 1em; height: 1em; position: relative; flex: none; vertical-align: middle; line-height: 0; }
+  .ind svg.k { width: 1em; height: 1em; display: block; overflow: visible; }
+  .ind .rot { transform-box: view-box; transform-origin: 50% 50%; animation: spin var(--d, 1s) linear infinite; }
+  .ind .rotf { transform-box: fill-box; transform-origin: 50% 50%; animation: spin var(--d, 1s) linear infinite; }
+  .ind .rev { animation-direction: reverse; }
+  .ind .flow { animation: flow var(--d, 1s) linear infinite; }
+  .ind .tx { animation: tx var(--d, 1s) linear infinite; }
+  .ind .ty { animation: ty var(--d, 1s) linear infinite; }
+  .ind .see { transform-box: fill-box; transform-origin: 50% 50%; animation: see 1.1s linear infinite; }
+  .ind .see.d2 { animation-delay: -.55s; }
+  /* running parts (.r) and still parts (.s) live in the same drawing */
+  .ind.st .r { display: none; }
+  .ind:not(.st) .s { display: none; }
+  /* status badge: the still kind mark steps back to the top left, the badge takes the bottom right corner */
+  .ind.b svg.k { transform: scale(.78); transform-origin: 0 0; }
+  .ind .bd { position: absolute; right: -.12em; bottom: -.12em; width: .66em; height: .66em; border-radius: 50%; background: var(--ko); box-shadow: 0 0 0 .07em var(--ko); }
+  .ind .bd svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  /* other combining rules, for comparison */
+  .pair { display: inline-flex; align-items: center; gap: .3em; vertical-align: middle; }
+
+  /* reduced motion: every mark stops in its rest pose and keeps its running parts, so it still reads as running */
+  .rm .ind *, .still-demo .ind * { animation: none !important; }
+  @media (prefers-reduced-motion: reduce) { .ind * { animation: none !important; } }
+
+  /* ---------- the set ---------- */
+  .set { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .set > div { padding: 16px 16px 14px; border-left: 1px solid var(--line-2); display: grid; grid-template-rows: auto auto 1fr auto; gap: 6px; min-width: 0; }
+  .set > div:first-child { border-left: 0; }
+  .set .big { display: flex; align-items: center; gap: 18px; height: 96px; --ko: var(--panel); }
+  .set .big .ind:first-child { font-size: 72px; }
+  .set .big .ind + .ind { font-size: 32px; }
+  .set .big .lab { font-size: 12px; color: var(--ink-3); line-height: 1.3; }
+  .set h3 { display: flex; align-items: center; gap: 8px; }
+  .set h3 i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .set p { margin: 0; color: var(--ink-2); font-size: 13.5px; line-height: 1.4; }
+  .set .inl { font-size: 12px; color: var(--ink-3); display: grid; gap: 3px; }
+  .set .inl span { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; }
+  .set .inl b { font-weight: 500; color: var(--ink-2); }
+
+  /* ---------- option frames ---------- */
+  .frames { display: grid; gap: 14px; }
+  .frame { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; display: flex; flex-direction: column; min-width: 0; }
+  .f-head { padding: 12px 16px 10px; border-bottom: 1px solid var(--line-2); }
+  .f-head h3 { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .f-head h3 .ind { font-size: 16px; }
+  .f-head p { margin: 2px 0 0; color: var(--ink-2); font-size: 13.5px; max-width: 110ch; }
+  .tag { font-size: 11.5px; font-weight: 700; border-radius: 4px; padding: 0 6px; line-height: 18px; color: var(--link); background: #DDF4FF; border: 1px solid #B6E3FF; }
+  .opts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px; }
+  .opt { border: 1px solid var(--line-2); border-radius: 6px; display: flex; flex-direction: column; min-width: 0; }
+  .opt.rec { border-color: var(--link); box-shadow: inset 0 0 0 1px var(--link); }
+  .stage { background: var(--sub); height: 120px; display: flex; align-items: center; justify-content: center; gap: 22px; border-radius: 5px 5px 0 0; position: relative; --ko: var(--sub); }
+  .stage .ind { font-size: 64px; }
+  .stage.duo .ind { font-size: 56px; }
+  .stage .rec-tag { position: absolute; top: 7px; left: 8px; font-size: 11.5px; font-weight: 700; color: #fff; background: var(--link); border-radius: 4px; padding: 0 6px; line-height: 18px; }
+  .stage .who { position: absolute; bottom: 5px; font-size: 11px; color: var(--ink-3); line-height: 1; }
+  .real { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 4px 8px; align-items: center; padding: 7px 10px; border-bottom: 1px solid var(--line-2); font-size: 12px; color: var(--ink-3); }
+  .real .row-m { display: flex; align-items: center; gap: 10px; min-width: 0; white-space: nowrap; overflow: hidden; color: var(--ink-2); }
+  .real .row-m .t { font-size: 11px; display: inline-flex; align-items: center; gap: 4px; overflow: hidden; }
+  .real .row-m .t9 { font-size: 10.5px; }
+  .o-body { padding: 8px 10px 10px; font-size: 13px; line-height: 1.4; }
+  .o-body b { display: block; font-size: 13.5px; }
+  .o-body p { margin: 2px 0 0; color: var(--ink-2); }
+  .f-foot { display: flex; flex-wrap: wrap; gap: 10px 28px; align-items: center; padding: 10px 16px 12px; border-top: 1px solid var(--line-2); font-size: 13px; color: var(--ink-2); }
+  .f-foot .grp { display: inline-flex; align-items: center; gap: 9px; }
+  .f-foot .grp .ind.l { font-size: 32px; }
+  .f-foot .grp .ind.s11 { font-size: 11px; } .f-foot .grp .ind.s9 { font-size: 9px; }
+  .f-foot .lbl { font-weight: 700; color: var(--ink); }
+  .f-foot .why { flex-basis: 100%; color: var(--ink-3); margin: 0; }
+  .sw { display: inline-flex; align-items: center; gap: 6px; }
+  .sw i { width: 12px; height: 12px; border-radius: 3px; border: 1px solid rgba(31,35,40,.15); display: inline-block; }
+
+  /* ---------- kind and status ---------- */
+  .ways { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px; }
+  .way { border: 1px solid var(--line-2); border-radius: 6px; padding: 10px 12px; font-size: 13px; }
+  .way.rec { border-color: var(--link); box-shadow: inset 0 0 0 1px var(--link); }
+  .way b { font-size: 13.5px; }
+  .way p { margin: 2px 0 8px; color: var(--ink-2); }
+  .way .ex { display: grid; gap: 6px; }
+  .way .ex span { display: flex; align-items: center; gap: 7px; white-space: nowrap; overflow: hidden; color: var(--ink-2); }
+  .way .ex .big { font-size: 40px; gap: 18px; height: 52px; }
+  .way .rec-tag { font-size: 11.5px; font-weight: 700; color: #fff; background: var(--link); border-radius: 4px; padding: 0 6px; line-height: 18px; margin-left: 6px; }
+  .grid { padding: 0 12px 12px; overflow-x: auto; }
+  .grid table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  .grid th { text-align: left; font-weight: 700; color: var(--ink-2); padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); white-space: nowrap; vertical-align: bottom; }
+  .grid th .s { display: block; font-weight: 400; color: var(--ink-3); font-size: 12px; }
+  .grid td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--line-2); white-space: nowrap; vertical-align: middle; }
+  .grid td .cell { display: inline-flex; align-items: center; gap: 9px; }
+  .grid td .cell .ind.l { font-size: 30px; }
+  .grid td .cell .ind.m { font-size: 11px; } .grid td .cell .ind.sm { font-size: 9px; }
+  .grid td.na { color: var(--faint); font-size: 12px; }
+  .grid td.kn { font-weight: 700; }
+  .grid td.kn span { display: block; font-weight: 400; color: var(--ink-3); font-size: 12px; }
+
+  /* ---------- in context: pieces of app.html, restyled here ---------- */
+  .ctx { display: grid; grid-template-columns: 330px 300px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .ctx-label { font-size: 13px; color: var(--ink-3); margin: 0 0 6px; }
+  .ctx-notes ul { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); font-size: 13.5px; display: grid; gap: 6px; }
+  .rail { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; --ko: var(--panel); }
+  .main-row { display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--line); padding: 8px 12px; font-size: 11.5px; font-weight: 700; background: #DDF4FF; box-shadow: inset 2.5px 0 0 var(--link); --ko: #DDF4FF; }
+  .main-row .ind { font-size: 11px; }
+  .main-row .m { color: var(--ink-3); margin-left: auto; font-size: 11px; font-weight: 400; }
+  .rail h5 { font-size: 13.5px; margin: 0; padding: 9px 12px 5px; display: flex; align-items: baseline; }
+  .rail h5 .cnt { margin-left: auto; font-weight: 400; color: var(--ink-3); font-size: 11px; }
+  .rail .past-h { color: var(--faint); }
+  .card { display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; column-gap: 9px; align-items: center; margin: 0 7px 5px; padding: 7px 9px; border-radius: 5.5px;
+    background: var(--panel); border: 1px solid var(--line); box-shadow: inset 3px 0 0 var(--kc, var(--green)); }
+  .card > .ind { font-size: 11px; grid-row: 1 / 3; }
+  .card .n { font-weight: 700; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card .m b { color: var(--kc); }
+  .card .d { font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 3; }
+  .card.red { background: #FFEBE9; border-color: #FFCECB; --ko: #FFEBE9; } .card.red .d { color: var(--red); }
+  .card.blue { background: #F1F8FF; border-color: #B6E3FF; --ko: #F1F8FF; } .card.blue .d { color: var(--link); font-weight: 500; }
+  .kc-agent { --kc: var(--k-agent); } .kc-sub { --kc: var(--k-sub); } .kc-fork { --kc: var(--k-fork); } .kc-shell { --kc: var(--k-shell); } .kc-mon { --kc: var(--k-mon); }
+  .sep { border-top: 1px solid var(--line-2); margin-top: 4px; }
+  .pr { display: grid; grid-template-columns: 11px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; padding: 2.5px 12px; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
+  .pr .ind { font-size: 9px; }
+  .pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+  .pr .k { color: var(--faint); }
+  .pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
+  .pr.red .d, .pr.red .k { color: var(--red); } .pr.amber .d, .pr.amber .k { color: var(--amber); }
+  .rail .foot { height: 8px; }
+
+  .side { background: var(--side); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; --ko: var(--side); }
+  .side-head { display: flex; align-items: center; gap: 10px; padding: 12px 14px 8px; }
+  .side-head h4 { font-size: 16px; margin: 0; }
+  .summary { display: flex; gap: 9px; font-size: 11px; color: var(--ink-2); margin-left: auto; }
+  .summary .r b { color: var(--red); } .summary .a b { color: var(--amber); } .summary .g b { color: var(--green); }
+  .g-name { font-weight: 700; font-size: 12.5px; padding: 8px 14px 4px; }
+  .row { display: grid; grid-template-columns: minmax(0, 1fr) 12px; column-gap: 10px; padding: 8px 14px 9px; border-top: 1px solid transparent; border-bottom: 1px solid transparent; }
+  .row.cur { background: var(--canvas); border-color: var(--line); --ko: var(--canvas); }
+  .r-main { min-width: 0; display: grid; gap: 1px; }
+  .r-title { font-weight: 700; font-size: 12.5px; line-height: 1.3; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r-state { font-size: 11px; line-height: 1.3; font-weight: 700; }
+  .r-state.red { color: var(--red); } .r-state.amber { color: var(--amber); } .r-state.green { color: var(--green); }
+  .r-now { font-size: 11px; color: var(--ink-3); line-height: 1.35; }
+  .r-agent { font-size: 10.5px; color: var(--ink-3); line-height: 1.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 4px; }
+  .r-agent .ind { font-size: 9px; }
+  .r-agent b { font-weight: 500; color: var(--kc, var(--ink-2)); }
+  .r-agent b.blue { color: var(--link); } .r-agent b.red { color: var(--red); }
+  .r-side { height: 16px; display: flex; align-items: center; justify-content: center; }
+  .r-side .ind { font-size: 11px; }
+  .status { display: flex; align-items: center; gap: 1ch; padding: 7px 14px; background: var(--sub); border: 1px solid var(--line); border-radius: 8px; --ko: var(--sub);
+    font-family: var(--mono); font-size: 13px; line-height: 1.45; white-space: nowrap; overflow: hidden; margin-top: 10px; }
+  .status .ind { font-size: 11px; }
+  .status b { color: var(--green); }
+  .status span { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; }
+
+  .waves { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 16px; font-family: var(--mono); font-size: 13px; line-height: 1.45; margin-top: 14px; }
+  .waves .hd { display: grid; grid-template-columns: 2ch minmax(0, 1fr); }
+  .waves .hd .g { color: var(--dot-green); }
+  .wgrid { display: grid; grid-template-columns: 3ch 2ch minmax(0, max-content) max-content 12ch max-content max-content; column-gap: 1.6ch; align-items: center; margin: 2px 0 6px; }
+  .wgrid > * { line-height: 1.5; white-space: nowrap; }
+  .wgrid .ind { font-size: 9px; }
+  .wgrid .alink { color: var(--link); overflow: hidden; text-overflow: ellipsis; max-width: 40ch; }
+  .wgrid .atype { color: var(--ink-3); font-family: var(--sans); font-size: 11.5px; }
+  .bar { height: .55em; background: var(--line-2); border-radius: 2px; position: relative; }
+  .bar > i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--faint); border-radius: 2px; }
+  .bar.run > i { background: var(--k-sub); } .bar.fail > i { background: var(--red); } .bar.wait > i { background: var(--red); opacity: .55; } .bar.rev > i { background: var(--link); }
+  .adur { color: var(--ink-3); text-align: right; font-variant-numeric: tabular-nums; }
+  .ast { color: var(--ink-3); } .ast.red { color: var(--red); } .ast.blue { color: var(--link); } .ast.run { color: var(--k-sub); }
+
+  .squint { display: grid; grid-template-columns: 330px 300px minmax(0, 1fr); gap: 14px; margin-top: 18px; align-items: start; }
+  .squint .blur { filter: grayscale(1) blur(1.2px); }
+  .squint p { margin: 0; color: var(--ink-2); max-width: 56ch; font-size: 13.5px; }
+
+  /* ---------- rules ---------- */
+  .rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+  .rule { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  .rule h3 { margin-bottom: 8px; }
+  .rule ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+  .rule li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; font-size: 13.5px; line-height: 1.4; }
+  .rule li .ind { font-size: 14px; margin-top: 2px; }
+  .rule p { margin: 0 0 8px; font-size: 13.5px; color: var(--ink-2); }
+  table.speeds { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.speeds th { text-align: left; font-weight: 700; color: var(--ink-2); border-bottom: 1px solid var(--line); padding: 3px 8px 3px 0; }
+  table.speeds td { padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line-2); vertical-align: middle; }
+  table.speeds td .ind { font-size: 14px; }
+  .note { margin-top: 10px; font-size: 13px; color: var(--ink-3); }
+
+  @media (max-width: 1100px) {
+    .set { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .set > div { border-left: 0; border-top: 1px solid var(--line-2); }
+    .opts, .ways { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .ctx, .squint { grid-template-columns: 1fr 1fr; }
+    .rules { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 700px) {
+    .page { padding: 18px 14px 60px; }
+    header.top { grid-template-columns: 1fr; }
+    header.top .acts { grid-row: auto; grid-column: 1; }
+    .set, .opts, .ways, .ctx, .squint { grid-template-columns: minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <clipPath id="cp-bub" clipPathUnits="userSpaceOnUse"><rect x="2.6" y="3" width="6.8" height="4.4"/></clipPath>
+    <clipPath id="cp-bubh" clipPathUnits="userSpaceOnUse"><rect x="3.4" y="2" width="5.2" height="3"/></clipPath>
+    <clipPath id="cp-chev" clipPathUnits="userSpaceOnUse"><rect x=".3" y="1.5" width="5.7" height="9"/></clipPath>
+    <clipPath id="cp-scroll" clipPathUnits="userSpaceOnUse"><rect x="5.6" y="2.4" width="6" height="8.4"/></clipPath>
+    <clipPath id="cp-eye" clipPathUnits="userSpaceOnUse"><path d="M.9 6c2.2-3.9 8-3.9 10.2 0-2.2 3.9-8 3.9-10.2 0Z"/></clipPath>
+  </defs>
+</svg>
+<div class="page">
+  <header class="top">
+    <h1>One mark per kind of work</h1>
+    <p>Each mark says what is running and that it is running. The main conversation, subagents, forks, shells and monitors each get a shape of their own that moves while the work goes on and stands still when it stops. Every motion is steady: nothing waits, fades or blinks.</p>
+    <div class="acts"><button class="btn" id="rm" aria-pressed="false">Preview reduced motion</button></div>
+  </header>
+
+  <section aria-labelledby="h-set">
+    <h2 id="h-set">The recommended set</h2>
+    <p class="lede">Running on the left, stopped on the right, then at the sizes you will see in the app: 11px on cards and status bars, 9px on sidebar sub-lines and past rows.</p>
+    <div class="set" id="set"></div>
+  </section>
+
+  <section aria-labelledby="h-opts">
+    <h2 id="h-opts">Options for each kind</h2>
+    <p class="lede">The main conversation and subagents are designed in pairs, because a subagent is a smaller copy of the agent: in each pair the subagent carries the agent’s moving mark as its head. Forks, shells and monitors stay distinct from that family. Each option shows the running mark at 64px, then at 11px and 9px, then the still mark.</p>
+    <div class="frames" id="frames"></div>
+  </section>
+
+  <section aria-labelledby="h-status">
+    <h2 id="h-status">Kind and status together</h2>
+    <p class="lede">When work stops or needs you, the kind mark stands still and a status badge takes its bottom right corner. The badge uses the status shapes you already know.</p>
+    <div class="frames">
+      <article class="frame">
+        <div class="f-head"><h3>Four ways to combine them</h3><p>Shown for a subagent that failed and a shell that timed out, at 40px, 11px and 9px.</p></div>
+        <div class="ways" id="ways"></div>
+      </article>
+      <article class="frame">
+        <div class="f-head"><h3>Every kind with every status, using the corner badge</h3><p>Each cell shows 30px, 11px and 9px. Cells marked “does not happen” are states that kind of work cannot reach.</p></div>
+        <div class="grid" id="grid"></div>
+      </article>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-ctx">
+    <h2 id="h-ctx">In context</h2>
+    <p class="lede">The recommended marks in mock pieces of the app. Each row should say what kind of work it is before you read a word.</p>
+    <div class="ctx">
+      <div>
+        <p class="ctx-label">Background work panel</p>
+        <div class="rail" id="rail">
+          <div class="main-row"><i data-m="agent"></i>Main conversation<span class="m">Working</span></div>
+          <h5>Running<span class="cnt">5 in the background</span></h5>
+          <div class="card kc-sub"><i data-m="sub"></i><span class="n">Build [SI M2-2] INVSH-87</span><span class="m"><b>subagent</b>, started 01:14 PM</span><span class="d">13m 01s</span></div>
+          <div class="card kc-fork"><i data-m="fork"></i><span class="n">Try the shorter migration</span><span class="m"><b>fork</b>, started 01:20 PM</span><span class="d">7m 40s</span></div>
+          <div class="card kc-shell"><i data-m="shell"></i><span class="n">bin/rspec spec/search</span><span class="m"><b>shell</b>, started 01:23 PM</span><span class="d">4m 12s</span></div>
+          <div class="card kc-mon"><i data-m="mon"></i><span class="n">Watch CI on #524108</span><span class="m"><b>monitor</b>, until it goes green</span><span class="d">22m</span></div>
+          <div class="card red kc-sub"><i data-m="sub" data-b="need"></i><span class="n">Audit backend M2 tickets</span><span class="m"><b>subagent</b>, wants Bash(psql)</span><span class="d">Needs you</span></div>
+          <h5>To review<span class="cnt">2</span></h5>
+          <div class="card blue kc-sub"><i data-m="sub" data-b="review"></i><span class="n">Kind marks storyboard</span><span class="m"><b>subagent</b>, finished 01:31 PM</span><span class="d">Review</span></div>
+          <div class="card blue kc-fork"><i data-m="fork" data-b="review"></i><span class="n">Shorter migration, as a PR</span><span class="m"><b>fork</b>, finished 01:40 PM</span><span class="d">Review</span></div>
+          <div class="sep"></div>
+          <h5 class="past-h">Past<span class="cnt">7</span></h5>
+          <div class="pr"><i data-m="shell" data-b="done"></i><span class="n">bin/rails db:migrate</span><span class="d">48s</span></div>
+          <div class="pr"><i data-m="sub" data-b="done"></i><span class="n">Fix guard model lookup</span><span class="d">5m</span></div>
+          <div class="pr red"><i data-m="sub" data-b="failed"></i><span class="n">Grade backend tickets <span class="k">failed</span></span><span class="d">25s</span></div>
+          <div class="pr amber"><i data-m="mon" data-b="timeout"></i><span class="n">Wait for deploy <span class="k">timed out</span></span><span class="d">30m</span></div>
+          <div class="pr"><i data-m="fork" data-b="done"></i><span class="n">Split the PR in two</span><span class="d">9m</span></div>
+          <div class="pr"><i data-m="shell" data-b="stopped"></i><span class="n">npm run dev <span class="k">stopped by you</span></span><span class="d">1h 2m</span></div>
+          <div class="pr"><i data-m="mon" data-b="done"></i><span class="n">Watch PR #525016 for review</span><span class="d">41m</span></div>
+          <div class="foot"></div>
+        </div>
+      </div>
+      <div>
+        <p class="ctx-label">Sidebar, with sub-lines for background work</p>
+        <div class="side" id="side">
+          <div class="side-head"><h4>Synopia</h4><div class="summary"><span class="r"><b>1</b> need you</span><span class="a"><b>2</b> your turn</span><span class="g"><b>2</b> working</span></div></div>
+          <div class="g-name">Shared invoice access</div>
+          <div class="row cur"><div class="r-main"><span class="r-title">M2 execution: ticket audit</span><span class="r-state green">Working</span><span class="r-now">Checking the export endpoint</span>
+            <span class="r-agent kc-sub">⎿ <i data-m="sub"></i><b>Build [SI M2-2] INVSH-87</b> 13m</span>
+            <span class="r-agent kc-fork">⎿ <i data-m="fork"></i><b>Try the shorter migration</b> 7m</span>
+            <span class="r-agent kc-mon">⎿ <i data-m="mon"></i><b>Watch CI on #524108</b></span>
+            <span class="r-agent">⎿ <i data-m="sub" data-b="need"></i><b class="red">Needs you</b> Audit backend M2 tickets</span></div><div class="r-side"><i data-m="agent"></i></div></div>
+          <div class="row"><div class="r-main"><span class="r-title">M2 design doc</span><span class="r-state amber">Your turn, 27 min</span><span class="r-now">SDD v2 done, 12 tickets in Linear</span>
+            <span class="r-agent">⎿ <i data-m="sub" data-b="review"></i><b class="blue">1 to review</b> Kind marks storyboard</span></div><div class="r-side"><i data-m="agent" data-b="your"></i></div></div>
+          <div class="g-name">Not in a group</div>
+          <div class="row"><div class="r-main"><span class="r-title">Command bar search: typo matching</span><span class="r-state amber">Your turn, 1 shell running</span><span class="r-now">Waiting for the test run</span>
+            <span class="r-agent kc-shell">⎿ <i data-m="shell"></i><b>bin/rspec spec/search</b> 4m 12s</span></div><div class="r-side"><i data-m="agent" data-b="your"></i></div></div>
+          <div class="row"><div class="r-main"><span class="r-title">M1 PR split</span><span class="r-state red">Needs you: question</span><span class="r-now">Re-run the failed Ruby job?</span></div><div class="r-side"><i data-m="agent" data-b="need"></i></div></div>
+          <div class="row"><div class="r-main"><span class="r-title">Docs site: search index</span><span class="r-state green">Working</span><span class="r-now">Rebuilding the index</span>
+            <span class="r-agent kc-sub">⎿ <i data-m="sub"></i><b>Draw the kind marks</b> 22s</span></div><div class="r-side"><i data-m="agent"></i></div></div>
+          <div style="height:8px"></div>
+        </div>
+        <div class="status"><i data-m="agent"></i><b>Working</b><span>Edited(prototype/kind-storyboard.html)</span></div>
+      </div>
+      <div class="ctx-notes">
+        <h3>What to check</h3>
+        <ul>
+          <li>Every moving mark is running, and its shape says what kind. Nothing else on the page moves, apart from the red needs-you stripes.</li>
+          <li>The agent spark and the subagent’s spark-head turn the same way: one family, told apart by the shoulders.</li>
+          <li>Past rows show the still kind mark with a status badge, so a failed shell and a failed subagent differ at a glance.</li>
+          <li>Session marks in the sidebar use the agent mark: the spark while it works, the still spark with a badge when it waits for you.</li>
+          <li>Kind colour sits on the card edge and in the word, as in the app today.</li>
+        </ul>
+      </div>
+    </div>
+    <div>
+      <p class="ctx-label" style="margin-top:18px">A wave of parallel subagents in the transcript</p>
+      <div class="waves" id="waves">
+        <div class="hd"><span class="g">●</span><span><b>Started 7 subagents</b> <span style="color:var(--ink-3)">3 running, 1 needs you</span></span></div>
+        <div class="wgrid">
+          <span style="color:var(--ink-3)">⎿</span><i data-m="sub"></i><span class="alink">Audit cross-cutting M2 risks</span><span class="atype">subagent</span><span class="bar run"><i style="width:70%"></i></span><span class="adur">13m 01s</span><span class="ast run">running</span>
+          <span></span><i data-m="sub"></i><span class="alink">Audit frontend M2 tickets vs code</span><span class="atype">subagent</span><span class="bar run"><i style="width:52%"></i></span><span class="adur">9m 40s</span><span class="ast run">running</span>
+          <span></span><i data-m="sub"></i><span class="alink">Build [SI M2-3] INVSH-88</span><span class="atype">subagent</span><span class="bar run"><i style="width:35%"></i></span><span class="adur">6m 58s</span><span class="ast run">running</span>
+          <span></span><i data-m="sub" data-b="need"></i><span class="alink">Audit backend M2 tickets vs code</span><span class="atype">subagent</span><span class="bar wait"><i style="width:30%"></i></span><span class="adur">3m 05s</span><span class="ast red">needs you</span>
+          <span></span><i data-m="sub" data-b="review"></i><span class="alink">Kind marks storyboard</span><span class="atype">subagent</span><span class="bar rev"><i style="width:100%"></i></span><span class="adur">18m 22s</span><span class="ast blue">ready for review</span>
+          <span></span><i data-m="sub" data-b="done"></i><span class="alink">Fix guard model lookup</span><span class="atype">subagent</span><span class="bar"><i style="width:40%"></i></span><span class="adur">5m 02s</span><span class="ast">done</span>
+          <span></span><i data-m="sub" data-b="failed"></i><span class="alink">Grade backend M2 tickets</span><span class="atype">subagent</span><span class="bar fail"><i style="width:8%"></i></span><span class="adur">25s</span><span class="ast red">failed</span>
+        </div>
+      </div>
+    </div>
+    <div class="squint" id="squint">
+      <div class="blur" id="sqR"></div>
+      <div class="blur" id="sqS"></div>
+      <div>
+        <h3 style="margin-bottom:6px">Squint test</h3>
+        <p>The same panel and sidebar in grey and out of focus, roughly what you see at the edge of your vision or without colour. Running items should still differ by shape and motion: a turning spark, a turning head on shoulders, beads running up a branch, a cursor running along a prompt, a hand sweeping a ring.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-rules">
+    <h2 id="h-rules">Rules</h2>
+    <p class="lede">What to keep when adding a kind or a state.</p>
+    <div class="rules" id="rules"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  /* ---------- drawing helpers, all on a 12-unit grid ---------- */
+  const C = {
+    agent: { c: "#1A7F37", l: "#C6E9D0", ramp: ["#1A7F37", "#2E8B47", "#4D9F63", "#6DB381", "#8CC49C", "#A8D4B4"] },
+    sub: { c: "#57606A", l: "#D0D7DE", ramp: ["#57606A", "#67707A", "#7C858F", "#959DA6", "#ACB3BB", "#C0C6CC"] },
+    fork: { c: "#8250DF", l: "#E2D6F8" },
+    shell: { c: "#0A6C74", l: "#A6D7DB" },
+    mon: { c: "#BF3989", l: "#F9D3E7" }
+  };
+  const f = n => +n.toFixed(2);
+  /* six spokes; the lead spoke points up and the lighter ones trail behind it, so a clockwise turn reads as motion */
+  const spokes = (cx, cy, r1, r2, w, cols) => [0, 60, 120, 180, 240, 300].map(a => {
+    const k = ((360 - a) % 360) / 60, t = a * Math.PI / 180, s = Math.sin(t), c = Math.cos(t);
+    return `<line x1="${f(cx + r1 * s)}" y1="${f(cy - r1 * c)}" x2="${f(cx + r2 * s)}" y2="${f(cy - r2 * c)}" stroke="${cols[k]}" stroke-width="${w}"/>`;
+  }).join("");
+  const solid = col => Array(6).fill(col);
+  const SH = "M1.8 11.1c0-3.3 8.4-3.3 8.4 0";                      /* shoulders */
+  const FK1 = "M6 10.1V7.9C6 5.9 3 5.9 3 3.9V2.6", FK2 = "M6 10.1V7.9C6 5.9 9 5.9 9 3.9V2.6";
+  const FKD = col => `<circle cx="3" cy="2.3" r="1.35" fill="${col}"/><circle cx="9" cy="2.3" r="1.35" fill="${col}"/><circle cx="6" cy="10.2" r="1.35" fill="${col}"/>`;
+  const CHEV = "M1.8 3.2 5 6 1.8 8.8";
+  const EYE = "M.9 6c2.2-3.9 8-3.9 10.2 0-2.2 3.9-8 3.9-10.2 0Z";
+  const BUB = "M3 1.8h6a2 2 0 0 1 2 2v2.8a2 2 0 0 1-2 2H5.4L2.8 10.8V8.5A2 2 0 0 1 1 6.6V3.8a2 2 0 0 1 2-2Z";
+
+  /* each mark: running parts get class r, still-only parts get class s, shared parts no class */
+  const M = {
+    /* ----- agent and subagent, in pairs ----- */
+    agentSpark: (() => { const k = C.agent;
+      return `<g class="r rot" style="--d:1.5s">${spokes(6, 6, 1.9, 5.2, 1.8, k.ramp)}</g><g class="s">${spokes(6, 6, 1.9, 5.2, 1.8, solid(k.c))}</g>`; })(),
+    subSpark: (() => { const k = C.sub;
+      return `<g class="r rotf" style="--d:1.5s">${spokes(6, 3.9, .8, 3.1, 1.45, k.ramp)}</g><g class="s">${spokes(6, 3.9, .8, 3.1, 1.45, solid(k.c))}</g><path d="${SH}" stroke="${k.c}" stroke-width="1.7"/>`; })(),
+    subOrbit: (() => { const k = C.sub;
+      return `<circle cx="6" cy="6" r="4.4" stroke="${k.l}" stroke-width="1.4"/><g class="r rot" style="--d:2.2s">${spokes(6, 1.6, .5, 2.2, 1.3, k.ramp)}</g><g class="s">${spokes(6, 1.6, .5, 2.2, 1.3, solid(k.c))}</g><circle cx="6" cy="6" r="1.5" fill="${k.c}"/>`; })(),
+    agentRing: (() => { const k = C.agent;
+      return `<circle cx="6" cy="6" r="4.8" stroke="${k.l}" stroke-width="1.8" class="r"/><circle cx="6" cy="6" r="4.8" stroke="${k.c}" stroke-width="1.8" pathLength="4" stroke-dasharray="1.6 2.4" class="r rot" style="--d:.9s"/><circle cx="6" cy="6" r="4.8" stroke="${k.c}" stroke-width="1.8" class="s"/><circle cx="6" cy="6" r="1.8" fill="${k.c}"/>`; })(),
+    subRing: (() => { const k = C.sub;
+      return `<circle cx="6" cy="3.9" r="2.5" stroke="${k.l}" stroke-width="1.6" class="r"/><circle cx="6" cy="3.9" r="2.5" stroke="${k.c}" stroke-width="1.6" pathLength="4" stroke-dasharray="1.6 2.4" class="r rotf" style="--d:.9s"/><circle cx="6" cy="3.9" r="2.5" stroke="${k.c}" stroke-width="1.6" class="s"/><path d="${SH}" stroke="${k.c}" stroke-width="1.7"/>`; })(),
+    agentBub: (() => { const k = C.agent;
+      return `<path d="${BUB}" stroke="${k.c}" stroke-width="1.4"/><g clip-path="url(#cp-bub)"><line x1="-1.8" y1="5.2" x2="14" y2="5.2" stroke="${k.c}" stroke-width="1.9" stroke-dasharray="0 2.6" class="r flow" style="--d:.9s;--o:-2.6"/></g><line x1="3.4" y1="5.2" x2="8.6" y2="5.2" stroke="${k.c}" stroke-width="1.9" stroke-dasharray="0 2.6" class="s"/>`; })(),
+    subBub: (() => { const k = C.sub;
+      return `<rect x="2.4" y="1" width="7.2" height="5.2" rx="1.8" stroke="${k.c}" stroke-width="1.35"/><g clip-path="url(#cp-bubh)"><line x1="-1" y1="3.6" x2="14" y2="3.6" stroke="${k.c}" stroke-width="1.6" stroke-dasharray="0 2.2" class="r flow" style="--d:.9s;--o:-2.2"/></g><line x1="3.8" y1="3.6" x2="8.2" y2="3.6" stroke="${k.c}" stroke-width="1.6" stroke-dasharray="0 2.2" class="s"/><path d="M2.4 11.4c0-2.9 7.2-2.9 7.2 0" stroke="${k.c}" stroke-width="1.6"/>`; })(),
+    /* ----- fork ----- */
+    forkBeads: (() => { const k = C.fork;
+      return `<g class="r"><path d="${FK1}" stroke="${k.l}" stroke-width="1.8"/><path d="${FK2}" stroke="${k.l}" stroke-width="1.8"/>
+        <path d="${FK1}" stroke="${k.c}" stroke-width="1.8" stroke-linecap="butt" pathLength="12" stroke-dasharray="2.4 1.6" class="flow" style="--d:.9s;--o:-4"/>
+        <path d="${FK2}" stroke="${k.c}" stroke-width="1.8" stroke-linecap="butt" pathLength="12" stroke-dasharray="2.4 1.6" class="flow" style="--d:.9s;--o:-4"/></g>
+        <g class="s"><path d="${FK1}" stroke="${k.c}" stroke-width="1.8"/><path d="${FK2}" stroke="${k.c}" stroke-width="1.8"/></g>${FKD(k.c)}`; })(),
+    forkPart: (() => { const k = C.fork;
+      return `<circle cx="6" cy="6" r="4.4" stroke="${k.l}" stroke-width="1.4"/><g class="r rot" style="--d:2.4s"><circle cx="6" cy="10.4" r="1.6" fill="${k.c}" transform="rotate(-50 6 6)"/></g><g class="r rot rev" style="--d:2.4s"><circle cx="6" cy="10.4" transform="rotate(50 6 6)" r="1.6" fill="${k.c}"/></g>
+        <g class="s"><circle cx="2.9" cy="2.9" r="1.6" fill="${k.c}"/><circle cx="9.1" cy="2.9" r="1.6" fill="${k.c}"/></g>`; })(),
+    forkArcs: (() => { const k = C.fork;
+      return `<circle cx="6" cy="6" r="4.8" stroke="${k.l}" stroke-width="1.8" class="r"/><circle cx="6" cy="6" r="4.8" stroke="${k.c}" stroke-width="1.8" pathLength="4" stroke-dasharray="1 1" class="r rot" style="--d:.9s"/><circle cx="6" cy="6" r="4.8" stroke="${k.c}" stroke-width="1.8" class="s"/>`; })(),
+    /* ----- shell: the >_ prompt ----- */
+    shellCursor: (() => { const k = C.shell;
+      return `<path d="${CHEV}" stroke="${k.c}" stroke-width="1.8"/><line x1="6.2" y1="9.5" x2="10.6" y2="9.5" stroke="${k.l}" stroke-width="1.9" stroke-linecap="butt" class="r"/>
+        <line x1="6.2" y1="9.5" x2="10.6" y2="9.5" stroke="${k.c}" stroke-width="1.9" stroke-linecap="butt" stroke-dasharray="3 1.4" class="r flow" style="--d:.8s;--o:-4.4"/>
+        <line x1="6.2" y1="9.5" x2="10.6" y2="9.5" stroke="${k.c}" stroke-width="1.9" class="s"/>`; })(),
+    shellChev: (() => { const k = C.shell;
+      return `<g clip-path="url(#cp-chev)"><g class="r tx" style="--d:.9s;--tx:3.4px"><path d="${CHEV}" transform="translate(-3.4 0)" stroke="${k.c}" stroke-width="1.8"/><path d="${CHEV}" stroke="${k.c}" stroke-width="1.8"/><path d="${CHEV}" transform="translate(3.4 0)" stroke="${k.c}" stroke-width="1.8"/></g></g>
+        <path d="${CHEV}" stroke="${k.c}" stroke-width="1.8" class="s"/><line x1="6.6" y1="9.5" x2="10.6" y2="9.5" stroke="${k.c}" stroke-width="1.9"/>`; })(),
+    shellScroll: (() => { const k = C.shell, L = (y, x2) => `<line x1="6.4" y1="${y}" x2="${x2}" y2="${y}" stroke="${k.c}" stroke-width="1.5"/>`;
+      return `<path d="${CHEV}" stroke="${k.c}" stroke-width="1.8"/><g clip-path="url(#cp-scroll)"><g class="r ty" style="--d:1.6s;--ty:-5.2px">${L(3.4, 10.8)}${L(6, 9)}${L(8.6, 10.8)}${L(11.2, 9)}${L(13.8, 10.8)}${L(16.4, 9)}</g></g>
+        <g class="s">${L(3.4, 10.8)}${L(6, 9)}${L(8.6, 10.8)}</g>`; })(),
+    shellBar: (() => { const k = C.shell;
+      return `<path d="${CHEV}" stroke="${k.c}" stroke-width="1.8"/><line x1="8.6" y1="4.4" x2="8.6" y2="9.6" stroke="${k.c}" stroke-width="1.9" class="r rotf" style="--d:.9s"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="${k.c}" stroke-width="1.9" class="s"/>`; })(),
+    /* ----- monitor ----- */
+    monRadar: (() => { const k = C.mon;
+      return `<circle cx="6" cy="6" r="5" stroke="${k.c}" stroke-width="1.4"/><g class="r rot" style="--d:2.4s"><path d="M6 6V1.6A4.4 4.4 0 0 0 1.6 6Z" fill="rgba(191,57,137,.38)"/><line x1="6" y1="6" x2="6" y2="1.7" stroke="${k.c}" stroke-width="1.5"/></g>
+        <line x1="6" y1="6" x2="6" y2="1.7" stroke="${k.c}" stroke-width="1.5" class="s"/><circle cx="6" cy="6" r=".9" fill="${k.c}"/>`; })(),
+    monLook: (() => { const k = C.mon;
+      return `<path d="${EYE}" stroke="${k.c}" stroke-width="1.4"/><g class="r rot" style="--d:2s"><circle cx="7.4" cy="6" r="1.5" fill="${k.c}"/></g><circle cx="6" cy="6" r="1.6" fill="${k.c}" class="s"/>`; })(),
+    monScan: (() => { const k = C.mon;
+      return `<path d="${EYE}" stroke="${k.c}" stroke-width="1.4"/><g clip-path="url(#cp-eye)"><g class="r tx" style="--d:1.6s;--tx:10.2px"><line x1="4.6" y1="1" x2="4.6" y2="11" stroke="${k.c}" stroke-width="1.7"/><line x1="-5.6" y1="1" x2="-5.6" y2="11" stroke="${k.c}" stroke-width="1.7"/></g></g><circle cx="6" cy="6" r="1.6" fill="${k.c}" class="s"/>`; })(),
+    /* today's marks, for comparison */
+    todayArc: `<circle cx="6" cy="6" r="5" stroke="#C6E9D0" stroke-width="2" class="r"/><circle cx="6" cy="6" r="5" stroke="#1A7F37" stroke-width="2" pathLength="4" stroke-dasharray="2 2" class="r rot" style="--d:.75s"/><circle cx="6" cy="6" r="5" stroke="#1A7F37" stroke-width="2" class="s"/>`
+  };
+  /* status badges, drawn on the same 12-unit grid inside a .66em disc */
+  const B = {
+    need: '<circle cx="6" cy="6" r="6" fill="#CF222E"/><rect class="see" x="3.2" y="3" width="2" height="6" rx=".4" fill="#fff"/><rect class="see d2" x="6.8" y="3" width="2" height="6" rx=".4" fill="#fff"/>',
+    review: '<circle cx="6" cy="6" r="6" fill="#0550AE"/><path d="M3.3 6.2 5.3 8.2 8.8 4.1" fill="none" stroke="#fff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>',
+    done: '<path d="M2.3 6.4 5 9.1 9.9 3.3" fill="none" stroke="#6E7781" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>',
+    failed: '<rect x="1.3" y="1.3" width="9.4" height="9.4" rx="1.5" fill="#CF222E"/>',
+    timeout: '<rect x="2.1" y="2.1" width="7.8" height="7.8" rx="1.3" fill="#fff" stroke="#9A6700" stroke-width="2.1"/>',
+    stopped: '<rect x="1.6" y="1.6" width="8.8" height="8.8" rx="1.4" fill="#6E7781"/>',
+    your: '<circle cx="6" cy="6" r="5.2" fill="#D4A72C"/>'
+  };
+  const BNAME = { need: "needs you", review: "ready for review", done: "done", failed: "failed", timeout: "timed out", stopped: "stopped", your: "your turn" };
+  const REC = { agent: "agentSpark", sub: "subSpark", fork: "forkBeads", shell: "shellCursor", mon: "monRadar" };
+  const KNAME = { agent: "main conversation", sub: "subagent", fork: "fork", shell: "shell", mon: "monitor" };
+  /* mark(drawing, {still, badge, px, cls}) */
+  const mark = (d, o = {}) => {
+    const still = o.still || !!o.badge;
+    return `<span class="ind${still ? " st" : ""}${o.badge ? " b" : ""}${o.cls ? " " + o.cls : ""}" role="img" aria-label="${o.label || ""}"${o.px ? ` style="font-size:${o.px}px"` : ""}>`
+      + `<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${M[d]}</svg>`
+      + (o.badge ? `<span class="bd"><svg viewBox="0 0 12 12" aria-hidden="true">${B[o.badge]}</svg></span>` : "") + `</span>`;
+  };
+  const km = (k, o = {}) => mark(REC[k], { label: KNAME[k] + (o.badge ? ", " + BNAME[o.badge] : o.still ? ", stopped" : ", running"), ...o });
+  const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
+
+  /* ---------- the recommended set ---------- */
+  const SET = [
+    ["agent", "Main conversation", "#1A7F37", "A six-point spark, Claude’s own symbol, turning clockwise. The lead point is dark and the rest trail lighter.", "Checking the export endpoint"],
+    ["sub", "Subagent", "#57606A", "The same spark, smaller, as the head of a person: work handed to a helper. Turns the same way.", "Build [SI M2-2] INVSH-87"],
+    ["fork", "Fork", "#8250DF", "A branch. Beads run up from the trunk into both branches: one conversation carrying on as two.", "Try the shorter migration"],
+    ["shell", "Shell", "#0A6C74", "The >_ prompt. The cursor runs steadily to the right along the underscore, like text being typed.", "bin/rspec spec/search"],
+    ["mon", "Monitor", "#BF3989", "A radar: a hand sweeps round a ring and leaves a short trail. The slowest motion in the set.", "Watch CI on #524108"]
+  ];
+  document.getElementById("set").innerHTML = SET.map(([k, n, col, p, t]) => `
+    <div>
+      <div class="big">${km(k)}${km(k, { still: true })}<span class="lab">running<br>and still</span></div>
+      <h3><i style="background:${col}"></i>${n}</h3>
+      <p>${p}</p>
+      <div class="inl"><span>${km(k, { px: 11 })}<b>${esc(t)}</b> 11px</span><span>${km(k, { px: 9 })}<b>${esc(t)}</b> 9px</span><span>${km(k, { px: 9, badge: "done" })}<b>${esc(t)}</b> stopped, done</span></div>
+    </div>`).join("");
+
+  /* ---------- options ---------- */
+  const SAMPLE = { agent: "M2 execution", sub: "Build INVSH-87", fork: "Shorter migration", shell: "bin/rspec", mon: "Watch CI" };
+  const FR = [
+    { id: "pair", title: "Main conversation and subagent, as pairs", kinds: ["agent", "sub"], col: [["#1A7F37", "agent green"], ["#57606A", "subagent slate"]],
+      when: "The agent is the conversation you talk to; a subagent is a helper it starts with a fresh context. In each pair the subagent is derived from the agent mark, so the two read as one family.",
+      opts: [
+        { d: ["agentSpark", "subSpark"], rec: true, name: "Spark, and a spark on shoulders", note: "The agent is the turning spark. The subagent is the same spark, scaled down to a head on a person. Same motion, same direction: clearly related, and the shoulders tell them apart at 9px." },
+        { d: ["agentSpark", "subOrbit"], name: "Spark, and a small spark in orbit", note: "The subagent is a small spark that split off and circles a still centre. Reads as derived, but at 9px the small spark becomes a dot and the person is gone." },
+        { d: ["agentRing", "subRing"], name: "Ring with a core, and a ring head", note: "Today’s arc with a solid core for the agent, and the arc as a person’s head. Familiar, but the agent is still just a spinner, and the core clashes with the queued mark." },
+        { d: ["agentBub", "subBub"], name: "Speech bubble, and a bubble head", note: "Dots run through a speech bubble: a conversation in progress. The subagent’s bubble head is too small to hold its dots at 9px." }
+      ],
+      still: "Still: the spark’s points all turn dark and stop. The subagent’s head does the same.",
+      why: "Agent and subagent share their motion on purpose. Every other kind has a motion of its own." },
+    { id: "fork", title: "Fork", kinds: ["fork"], col: [["#8250DF", "fork purple"], ["#E2D6F8", "track"]],
+      when: "A fork copies the whole conversation and carries on with it. Unlike a subagent it does not start fresh, so its mark comes from a different family: a branch, not a person.",
+      opts: [
+        { d: ["forkBeads"], rec: true, name: "Beads running up a branch", note: "The branch glyph, with dark beads flowing from the trunk out into both branches on a pale track. The only mark that flows along a line." },
+        { d: ["forkPart"], name: "Two dots parting", note: "Two dots leave the bottom of a ring in opposite directions and meet at the top. Says splitting, but the still mark is just two dots on a ring." },
+        { d: ["forkArcs"], name: "Two arcs, today", note: "Today’s purple two-arc spinner. Moves well, but nothing in it says fork; only the colour does." }
+      ],
+      still: "Still: the branch turns solid purple and the beads stop.",
+      why: "Kept far from the agent family: no turning, no spark, no person." },
+    { id: "shell", title: "Shell", kinds: ["shell"], col: [["#0A6C74", "shell teal"], ["#A6D7DB", "track"]],
+      when: "A command running in a terminal, like a test run or a dev server. The >_ prompt is the icon; each option animates a part of it. None of them blinks: the cursor moves instead of switching on and off.",
+      opts: [
+        { d: ["shellCursor"], rec: true, name: "Cursor running along the prompt", note: "The chevron stays put and the underscore turns into a cursor that runs steadily to the right on a pale track. Reads as >_ at every size, and as typing." },
+        { d: ["shellChev"], name: "Chevrons marching", note: "Chevrons slide to the right through the prompt, endlessly. Busy and readable, but it also looks like fast forward." },
+        { d: ["shellScroll"], name: "Output scrolling past", note: "Lines of output scroll upwards next to the chevron. Honest about what a shell does; at 9px the lines merge into a grey patch." },
+        { d: ["shellBar"], name: "Turning bar at the cursor", note: "The terminal’s |/-\\ spinner sits where the cursor would be and lies down as the underscore when the shell stops. Clever, but the turning bar alone reads like today’s mark." }
+      ],
+      still: "Still: the underscore is solid teal: a plain >_ prompt.",
+      why: "The only mark that moves sideways, so it never looks like the turning agent family." },
+    { id: "mon", title: "Monitor", kinds: ["mon"], col: [["#BF3989", "monitor pink"], ["rgba(191,57,137,.38)", "trail"]],
+      when: "A monitor waits for something to change, such as CI going green. It is watching, not working hard, so its motion is the slowest.",
+      opts: [
+        { d: ["monRadar"], rec: true, name: "Radar sweep", note: "Today’s mark, kept. A hand sweeps round a ring and leaves a short trail. It already says watching and running at once." },
+        { d: ["monLook"], name: "Eye looking around", note: "The eye glyph, with the pupil circling inside it. Friendly, but the pupil only moves by a pixel at 9px." },
+        { d: ["monScan"], name: "Eye with a scan line", note: "A line passes across the eye from left to right, again and again. Reads as scanning; the eye shape thins out at 9px." }
+      ],
+      still: "Still: the trail goes, the hand points up.",
+      why: "Turns like the agent, but a ring with one hand at 2.4s per turn against six points at 1.5s." }
+  ];
+  const dual = (o, fn) => o.d.map(fn).join("");
+  document.getElementById("frames").innerHTML = FR.map(fr => {
+    const rec = fr.opts.find(o => o.rec);
+    return `<article class="frame" id="f-${fr.id}">
+      <div class="f-head"><h3>${dual(rec, d => mark(d))}${esc(fr.title)}</h3><p>${fr.when}</p></div>
+      <div class="opts">${fr.opts.map((o, i) => `
+        <div class="opt${o.rec ? " rec" : ""}">
+          <div class="stage${o.d.length > 1 ? " duo" : ""}">${o.rec ? '<span class="rec-tag">Recommended</span>' : ""}${dual(o, d => mark(d))}${o.d.length > 1 ? '<span class="who">agent and subagent</span>' : ""}</div>
+          <div class="real">
+            <span>11px</span><span class="row-m">${dual(o, d => mark(d, { px: 11 }))}<span class="t">${dual(o, d => mark(d, { px: 11 }))} ${esc(SAMPLE[fr.kinds[0]])}</span></span>
+            <span>9px</span><span class="row-m">${dual(o, d => mark(d, { px: 9 }))}<span class="t t9">⎿ ${dual(o, d => mark(d, { px: 9 }))} ${esc(SAMPLE[fr.kinds[fr.kinds.length - 1]])}</span></span>
+            <span>Still</span><span class="row-m">${dual(o, d => mark(d, { px: 24, still: true }))}${dual(o, d => mark(d, { px: 11, still: true }))}${dual(o, d => mark(d, { px: 9, still: true }))}</span>
+          </div>
+          <div class="o-body"><b>${"ABCD"[i]}. ${o.name}</b><p>${o.note}</p></div>
+        </div>`).join("")}</div>
+      <div class="f-foot">
+        <span class="grp"><span class="lbl">Still</span>${dual(rec, d => mark(d, { still: true, cls: "l" }) + mark(d, { still: true, cls: "s11" }) + mark(d, { still: true, cls: "s9" }))}</span>
+        <span class="grp still-demo"><span class="lbl">Reduced motion, running</span>${dual(rec, d => mark(d, { cls: "l" }) + mark(d, { cls: "s11" }) + mark(d, { cls: "s9" }))}</span>
+        <span class="sw"><span class="lbl">Colour</span>${fr.col.map(c => `<i style="background:${c[0]}"></i>${c[0].startsWith("#") ? c[0] + " " : ""}${c[1]}`).join(", ")}</span>
+        <p class="why">${fr.still} ${fr.why} With reduced motion a running mark stops in its rest pose but keeps its running parts (the trailing points, the pale track, the trail), so it still differs from the still mark.</p>
+      </div>
+    </article>`; }).join("");
+
+  /* ---------- ways to combine kind and status ---------- */
+  const WAYS = [
+    { rec: true, name: "Badge on the corner", note: "The kind mark stops and steps back; a status badge takes the bottom right corner. One mark, one slot, works for every kind.",
+      ex: (k, b, px) => km(k, { badge: b, px }) },
+    { name: "Status mark, then kind", note: "The status mark from the earlier storyboard, with the still kind mark after it. Clearest at 9px, but twice as wide and two things to read.",
+      ex: (k, b, px) => `<span class="pair" style="font-size:${px}px">${mark("__" + b)}${km(k, { still: true })}</span>` },
+    { name: "Status replaces the kind", note: "Only the status mark. Calm, but a failed shell and a failed subagent look the same; the kind is left to the words.",
+      ex: (k, b, px) => mark("__" + b, { px }) },
+    { name: "Kind mark tinted by status", note: "A red person for failed, an amber prompt for timed out. Colour alone carries the status, which fails without colour vision.",
+      ex: (k, b, px) => `<span style="filter:${b === "failed" ? "sepia(1) saturate(9) hue-rotate(-50deg)" : "sepia(1) saturate(5) hue-rotate(5deg)"};display:inline-flex">${km(k, { still: true, px })}</span>` }
+  ];
+  /* status marks on their own, for the comparison: the badge drawing at full size */
+  Object.keys(B).forEach(b => { M["__" + b] = B[b].replace('r="6"', 'r="5.6"'); });
+  document.getElementById("ways").innerHTML = WAYS.map(w => `
+    <div class="way${w.rec ? " rec" : ""}"><b>${w.name}</b>${w.rec ? '<span class="rec-tag">Recommended</span>' : ""}<p>${w.note}</p>
+      <div class="ex"><span class="big">${w.ex("sub", "failed", 40)}${w.ex("shell", "timeout", 40)}</span>
+        <span>${w.ex("sub", "failed", 11)} Grade backend tickets</span><span>${w.ex("shell", "timeout", 11)} bin/rspec spec/search</span>
+        <span style="font-size:11.5px">${w.ex("sub", "failed", 9)} Grade backend tickets</span><span style="font-size:11.5px">${w.ex("shell", "timeout", 9)} bin/rspec spec/search</span></div></div>`).join("");
+
+  /* ---------- kinds by statuses ---------- */
+  const COLS = [
+    ["Running", "moving, no badge", null], ["Needs you", "red, stripes move", "need"], ["Your turn", "amber dot", "your"], ["Ready for review", "blue check", "review"],
+    ["Done", "grey check", "done"], ["Failed", "red square", "failed"], ["Timed out", "amber outline", "timeout"], ["Stopped", "grey square", "stopped"]
+  ];
+  const CAN = {
+    agent: ["Running", "Needs you", "Your turn", "Done", "Failed", "Stopped"],
+    sub: ["Running", "Needs you", "Ready for review", "Done", "Failed", "Stopped"],
+    fork: ["Running", "Needs you", "Ready for review", "Done", "Failed", "Stopped"],
+    shell: ["Running", "Done", "Failed", "Timed out", "Stopped"],
+    mon: ["Running", "Done", "Failed", "Timed out", "Stopped"]
+  };
+  const KROW = { agent: ["Main conversation", "Done is Looks finished"], sub: ["Subagent", ""], fork: ["Fork", ""], shell: ["Shell", "Done is exit 0"], mon: ["Monitor", "Done is the change it waited for"] };
+  document.getElementById("grid").innerHTML = `<table><thead><tr><th></th>${COLS.map(c => `<th>${c[0]}<span class="s">${c[1]}</span></th>`).join("")}</tr></thead><tbody>
+    ${Object.keys(REC).map(k => `<tr><td class="kn">${KROW[k][0]}<span>${KROW[k][1]}</span></td>${COLS.map(([n, , b]) => CAN[k].includes(n)
+      ? `<td><span class="cell">${km(k, { badge: b, cls: "l" })}${km(k, { badge: b, cls: "m" })}${km(k, { badge: b, cls: "sm" })}</span></td>`
+      : '<td class="na">does not happen</td>').join("")}</tr>`).join("")}
+  </tbody></table>`;
+
+  /* ---------- in context ---------- */
+  const fill = root => root.querySelectorAll("i[data-m]").forEach(el => { el.outerHTML = km(el.dataset.m, el.dataset.b ? { badge: el.dataset.b } : {}); });
+  fill(document);
+  const clone = (src, dst) => { const c = document.getElementById(src).cloneNode(true); c.removeAttribute("id"); c.setAttribute("aria-hidden", "true"); document.getElementById(dst).appendChild(c); };
+  clone("rail", "sqR"); clone("side", "sqS");
+
+  /* ---------- rules ---------- */
+  const r = (k, o) => km(k, o);
+  document.getElementById("rules").innerHTML = `
+    <div class="rule"><h3>What each mark means</h3><ul>
+      <li>${r("agent")}<span><b>Spark</b>: the main conversation, the Claude you talk to. Turning means it is working.</span></li>
+      <li>${r("sub")}<span><b>Spark on shoulders</b>: a subagent, a helper Claude started with a fresh context. A smaller copy of the agent.</span></li>
+      <li>${r("fork")}<span><b>Branch</b>: a fork, a copy of this conversation going its own way. Beads flow while it runs.</span></li>
+      <li>${r("shell")}<span><b>Prompt</b>: a shell command. The cursor runs while the command runs.</span></li>
+      <li>${r("mon")}<span><b>Radar</b>: a monitor waiting for a change. The hand sweeps while it watches.</span></li>
+      <li>${r("sub", { badge: "failed" })}<span><b>Badge</b>: the work has stopped or needs you. The badge says how; the kind mark under it says what.</span></li>
+    </ul></div>
+    <div class="rule"><h3>Five motions that stay apart</h3>
+      <p>No two kinds share shape and motion. The only shared motion is the agent family, on purpose, and the shoulders separate it.</p>
+      <table class="speeds"><thead><tr><th></th><th>Shape</th><th>Motion</th><th>One cycle</th></tr></thead><tbody>
+        <tr><td>${r("agent")}</td><td>Six points</td><td>Turns clockwise</td><td>1.5 s</td></tr>
+        <tr><td>${r("sub")}</td><td>Head on shoulders</td><td>Head turns clockwise</td><td>1.5 s</td></tr>
+        <tr><td>${r("fork")}</td><td>Branch</td><td>Beads flow up and out</td><td>0.9 s</td></tr>
+        <tr><td>${r("shell")}</td><td>&gt;_ prompt</td><td>Cursor runs to the right</td><td>0.8 s</td></tr>
+        <tr><td>${r("mon")}</td><td>Ring with a hand</td><td>Hand sweeps clockwise</td><td>2.4 s</td></tr>
+        <tr><td>${r("sub", { badge: "need" })}</td><td>Red badge</td><td>Stripes seesaw up and down</td><td>1.1 s</td></tr>
+      </tbody></table>
+      <p class="note">Turning belongs to Claude and to watching; flowing along a line to forks; sideways to shells; up and down only to needs you. Every motion is linear and endless.</p></div>
+    <div class="rule"><h3>Running and still</h3><ul>
+      <li>${r("agent")}<span><b>Running</b>: the mark moves and has no badge. Its moving part has a pale trail or track.</span></li>
+      <li>${r("agent", { still: true })}<span><b>Still</b>: the motion stops in the rest pose, the trail and track go, and the shape turns solid in its kind colour.</span></li>
+      <li>${r("shell", { badge: "done" })}<span><b>Stopped work always has a badge</b>, so a past row never relies on stillness alone. A bare mark always means running.</span></li>
+      <li>${r("sub", { badge: "need" })}<span><b>Needs you</b> stops the kind mark too: the subagent is paused, and the only motion left is the red stripes.</span></li>
+      <li><span class="still-demo">${r("fork")}</span><span><b>Reduced motion</b>: running marks freeze in their rest pose but keep the trail or track, and no badge.</span></li>
+      <li>${r("agent", { badge: "your" })}<span><b>Sessions</b> use the agent mark: the spark while working, the still spark with a badge when it waits for you.</span></li>
+    </ul></div>`;
+
+  /* reduced motion: follow the system setting, or preview it with the button */
+  const mq = matchMedia("(prefers-reduced-motion: reduce)");
+  const btn = document.getElementById("rm");
+  const set = on => { document.documentElement.classList.toggle("rm", on); btn.setAttribute("aria-pressed", String(on)); };
+  set(mq.matches || location.hash === "#rm");
+  mq.addEventListener("change", e => set(e.matches));
+  btn.addEventListener("click", () => set(btn.getAttribute("aria-pressed") !== "true"));
+})();
+</script>
+</body>
+</html>

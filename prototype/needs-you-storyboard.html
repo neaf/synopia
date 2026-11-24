@@ -1,0 +1,547 @@
+<!-- Design history, not the spec: where this storyboard differs from docs/requirements.md (R6.4 keys, R8.3 kind marks), the requirements win. All data in it is invented. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: when Claude needs you</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* app tokens, copied from app.html */
+  :root {
+    --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+    --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
+    --dot-red: #CF222E; --dot-amber: #D4A72C; --dot-green: #2DA44E; --dot-off: #AFB8C1;
+    --add-bg: #DAFBE1; --del-bg: #FFEBE9; --sel: #DDF4FF;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--canvas); color: var(--ink); font: 400 14.5px/1.5 var(--sans); }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  button { font: inherit; color: inherit; }
+  kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 2.5px; padding: 0 3.5px; background: var(--panel); color: var(--ink-2); line-height: 1.4; }
+  code { font-family: var(--mono); font-size: .88em; font-variant-ligatures: none; }
+
+  /* ---------- storyboard page ---------- */
+  .wrap { max-width: 1440px; margin: 0 auto; padding: 0 48px; }
+  .top { padding: 36px 0 8px; }
+  .top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -.01em; }
+  .top p { margin: 0; color: var(--ink-2); max-width: 78ch; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 14px 0 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .toc a { color: var(--link); }
+  section { padding: 8px 0 4px; }
+  h2 { font-size: 21px; line-height: 1.25; margin: 52px 0 6px; }
+  h3 { font-size: 16px; margin: 0 0 4px; }
+  .lede { margin: 0 0 18px; color: var(--ink-2); max-width: 78ch; }
+  .note { color: var(--ink-2); max-width: 72ch; margin: 0; }
+  .cap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 32px; margin: 16px 0 14px; }
+  .cap ul { margin: 4px 0 0; padding-left: 1.1em; color: var(--ink-2); }
+  .cap li { margin: 0 0 3px; }
+  .cap h4 { margin: 0; font-size: 14px; }
+  .cap .no li::marker { content: "✕  "; color: var(--red); font-size: 12px; }
+  .cap .no s { text-decoration-color: var(--faint); color: var(--ink-3); }
+  .mk { font-family: var(--mono); font-size: 12px; color: var(--faint); } .mk.ok { color: var(--green); } .mk.cur { color: var(--link); }
+  .frame-wrap { width: 1440px; margin: 0 auto; }
+  .frame-wrap > .label { font-size: 12.5px; color: var(--ink-3); padding: 0 48px 6px; }
+
+  /* diagnosis: what the old card got wrong */
+  .diag { max-width: 760px; }
+  .findings { margin: 0; padding: 0; list-style: none; counter-reset: f; max-width: 64ch; }
+  .findings li { display: grid; grid-template-columns: 30px minmax(0, 1fr); margin: 0 0 14px; }
+  .findings li::before { counter-increment: f; content: counter(f); width: 22px; height: 22px; border-radius: 50%; background: var(--ink); color: #fff; font: 700 12px/22px var(--sans); text-align: center; margin-top: 1px; }
+  .findings b { display: block; }
+  .findings span { color: var(--ink-2); }
+
+  /* states */
+  .pair { display: grid; grid-template-columns: 300px 873px; gap: 40px; align-items: start; margin: 0 0 28px; }
+  .pair .txt h3 { margin-top: 6px; }
+  .pair .txt p { margin: 0 0 6px; color: var(--ink-2); }
+  .solo { background: var(--canvas); }
+  .ends { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .ends h3 { margin-bottom: 8px; }
+  .ends .verdictline { font-size: 13px; color: var(--ink-2); margin: 8px 0 0; max-width: 70ch; }
+
+  .rules { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 48px; margin: 0; padding: 0; list-style: none; max-width: 1200px; }
+  .rules li { padding: 9px 0 10px; border-top: 1px solid var(--line); }
+  .rules b { display: block; font-size: 14.5px; }
+  .rules span { color: var(--ink-2); font-size: 14px; }
+  .keys { border-collapse: collapse; margin: 6px 0 0; font-size: 14px; max-width: 1000px; }
+  .keys td { padding: 5px 24px 5px 0; vertical-align: top; border-top: 1px solid var(--line); }
+  .keys td:first-child { white-space: nowrap; }
+  .keys td:last-child { color: var(--ink-2); }
+  .keys tr.gone td { color: var(--ink-3); }
+  footer { padding: 48px 0 64px; color: var(--ink-3); font-size: 13px; }
+
+  /* ---------- app frame (1440 x 1000), simplified copy of app.html ---------- */
+  .app { width: 1440px; height: 1000px; display: grid; grid-template-columns: 270px minmax(0, 1fr); grid-template-rows: 1000px; font: 400 13px/1.5 var(--sans); background: var(--canvas); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); overflow: hidden; }
+  .side { background: #22272E; color: #E6EDF3; display: flex; flex-direction: column; min-height: 0; }
+  .side-head { padding: 12.5px 12.5px 9px; }
+  .side-head h1 { font-size: 15.5px; margin: 0; color: #F0F6FC; }
+  .side-scroll { flex: 1; }
+  .g-name { font-weight: 700; font-size: 12px; padding: 11px 12.5px 5.5px; color: #F0F6FC; }
+  .g-name.others { color: #9198A1; }
+  .row { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 9px; padding: 7px 12.5px 8px; width: calc(100% - 6px); margin-left: 6px; }
+  .row .r-side { width: 16px; height: 16px; border: 1px solid #545D68; border-radius: 4px; display: grid; place-items: center; background: #2D333B; margin-top: 1px; }
+  .row .r-title { font-weight: 500; font-size: 12px; line-height: 1.3; color: #CDD9E5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row .r-state { font-size: 11px; line-height: 1.3; font-weight: 500; }
+  .row .r-now { font-size: 11px; color: #9198A1; line-height: 1.35; }
+  .row.amber .r-state { color: #E3B341; } .row.red .r-state { color: #FF7B72; } .row.green .r-state { color: #56D364; }
+  .row.cur { background: var(--canvas); border-radius: 9px 0 0 9px; }
+  .row.cur .r-title { color: var(--ink); font-weight: 700; }
+  .row.cur .r-now { color: var(--ink-2); }
+  .row.cur .r-state { color: var(--red); }
+  .row.cur .r-side { background: var(--panel); border-color: #8C959F; }
+  .side .ind { --red: #FF7B72; --ink-3: #9198A1; --green: #3FB950; }
+  .side .row.cur .ind { --red: #CF222E; --ink-3: #6E7781; --green: #1A7F37; }
+  .side-foot { border-top: 1px solid #373E47; padding: 9px 12.5px; display: flex; align-items: center; font-size: 11px; color: #9198A1; }
+  .side-foot .btn { margin-left: auto; background: #2D333B; border: 1px solid #444C56; color: #E6EDF3; border-radius: 5.5px; padding: 4.5px 11px; font-size: 12px; font-weight: 500; }
+
+  .conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+  .c-head { grid-column: 1 / -1; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; }
+  .c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
+  .c-now { color: var(--ink-2); margin: 0; }
+  .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
+  .c-meta .mono { font-family: var(--mono); font-size: .9em; color: var(--ink-2); }
+  .c-acts { grid-row: 1 / 4; grid-column: 2; display: flex; gap: 7px; align-items: center; font-size: 12px; color: var(--ink-2); }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 5.5px; padding: 4.5px 11px; font-size: 12px; font-weight: 500; font-family: var(--sans); }
+  .btn.primary { background: #1F883D; border-color: #1A7F37; color: #fff; }
+  .btn[disabled] { background: var(--sub); color: var(--faint); border-color: var(--line-2); }
+
+  .log { overflow: hidden; padding: 11px 16px 12.5px; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; }
+  .log, .composer, .qbody { font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; flex: none; }
+  .ln > .g { position: relative; user-select: none; }
+  .ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.5ch - 5px); top: calc(.725em - 5px); }
+  .ln.tool > .g { color: var(--dot-green); }
+  .ln.ask > .g { color: var(--dot-amber); }
+  .ln .name { font-weight: 700; }
+  .ln .dim { color: var(--ink-3); }
+  .ln p { margin: 0 0 .85em; } .ln p:last-child { margin: 0; }
+  .ln ul { margin: 0 0 .85em; list-style: none; padding-left: 2ch; } .ln ul > li::before { content: "- "; margin-left: -2ch; }
+  .ln li { margin: 0; }
+  .ln h4 { margin: 0 0 .4em; font-size: 1em; }
+  .ln code { color: var(--link); font-size: 1em; }
+  .flist { display: grid; grid-template-columns: 3ch minmax(0, max-content) auto; justify-content: start; column-gap: 2ch; }
+  .fp { color: var(--link); } .add { color: var(--green); } .del { color: var(--red); } .new { color: var(--ink-3); }
+  .doneln { color: var(--ink-3); margin-bottom: 4px; }
+  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; flex: none; }
+  .prompt > .g { color: var(--link); }
+  .prompt p { margin: 0; }
+  .opt-line { color: var(--ink-3); white-space: pre; }
+  .opt-line.picked { color: var(--ink); font-weight: 700; }
+  /* the waiting line that closes the transcript, as in app.html */
+  .ln.wait { margin-bottom: 0; }
+  .ln.wait b { color: var(--red); }
+  .old-wait { color: var(--red); margin: 0 0 11px; }
+
+  .dock { grid-column: 1; }
+  /* rail, in the app's order: main conversation, running, past */
+  .rail { grid-column: 2; grid-row: 2 / 4; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .mainrow { display: flex; align-items: center; gap: 7px; padding: 8px 12.5px; background: #FFEBE9; box-shadow: inset 3px 0 0 var(--red); border-bottom: 1px solid var(--line); border-radius: 7px 7px 0 0; font-size: 11.5px; font-weight: 700; flex: none; }
+  .mainrow span { margin-left: auto; font-weight: 400; color: var(--ink-2); font-size: 11px; }
+  .rail h3 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; display: flex; align-items: baseline; gap: 7px; }
+  .rail h3 .cnt { margin-left: auto; font-weight: 400; color: var(--ink-3); font-size: 11px; }
+  .running { padding: 9px 0 3px; border-bottom: 1px solid var(--line-2); flex: none; }
+  .rc { margin: 0 9px 6px; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 5.5px; padding: 6px 9px; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 8px; align-items: center; }
+  .rc .n { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rc .k { font-size: 11px; color: var(--ink-3); grid-column: 2; } .rc .k b { color: var(--green); font-weight: 500; }
+  .rc .t { font-family: var(--mono); font-size: 11.5px; font-weight: 700; grid-row: 1 / 3; grid-column: 3; }
+  .past { flex: 1; min-height: 0; overflow: hidden; padding: 9px 0 0;
+    -webkit-mask-image: linear-gradient(to top, transparent 0, #000 60px); mask-image: linear-gradient(to top, transparent 0, #000 60px); }
+  .past h3 { color: var(--faint); }
+  .pr { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 8px; padding: 2.5px 12.5px; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); align-items: center; }
+  .pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* message box: no mode label, no send button; the border is the mode */
+  .composer { display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 14px; align-items: center; }
+  .composer > .g { color: var(--faint); }
+  .composer .ph { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .composer .typed { color: var(--ink); }
+  .composer .caret { display: inline-block; width: 1px; height: 1.2em; background: var(--ink); vertical-align: -.25em; margin-left: 1px; }
+  .dock.normal .composer { background: var(--sub); border-radius: 0 0 7px 7px; }
+  .dock.insert { box-shadow: 0 0 0 2px #54AEFF; }
+  .dock.insert .composer > .g { color: var(--link); }
+
+  /* ---------- marks (from app.html) ---------- */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+  .ind { display: inline-grid; place-items: center; width: 1em; height: 1em; position: relative; flex: none; vertical-align: middle; line-height: 0; font-size: 11px; }
+  .ind > * { grid-area: 1 / 1; }
+  .ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
+  .ind .arc { width: 1em; height: 1em; border-radius: 50%; border: .17em solid #C6E9D0; border-top-color: var(--green); border-right-color: var(--green); animation: spin .75s linear infinite; }
+  .ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
+  .ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; animation: see 1.1s linear infinite; }
+  .ind .bars i + i { animation-delay: -.55s; }
+  .ind .sq { width: .66em; height: .66em; border-radius: .1em; background: var(--ink-3); }
+  .ind .chk { width: .32em; height: .6em; border: solid var(--ink-3); border-width: 0 .16em .16em 0; transform: translateY(-.07em) rotate(45deg); }
+  @media (prefers-reduced-motion: reduce) { .ind * { animation: none !important; } }
+
+  /* ---------- the needs-you card, copied from app.html (.qa-card, .acc, .o) ---------- */
+  .qa-card { border-bottom: 1px solid var(--line-2); }
+  .nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; border-radius: 7px 7px 0 0; font-size: 12px; }
+  .nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+  .nd-head .why { color: var(--ink-2); }
+  .nd-head .prog { margin-left: auto; color: var(--ink-2); font-size: 11.5px; }
+  .qbody { padding: 9px 12.5px 9px; }
+  .qbody .qt { margin: 0 0 7px; max-width: 110ch; }
+  .opts { display: grid; grid-template-columns: 1.4ch 11px max-content minmax(0, 1fr); column-gap: 1.2ch; row-gap: 1px; margin: 0 0 0 -.6ch; }
+  .o { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline; padding: 2px .6ch; border-radius: 4px; }
+  .o > .k { color: var(--link); font-weight: 700; text-align: right; }
+  .o > .l { font-weight: 700; white-space: nowrap; padding-right: 1.4ch; }
+  .o > .l .rc-t { display: block; font: 500 10.5px/1.35 var(--sans); color: var(--green); }
+  .o > .d { color: var(--ink-3); font-size: 11.5px; max-width: 90ch; }
+  .o.on { background: var(--sel); }
+  .o.on > .l { color: var(--link); }
+  .o.on > .d { color: var(--ink-2); }
+  .o.other > .l { font-weight: 400; color: var(--ink-3); }
+  .o.other.on > .l { font-weight: 700; color: var(--link); }
+  .o.focus { box-shadow: inset 0 0 0 1px #54AEFF; }
+  .radio { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; }
+  .o.on > .radio { border-color: var(--link); }
+  .o.on > .radio::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--link); }
+  .box { width: 11px; height: 11px; border-radius: 2.5px; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; }
+  .o.on > .box { border-color: var(--link); background: var(--link); }
+  .o.on > .box::after { content: ""; position: absolute; left: 2.5px; top: 0; width: 3px; height: 6px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+  .pen { width: 11px; height: 11px; border-radius: 50%; border: 1.5px dashed var(--faint); display: inline-block; vertical-align: -1px; }
+  .o.on > .pen { border-style: solid; border-color: var(--link); background: radial-gradient(circle, var(--link) 0 2px, transparent 2.5px); }
+  .nd-foot { display: flex; align-items: center; gap: 14px; padding: 6px 12.5px 7px; font-size: 11px; color: var(--ink-3); }
+  .nd-foot .btn { margin-left: auto; }
+  .nd-foot .hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .nd-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+  /* accordion: one line per question, the current one open */
+  .acc { display: grid; grid-template-columns: 1.6ch 16ch minmax(0, 1fr); column-gap: 1.2ch; align-items: baseline; width: 100%; padding: 2px .6ch; border-radius: 4px; }
+  .acc .hd { font-weight: 700; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acc .ans { color: var(--link); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .acc .miss { color: var(--ink-3); }
+  .am { text-align: center; color: var(--faint); }
+  .am.ok { color: var(--green); } .am.cur { color: var(--link); }
+  .acc.open { display: block; margin: 3px 0; padding: 0; }
+  .acc-h { display: grid; grid-template-columns: 1.6ch minmax(0, 1fr); column-gap: 1.2ch; padding: 2px .6ch; }
+  .acc.open .acc-h .hd { color: var(--link); font-weight: 700; }
+  .acc-b { margin-left: calc(2.8ch); padding: 3px 0 6px; }
+  .qbody > :only-child .acc-b { margin-left: 0; }
+  /* permission and plan extras (designed here, not in app.html yet) */
+  .cmd { display: block; margin: 0 0 5px; padding: 4px 9px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5px; color: var(--ink); white-space: pre-wrap; max-width: 110ch; font-size: 12px; }
+  .cmd .ps { color: var(--ink-3); user-select: none; }
+  .why2 { color: var(--ink-2); margin: 0 0 7px; max-width: 110ch; }
+  .why2 .who { color: var(--ink-3); }
+  .plan-doc { border-left: 2.5px solid var(--line); padding-left: 1.5ch; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <h1>When Claude needs you</h1>
+    <p>The decided design for Claude's questions, permission prompts and plan approval in the message panel, worked through with an invented M2 execution question. It matches the implementation in app.html. Frames are at the app's size, 1440 by 1000.</p>
+    <ul class="toc">
+      <li><a href="#why">Why it changed</a></li>
+      <li><a href="#design">The design</a></li>
+      <li><a href="#states">States</a></li>
+      <li><a href="#six">Six questions</a></li>
+      <li><a href="#perm">Permission prompt</a></li>
+      <li><a href="#plan">Plan approval</a></li>
+      <li><a href="#end">End of the transcript</a></li>
+      <li><a href="#rules">Rules and keys</a></li>
+    </ul>
+  </header>
+
+  <section id="why">
+    <h2>Why it changed</h2>
+    <p class="lede">The old card had no grid, said everything twice and gave every line the same weight, so the decision was hard to find.</p>
+    <div class="diag">
+      <ol class="findings">
+        <li><div><b>The question was shown twice.</b><span>The transcript repeated the question and its options, then the card showed them again with other numbers.</span></div></li>
+        <li><div><b>The turn looked finished.</b><span>“Files changed” and “Worked for 1h 18m, done” came after the open question.</span></div></li>
+        <li><div><b>The status said nothing specific.</b><span>“Claude is asking you something” hid that there were two questions and how many were answered.</span></div></li>
+        <li><div><b>Boxes inside a panel.</b><span>Six bordered boxes of equal weight made the card about 560 pixels tall, with every question open at once.</span></div></li>
+        <li><div><b>Numbers you couldn't type.</b><span>“2.1” suggested a chord, but number keys only reached the first question.</span></div></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="design">
+    <h2>The design: one question open at a time</h2>
+    <p class="lede">Each question is one line: a status mark, its header, and the answer or “Not answered”. Only the current question is open, with Claude's text and the option rows. A red header replaces the status line and counts the answers. The closed lines are the review, so there is no separate review step.</p>
+  </section>
+</div>
+
+<div class="frame-wrap"><div class="label">Nothing answered yet. The cursor is on the first option of Mark ready.</div><div id="fA"></div></div>
+<div class="wrap">
+  <div class="cap">
+    <div><h4>How it works</h4>
+      <ul><li>Marks: <span class="mk ok">✓</span> answered, <span class="mk cur">●</span> current, <span class="mk">○</span> not answered.</li>
+      <li><kbd>j</kbd> <kbd>k</kbd> move the cursor › through the open question's options, <kbd>Space</kbd> picks. A single-choice pick opens the next unanswered question.</li>
+      <li><kbd>h</kbd> <kbd>l</kbd> open the previous or next question; clicking a line does the same.</li>
+      <li>“Something else” is the last row. <kbd>i</kbd> types it in the message box and <kbd>Enter</kbd> saves it.</li>
+      <li>The message box only shows the mode by its border: grey in normal mode, a blue ring in insert mode. Send lives in the card's footer.</li></ul></div>
+    <div class="no"><h4>Decided against</h4>
+      <ul><li><s>All questions open at once</s> as one stacked list.</li>
+      <li><s>Horizontal tabs</s> for the questions, and <s>questions side by side</s>.</li>
+      <li><s>Number keys to pick</s> (“1 2 3 4 pick”). Numbers do nothing in the card.</li>
+      <li><s>A separate review step</s> before sending.</li>
+      <li><s>Mode labels</s> in the message box and <s>a Send button</s> in it.</li>
+      <li><s>Repeating the question</s> in the transcript while it waits.</li></ul></div>
+  </div>
+
+  <section id="states">
+    <h2>States</h2>
+    <p class="lede">The message panel only, at its real width. The footer keys are the same in every state.</p>
+    <div id="states-list"></div>
+  </section>
+
+  <section id="six">
+    <h2>Six questions</h2>
+    <p class="lede">Claude sometimes asks six questions. The closed lines keep the card about 380 pixels tall, and the transcript keeps most of its room. Questions three to six are written for this storyboard.</p>
+  </section>
+</div>
+<div class="frame-wrap"><div class="label">Two answered, the third open, three not answered.</div><div id="f6"></div></div>
+
+<div class="wrap">
+  <section id="perm">
+    <h2>Permission prompt</h2>
+    <p class="lede">The same card with one open item: the command and Claude's reason, then option rows. The last row is your own words, “Deny” with a reason typed in the message box. With one item there is no header line, no progress and no <kbd>h</kbd> <kbd>l</kbd>.</p>
+  </section>
+</div>
+<div class="frame-wrap"><div class="label">Permission to run a command.</div><div id="fP"></div></div>
+
+<div class="wrap">
+  <section id="plan">
+    <h2>Plan approval</h2>
+    <p class="lede">The plan itself is the last message in the transcript. The card holds only the decision, with “Ask for changes” as the type-your-own row.</p>
+  </section>
+</div>
+<div class="frame-wrap"><div class="label">Plan approval.</div><div id="fL"></div></div>
+
+<div class="wrap">
+  <section id="end">
+    <h2>The end of the transcript while Claude waits</h2>
+    <p class="lede">Files changed comes first, then one waiting line points at the message panel. The question is not repeated, and no “Worked for” line follows until the turn really ends.</p>
+    <div class="ends" id="ends"></div>
+  </section>
+
+  <section id="rules">
+    <h2>Rules</h2>
+    <ul class="rules">
+      <li><b>One question open at a time.</b><span>Every other question is one line: mark, header, answer or “Not answered”. The lines are the review.</span></li>
+      <li><b>The header replaces the status line.</b><span>“Needs you, Claude asks N questions, for X min” and “k of N answered”. It is the only red block on screen.</span></li>
+      <li><b>One place for the decision.</b><span>The transcript gets one waiting line, never a copy of the question or its options.</span></li>
+      <li><b>The waiting line is last.</b><span>Files changed goes before it; “Worked for” waits for the end of the turn.</span></li>
+      <li><b>One structure for every kind.</b><span>Questions, permissions and plans all use one open item with option rows. Reading material, like a plan, goes in the transcript.</span></li>
+      <li><b>Your own words are the last row.</b><span>“Something else”, “Deny” or “Ask for changes”, always typed in the message box.</span></li>
+      <li><b>Rows, not boxes.</b><span>Cursor, mark, label, description on one grid. Only the picked row gets a background; the cursor row gets a thin blue outline.</span></li>
+      <li><b>The border is the mode.</b><span>Grey message box in normal mode, blue ring in insert mode. No mode label, no Send button in the box.</span></li>
+      <li><b>Red means needs you, blue means picked.</b><span>Recommended is a green word under the label. The current question's header is blue.</span></li>
+      <li><b>Claude's words in mono, Synopia's in sans.</b><span>Questions, options and commands are mono like the transcript. The header, hints and buttons are sans.</span></li>
+    </ul>
+    <h3 style="margin-top:28px">Keys in normal mode while Claude waits</h3>
+    <table class="keys">
+      <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>Move the cursor through the open question's options, including the type-your-own row.</td></tr>
+      <tr><td><kbd>Space</kbd></td><td>Pick. Single choice: picks and opens the next unanswered question. Multiple choice: toggles and stays.</td></tr>
+      <tr><td><kbd>h</kbd> <kbd>l</kbd></td><td>Open the previous or next question.</td></tr>
+      <tr><td><kbd>i</kbd></td><td>Type your own answer in the message box. <kbd>Enter</kbd> saves it and opens the next unanswered question; <kbd>Esc</kbd> goes back.</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td>Send, once every question has an answer. Before that it opens the next unanswered question.</td></tr>
+      <tr><td><kbd>J</kbd> <kbd>K</kbd></td><td>Switch sessions, as always.</td></tr>
+      <tr class="gone"><td><kbd>1</kbd> to <kbd>9</kbd></td><td>Not used for picking.</td></tr>
+    </table>
+  </section>
+  <footer>Synopia prototype storyboard. All content is invented for this storyboard.</footer>
+</div>
+
+<script>
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const IND = {
+  pause: '<span class="ind" aria-hidden="true"><span class="bars"><i></i><i></i></span></span>',
+  work: '<span class="ind" aria-hidden="true"><i class="arc"></i></span>',
+  stop: '<span class="ind" aria-hidden="true"><i class="sq"></i></span>',
+  agent: '<span class="ind" aria-hidden="true"><svg viewBox="0 0 12 12" fill="none"><circle cx="6" cy="6" r="4.8" stroke="#1A7F37" stroke-width="1.8"/><circle cx="6" cy="6" r="1.8" fill="#1A7F37"/></svg></span>',
+  chk: '<span class="ind" aria-hidden="true"><i class="chk"></i></span>'
+};
+const md = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+const K = (...k) => k.map(x => `<kbd>${x}</kbd>`).join(" ");
+
+/* the M2 execution questions (invented) */
+const Q = [
+  { h: "Mark ready", q: "All 9 M1 PRs are green. Which ones should I mark ready for review now? Marking ready requests the CODEOWNERS reviews (access-guild on roles.yml, billing-core, web-guild…) and starts a OrchardBot review on each.",
+    o: [["Bottom of each stack", "#523892 [SI M1-1] and #519464 [SI M1-6] now; the rest as each lower PR merges. Reviewers start where merging starts.", true],
+        ["All 9 M1 PRs", "Backend #523892 → #524088 and frontend #519464 → #524116 at once; reviewers can read the whole stacks."],
+        ["Backend stack only", "#523892 to #524088 now; frontend after #523892 merges (it merged branch 70)."],
+        ["Don't mark, I'll do it", "I only make sure everything is ready; you click."]] },
+  { h: "Replies", q: "The 6 M1 reply texts (in orchard/.ai-notes/shared-invoices-m1/review-pass-2026-11-23.md) answer open OrchardBot threads. Should I post them as replies on those threads under your account, or will you?",
+    o: [["You post them for me", "I post exactly the drafted texts as thread replies and leave the threads open for reviewers."],
+        ["I'll post them", "They stay in the notes file."]] }
+];
+/* four more, written for the six-question case */
+const Q6 = [...Q,
+  { h: "Row 11 reply", q: "The row 11 reply on M2-3 (#525033) disagrees with OrchardBot: it says the export guard belongs in M2-5, not M2-3. Post it as drafted, or soften it?",
+    o: [["Post as drafted", "The reply links the M2-5 thread so OrchardBot can resolve both.", true], ["Soften it", "Same point, but asks whether moving the guard is fine instead of stating it."], ["Leave row 11 open", "I skip this reply and you answer the thread yourself."]] },
+  { h: "M2-7 base", q: "M2-7 (INVSH-92) is building on invsh-91. When M2-6 merges, should I rebase M2-7 onto main or keep it stacked?", o: [["Rebase onto main", "", true], ["Keep it stacked", ""]] },
+  { h: "Seed data", q: "Should the M2-11 seed extension also add a viewer without the role, for the export request spec?", o: [["Add it", "", true], ["Leave it out", ""]] },
+  { h: "Flaky spec", q: "M2-1 and M2-2 failed twice on the same Capybara spec. Retry once more, or skip it and open a ticket?", o: [["Retry once more", ""], ["Skip and open a ticket", ""]] }];
+
+/* ---------- app chrome ---------- */
+const side = () => `<aside class="side">
+  <div class="side-head"><h1>Synopia</h1></div>
+  <div class="side-scroll">
+    <div class="g-name">Shared invoice access</div>
+    <div class="row amber"><span class="r-side">${IND.stop}</span><div><div class="r-title">M1 PR split</div><div class="r-state">Your turn, 8 min</div><div class="r-now">Changed the milestone skills to take free-form input</div></div></div>
+    <div class="row red cur"><span class="r-side">${IND.pause}</span><div><div class="r-title">M2 execution: ticket audit</div><div class="r-state">Needs you, 4 min</div><div class="r-now">Checking the export endpoint and the M1 waiting page after your answers</div></div></div>
+    <div class="g-name others">Not in a group</div>
+    <div class="row amber"><span class="r-side">${IND.stop}</span><div><div class="r-title">Command bar search: typo matching (PR 524739)</div><div class="r-state">Your turn, 32 min</div><div class="r-now">Suggested replacing the fuzzy matcher after the support feedback</div></div></div>
+    <div class="row amber"><span class="r-side">${IND.stop}</span><div><div class="r-title">Inbox filters: saved views</div><div class="r-state">Your turn, 26 min</div><div class="r-now">2 shells or monitors running</div></div></div>
+    <div class="row green"><span class="r-side">${IND.work}</span><div><div class="r-title">Docs site: search index</div><div class="r-state">Working</div><div class="r-now">Rebuilding the index on the new parser</div></div></div>
+  </div>
+  <div class="side-foot">5 open sessions <button class="btn" tabindex="-1">New session</button></div>
+</aside>`;
+const head = () => `<header class="c-head panel"><h2 class="c-title">M2 execution: ticket audit</h2>
+  <p class="c-now">Now: Checking the export endpoint and the M1 waiting page after your answers</p>
+  <p class="c-meta">Folder <span class="mono">~/dev/orchard.mk-si-m2-trial</span>, PRs #525033 #525097 #525119 #525121. Tab “m2-shared-invoices-execution-plan”.</p>
+  <div class="c-acts">Default (Claude Opus 5.5) <button class="btn" tabindex="-1">Close session</button></div></header>`;
+const past = ["Row 17 nit on [SI M2-1]|4m", "Build [SI M2-6] INVSH-91|8m", "Build [SI M2-5] INVSH-90|27m", "CI state and open review threads|30m", "Review fixes on [SI M2-4]|12m", "Build [SI M2-4] INVSH-89|11m", "M1-7 configure button fix|9m", "Round-3 review fix on [SI M2-1]|9m", "Resolve M1-9 merge and row 9|8m", "Fix future dates in [SI M2-3]|14m", "M1 review fixes, frontend stack|9m", "Round-2 review fixes on [SI M2-1]|13m", "Merge up and fix [SI M2-3]|11m", "Review fixes on [SI M2-2]|6m", "Review fixes on [SI M2-1]|9m", "Build [SI M2-3] INVSH-88|14m", "Build [SI M2-2] INVSH-87|15m", "Fix guard model lookup in M2-1|5m", "Build [SI M2-1] INVSH-86|12m", "M1-7 add contact-admin line|8m", "Audit cross-cutting M2 risks|14m", "Audit backend M2 tickets vs code|8m", "Audit frontend M2 tickets vs code|7m", "Grade backend M2 tickets|25s"];
+const rail = () => `<aside class="rail panel">
+  <div class="mainrow">${IND.pause} Main conversation <span>Needs you</span></div>
+  <div class="running"><h3>Running <span class="cnt">4 in the background</span></h3>
+    ${[["Build [SI M2-7] INVSH-92", "subagent", "03:51 PM", "11m 09s"], ["Build [SI M2-11] seed branch", "subagent", "03:54 PM", "8m 00s"], ["Run bin/cleanup in the M1 worktree", "shell", "02:44 PM", "1h 17m"], ["CI state and open review threads", "monitor", "03:45 PM", "17m 09s"]]
+      .map(([n, k, s, t]) => `<div class="rc">${IND.work}<span class="n">${n}</span><span class="t">${t}</span><span class="k"><b>${k}</b>, started ${s}</span></div>`).join("")}</div>
+  <div class="past"><h3>Past <span class="cnt">29</span></h3>${past.map(p => { const [n, t] = p.split("|"); return `<div class="pr">${IND.chk}<span class="n">${n}</span><span>${t}</span></div>`; }).join("")}</div>
+</aside>`;
+const frame = (log, dock) => `<div class="app">${side()}<div class="conv">${head()}<div class="log panel">${log}</div>${dock}${rail()}</div></div>`;
+
+/* ---------- transcript ---------- */
+const claude = t => `<div class="ln"><span class="g">●</span><div>${t.split("\n\n").map(p => p.startsWith("- ") ? `<ul>${p.split("\n").map(l => `<li>${md(l.slice(2))}</li>`).join("")}</ul>` : `<p>${md(p)}</p>`).join("")}</div></div>`;
+const tool = (v, o) => `<div class="ln tool"><span class="g">●</span><div><span class="name">${v}</span><span class="dim">(${esc(o)})</span></div></div>`;
+const files = () => `<div class="ln tool"><span class="g">●</span><div><span class="name">Files changed</span> <span class="dim">2 files, click one to see the diff</span>
+  <div class="dim">~/dev/orchard</div><div class="flist"><span class="dim">⎿</span><span class="fp">.ai-notes/shared-invoices-m1/review-pass-2026-11-23.md</span><span><span class="new">new</span> <span class="add">+29</span> <span class="del">-0</span></span></div>
+  <div class="dim">~/dev/orchard.mk-si-m2-trial</div><div class="flist"><span class="dim">⎿</span><span class="fp">.ai-notes/shared-invoices-m2/review-pass-2026-11-23.md</span><span><span class="add">+8</span> <span class="del">-0</span></span></div></div></div>`;
+const before = () => [
+  claude("M2-3 (#525033) is re-running CI after the row 17 merge-up. Its one open thread is row 11, which waits for you to post the reply.\n\nStill running: M2-7 in the M1 worktree, and the M2-11 seed extension in the M2 worktree."),
+  claude("M2-1 (#525016) and M2-2 (#525024) are re-running CI after the row 17 merge-up, both with 0 open threads.\n\nStill running: M2-7 in the M1 worktree, and the M2-11 seed extension in the M2 worktree."),
+  claude("OrchardBot left 6 threads on M2-5 (#525119). Reading them."),
+  tool("Ran", "Read the six open threads on #525119"),
+  claude("You're asking about M1, so I'll check where the M1 PRs stand right now: CI and open threads."),
+  tool("Ran", "Show draft, review and CI state of the M1 PRs"),
+  files()
+].join("");
+const waitLine = what => `<div class="ln wait"><span class="g">${IND.pause}</span><div><b>Waiting for you:</b> <span class="dim">${what}</span></div></div>`;
+const nq = n => n === 1 ? "a question" : `${n} questions`;
+const logQ = n => before() + waitLine(`${nq(n)} from Claude, in the message panel`);
+
+/* ---------- message box: the border is the mode ---------- */
+const PH = "Message M2 execution: ticket audit, / for commands";
+const composer = (mode, text, ph = PH) => `<div class="composer"><span class="g">❯</span>${text
+  ? `<span class="typed">${esc(text)}${mode === "insert" ? '<span class="caret"></span>' : ""}</span>`
+  : `<span class="ph">${mode === "insert" ? '<span class="caret" style="margin:0 2px 0 0"></span>' : ""}${esc(ph)}</span>`}</div>`;
+
+/* ---------- the card, built like qaHTML in app.html ----------
+   qs: [{h, q (html or text), o: [[label, desc, rec]], multi, pre}], st: { qi, oi, picks: {qi: [oi]}, own: {qi: text} } */
+const answered = (st, qi) => (st.picks[qi] || []).length > 0 || !!st.own[qi];
+function card(qs, st, why, opt = {}) {
+  const n = qs.length, done = qs.filter((q, qi) => answered(st, qi)).length, all = done === n;
+  const item = (q, qi) => {
+    const open = qi === st.qi, hd = esc(q.h);
+    const mark = answered(st, qi) ? `<span class="am ok">✓</span>` : open ? `<span class="am cur">●</span>` : `<span class="am">○</span>`;
+    if (!open) return `<div class="acc">${mark}<span class="hd">${hd}</span><span class="${answered(st, qi) ? "ans" : "miss"}">${answered(st, qi) ? esc(st.own[qi] || st.picks[qi].map(i => q.o[i][0]).join(", ")) : "Not answered"}</span></div>`;
+    const picked = st.picks[qi] || [], own = st.own[qi];
+    const other = q.other || { l: "Something else", d: "Press i and type your answer in the message box" };
+    const rows = [...q.o.map(([l, d, rec], oi) => ({ l, d, rec, oi, on: picked.includes(oi) })), { l: other.l, d: own ? `“${own}”` : other.d, oi: q.o.length, on: !!own, other: true }];
+    return `<div class="acc open">${n > 1 ? `<div class="acc-h">${mark}<span class="hd">${hd}</span></div>` : ""}<div class="acc-b">
+      ${q.pre || `<p class="qt">${md(q.q)}</p>`}<div class="opts">${rows.map(r => `<div class="o ${r.on ? "on" : ""} ${r.oi === st.oi ? "focus" : ""} ${r.other ? "other" : ""}">
+        <span class="k">${r.oi === st.oi ? "›" : ""}</span><span class="${r.other ? "pen" : q.multi ? "box" : "radio"}"></span>
+        <span class="l">${esc(r.l)}${r.rec ? `<span class="rc-t">Recommended</span>` : ""}</span><span class="d">${esc(r.d)}</span></div>`).join("")}</div></div></div>`;
+  };
+  const own = opt.own || "your own answer";
+  return `<div class="qa-card">
+    <div class="nd-head"><b>${IND.pause} Needs you</b><span class="why">${why}</span>${n > 1 ? `<span class="prog">${done} of ${n} answered</span>` : ""}</div>
+    <div class="qbody">${qs.map(item).join("")}</div>
+    <div class="nd-foot"><span class="hint"><span>${K("j", "k")} move</span><span>${K("Space")} pick</span>${n > 1 ? `<span>${K("h", "l")} question</span>` : ""}<span>${K("i")} ${own}</span><span>${K("Enter")} send</span></span>
+      <button class="btn ${all ? "primary" : ""}" ${all ? "" : "disabled"} tabindex="-1">${opt.send || `Send answer${n > 1 ? "s" : ""}`}</button></div>
+  </div>`;
+}
+const dock = (cardHTML, mode = "normal", text = "", ph) => `<div class="dock panel ${mode}">${cardHTML}${composer(mode, text, ph)}</div>`;
+const ask2 = (st, mins = 4) => card(Q, st, `Claude asks 2 questions, for ${mins} min`);
+
+/* ---------- the chosen design, full frame ---------- */
+document.getElementById("fA").innerHTML = frame(logQ(2), dock(ask2({ qi: 0, oi: 0, picks: {}, own: {} })));
+
+/* ---------- states ---------- */
+const OWN = "Post the 5 short ones; I'll post the row 11 reply myself";
+const S = [
+  ["Nothing answered", "Mark ready is open with the cursor on its first option. Replies is one line, “Not answered”. Send stays grey.",
+    dock(ask2({ qi: 0, oi: 0, picks: {}, own: {} }))],
+  ["Partly answered", "Space picked “Bottom of each stack”: Mark ready closed to one line with a green ✓ and its answer, and Replies opened as the current question. h goes back to Mark ready.",
+    dock(ask2({ qi: 1, oi: 0, picks: { 0: [0] }, own: {} }))],
+  ["Typing your own answer", "i moves the cursor to “Something else” and switches to insert mode: the message box gets the blue ring, with no label. Enter saves the text as the answer to Replies.",
+    dock(ask2({ qi: 1, oi: 2, picks: { 0: [0] }, own: {} }, 5), "insert", OWN)],
+  ["All answered, ready to send", "Both have a ✓ and the header says 2 of 2 answered. The last question picked stays open; the closed line above is the review. Send answers turns green and Enter sends.",
+    dock(ask2({ qi: 1, oi: 0, picks: { 0: [0], 1: [0] }, own: {} }, 5))],
+  ["Several answers allowed", "For a multiple-choice question the marks are squares and Space toggles without moving on. One question has no header line and no count. Example written for this storyboard.",
+    dock(card([{ h: "Reviewers", multi: true, q: "Besides CODEOWNERS, who should I request on #523892 [SI M1-1]? Pick any.", o: [["OrchardBot", "Automatic review, about 10 minutes.", true], ["Backend guild", "Two people; they reviewed the guard in M1."], ["Billing product", "Checks the copy on the waiting page."]] }],
+      { qi: 0, oi: 1, picks: { 0: [0, 1] }, own: {} }, "Claude asks a question, for 1 min"))],
+];
+document.getElementById("states-list").innerHTML = S.map(([t, p, d]) => `<div class="pair"><div class="txt"><h3>${t}</h3><p>${p}</p></div><div class="solo">${d}</div></div>`).join("")
+  + `<div class="pair"><div class="txt"><h3>Answered, in the transcript</h3><p>Sending clears the card and the status goes back to Working. The waiting line becomes the questions with the picked option marked ❯, and your answers become your turn in the blue prompt style, as in app.html.</p></div>
+  <div class="solo"><div class="panel log" style="display:block">${tool("Ran", "Show draft, review and CI state of the M1 PRs")}${files()}
+    <div class="ln ask"><span class="g">●</span><div>${Q.map((q, qi) => `<p style="margin-bottom:.4em">${md(q.q)}</p><div style="margin-bottom:.85em">${q.o.map(([l, , rec], oi) => `<div class="opt-line ${oi === 0 ? "picked" : ""}">${oi === 0 ? "❯" : " "} ${oi + 1}. ${esc(l)}${rec ? " (Recommended)" : ""}</div>`).join("")}</div>`).join("")}</div></div>
+    <div class="prompt"><span class="g">❯</span><div><p>1. Bottom of each stack (Recommended)</p><p>2. You post them for me</p></div></div>
+    <div class="ln"><span class="g">●</span><div><p>Marking #523892 [SI M1-1] and #519464 [SI M1-6] ready for review, then posting the 6 replies.</p></div></div>
+    <div class="ln" style="margin:0"><span class="g">${IND.work}</span><div><b>Working</b> <span class="dim">Ran(Mark #523892 and #519464 ready for review)</span></div></div>
+  </div></div></div>`;
+
+/* ---------- six questions ---------- */
+document.getElementById("f6").innerHTML = frame(logQ(6), dock(card(Q6, { qi: 2, oi: 0, picks: { 0: [0], 1: [0] }, own: {} }, "Claude asks 6 questions, for 9 min")));
+
+/* ---------- permission ---------- */
+const logP = () => [
+  claude("Row 9 is resolved on M1-9 (#524116). The branch needed a rebase onto the merged M1-8, so its 3 commits changed hashes."),
+  tool("Ran", "Rebase mk/si-m1-9-footer-selectors onto the M1-8 merge"),
+  tool("Ran", "Run the footer selector specs"),
+  claude("The rebase is clean and the 14 footer selector specs pass. I'll push it so CI reruns."),
+].join("") + waitLine("permission to run a command, in the message panel");
+const PERM = { h: "Run command",
+  pre: `<code class="cmd"><span class="ps">$ </span>git push --force-with-lease origin mk/si-m1-9-footer-selectors</code>
+        <p class="why2"><span class="who">In ~/dev/orchard.mk-si-m1.</span> Push the rebased M1-9 branch so CI reruns on the new base. It rewrites the 3 commits on the remote branch; nobody else pushed to it since 03:12 PM.</p>`,
+  o: [["Allow once", "Runs this command now. Claude asks again next time."], ["Always allow", "Never ask again for git push --force-with-lease in this folder, in this session."]],
+  other: { l: "Deny", d: "Press i and tell Claude why or what to do instead" } };
+document.getElementById("fP").innerHTML = frame(logP(), dock(card([PERM], { qi: 0, oi: 0, picks: {}, own: {} }, "Claude wants to run a command, for 2 min", { own: "deny with a reason", send: "Send" })));
+
+/* ---------- plan ---------- */
+const PLAN = `<div class="ln"><span class="g">●</span><div class="plan-doc">
+<h4>Plan: answer the 6 OrchardBot threads on M2-5 (#525119)</h4>
+<p>Four threads ask for code changes, two are questions I can answer from the plan.</p>
+<p><b>1. Fail-closed guard (threads 1 and 2).</b> Move the covered actions list next to the policy in <code>fail_closed_guard.rb</code> and add a spec for an action missing from it.</p>
+<p><b>2. Export endpoint (thread 3).</b> The CSV export skips the access check. Route it through <code>InvoicesPortfolioAccess</code> like the index, and add a request spec for a viewer without the role.</p>
+<p><b>3. N+1 on line items (thread 4).</b> Preload <code>invoice: :customer</code> in the Review tab query. Check with the bullet log on the seed data.</p>
+<p><b>4. Replies (threads 5 and 6).</b> Draft replies in <code>review-pass-2026-11-23.md</code>: the waiting page is M1 scope (link #524116), and the admin import stays admin-only by design.</p>
+<p><b>5. Ship.</b> One commit per thread on <code>invsh-90</code>, merge up through M2-5 only, push, resolve threads 1 to 4. Replies wait for you.</p>
+<p>Not in this plan: the M2-7 Review tab, which a subagent is building now.</p>
+</div></div>`;
+const logL = () => [
+  claude("OrchardBot left 6 threads on M2-5 (#525119). Reading them."),
+  tool("Ran", "Read the six open threads on #525119"),
+  tool("Read", "app/policies/invoices/fail_closed_guard.rb"),
+  tool("Read", "app/controllers/invoices/exports_controller.rb"),
+].join("") + PLAN + waitLine("approval of the plan above, in the message panel");
+const PLANQ = { h: "Plan",
+  pre: `<p class="qt">Answer the 6 OrchardBot threads on M2-5 (#525119) in 5 steps. The plan is the last message in the transcript.</p>`,
+  o: [["Approve, edit freely", "Claude follows the plan and edits files without asking."], ["Approve, ask first", "Claude follows the plan and asks before each file edit."]],
+  other: { l: "Ask for changes", d: "Press i and tell Claude what to change. It replans and asks again" } };
+document.getElementById("fL").innerHTML = frame(logL(), dock(card([PLANQ], { qi: 0, oi: 0, picks: {}, own: {} }, "Claude wrote a plan and waits for your approval, for 6 min", { own: "ask for changes", send: "Send" })));
+
+/* ---------- end of transcript, before and now ---------- */
+const oldEnd = tool("Ran", "Show draft, review and CI state of the M1 PRs") +
+  `<div class="ln"><span class="g" style="color:var(--dot-amber)">●</span><div>${Q.map(q => `<p style="margin-bottom:.4em">${md(q.q)}</p><div style="margin-bottom:.85em">${q.o.map(([l, , rec], i) => `<div class="opt-line">  ${i + 1}. ${esc(l)}${rec ? " (Recommended)" : ""}</div>`).join("")}</div>`).join("")}</div></div>
+  <div class="old-wait">⎿ Waiting for your answer, below</div>${files()}<div class="ln doneln" style="margin:0"><span class="g">${IND.agent}</span><div>Worked for 1h 18m, done 03:57 PM</div></div>`;
+document.getElementById("ends").innerHTML = `
+  <div><h3>Before</h3><div class="panel log" style="display:block;height:640px">${oldEnd}</div>
+    <p class="verdictline">The options were copied above the card, and two lines after the question said the turn was done.</p></div>
+  <div><h3>Now</h3><div class="panel log" style="height:640px">${logQ(2)}</div>
+    <p class="verdictline">Files changed stays with the work it belongs to. The last line is the pause mark and one sentence: “Waiting for you: 2 questions from Claude, in the message panel”.</p></div>`;
+</script>
+</body>
+</html>
