@@ -243,3 +243,12 @@ Scripted run on 2026-11-23: SDK 0.3.330 (bundled CLI 2.1.330, entrypoint `sdk-cl
 - `staleReadFileStateHint` is a new `toolUseResult` field (a string). Inference: it comes from parsing the command (only `sed -i` was recognised, while appends to files that had been Read went unflagged), not from watching the file system.
 
 Cause (from the typings, `sdk.d.ts:8078`): `Settings.bashEditDiffEnabled` is off by default except in some auto/bypassPermissions cases, and the user's interactive CLI has it on. Synopia's driver passes `settings: {bashEditDiffEnabled: true}`; the bash-edits task verifies which edits are then recorded.
+
+
+## Handover for the rearchitect run (2026-11-24)
+
+- `main` is green: `app/check.sh --page` (308 backend tests, 21 page suites). Run it with Node on PATH (asdf `nodejs 22.13.1`).
+- Plan and decisions: `docs/technical-plan.md`, `docs/requirements.md` (behaviour, with every decision since milestone 1), `.attack-plan/synopia-m1/ledger.md` (the author's answers, Q1 to Q12).
+- Run the rearchitect in its own worktree (`git worktree add ~/dev/synopia-rearch -b rearch`): the daemon watches `~/dev/synopia/app/backend/src` and restarts itself on changes when idle, so refactoring in place would restart the running app onto half-done code.
+- Keep the page checks as the behaviour contract: `app/web/dev/cdp/run.sh all` (isolated Chrome and backend per run). No macOS permissions are available (no osascript, UI scripting or screencapture).
+- Undocumented dependencies sit in one module each: `transcript.ts` (JSONL), `status.ts` (the state-events flag), `registry.ts` (Claude Code pid files), `daemon.ts` (its own `daemon.json`). Keep that shape.
