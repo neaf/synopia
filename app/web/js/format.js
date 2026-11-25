@@ -21,6 +21,12 @@ export function dur(ms) {
   const h = Math.floor(m / 60);
   return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d`;
 }
+/* how long ago, in one unit, for the Open list and the folder list: "4 min ago", "2 h ago", "3 d ago", and
+   months past 60 days ("9 mo ago") */
+export function ago(ms) {
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000)), d = Math.floor(m / 1440);
+  return m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : d <= 60 ? `${d} d ago` : `${Math.floor(d / 30)} mo ago`;
+}
 /* a countdown to a time (ms), the rate-limit retry: "in 38s", then "now" */
 export const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
 

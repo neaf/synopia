@@ -161,6 +161,20 @@ Code: `session.ts` `onMessage` (`task_notification`). Source: live runs S4 and M
 - Resume and fork re-send the whole history: one haiku fork of a large session cost $0.25. `unverified` as a general cost model (one spike run). Source: SDK spike row 3 (removed from the repo).
 - A CLI can resume an SDK-made session and the other way round (CLI 2.1.323 read a 2.1.330 transcript).
 
+### Resume and fork in another folder
+
+Settled by one scripted check (`app/backend/perf/fork-cwd.mjs`, 2026-11-25, SDK 0.3.330, one haiku call): a session made in folder A, then A deleted, then two queries with `cwd` B that send only a `shouldQuery: false` message.
+
+| Query | `system/init` | Where the new records go | `listSessions()` |
+|---|---|---|---|
+| `resume: <id>` | the same id, `cwd` B | appended to the old file in A's project folder | the session under A, `cwd` A |
+| `resume: <id>, forkSession: true` | a new id, `cwd` B | a new file in B's project folder, with the whole history | the fork under B, `cwd` B |
+
+- Both work with A gone; neither errors, and neither makes a model call (the turn's `result` is `success` with no assistant message).
+- So a plain resume would leave a session that still names the gone folder. Synopia continues a gone-folder session as a fork (R3.11): `sdk.ts` `buildOptions` sets `forkSession` with `resume` and the new `cwd`, and `session.ts` `continueIn` sends the one context line.
+- The typings' `forkSession()` function copies a transcript within a project folder (`dir`), so it can't move a session to another folder; Synopia doesn't use it.
+- Code: `sdk.ts` `buildOptions`, `session.ts` `continueIn`, `sessions.ts` `continueSession`. Test: `sessions.test.ts` (continue), `scripted-sdk.test.ts` (fork). Source: the check above; the throwaway session's files were deleted after it.
+
 ## The writer's isolated call
 
 Titles and the Now line come from a one-turn query that can't act and writes nothing:
@@ -193,6 +207,7 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 - A user message sent during a turn is queued. `interrupt({cancelQueued: true})` lists under `cancelled` the queued uuids not yet in the transcript, and the turn ends `result/error_during_execution` with `terminal_reason: aborted_streaming`.
 - A `shouldQuery: false` message joins the transcript and starts no turn ("Streaming input and control calls"). A message that starts a turn is written to the transcript as the CLI writes a prompt.
 - `supportedCommands` and `supportedModels` return the script's `menu` in the SDK's shapes, HTML-escaped hints included ("Command and model list shapes").
+- `resume` with `forkSession: true` gives a new id and copies the transcript into the new cwd's project folder with the new id and folder ("Resume and fork in another folder"); a process that took only `shouldQuery: false` context sends `system/init` and no turn.
 - `listSessions()` gives one `SDKSessionInfo` per fixture transcript: `cwd` and `firstPrompt` from its records, `customTitle` and `summary` from its `custom-title` and `ai-title` records, `lastModified` from its mtime.
 
 The script format and what it seeds are in docs/Page checks.md, "The scripted SDK". Test: `app/backend/test/scripted-sdk.test.ts`.

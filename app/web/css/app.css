@@ -316,6 +316,31 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .ol-it[aria-selected="true"] .n { color: var(--link); }
 .ol-empty { color: var(--ink-3); margin: 0; padding: 5.5px 14.5px; }
 .ol-keys { margin: 0; padding: 6.5px 14.5px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--ink-3); }
+.ol-note { margin: 0; padding: 4px 14.5px 5px; font-family: var(--mono); font-size: 12px; line-height: 1.4; color: var(--ink-3); }
+.ol-note[hidden] { display: none; }
+.ol-it .f.gone { text-decoration: line-through; text-decoration-color: var(--faint); }
+/* the folder list (R3.3): a folder, its sessions, when last used; drawn like the Open list */
+.fl-it { display: grid; grid-template-columns: minmax(0, 1fr) 12ch 9ch; gap: 1.5ch; padding: 2px 14.5px; cursor: pointer; }
+.fl-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-it .c, .fl-it .a { color: var(--ink-3); }
+.fl-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+.fl-it:hover { background: var(--sub); }
+.fl-it[aria-selected="true"] { background: #DDF4FF; }
+.fl-it[aria-selected="true"] .p { color: var(--link); }
+.fl-it.gone { color: var(--faint); cursor: default; }
+.fl-it.gone:hover { background: none; }
+.fl-it.mk .p { grid-column: 1 / -1; color: var(--ink-2); }
+.fl-it.mk[aria-selected="true"] .p { color: var(--link); }
+/* fuzzy matches (R3.14), as nota draws them: bold in the link blue; on the selected row also underlined */
+.ol-list b.m, .slash b.m { font-weight: 700; color: var(--link); }
+.ol-list [aria-selected="true"] b.m, .slash [aria-selected="true"] b.m { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+.fl-it.gone b.m { color: inherit; }
+/* its folder is gone (R3.11): one line instead of the field */
+.gone-line { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-3); cursor: pointer; }
+.gone-line b { color: var(--ink); font-weight: 400; }
+.composer.gone .gone-line { display: block; }
+.composer.gone textarea, .composer.gone .attach { display: none; }
+.c-meta .gone { color: var(--ink-2); }
 
 /* background work panel, like a play queue turned upside down:
    past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */

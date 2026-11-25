@@ -6,6 +6,7 @@ State on 2026-11-24, after the rearchitecture (branch `rearch`, worktree `~/dev/
 
 - The app is built and green: `app/check.sh --page` prints four pass lines (backend, shell, web, page with 22 suites).
 - The rearchitecture split the backend into one module per job and one adapter per external system, moved every status rule to `status.ts`, made the page plain ES modules over one shared protocol schema (`app/web/js/protocol.js`, version 2, acked actions), gave the layout to the backend, replaced the `--fake` driver with a scripted SDK, put the daemon on a kernel lock and a `handover` field, and moved the Swift shell to async HTTP.
+- 2026-11-25, sessions in any folder (`prototype/folders-storyboard.html`, approved): the folder list (`folder-list.js`, `folders.ts`), keys n and o, the one matcher `web/js/fuzzy.js` in four lists, gone folders continued as a fork (`continueSession`, the check in docs/Agent SDK.md "Resume and fork in another folder"), protocol version 3, 23 page suites (`folders`). `settings.newSessionCwd` is gone. Open items: docs/functional-requirements.md Known gaps, "Folders".
 - Facts that used to live in this file (measurements, live runs, settled shapes) are in the topic docs. The old version of this file is at tag `rearch-base`; the topic docs cite it by section.
 
 ## How to run

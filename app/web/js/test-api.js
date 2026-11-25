@@ -14,6 +14,7 @@ import { mode } from "./mode.js";
 import { attachments, prompt } from "./composer.js";
 import { qstate, pendingAsk, askKey } from "./card.js";
 import { openList, openListShown } from "./open-list.js";
+import { fl, folderListShown } from "./folder-list.js";
 
 const copy = x => x === undefined || x === null ? null : structuredClone(x);
 const of = (list, types) => copy(types.length ? list.filter(m => types.includes(m.t)) : list);
@@ -56,7 +57,8 @@ export function installTestApi({ inject, render }) {
     card: sid => { const s = state.store.sessions.get(sid ?? state.current), a = s && pendingAsk(s); return a ? copy(qstate[askKey(s, a)]) : null; },
     cards: () => copy(qstate), // every card's state, by "<sid>:<request id>"
     preview: () => ({ shown: previewShown(), path: pv.path }),
-    openList: () => ({ shown: openListShown(), filter: openList.filter }),
+    openList: () => ({ shown: openListShown(), filter: openList.filter, totals: openList.totals }),
+    folderList: () => ({ shown: folderListShown(), fixed: fl.fixed, sid: fl.sid, filter: fl.filter, rows: fl.rows.map(r => ({ kind: r.kind, path: r.path, gone: r.gone })), sel: fl.sel, known: fl.known.length }),
     marks: () => Object.keys(MARKS), // every mark kind
     mark: (kind, size) => ind(kind, size), // a mark's markup
     /* renders on demand, as a server message would: for checks that a render keeps something */

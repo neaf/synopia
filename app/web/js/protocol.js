@@ -5,7 +5,7 @@
    `ack {id, ok, error}` back, to the page that sent it.
 
    Field types: "str", "num", "bool", "obj", "arr", "any"; a trailing "?" also takes a missing field or null. */
-export const VERSION = 2;
+export const VERSION = 3;
 
 /* page to backend */
 export const PAGE = {
@@ -16,6 +16,11 @@ export const PAGE = {
   earlier: { sid: "str", agent: "str?", before: "str" },
   toolOutput: { sid: "str", agent: "str?", toolUseId: "str" },
   listRecent: { filter: "str?" },
+  /* the folder list (R3.3, R3.13): the known folders; one folder's child folders, on Tab; whether named paths are
+     gone (a path inside a protected folder only when `chosen`) */
+  listFolders: {},
+  completeFolder: { path: "str" },
+  checkFolders: { paths: "arr", chosen: "bool?" },
   preview: { path: "str", theme: "str?" },
   open: { path: "str?", url: "str?" },
   /* state the page holds: the last one wins; sent again whole on a reconnect */
@@ -27,7 +32,9 @@ export const PAGE = {
   interrupt: { id: "str?", sid: "str" },
   background: { id: "str?", sid: "str" },
   close: { id: "str?", sid: "str" },
-  newSession: { id: "str?" },
+  /* a folder as the page shows it (`~/…` or absolute); `create`: mkdir -p it first, the create row's */
+  newSession: { id: "str?", cwd: "str", create: "bool?" },
+  continueSession: { id: "str?", sid: "str", cwd: "str", create: "bool?" },
   openSession: { id: "str?", sid: "str" },
   cancelTakeover: { id: "str?", sid: "str" },
   setModel: { id: "str?", sid: "str", model: "str", effort: "str?" },
@@ -47,7 +54,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "close", "newSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup"]);
+export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup"]);
 
 /* backend to page */
 export const SERVER = {
@@ -57,7 +64,7 @@ export const SERVER = {
   session: {
     id: "str", replaces: "str?", title: "str?", name: "str?", now: "str?", cwd: "str?", prs: "arr?", state: "obj?",
     model: "any", effort: "any", ask: "obj?", outbox: "arr?", bang: "obj?", held: "arr?",
-    agents: "arr?", background: "arr?", stream: "str?", layout: "obj?",
+    agents: "arr?", background: "arr?", stream: "str?", layout: "obj?", gone: "bool?",
   },
   /* the sidebar's groups and order, whole, closed sessions' ids included (hidden), after any change */
   layout: { layout: "obj" },
@@ -70,7 +77,14 @@ export const SERVER = {
   menu: { cwd: "str", commands: "arr", models: "arr" },
   toast: { text: "str" },
   toolOutput: { sid: "str", agent: "str?", toolUseId: "str", text: "str" },
-  recent: { filter: "str", sessions: "arr", error: "bool?" },
+  /* the Open list: at most 50 rows, and the totals: past sessions, their folders, how many match the filter */
+  recent: { filter: "str", sessions: "arr", total: "num?", folders: "num?", matched: "num?", error: "bool?" },
+  /* the known folders ({path, sessions, lastUsed}), newest first */
+  folders: { rows: "arr", error: "bool?" },
+  /* the child folders of `path`, the folder typed so far */
+  completion: { path: "str", names: "arr", error: "str?" },
+  /* per path asked: {path, gone} */
+  folderState: { states: "arr" },
   /* a text file's preview, or `opened` for a file the backend opened instead */
   preview: { path: "str", opened: "bool?", display: "str?", lang: "str?", html: "str?", lines: "num?", truncated: "bool?", size: "num?" },
   /* messages that didn't go, back in the box: their texts, and the pasted images they carried ({mediaType, data, n?}) */

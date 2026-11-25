@@ -668,7 +668,6 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   fs.mkdirSync(path.join(claudeDir, 'projects', '-tmp-x'), { recursive: true });
   fs.mkdirSync(cwd, { recursive: true });
   const store = openStore(path.join(root, 'state'), { minIntervalMs: 0 });
-  store.state.settings.newSessionCwd = cwd;
   const a = client(), b = client();
   const clients = new Set<Client>([a, b]);
   let sessions: Sessions | null = null;
@@ -677,7 +676,7 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   const q = fakeQuery();
   sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root });
   const tick = () => new Promise((r) => setTimeout(r, 5));
-  const ph = sessions.newSession();
+  const ph = sessions.newSession(cwd);
   sessions.get(ph)!.send('count slowly', [], '0e9b7f1c-0000-4000-8000-0000000000a1', a);
   await tick();
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: REAL, uuid: 'u-init', capabilities: ['interrupt_cancel_queued_v1'] });

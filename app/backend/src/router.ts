@@ -145,6 +145,7 @@ export class Router {
       view: (client, m) => {
         const sid = sessions.resolve(m.sid as string);
         publisher.view(client, sid, agent(m), str(m.from));
+        if (!agent(m)) sessions.get(sid)?.checkFolder(); // the session you chose: its folder gone or not (R3.11)
         const folder = publisher.meta(sid)?.cwd, s = sessions.get(sid);
         if (folder && s) void menus.viewed(client, folder, s.cwd, s.menuSource());
       },
@@ -152,14 +153,25 @@ export class Router {
       toolOutput: async (client, m) => { await publisher.toolOutput(client, sessions.resolve(m.sid as string), agent(m), m.toolUseId as string); },
       listRecent: (client, m) => {
         const filter = str(m.filter) ?? '';
-        return sessions.listRecent(filter).then(
-          (list) => publisher.reply(client, { t: 'recent', filter, sessions: list }),
+        return sessions.searchRecent(filter).then(
+          (r) => publisher.reply(client, { t: 'recent', filter, sessions: r.rows, total: r.total, folders: r.folders, matched: r.matched }),
           (e) => {
             log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') });
             publisher.reply(client, { t: 'recent', filter, sessions: [], error: true });
           },
         );
       },
+      // the folder list (R3.3, R3.13): known folders (no disk read), one folder's children on Tab, gone checks
+      listFolders: (client) => sessions.listFolders().then(
+        (rows) => publisher.reply(client, { t: 'folders', rows }),
+        (e) => {
+          log('sessions.foldersFailed', { error: String((e as Error)?.name ?? 'error') });
+          publisher.reply(client, { t: 'folders', rows: [], error: true });
+        },
+      ),
+      completeFolder: (client, m) => sessions.folders.complete(m.path as string).then((r) => publisher.reply(client, { t: 'completion', ...r })),
+      checkFolders: (client, m) => sessions.folders.check((m.paths as unknown[]).filter((x): x is string => typeof x === 'string'), m.chosen === true)
+        .then((states) => publisher.reply(client, { t: 'folderState', states })),
       // a text file's read-only preview; anything else opens as `open` does, and the page hears it did
       preview: (client, m) => this.o.bat.then((bat) => previewFile(m.path, {
         bat, theme: themeOf(m.theme), log, display: (p) => displayPath(p, this.o.home), reply: (r) => publisher.reply(client, r), toast: toastTo(client),
@@ -182,7 +194,8 @@ export class Router {
       setModel: (_client, m) => this.act(m.sid, (s) => s.setModel(m.model as string, str(m.effort) || null)),
       cancelTakeover: (_client, m) => this.act(m.sid, (s) => s.cancelTakeover()),
       close: (_client, m) => sessions.close(m.sid as string),
-      newSession: () => { sessions.newSession(); },
+      newSession: (_client, m) => sessions.newSessionIn(m.cwd as string, m.create === true),
+      continueSession: (_client, m) => sessions.continueSession(m.sid as string, m.cwd as string, m.create === true),
       openSession: (_client, m) => sessions.openSession(m.sid as string)
         .catch((): SendResult => ({ ok: false, error: "Synopia couldn't read the list of past sessions." })),
       // a mark only for a subagent an open session has: an unknown id would be stored for nothing;

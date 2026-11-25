@@ -11,7 +11,8 @@ import { drag, dragKey } from "./dnd.js";
 import { renderConv, loadEarlier } from "./transcript.js";
 import { promptKey, askInterrupt, askBackground, askClose } from "./composer.js";
 import { qaKeys } from "./card.js";
-import { openListShown, openListKey } from "./open-list.js";
+import { openListShown, openListKey, showOpenList } from "./open-list.js";
+import { folderListKeys, folderListKey, openNewSession, showFolderList } from "./folder-list.js";
 import { previewShown, previewKey } from "./preview.js";
 import { viewer, viewerKey } from "./images.js";
 
@@ -20,6 +21,7 @@ const LAYERS = [
   { shown: previewShown, key: previewKey },
   { shown: () => !!viewer, key: viewerKey },
   { shown: openListShown, key: openListKey },
+  { shown: folderListKeys, key: folderListKey },
   { shown: () => !!drag?.started, key: dragKey },
 ];
 const inField = t => /INPUT|TEXTAREA|SELECT/.test(t.tagName);
@@ -53,8 +55,12 @@ function sessionKey(e) {
   if (promptKey(e)) return;
   if ((e.key === "Escape" && askInterrupt()) || (e.key === "b" && askBackground()) || (e.key === "x" && askClose())) { e.preventDefault(); return; }
   if (qaKeys(e)) return;
-  const log = document.getElementById("log");
+  const log = document.getElementById("log"), gone = Boolean(cur()?.gone);
+  if (gone && /^[ia/]$/.test(e.key)) { e.preventDefault(); return; } // its folder is gone: no field to type in (R3.11)
   switch (e.key) {
+    case "n": e.preventDefault(); openNewSession(); break; // New session (R9.7)
+    case "o": e.preventDefault(); showOpenList(); break; // Open session (R9.7)
+    case "Enter": if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); } break; // Continue in a folder (R3.11)
     case "J": e.preventDefault(); stepSession(1); break;
     case "K": e.preventDefault(); stepSession(-1); break;
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;

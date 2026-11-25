@@ -212,3 +212,26 @@ test('scripted: every pid file is a live CLI that isn\'t Synopia\'s; a take-over
     t.stop();
   } finally { stop(); }
 });
+
+test('scripted: a fork with another cwd gets a new id and a file under the new folder with the whole history (docs/Agent SDK.md)', async () => {
+  const t = await setup();
+  const next = path.join(t.root, 'next');
+  const src = path.join(t.claudeDir, 'projects', '-tmp-fixture', `${S2}.jsonl`);
+  const before = fs.readFileSync(src, 'utf8');
+  let push: ((m: unknown) => void) | null = null;
+  const prompt = { async *[Symbol.asyncIterator]() { yield* await new Promise<unknown[]>((r) => { push = (m) => r([m]); }); } };
+  const q = t.scripted.sdk.query({ prompt: prompt as never, options: { cwd: next, resume: S2, forkSession: true, canUseTool: (async () => ({ behavior: 'deny', message: 'no' })) as never } });
+  push!({ type: 'user', message: { role: 'user', content: 'Moved here.' }, parent_tool_use_id: null, uuid: '0e9b7f1c-0000-4000-8000-0000000000f1', shouldQuery: false });
+  await sleep(20);
+  const list = await t.scripted.sdk.listSessions();
+  const fork = list.find((s) => s.cwd === next);
+  assert.ok(fork && fork.sessionId !== S2, 'a new id, listed under the new folder');
+  const file = path.join(t.claudeDir, 'projects', next.replace(/[^A-Za-z0-9]/g, '-'), `${fork!.sessionId}.jsonl`);
+  const recs = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(recs.length, before.trim().split('\n').length + 1, 'the whole history, then the context line');
+  assert.ok(recs.every((r) => r.sessionId === fork!.sessionId));
+  assert.equal(recs.at(-1).message.content, 'Moved here.');
+  assert.equal(fs.readFileSync(src, 'utf8'), before, 'the old file is left as it was');
+  q.close?.();
+  t.stop();
+});

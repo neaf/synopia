@@ -116,6 +116,13 @@ export class Transcripts {
     this.listener?.closed(id);
   }
 
+  // The session continues in another folder (session.ts continueIn): the folder its meta shows, kept
+  // over the id change that follows.
+  moveCwd(id: string, cwd: string): void {
+    const s = this.live.get(id);
+    if (s) s.cwd = cwd;
+  }
+
   // The session's id changed (a new session's real id from system/init, or a conversation_reset):
   // the reading starts again on the new id's file, from the start. The cwd stays.
   rekey(oldId: string, newId: string): void {

@@ -23,5 +23,6 @@
   "model": null,
   "effort": null,
   "outbox": [],
-  "bang": null
+  "bang": null,
+  "gone": false
 }

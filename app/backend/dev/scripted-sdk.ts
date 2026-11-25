@@ -204,14 +204,21 @@ class ScriptedSession implements QueryLike {
   private running = false; // a turn runs
   private queued: { uuid: string; text: string }[] = []; // sent during the turn
   private seqs = new Set<Turn>();
+  private inited = false; // its system/init went out
 
   constructor(env: Scripted, options: Options, prompt: AsyncIterable<SDKUserMessage>) {
     this.env = env;
     this.sid = options.resume ?? randomUUID();
     this.cwd = options.cwd ?? '';
     this.canUseTool = options.canUseTool as CanUseTool;
+    // a fork (docs/Agent SDK.md, "Resume and fork in another folder"): a new id, the whole history copied
+    // into a new file under the new cwd's project folder
+    if (options.resume && options.forkSession) {
+      this.sid = randomUUID();
+      env.fork(options.resume, this.sid, this.cwd);
+    }
     const script = env.script.sessions[this.sid];
-    if (options.resume && script?.steps?.length && !env.played.has(this.sid)) {
+    if (options.resume && !options.forkSession && script?.steps?.length && !env.played.has(this.sid)) {
       env.played.add(this.sid);
       void this.play([{ message: this.init() }, ...script.steps], true);
     }
@@ -260,6 +267,8 @@ class ScriptedSession implements QueryLike {
       const text = textOf(m.message.content);
       if (m.shouldQuery === false) {
         this.env.append(this.sid, this.cwd, [{ type: 'user', uuid, message: { role: 'user', content: m.message.content } }]);
+        // a process that so far took only context still says system/init, with no turn (docs/Agent SDK.md)
+        if (!this.inited) { this.inited = true; await this.out.deliver({ uuid: randomUUID(), ...this.init() } as unknown as SDKMessage); }
         continue;
       }
       if (this.running) {
@@ -315,6 +324,7 @@ class ScriptedSession implements QueryLike {
     if (step.send !== undefined) this.env.send(this.sid, step.send);
     if (step.message) {
       const m = { uuid: randomUUID(), session_id: this.sid, ...step.message };
+      if (m.type === 'system' && m.subtype === 'init') this.inited = true;
       if (m.type === 'system' && m.subtype === 'session_state_changed') this.running = m.state !== 'idle';
       if (m.type === 'result') this.queued = this.queued.filter((q) => !this.landed(q));
       await this.out.deliver(m as unknown as SDKMessage);
@@ -407,6 +417,13 @@ export class Scripted {
     };
   }
 
+  // The script's home is made up (/Users/fixture): its folders count as there, as its terminals are
+  // pretend, so a fixture session isn't "Folder gone" (R3.11). Real folders elsewhere are checked.
+  readonly pretendFolder = (abs: string): boolean => {
+    const h = this.script.home;
+    return Boolean(h) && (abs === h || abs.startsWith(`${h}/`));
+  };
+
   get home(): string | undefined {
     return this.script.home;
   }
@@ -455,6 +472,14 @@ export class Scripted {
     const f = path.join(this.claudeDir, 'projects', (cwd || '/tmp').replace(/[^A-Za-z0-9]/g, '-'), `${sid}.jsonl`);
     this.files.set(sid, f);
     return f;
+  }
+
+  // A fork's file: every record of the old session, with the new id and folder.
+  fork(from: string, to: string, cwd: string): void {
+    const recs = records(this.fileOf(from, '')).map((r) => ({ ...r, sessionId: to, ...('cwd' in r ? { cwd } : {}) }));
+    const file = this.fileOf(to, cwd);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, recs.map((r) => JSON.stringify(r) + '\n').join(''));
   }
 
   append(sid: string, cwd: string, recs: Record<string, unknown>[]): void {

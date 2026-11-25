@@ -46,7 +46,8 @@ Rules the design keeps:
 | `store.ts` | `state.json`: load, validate every entry, cap growing maps, atomic write at most 1/s, retry after a failed write, sync flush on any exit, `.bad-<ms>` on corrupt; `ReviewedMarks`. |
 | `ui-state.ts` | UI state (R3.9): patch, caps, drafts as files, prune on close and at start, rekey on id swap; never clears `current`/`view` on an empty entry. |
 | `layout.ts` | The one layout owner: applies page intents (move, new group, rename group), reconciles with the open list, renames on id swap, keeps closed ids in place. Pure functions plus the `Layouts` owner. |
-| `sessions.ts` | The set of open sessions: open list, new/open/close, `listRecent`, id aliases, one `rekey` that moves the whole per-session record. |
+| `sessions.ts` | The set of open sessions: open list, new (in a folder, made first on request)/open/close/continue (fork into another folder), `listRecent` (the matcher over every past session, with totals), `listFolders`, id aliases, one `rekey` that moves the whole per-session record. |
+| `folders.ts` | Folders on disk, the only module that touches them for the folder list (R3.13, NFR-13): the known-folders list from Synopia's open list and `listSessions()` (no read), `~` expansion, one-folder completion (one `readdir`, injectable for the test that counts reads), gone checks of named paths with the protected-folder rule, and the one write, `mkdir -p` of a typed path. |
 | `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background. |
 | `cards.ts` | Needs-you requests: park `canUseTool` FIFO per session, abort cleanup, answer mapping (questions, permission, plan), "always allow" session rules that clear on close (Q6). |
 | `bang.ts` | `!` commands: run in a process group, cap by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. |
@@ -95,10 +96,12 @@ Dev and test only (not loaded in production):
 | `js/preview.js` | File preview pane and find. |
 | `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back. |
 | `js/card.js` | Needs-you card and the status line; keeps picks until the answer is acked. |
-| `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, sidebar drag), then the session keys; `renderAll`. |
+| `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, folder list, sidebar drag), then the session keys (n, o among them); `renderAll`. |
 | `js/mode.js` | Normal and insert mode (`setMode`, `paintMode`); the box is the only indicator. |
 | `js/toast.js` | The toast line. |
-| `js/open-list.js` | Open session list, New session. |
+| `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
+| `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
+| `js/folder-list.js` | The folder list (New session and "Continue in a folder"): known folders, path completion on Tab, the create row, gone rows, the fixed list with no open session. |
 | `js/theme-switch.js` | The theme choice: footer switch, system listener, UI state `theme`, the localStorage copy for first paint. |
 | `js/theme.js` | Classic head script: theme before first paint from the localStorage copy; no globals. |
 | `css/app.css`, `css/dark.css`, `css/preview.css`, `fonts/` | Look; fonts bundled (Q8, OFL), no Google Fonts. |
@@ -121,7 +124,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 ### Tooling
 
-`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 22 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
+`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 23 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
 
 ## Data flow
 
@@ -131,8 +134,9 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 4. The CLI writes JSONL. `tail` -> `claude-jsonl` (classify) -> `transcript` (reduce) inside `transcripts` -> `status` (transcript facts) and `publisher` (items). The SDK stream carries only control and live state (R12); the stream preview is cleared when its record lands.
 5. `cli-terminals` watches pid files -> `session` yields or takes over; `macos` gives process facts.
 6. `publisher` flushes once per change batch: `session` meta (with `state` from `status`), then `agents`/`background`, then `items`. Every module that changes visible state tells the publisher; nobody else sends frames.
-7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, reviewed, settings and UI state. `layout` and `ui-state` own their sections; `store` owns the file.
-8. Shell: `Backend` polls `/api/badge` (cached count from `status`, O(1)) every 2 s on an async session; on loss reads `daemon.json` `handover` to wait for the successor.
+7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, reviewed, settings and UI state.
+8. Folders: the page asks `listFolders` when the folder list opens (no disk read: the open list and `listSessions()`), `completeFolder` on Tab (one `readdir`), `checkFolders` for the rows on screen once per opening and for a typed path when typing stops; `newSession`/`continueSession` with `create` make the folder first. A continue starts the session's process with `resume`, `forkSession` and the new `cwd`; its `system/init` id goes through `rekey` ('moved'), which also moves the open entry to the new folder. `layout` and `ui-state` own their sections; `store` owns the file.
+9. Shell: `Backend` polls `/api/badge` (cached count from `status`, O(1)) every 2 s on an async session; on loss reads `daemon.json` `handover` to wait for the successor.
 
 ## Threading and timing model
 
@@ -145,12 +149,12 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 ## Interfaces
 
-### WebSocket protocol (`app/web/js/protocol.js` is the source, `VERSION` 2)
+### WebSocket protocol (`app/web/js/protocol.js` is the source, `VERSION` 3)
 
 - Transport: `/ws`, `auth` first within 10 s, 32 MB cap, close 4001 on auth failure, 1009 on oversize.
 - `hello` carries `v` (protocol version) and `code` (daemon code hash). A page of another version shows "Updating…", sends nothing and waits; it reloads once for a newer daemon.
-- Server to page: `hello`, `session` (meta plus `state` from `status`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `recent`, `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
-- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession`, `openSession {sid}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from}`, `earlier`, `toolOutput`, `listRecent`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
+- Server to page: `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
+- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from}`, `earlier`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
 - At run time a field more is ignored both ways; a frame that doesn't fit is dropped with a log line or console warning.
 - Contract tests: golden frames in `app/backend/test/golden/`, checked strictly against the schema by `protocol-golden.test.ts`.
 
@@ -176,6 +180,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 | `<state>/backend.log` | `log.ts` | page checks (preview, open) |
 | `~/.claude/projects/**` | Claude Code | `tail.ts` / `claude-jsonl.ts` |
 | `~/.claude/sessions/<pid>.json` | Claude Code | `cli-terminals.ts` (never `*.key`) |
+| Your folders | you | `folders.ts`: one `readdir` on Tab, stats of named paths, `mkdir -p` of a typed path on its create row; `session.ts` stats its own folder |
 
 `<state>` is `~/Library/Application Support/Synopia/` for the app, `app/.dev-state/` for `dev.sh`, a temp folder per page-check run. The daemon's files are in [Daemon files](Daemon%20files.md).
 
@@ -199,10 +204,10 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
   "ended":    {"<sid>": 0},
   "endedFailed": {"<sid>": true},
   "written":  {"<sid>": {"title": "…", "now": "…", "at": 0, "history": [{"title": "…", "at": 0}]}},
-  "settings": {"writerModel": "haiku", "model": "…", "newSessionCwd": "…"},
+  "settings": {"writerModel": "haiku", "model": "…"},
   "ui": {
     "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "openBg": "<key>|null", "theme": "light|dark|null",
-    "openList": {"filter": "…"}, "preview": {"path": "…", "scroll": 0, "find": "…"},
+    "openList": {"filter": "…"}, "folderList": {"filter": "…", "sid": "<sid continued>|null"}, "preview": {"path": "…", "scroll": 0, "find": "…"},
     "viewer": {"srcs": ["/api/image?sid=…&ref=…"], "froms": ["…"], "i": 0},
     "sessions": {"<sid>": {
       "scroll":  {"<view>": {"id": "<block key>", "off": 0}, "<view>": {"bottom": true}},
@@ -323,8 +328,8 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-PLAT-18 | build.sh, app/web/icon |
 | FR-PLAT-19 | daemon-files.ts, log.ts, daemon.ts |
 | FR-SES-01 | sessions.ts, store.ts |
-| FR-SES-02 | sessions.ts, store.ts, open-list.js |
-| FR-SES-03 | sessions.ts, sdk.ts, open-list.js |
+| FR-SES-02 | sessions.ts, folders.ts, folder-list.js, fuzzy.js |
+| FR-SES-03 | sessions.ts, sdk.ts, fuzzy.js, open-list.js |
 | FR-SES-04 | sessions.ts, session.ts, cards.ts, ui-state.ts |
 | FR-SES-05 | writer.ts, sdk.ts |
 | FR-SES-06 | transcript.ts, claude-jsonl.ts, publisher.ts |
@@ -337,6 +342,10 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-SES-13 | sdk.ts |
 | FR-SES-14 | session.ts, sdk.ts, protocol.js, composer.js |
 | FR-SES-15 | none (future) |
+| FR-SES-16 | session.ts, sessions.ts, folders.ts, sdk.ts (`forkSession`), claude-jsonl.ts (the context line), publisher.ts, composer.js, folder-list.js |
+| FR-SES-17 | folder-list.js, transcript.js |
+| FR-SES-18 | fuzzy.js, sessions.ts, open-list.js, folder-list.js, composer.js |
+| FR-SES-19 | folders.ts, sessions.ts, folder-list.js |
 | FR-STATE-01 | ui-state.ts, ui-state.js |
 | FR-STATE-02 | store.ts, daemon.ts |
 | FR-SIDE-01 | app.css, sidebar.js |
@@ -397,6 +406,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-KEY-04 | composer.js, session.ts, sdk.ts |
 | FR-KEY-05 | composer.js, session.ts |
 | FR-KEY-06 | composer.js, keys.js |
+| FR-KEY-07 | keys.js, folder-list.js, open-list.js |
 | FR-REV-01 | status.ts, store.ts, router.ts, publisher.ts, transcript.js, rail.js |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |
@@ -410,4 +420,4 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-TOOL-07 | none (dropped, Q10) |
 | FR-TOOL-08 | test/upgrade.sh, test/upgrade.ts |
 
-NFRs: NFR-01 the adapters table above; NFR-02 `sdk.ts` and the topic docs; NFR-03 the page modules and the `motion` suite; NFR-04 `chrome-bin.sh` and the cdp harness; NFR-05 `check.sh`; NFR-06 `macos.ts`, `daemon.ts` (async hash), `transcripts.ts` (async rereads); NFR-07 `router.ts`, `server.ts`, `daemon.ts`, `session.ts`; NFR-08 `server.ts`, `open.ts`, `log.ts`, `WebView.swift`; NFR-09 `tail.ts` (perf test in `tail.test.ts`), `session.ts` idle end; NFR-10 `build.sh`, `app/web/fonts`; NFR-11 fixtures with invented data, `cli-terminals.ts` (never `*.key`); NFR-12 `store.ts`.
+NFRs: NFR-01 the adapters table above; NFR-02 `sdk.ts` and the topic docs; NFR-03 the page modules and the `motion` suite; NFR-04 `chrome-bin.sh` and the cdp harness; NFR-05 `check.sh`; NFR-06 `macos.ts`, `daemon.ts` (async hash), `transcripts.ts` (async rereads); NFR-07 `router.ts`, `server.ts`, `daemon.ts`, `session.ts`; NFR-08 `server.ts`, `open.ts`, `log.ts`, `WebView.swift`; NFR-09 `tail.ts` (perf test in `tail.test.ts`), `session.ts` idle end; NFR-10 `build.sh`, `app/web/fonts`; NFR-11 fixtures with invented data, `cli-terminals.ts` (never `*.key`); NFR-12 `store.ts`; NFR-13 `folders.ts` (`folders.test.ts` counts the reads).
