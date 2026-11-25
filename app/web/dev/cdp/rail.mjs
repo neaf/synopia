@@ -97,5 +97,12 @@ check('the header has the same height and line tops in the main and the subagent
 check("the main conversation's header has the model button only", (await ev(`[...document.querySelectorAll('.c-head .c-acts button')].map((b) => b.id).join()`)) === 'model-label');
 check("the sidebar counts only the main thread's shells", (await ev(`document.querySelector('#groups .row[data-id^="66666666"] [data-line="bg"]')?.textContent.trim()`)) === '1 shell or monitor running');
 check("the main transcript doesn't show them", await ev(`!/Resize the images|Watch the resize log|Optimise the images/.test(document.getElementById('log').textContent)`));
+// a shell card expands to its command; clicking Main conversation folds it and shows the main conversation
+await ev(`document.querySelector('.rail .card[data-bg]').click()`);
+await sleep(300);
+const bgOpen = await ev(`document.querySelector('.rail .card[data-bg]').getAttribute('aria-expanded') === 'true' && !!document.querySelector('.rail .bw-detail')`);
+await ev(`document.querySelector('[data-back-main]').click()`);
+await sleep(300);
+check('clicking Main conversation folds an expanded shell and shows the main conversation', bgOpen && await ev(`document.querySelector('.rail .card[data-bg]').getAttribute('aria-expanded') === 'false' && !document.querySelector('.rail .bw-detail') && document.querySelector('[data-back-main]').getAttribute('aria-current') === 'true'`));
 c.print();
 c.close();

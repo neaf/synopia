@@ -474,7 +474,7 @@ conv.addEventListener("click", e => {
     e.preventDefault(); e.stopPropagation();
     selectView(t.dataset.agent); renderConv();
   }
-  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { if (openBg === view) setOpenBg(null); selectView(null); renderConv(); } // leaving a subagent folds its card
+  else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { setOpenBg(null); selectView(null); renderConv(); } // Main conversation (or Back) folds the expanded shell or monitor
   else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { setOpenBg(openBg === t.dataset.bg ? null : t.dataset.bg); renderRail(); }
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
