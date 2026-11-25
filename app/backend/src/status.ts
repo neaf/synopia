@@ -104,6 +104,7 @@ export class SessionStatus {
   private external = false; // a main turn running in another process, from the transcript
   private ask: PendingAsk | null = null; // a question or plan waiting in another process, from the transcript
   private stopping = false; // an interrupt was sent and its result hasn't come yet
+  private hurrying = false; // f, f interrupted the turn so its queued messages run now: no Stop
   private signedOut: boolean;
   private compacting = false;
   private retry: { attempt: number; max: number; at: number } | null = null;
@@ -130,6 +131,11 @@ export class SessionStatus {
 
   get working(): boolean {
     return this.running;
+  }
+
+  // Messages pushed during the turn that no reply has listed yet (f, f sends them now, R9.8).
+  get queuedCount(): number {
+    return this.queued.length;
   }
 
   // Another process runs the main turn, or asks its question, by the transcript (no process of ours).
@@ -195,6 +201,7 @@ export class SessionStatus {
     } else if (state === 'idle') {
       this.turnOver();
       this.stopping = false; // an interrupt after the turn's result had nothing to stop
+      this.hurrying = false;
     }
     this.update();
   }
@@ -209,11 +216,20 @@ export class SessionStatus {
   // The interrupt never reached the CLI: the turn's result is its own.
   interruptFailed(): void {
     this.stopping = false;
+    this.hurrying = false;
+  }
+
+  // f, f interrupted the turn so the queued messages run next (R9.8): its aborted result is no Stop
+  // and no failure, the next turn follows. Not once the turn's result came.
+  hurried(): void {
+    if (this.resulted) return;
+    this.hurrying = true;
   }
 
   result(r: ResultLike): void {
-    this.outcome = this.stopping ? 'stopped' : outcomeOf(r);
+    this.outcome = this.stopping ? 'stopped' : this.hurrying ? 'idle' : outcomeOf(r);
     this.stopping = false;
+    this.hurrying = false;
     this.resulted = true;
     if (!this.flag) this.turnOver();
     this.update();

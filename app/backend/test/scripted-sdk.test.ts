@@ -275,8 +275,39 @@ test('scripted: a call of Synopia\'s own tool asks, runs the tool from the sessi
     assert.ok(newId && t.sessions.get(newId), 'the new session is open under its real id');
     const titled = fs.readdirSync(path.join(t.claudeDir, 'projects'), { recursive: true }).map(String).find((f) => f.endsWith(`${newId}.jsonl`));
     const newRecs = fs.readFileSync(path.join(t.claudeDir, 'projects', titled!), 'utf8').split('\n').flatMap(jsonLine);
-    assert.equal(newRecs.find((r) => r.type === 'custom-title')?.customTitle, 'Next steps', 'Options.title as a custom-title record');
+    assert.equal(newRecs.find((r) => r.type === 'custom-title'), undefined, 'the title is no custom-title record (R3.15)');
+    assert.equal(t.store.state.written[newId!]?.title, 'Next steps', 'it is the first written title');
   } finally {
     t.stop();
   }
+});
+
+test('scripted: MCP status, reconnect, toggle and the pretend login and logout, under mcp.ts (live run MC-1)', async () => {
+  const { Mcp } = await import('../src/mcp.ts');
+  const { mcpProbe } = await import('../src/sdk.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-scripted-mcp-'));
+  const file = path.join(root, SCRIPT_FILE);
+  fs.writeFileSync(file, JSON.stringify({ sessions: {}, mcp: { loginMs: 20, servers: [
+    { name: 'figma', status: 'needs-auth' }, { name: 'db', status: 'failed', kind: 'stdio', scope: 'local' }, { name: 'wiki', status: 'disabled' },
+  ] } }));
+  const scripted = openScripted({ file, claudeDir: path.join(root, 'claude'), stateDir: path.join(root, 'state') });
+  const probe = mcpProbe(scripted.sdk.query, '/tmp');
+  const list = await probe.control!.mcpServerStatus();
+  assert.deepEqual(list.map((s) => [s.name, s.status, s.config && 'type' in s.config ? s.config.type : 'stdio']), [['figma', 'needs-auth', 'http'], ['db', 'failed', 'stdio'], ['wiki', 'disabled', 'http']]);
+  await assert.rejects(probe.control!.reconnectMcpServer('wiki'), /disabled/);
+  await assert.rejects(probe.control!.reconnectMcpServer('nope'), /Server not found/);
+  probe.close();
+  const frames: Msg[] = [];
+  const mcp = new Mcp({ runner: scripted.mcpRunner, probe: (cwd) => mcpProbe(scripted.sdk.query, cwd), send: (m) => frames.push(m as Msg), settleMs: 5 });
+  const t = { id: 's', cwd: '/tmp', terminal: false, control: () => null };
+  const row = (name: string) => (frames.at(-1)!.servers as { name: string; status: string }[]).find((r) => r.name === name);
+  await mcp.act(t, 'figma', 'login');
+  assert.equal(row('figma')?.status, 'connected');
+  await mcp.act(t, 'figma', 'logout');
+  assert.equal(row('figma')?.status, 'needs-auth');
+  await mcp.act(t, 'db', 'reconnect');
+  assert.equal(row('db')?.status, 'connected');
+  await mcp.act(t, 'wiki', 'enable');
+  assert.equal(row('wiki')?.status, 'needs-auth');
+  mcp.stop();
 });

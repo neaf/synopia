@@ -26,6 +26,10 @@ export const PAGE = {
   checkFolders: { paths: "arr", chosen: "bool?" },
   preview: { path: "str", theme: "str?" },
   open: { path: "str?", url: "str?" },
+  /* inline-code paths in a reply (R5.9, path-links.js): resolved against the session's folder and home, answered by `pathState` */
+  resolvePaths: { sid: "str", paths: "arr" },
+  /* /mcp (R5.15): the session's MCP servers, read now; answered by `mcp` */
+  mcp: { sid: "str" },
   /* state the page holds: the last one wins; sent again whole on a reconnect */
   ui: { patch: "obj" },
   /* actions: each with an id, acked */
@@ -34,6 +38,8 @@ export const PAGE = {
   answer: { id: "str?", sid: "str", requestId: "str", answer: "obj?" },
   interrupt: { id: "str?", sid: "str" },
   background: { id: "str?", sid: "str" },
+  /* f, f (R9.8): send the queued messages now; `draft` the box's message as a send's {text, images, uuid}, if any */
+  sendNow: { id: "str?", sid: "str", draft: "obj?" },
   close: { id: "str?", sid: "str" },
   /* a folder as the page shows it (`~/…` or absolute); `create`: mkdir -p it first, the create row's */
   newSession: { id: "str?", cwd: "str", create: "bool?" },
@@ -47,6 +53,8 @@ export const PAGE = {
   moveSession: { id: "str?", sid: "str", before: "str?", after: "str?", group: "str?" },
   newGroup: { id: "str?", sid: "str", onto: "str", group: "str", name: "str?" },
   renameGroup: { id: "str?", group: "str", name: "str" },
+  /* /mcp (R5.15): one server's action: login, logout, reconnect, enable or disable (mcp.ts); its outcome comes as `mcp` */
+  mcpAction: { id: "str?", sid: "str", name: "str", action: "str" },
 };
 
 /* a send's images (FR-SES-14): PNG or JPEG, 5 MB each and 20 MB together, decoded. Base64 makes 20 MB about
@@ -57,7 +65,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup"]);
+export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction"]);
 
 /* backend to page */
 export const SERVER = {
@@ -94,11 +102,16 @@ export const SERVER = {
   completion: { path: "str", names: "arr", error: "str?" },
   /* per path asked: {path, gone} */
   folderState: { states: "arr" },
+  /* per path asked: {p, path, kind}; path the absolute one and kind "file" or "folder" when it is there, both null when not */
+  pathState: { sid: "str", states: "arr" },
   /* a text file's preview, or `opened` for a file the backend opened instead */
   preview: { path: "str", opened: "bool?", display: "str?", lang: "str?", html: "str?", lines: "num?", truncated: "bool?", size: "num?" },
   /* messages that didn't go, back in the box: their texts, and the pasted images they carried ({mediaType, data, n?}) */
   restore: { sid: "str", texts: "arr", images: "arr?" },
   update: { pending: "bool" },
+  /* /mcp (R5.15), to every page, whole: the session's servers ({name, status, kind, scope, signIn, reconnect, busy}),
+     the last action's error (one sentence), a note instead of the list (a terminal holds it), and `reading` while asked */
+  mcp: { sid: "str", servers: "arr", error: "str?", note: "str?", reading: "bool?" },
   ack: { id: "str", ok: "bool", error: "str?" },
 };
 

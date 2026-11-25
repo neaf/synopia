@@ -19,7 +19,7 @@ await ev(`document.querySelector('.row[data-id^="1111"]').click()`); await ev('d
 await sleep(300);
 await K.slash();
 let names = await box(); if (!Array.isArray(names)) console.log('box:', names);
-check('/ lists the folder\'s commands', names && names.length === 7, JSON.stringify(names));
+check('/ lists the folder\'s commands and Synopia\'s /mcp (R5.15)', names && names.length === 8 && names.includes('/mcp'), JSON.stringify(names));
 check('internal __ commands left out', names && !names.some((n) => n.includes('__')));
 check('argument hints shown', await ev(`[...document.querySelectorAll('#slash .it .h')].map(h => h.textContent).includes('<number>')`));
 check('descriptions aligned in one column', await ev(`(() => { const xs = [...document.querySelectorAll('#slash .it .d')].map(d => Math.round(d.getBoundingClientRect().left)); return xs.length > 1 && xs.every(x => x === xs[0]); })()`));

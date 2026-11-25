@@ -48,12 +48,13 @@ Rules the design keeps:
 | `layout.ts` | The one layout owner: applies page intents (move, new group, rename group), reconciles with the open list, renames on id swap, keeps closed ids in place. Pure functions plus the `Layouts` owner. |
 | `sessions.ts` | The set of open sessions: open list, new (in a folder, made first on request)/open/close/continue (fork into another folder), `listRecent` (the matcher over every past session, with totals), `listFolders`, id aliases, one `rekey` that moves the whole per-session record. |
 | `folders.ts` | Folders on disk, the only module that touches them for the folder list (R3.13, NFR-13): the known-folders list from Synopia's open list and `listSessions()` (no read), `~` expansion, one-folder completion (one `readdir`, injectable for the test that counts reads), gone checks of named paths with the protected-folder rule, and the one write, `mkdir -p` of a typed path. |
-| `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background. |
+| `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background, send-now (f, f: `nowRoute`). |
 | `agent-tools.ts` | Synopia's tools for agents (R3.15), the one owner: the tool list (name, description, zod input, card words, step line, run), the server per process (through `sdk.ts` `toolServer`), the `Host` it needs from `sessions.ts`, `start_session` and its result text. A tool is one entry of `TOOLS`. |
 | `cards.ts` | Needs-you requests: park `canUseTool` FIFO per session, abort cleanup, answer mapping (questions, permission, plan), "always allow" session rules that clear on close (Q6). |
 | `bang.ts` | `!` commands: run in a process group, cap by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. |
 | `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, the in-process tool server (`toolServer`), `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
 | `menu.ts` | Slash commands and model list per folder: cache, persisted models, backoff after a failed fill, one send per folder per connection. |
+| `mcp.ts` | `/mcp` (R5.15): per session, its MCP servers' rows, the action running on each and the last error, sent whole as `mcp` to every page. Status and control calls from the session's process (`Session.mcpControl`), else an idle probe in its folder (`sdk.ts` `mcpProbe`, closed 3 min after the last ask); a fresh source's empty first answer and `pending` rows are read again every 0.5 s. Sign-in and sign-out run the bundled CLI (`sdk.ts` `bundledCli`) as `claude mcp login <name>` or `logout` in the session's folder, no TTY, 5 min for a sign-in, then `reconnectMcpServer`. The runner and the probe are injected (tests; the scripted SDK's pretend CLI). |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
@@ -65,6 +66,7 @@ Rules the design keeps:
 | `macos.ts` | Process probes, all async: `ps -o lstart=` under `LC_ALL=C TZ=UTC`, `ps -o tty=`, liveness, process-group signals, ancestry. Transient failures are not cached. |
 | `open.ts` | `/usr/bin/open` via argv: allow-list, reveal otherwise, http/https URLs only. |
 | `preview.ts` | File preview: plan (text vs open), caps, ANSI to escaped HTML, and the bat call (the bat adapter: flags, themes, language list). |
+| `file-refs.ts` | Paths named in replies (R5.9, 2026-11-25): `resolvePaths` against the session's folder and home, one stat each (there or not, file or folder; protected folders skipped as in `folders.ts`); the viewer's image of a file it answered for that session (`/api/image` ref `file:<abs>`: image name and bytes, 20 MB at most). Opening goes through `preview` and `open`. |
 | `login-env.ts` | Login shell environment merge once at start, allow-list, fallback PATH. |
 | `paths.ts` | Display paths (`~`, `/tmp`) with left boundaries; also the absolute path used as cache key (display strings are never keys); `isDir`. |
 | `log.ts` | `backend.log` event lines with quoted, capped values. |
@@ -98,14 +100,15 @@ Dev and test only (not loaded in production):
 | `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps, files changed, earlier link, live line, the sticky queue of queued prompts. |
 | `js/images.js` | Thumbnails and the image viewer. |
 | `js/preview.js` | File preview pane and find. |
+| `js/path-links.js` | Paths in replies (R5.9, 2026-11-25): asks `resolvePaths` for the new `data-pc` code spans once per render, cached per session; ⌘ held (`cmd-held`, cleared on blur) and ⌘-click to the preview, the image viewer or `open`. |
 | `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back. |
-| `js/send-tween.js` | The send tween: a sent message's band moves up from the box into its place (composer.js starts it, transcript.js lands it). |
 | `js/card.js` | Needs-you card and the status line; keeps picks until the answer is acked. |
 | `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, folder list, sidebar drag), then the session keys (n, o among them); `renderAll`. |
 | `js/mode.js` | Normal and insert mode (`setMode`, `paintMode`); the box is the only indicator. |
 | `js/toast.js` | The toast line. |
 | `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
 | `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
+| `js/mcp-panel.js` | The MCP panel (R5.15), a layer in `keys.js` drawn like the Open list: renders the backend's `mcp` frame, chooses a server and an action, sends `mcpAction`. |
 | `js/folder-list.js` | The folder list (New session and "Continue in a folder"): known folders, path completion on Tab, the create row, gone rows, the fixed list with no open session. |
 | `js/theme-switch.js` | The theme choice: footer switch, system listener, UI state `theme`, the localStorage copy for first paint. |
 | `js/theme.js` | Classic head script: theme before first paint from the localStorage copy; no globals. |
@@ -158,8 +161,8 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 - Transport: `/ws`, `auth` first within 10 s, 32 MB cap, close 4001 on auth failure, 1009 on oversize.
 - `hello` carries `v` (protocol version) and `code` (daemon code hash). A page of another version shows "Updating…", sends nothing and waits; it reloads once for a newer daemon.
-- Server to page: `started` (a session started another, R3.15: a page viewing `from` shows `sid`), `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
-- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
+- Server to page: `started` (a session started another, R3.15: a page viewing `from` shows `sid`), `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `mcp` (R5.15, to every page: `{sid, servers: [{name, status, kind, scope, signIn, reconnect, busy}], error, note, reading}`, whole each time), `preview` (also for non-text files: `{opened:true}`), `pathState {sid, states: [{p, path, kind}]}` (2026-11-25), `restore` (texts and images, acting client only), `update`, `ack`.
+- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `sendNow {sid, draft?}` (f, f, R9.8: `session.ts` `nowRoute` picks how the turn changes, from what runs and what is queued; `draft` is the box's `{text, images, uuid}`, sent as a `send` would be), `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`, `mcpAction {sid, name, action}` (R5.15: `login`, `logout`, `reconnect`, `enable`, `disable`; acked once it ran, its outcome and error in the next `mcp`; refused while that server is busy or a terminal holds the session). Requests answered by data: `mcp {sid}` (the MCP panel opened: read now), `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`, `resolvePaths {sid, paths}` (R5.9, 2026-11-25: the inline-code paths of a render). State sync: `ui {patch}` (resent on reconnect).
 - At run time a field more is ignored both ways; a frame that doesn't fit is dropped with a log line or console warning.
 - Contract tests: golden frames in `app/backend/test/golden/`, checked strictly against the schema by `protocol-golden.test.ts`.
 
@@ -253,6 +256,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 | Held, queued (outbox), after-exit messages | `session.ts` | page shows `session.outbox` |
 | Layout | `layout.ts` | page renders the server layout, sends intents |
 | Open list | `sessions.ts` | |
+| MCP panel: servers, running action, last error | `mcp.ts` | page renders `mcp` |
 | UI state | `ui-state.ts` (backend) | page `ui-state.js` collects and applies |
 | Theme | backend `ui.theme` | localStorage first-paint copy |
 | Reviewed marks | `store.ts` `ReviewedMarks` via router: only a subagent an open session has, the 1000 newest kept, not pruned with closed sessions (a closed session can be reopened) | page via `agents[].review` |
@@ -275,7 +279,8 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 |---|---|
 | `claude-jsonl.ts`, `tail.ts` | [Claude Code transcripts](Claude%20Code%20transcripts.md) |
 | `cli-terminals.ts` | [Claude Code terminals](Claude%20Code%20terminals.md) |
-| `sdk.ts`, `dev/scripted-sdk.ts` | [Agent SDK](Agent%20SDK.md) |
+| `sdk.ts`, `dev/scripted-sdk.ts`, `mcp.ts` (control calls) | [Agent SDK](Agent%20SDK.md) |
+| `mcp.ts` (`claude mcp login`, `logout`) | [Claude Code terminals](Claude%20Code%20terminals.md) |
 | `daemon-files.ts`, `DaemonFiles.swift` | [Daemon files](Daemon%20files.md) |
 | `macos.ts`, `open.ts`, `login-env.ts`, `preview.ts` (bat) | [macOS](macOS.md) |
 | `WebView.swift`, `TitleBar.swift`, `AppDelegate.swift`, page `marks.js`/`dnd.js` platform quirks | [WKWebView and AppKit](WKWebView%20and%20AppKit.md) |
@@ -363,13 +368,14 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-01 | transcript.js, publisher.ts |
 | FR-VIEW-02 | transcript.js, app.css, fonts |
 | FR-VIEW-03 | transcript.ts, transcript.js |
-| FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js, send-tween.js, marks.js |
+| FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js, marks.js |
 | FR-VIEW-05 | transcript.ts, publisher.ts, transcript.js |
 | FR-VIEW-06 | transcript.ts, transcript.js |
 | FR-VIEW-07 | transcript.ts, transcript.js |
 | FR-VIEW-08 | transcript.ts, claude-jsonl.ts, transcript.js, open.ts |
 | FR-VIEW-09 | preview.ts, preview.js |
 | FR-VIEW-10 | open.ts |
+| FR-VIEW-10a | md.js, path-links.js, file-refs.ts |
 | FR-VIEW-11 | md.js, table-fit.js |
 | FR-VIEW-12 | transcript.ts, cards.ts |
 | FR-VIEW-13 | transcript.js, publisher.ts, state.js |
@@ -384,6 +390,8 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-BOX-02 | composer.js, protocol.js, sdk.ts (content) |
 | FR-BOX-03 | bang.ts, session.ts, composer.js |
 | FR-BOX-04 | menu.ts, sdk.ts, composer.js |
+| FR-BOX-05 | mcp.ts, sdk.ts, session.ts, router.ts, mcp-panel.js, composer.js, keys.js |
+| FR-BOX-06 | composer.js, md.js, transcript.js |
 | FR-NEED-01 | marks.js, app.css, card.js, status.ts |
 | FR-NEED-02 | transcript.js |
 | FR-NEED-03 | card.js |

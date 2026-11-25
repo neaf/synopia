@@ -5,6 +5,29 @@ import { esc } from "./format.js";
 /* back from esc, for a URL found in escaped text that is escaped again as an attribute */
 const unesc = s => s.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
 
+/* Plain text as HTML with its bare http(s) URLs as links (a tool's output, R5.6: a sign-in link an MCP server
+   returns opens in the browser; transcript.js sends a click as `open`). Trailing punctuation stays outside. */
+export function linkText(text) {
+  return esc(text).replace(/(^|[\s(>"'])(https?:\/\/[^\s<]+?)([.,;:!?)]*(?=\s|<|$))/g, (m, pre, url, tail) => `${pre}<a href="${esc(unesc(url))}" target="_blank" rel="noreferrer">${url}</a>${tail}`);
+}
+
+/* Whether an inline code span names a file or folder (R5.9, 2026-11-25): the path to resolve, or null. A path is
+   absolute (`/…`), under home (`~/…`), or relative with a `/` or a file extension; a trailing `:12` or `:12:3`
+   line number is dropped. Not a path: a URL or other scheme, a flag (`-x`), an npm scope (`@a/b`), anything with
+   shell or code characters, a call (`f()`), and a dotted name with nothing after a dot but letters and digits that
+   start with a digit (`R5.9`, `1.2.3`). The backend says which ones are there (file-refs.ts); only those open. */
+const PATH_EXT = /[^/.\s][^/]*\.[A-Za-z][A-Za-z0-9_-]{0,11}$/;
+export function pathCandidate(text) {
+  let s = String(text ?? "").trim();
+  if (!s || s.length > 1024 || /[\s]{2}|[\n\t`<>|"'*?{}$;=&,\\]/.test(s)) return null;
+  s = s.replace(/:\d+(?::\d+)?$/, "");
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(s) || /^[-@]/.test(s) || /\(\)$/.test(s) || /\s-/.test(s)) return null;
+  if (s.startsWith("//") || s === "/" || s === "~") return null;
+  if (s.startsWith("/") || s.startsWith("~/")) return s;
+  if (s.startsWith("~")) return null;
+  return s.includes("/") || PATH_EXT.test(s) ? s : null;
+}
+
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
 export function md(src) {
   const out = []; const lines = (src || "").split("\n"); let i = 0;
@@ -18,7 +41,7 @@ export function md(src) {
     /* bare URLs become links too, in code spans as well (as the prototype does); trailing punctuation stays outside */
     const bare = t => t.replace(/(^|[\s(>])(https?:\/\/[^\s<\u0001]+?)([.,;:!?)]*(?=\s|<|\u0001|$))/g, (m, pre, url, tail) => `${pre}${link(unesc(url), url)}${tail}`);
     const raw = (s || "").replace(/\u0001/g, "")
-      .replace(/`([^`]+)`/g, (m, c) => put(`<code>${bare(esc(c))}</code>`))
+      .replace(/`([^`]+)`/g, (m, c) => { const p = pathCandidate(c); return put(`<code${p ? ` data-pc="${esc(p)}"` : ""}>${bare(esc(c))}</code>`); })
       .replace(/\[([^\]\u0001]+)\]\((https?:[^)\s\u0001]+)\)/g, (m, t, url) => put(link(url, bold(esc(t)))));
     /* a pasted image's [Image #N] tag, as the CLI puts it in the prompt (R5.13): a plain dim tag, not in code spans */
     return bare(bold(esc(raw))).replace(/\[Image #(\d+)\]/g, '<span class="img-tag">[Image #$1]</span>').replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);

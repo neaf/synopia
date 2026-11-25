@@ -15,7 +15,8 @@ import { Transcripts } from './transcripts.ts';
 import { Publisher } from './publisher.ts';
 import { Sessions } from './sessions.ts';
 import { CliTerminals, realEnd } from './cli-terminals.ts';
-import { realSdk } from './sdk.ts';
+import { realSdk, mcpProbe } from './sdk.ts';
+import { Mcp, cliRunner } from './mcp.ts';
 import { loadBat } from './preview.ts';
 import { Router } from './router.ts';
 import { loadLoginEnv } from './login-env.ts';
@@ -25,6 +26,7 @@ import { BadgeCounter, quitSummary } from './status.ts';
 import { startDaemon } from './daemon.ts';
 import { EXIT } from './daemon-files.ts';
 import { draftImage } from './ui-state.ts';
+import { FileRefs } from './file-refs.ts';
 import { VERSION as PROTOCOL } from '../../web/js/protocol.js';
 import type { Client, Server } from './server.ts';
 
@@ -174,8 +176,12 @@ function busy(): boolean {
   return q.running.length + q.background.length > 0 || publisher.pending().length > 0;
 }
 
+// /mcp (R5.15): a session's MCP servers; sign-in and sign-out through the bundled CLI (the script's pretend one).
+const mcp = new Mcp({ runner: scripted?.mcpRunner ?? cliRunner, probe: (cwd) => mcpProbe(sdk.query, cwd), send: (msg) => publisher.broadcast(msg), log });
+
 // Page frames (router.ts): checked, one module acts, actions acked.
-const router = new Router({ sessions, transcripts, publisher, menus, store, marks, bat, home, log, dryRun });
+const fileRefs = new FileRefs({ home });
+const router = new Router({ sessions, transcripts, publisher, menus, mcp, store, marks, bat, home, log, dryRun, fileRefs });
 
 try {
   server = await startServer({
@@ -191,6 +197,7 @@ try {
     // "Restart Backend Now…": a handover at once, whatever runs (the shell asked first). Not under dev.sh.
     onRestart: flags['no-parent'] ? undefined : () => void daemon.handOver('restart'),
     image: async (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions.resolve(sid), ref)
+      : ref.startsWith('file:') ? fileRefs.image(sessions.resolve(sid), ref)
       : ref.startsWith('queued:') ? (sessions.get(sid)?.queuedImage(ref) ?? { status: 404 })
       : transcripts.image(sessions.resolve(sid), agent, ref),
     onMessage: (client, msg) => router.handle(client, msg),
@@ -209,6 +216,7 @@ await daemon.ready({
   stop: () => {
     writer.stop();
     menus.stop();
+    mcp.stop();
     terminals.stop();
     sessions.stop();
     publisher.stop();

@@ -5,9 +5,16 @@
 //   the transcript, messages you send) and answers the control calls: the menu, setModel,
 //   applyFlagSettings, backgroundTasks and interrupt (queued messages not yet in the transcript are
 //   cancelled, the turn ends stopped). A message that starts a turn, and bash mode's context, are
-//   appended to the transcript as the CLI writes them.
+//   appended to the transcript as the CLI writes them. For f, f (docs/Agent SDK.md, "Sending queued
+//   messages now"): backgroundTasks takes the queued messages into the running turn, a plain
+//   interrupt (no cancelQueued) runs them next as one turn, and a `priority: 'now'` message is
+//   taken in at once.
 // - The writer's one-shot call gets the script's `writer` reply, else a failed result. The idle
 //   menu probe answers from the script's `menu`.
+// - MCP (docs/Agent SDK.md, "MCP servers: status, sign-in"): every query answers mcpServerStatus,
+//   reconnectMcpServer and toggleMcpServer from the script's `mcp.servers` (a session's own
+//   mcpServers too, as source `sdk`), and `mcpRunner` is a pretend `claude mcp login|logout`: a
+//   sign-in takes `mcp.loginMs` and lets the next reconnect connect; a sign-out undoes it.
 // - listSessions() lists the fixture tree's transcripts.
 // - A clock for `ago`: while a step plays, Sessions' clock reads that much earlier, so a status or a
 //   card starts in the past; timers armed then count on the same clock. Steps play one at a time.
@@ -20,10 +27,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import type { CanUseTool, ModelInfo, Options, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
+import type { CanUseTool, McpServerStatus, ModelInfo, Options, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { CANCEL_QUEUED } from '../src/sdk.ts';
 import { callServed } from '../src/agent-tools.ts';
 import type { ListFn, QueryFn, QueryLike, Sdk } from '../src/sdk.ts';
+import type { McpRunner } from '../src/mcp.ts';
 import type { Probe, EndDeps } from '../src/cli-terminals.ts';
 import type { Timer } from '../src/status.ts';
 import type { Log } from '../src/log.ts';
@@ -59,7 +67,12 @@ export type Script = {
   writer?: { title: string; now: string }; // the writer's reply; without it every call fails
   onSend?: Step[]; // for sessions with no onSend of their own
   sessions: Record<string, SessionScript>;
+  // MCP servers every query reports (status: connected, needs-auth, failed, pending, disabled; kind:
+  // http (default), sse, stdio, claudeai-proxy); a pending one connects after pendingMs. A sign-in
+  // takes loginMs (default 1500); one of a server in failLogin fails with the CLI's stderr line.
+  mcp?: { servers: McpScript[]; loginMs?: number; pendingMs?: number; failLogin?: string[] };
 };
+export type McpScript = { name: string; status: McpServerStatus['status']; kind?: string; scope?: string };
 
 export function loadScript(file: string | null): Script {
   if (!file || !fs.existsSync(file)) return { sessions: {} };
@@ -245,14 +258,22 @@ class ScriptedSession implements QueryLike {
   }
 
   async interrupt(req?: { cancelQueued?: boolean }) {
-    const cancelled = req?.cancelQueued ? this.queued.filter((q) => !this.landed(q)).map((q) => q.uuid) : [];
-    const still = req?.cancelQueued ? [] : this.queued.filter((q) => !this.landed(q)).map((q) => q.uuid);
+    const waiting = this.queued.filter((q) => !this.landed(q));
+    const cancelled = req?.cancelQueued ? waiting.map((q) => q.uuid) : [];
+    const still = req?.cancelQueued ? [] : waiting.map((q) => q.uuid);
     this.queued = [];
     if (this.running) {
       for (const t of this.seqs) this.cancel(t);
+      // the plain interrupt keeps the queue: its messages run next, as one turn (live run PR-1)
+      const next: Step[] = !req?.cancelQueued && waiting.length ? [
+        { append: waiting.map((q) => ({ type: 'user', uuid: q.uuid, message: { role: 'user', content: q.text } })) },
+        { message: this.init() }, { message: { type: 'system', subtype: 'session_state_changed', state: 'running' } },
+        ...(this.env.script.sessions[this.sid]?.onSend ?? this.env.script.onSend ?? []),
+      ] : [];
       void this.play([
         { message: { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' } },
         { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } },
+        ...next,
       ], false);
     }
     return { subtype: 'success', cancelled, still_queued: still } as unknown as Awaited<ReturnType<NonNullable<QueryLike['interrupt']>>>;
@@ -260,9 +281,22 @@ class ScriptedSession implements QueryLike {
 
   async supportedCommands(): Promise<SlashCommand[]> { return [...(this.env.script.menu?.commands ?? [])]; }
   async supportedModels(): Promise<ModelInfo[]> { return [...(this.env.script.menu?.models ?? [])]; }
+  async mcpServerStatus(): Promise<McpServerStatus[]> { return this.env.mcpStatus(Object.keys(this.mcpServers ?? {})); }
+  async reconnectMcpServer(name: string): Promise<void> { this.env.mcpReconnect(name, Object.keys(this.mcpServers ?? {})); }
+  async toggleMcpServer(name: string, enabled: boolean): Promise<void> { this.env.mcpToggle(name, enabled, Object.keys(this.mcpServers ?? {})); }
   async setModel(): Promise<void> {}
   async applyFlagSettings(): Promise<void> {}
-  async backgroundTasks(): Promise<boolean> { return true; }
+  // The queued messages fold into the running turn at once, in order (live runs PR-1 and PR-2).
+  async backgroundTasks(): Promise<boolean> {
+    this.takeIn(this.queued.filter((q) => !this.landed(q)));
+    this.queued = [];
+    return true;
+  }
+
+  // Messages a running turn takes in: one queued_command attachment each, as the CLI writes them.
+  private takeIn(list: { uuid: string; text: string }[]): void {
+    if (list.length) this.env.append(this.sid, this.cwd, list.map((h) => ({ type: 'attachment', uuid: h.uuid, attachment: { type: 'queued_command', prompt: h.text, commandMode: 'prompt', source_uuid: h.uuid } })));
+  }
 
   private init(): Record<string, unknown> {
     return { type: 'system', subtype: 'init', session_id: this.sid, cwd: this.cwd, capabilities: [CANCEL_QUEUED], tools: [], model: 'fixture-large' };
@@ -285,6 +319,7 @@ class ScriptedSession implements QueryLike {
         continue;
       }
       this.flushHeld();
+      if (this.running && m.priority === 'now') { this.takeIn([{ uuid, text }]); continue; } // read in the same turn
       if (this.running) {
         this.queued.push({ uuid, text });
         continue;
@@ -303,10 +338,7 @@ class ScriptedSession implements QueryLike {
     const held = this.held.splice(0);
     if (!held.length || this.out.closed) return;
     // taken in by a running turn: one queued_command attachment each, as the CLI writes them
-    if (this.running) {
-      this.env.append(this.sid, this.cwd, held.map((h) => ({ type: 'attachment', uuid: h.uuid, attachment: { type: 'queued_command', prompt: h.text, commandMode: 'prompt', source_uuid: h.uuid } })));
-      return;
-    }
+    if (this.running) { this.takeIn(held); return; }
     this.env.append(this.sid, this.cwd, [{ type: 'user', uuid: held[0].uuid, queueTranscriptOnly: true, mergedSendUuids: held.slice(1).map((h) => h.uuid), promptSource: 'sdk',
       message: { role: 'user', content: held.map((h) => h.text).join('\n') } }]);
   }
@@ -397,6 +429,9 @@ function probe(env: Scripted, prompt: AsyncIterable<SDKUserMessage>): QueryLike 
     async *[Symbol.asyncIterator]() { for await (const _ of prompt) { /* never yields */ } },
     supportedCommands: async () => [...(env.script.menu?.commands ?? [])],
     supportedModels: async () => [...(env.script.menu?.models ?? [])],
+    mcpServerStatus: async () => env.mcpStatus([]),
+    reconnectMcpServer: async (name: string) => env.mcpReconnect(name, []),
+    toggleMcpServer: async (name: string, enabled: boolean) => env.mcpToggle(name, enabled, []),
   };
 }
 
@@ -433,6 +468,9 @@ export class Scripted {
   private gone = new Set<number>(); // pretend CLIs a take-over ended
   private settled: (() => void)[] = [];
   private files = new Map<string, string>();
+  private mcp = new Map<string, { status: McpServerStatus['status']; at: number }>(); // by name, across queries
+  private mcpAuth = new Map<string, boolean>(); // signed in: a reconnect connects
+  private mcpOff = new Set<string>();
 
   constructor(opts: { file: string | null; claudeDir: string; log?: Log }) {
     this.script = loadScript(opts.file);
@@ -465,6 +503,72 @@ export class Scripted {
       now: Date.now,
     };
   }
+
+  // ---------- MCP ----------
+
+  private mcpScript(name: string): McpScript | undefined {
+    return this.script.mcp?.servers.find((x) => x.name === name);
+  }
+
+  private mcpNow(m: McpScript): McpServerStatus['status'] {
+    if (!this.mcp.has(m.name)) {
+      // a disabled server is what it would be once enabled, behind the switch
+      const under = m.status !== 'disabled' ? m.status : (m.kind ?? 'http') === 'stdio' ? 'connected' : 'needs-auth';
+      this.mcp.set(m.name, { status: under, at: Date.now() });
+      this.mcpAuth.set(m.name, under === 'connected');
+      if (m.status === 'disabled') this.mcpOff.add(m.name);
+    }
+    const st = this.mcp.get(m.name)!;
+    if (st.status === 'pending' && Date.now() - st.at >= (this.script.mcp?.pendingMs ?? 1200)) st.status = 'connected';
+    return this.mcpOff.has(m.name) ? 'disabled' : st.status;
+  }
+
+  mcpStatus(own: string[]): McpServerStatus[] {
+    const out: McpServerStatus[] = (this.script.mcp?.servers ?? []).map((m) => {
+      const kind = m.kind ?? 'http';
+      const config = kind === 'stdio' ? { command: '/usr/bin/true' } : { type: kind, url: `https://${m.name}.example.test/mcp` };
+      return { name: m.name, status: this.mcpNow(m), scope: m.scope ?? 'user', source: m.scope ?? 'user', config } as McpServerStatus;
+    });
+    for (const name of own) out.push({ name, status: this.mcpOff.has(name) ? 'disabled' : 'connected', scope: 'dynamic', source: 'sdk' } as McpServerStatus);
+    return out;
+  }
+
+  mcpReconnect(name: string, own: string[]): void {
+    const m = this.mcpScript(name);
+    if (!m && !own.includes(name)) throw new Error(`Server not found: ${name}`);
+    if (!m) throw new Error('SDK servers should be handled in print.ts');
+    if (this.mcpOff.has(name)) throw new Error(`MCP server ${name} is disabled — enable it (mcp_toggle) before reconnecting`);
+    this.mcpNow(m);
+    const remote = (m.kind ?? 'http') !== 'stdio';
+    this.mcp.set(name, { status: !remote || this.mcpAuth.get(name) ? 'connected' : 'needs-auth', at: Date.now() });
+  }
+
+  mcpToggle(name: string, enabled: boolean, own: string[]): void {
+    const m = this.mcpScript(name);
+    if (!m && !own.includes(name)) throw new Error(`Server not found: ${name}`);
+    if (m) this.mcpNow(m);
+    if (enabled) this.mcpOff.delete(name); else this.mcpOff.add(name);
+  }
+
+  // A pretend `claude mcp login|logout <name>`: no CLI, no browser.
+  readonly mcpRunner: McpRunner = async (args, o) => {
+    const [, verb, name] = args;
+    const m = this.mcpScript(name);
+    this.log('scripted.mcp', { verb });
+    if (!m) return { code: 1, stdout: '', stderr: `No MCP server named "${name}". Run \`claude mcp add\` to add one.\n` };
+    if (verb === 'login') {
+      const ms = this.script.mcp?.loginMs ?? 1500;
+      const ended = await new Promise<boolean>((r) => { const t = setTimeout(() => r(true), Math.min(ms, o.timeoutMs)); o.signal.addEventListener('abort', () => { clearTimeout(t); r(false); }, { once: true }); });
+      if (!ended) return { code: null, stdout: '', stderr: '' };
+      if (ms > o.timeoutMs) return { code: null, stdout: '', stderr: '', timedOut: true };
+      if (this.script.mcp?.failLogin?.includes(name)) return { code: 1, stdout: '', stderr: 'Authentication failed: the authorization server refused the request.\n' };
+      this.mcpNow(m);
+      this.mcpAuth.set(name, true);
+      return { code: 0, stdout: `Authentication successful. Connected to ${name}.\n`, stderr: '' };
+    }
+    if (verb === 'logout') { this.mcpNow(m); this.mcpAuth.set(name, false); return { code: 0, stdout: `Cleared OAuth credentials for ${name}.\n`, stderr: '' }; }
+    return { code: 1, stdout: '', stderr: 'unknown command\n' };
+  };
 
   // The script's home is made up (/Users/fixture): its folders count as there, as its terminals are
   // pretend, so a fixture session isn't "Folder gone" (R3.11). Real folders elsewhere are checked.

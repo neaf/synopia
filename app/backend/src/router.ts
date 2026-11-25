@@ -18,8 +18,10 @@ import type { Image } from './sdk.ts';
 import type { Bat } from './preview.ts';
 import { previewFile, themeOf } from './preview.ts';
 import { openTarget } from './open.ts';
+import type { FileRefs } from './file-refs.ts';
 import { patchUi } from './ui-state.ts';
 import { displayPath } from './paths.ts';
+import type { Mcp, Action as McpAction, McpTarget } from './mcp.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 
@@ -34,12 +36,14 @@ export type RouterOptions = {
   transcripts: Transcripts;
   publisher: Publisher;
   menus: Menus;
+  mcp?: Mcp; // /mcp (R5.15)
   store: Store;
   marks: ReviewedMarks;
   bat: Promise<Bat>;
   home: string;
   log?: Log;
   dryRun?: boolean; // `open` logs and opens nothing (checks)
+  fileRefs?: FileRefs; // paths named in replies (R5.9): `resolvePaths`
 };
 
 type Msg = { t: string; [k: string]: unknown };
@@ -53,6 +57,9 @@ function placeOf(m: Msg, resolve: (id: string) => string): Place | null {
   if ([before, after, group].filter((x) => x !== null).length !== 1) return null;
   return before !== null ? { before: resolve(before) } : after !== null ? { after: resolve(after) } : { group: group as string };
 }
+
+// What mcp.ts needs of a session: its folder, whether a terminal holds it, its process's control calls.
+const mcpTarget = (s: Session): McpTarget => ({ id: s.id, cwd: s.cwd, terminal: s.terminalHolds, control: () => s.mcpControl() });
 
 export class Router {
   private o: RouterOptions;
@@ -178,7 +185,15 @@ export class Router {
         bat, theme: themeOf(m.theme), log, display: (p) => displayPath(p, this.o.home), reply: (r) => publisher.reply(client, r), toast: toastTo(client),
         open: (p) => openTarget({ path: p }, { dryRun: this.o.dryRun, log, onError: toastTo(client) }),
       })),
+      // paths named in Claude's replies (R5.9): there or not, file or folder, against the session's folder and home
+      resolvePaths: (client, m) => {
+        const sid = sessions.resolve(m.sid as string), cwd = sessions.get(sid)?.cwd ?? publisher.meta(sid)?.cwd ?? '';
+        if (!this.o.fileRefs) return;
+        return this.o.fileRefs.resolve(sid, cwd, m.paths as unknown[]).then((states) => publisher.reply(client, { t: 'pathState', sid: m.sid as string, states }));
+      },
       open: (client, m) => { openTarget({ path: m.path, url: m.url }, { dryRun: this.o.dryRun, log, onError: toastTo(client) }); },
+      // /mcp (R5.15): the session's MCP servers, as one `mcp` frame (mcp.ts)
+      mcp: (_client, m) => this.act(m.sid, (s) => { void this.o.mcp?.list(mcpTarget(s)); }),
       // ---------- state the page holds ----------
       // the page's UI state (R3.9): stored, returned in hello, never broadcast
       ui: (client, m) => { patchUi(store, m.patch, { resolve: (id) => sessions.resolve(id), known: (id) => transcripts.has(id), toast: toastTo(client) }); },
@@ -192,6 +207,12 @@ export class Router {
       answer: (_client, m) => this.act(m.sid, (s) => s.answer(m.requestId as string, (m.answer ?? {}) as CardAnswer)),
       interrupt: (client, m) => this.act(m.sid, (s) => s.interrupt(client)),
       background: (_client, m) => this.act(m.sid, (s) => s.background()), // b, b (R9): an error only when nothing moved
+      // f, f (R9.8): the queued messages go now; session.ts picks the route, the draft goes as a send's
+      sendNow: (client, m) => this.act(m.sid, (s) => {
+        const d = (m.draft && typeof m.draft === 'object' ? m.draft : null) as { text?: unknown; images?: unknown; uuid?: unknown } | null;
+        const images = (Array.isArray(d?.images) ? d!.images as Image[] : []).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string');
+        return s.sendNow(d ? { text: str(d.text) ?? '', images, uuid: str(d.uuid) ?? undefined } : null, client);
+      }),
       setModel: (_client, m) => this.act(m.sid, (s) => s.setModel(m.model as string, str(m.effort) || null)),
       cancelTakeover: (_client, m) => this.act(m.sid, (s) => s.cancelTakeover()),
       close: (_client, m) => sessions.close(m.sid as string),
@@ -213,6 +234,7 @@ export class Router {
         return to ? sessions.layout.move(sessions.resolve(m.sid as string), to) : { ok: false, error: UNREADABLE };
       },
       newGroup: (_client, m) => sessions.layout.newGroup(sessions.resolve(m.sid as string), sessions.resolve(m.onto as string), m.group as string, str(m.name) ?? undefined),
+      mcpAction: (_client, m) => this.act(m.sid, (s) => this.o.mcp?.act(mcpTarget(s), m.name as string, m.action as McpAction) ?? { ok: false, error: 'MCP servers can\'t be managed here.' }),
       renameGroup: (_client, m) => sessions.layout.renameGroup(m.group as string, m.name as string),
     };
   }

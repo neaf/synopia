@@ -1,7 +1,7 @@
 // md.js: markdown as the CLI renders it, and the answer text of a question card, in Node (DOM-free).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { md, colKinds, colAlign, parseAnswers, parseNotes } from "../js/md.js";
+import { md, colKinds, colAlign, parseAnswers, parseNotes, linkText } from "../js/md.js";
 
 const A = url => `<a href="${url}" target="_blank" rel="noreferrer">`;
 
@@ -86,4 +86,11 @@ test("every prefix of a reply renders, a half-written table row as text", () => 
   for (let n = 0; n <= src.length; n++) md(src.slice(0, n));
   assert.equal(md("text\n| a | b"), "<p>text</p><p>| a | b</p>");
   assert.equal(md("| a | b"), "<p>| a | b</p>");
+});
+
+test("linkText: a tool output's URLs are links, the rest escaped, trailing punctuation outside", () => {
+  assert.equal(linkText('Open https://portal.example.test/signin?a=1&b=2. Then <retry>'),
+    'Open <a href="https://portal.example.test/signin?a=1&amp;b=2" target="_blank" rel="noreferrer">https://portal.example.test/signin?a=1&amp;b=2</a>. Then &lt;retry&gt;');
+  assert.equal(linkText('(see http://x.test/a)'), '(see <a href="http://x.test/a" target="_blank" rel="noreferrer">http://x.test/a</a>)');
+  assert.equal(linkText('javascript:alert(1) "><img>'), 'javascript:alert(1) &quot;&gt;&lt;img&gt;');
 });

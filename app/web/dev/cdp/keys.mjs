@@ -110,6 +110,11 @@ await K.enter();
 check('card: Enter on the last row opens the in-place field', (await ev('document.activeElement.id')) === 'qa-own' && (await mode()) === 'insert', await st());
 await K.esc();
 check('card: Esc leaves it, nothing sent', (await mode()) === 'normal' && (await ev(`__synopia.sent('answer')`)).length === sentQ);
+// with an answer typed in it, Enter on the last row takes that answer instead of opening the field again
+await K.i(); await sleep(100); await c.cdp("Input.insertText", { text: "my own answer" }); await K.enter(); await sleep(50); // Enter in the field saves it
+const qi0 = await ev("__synopia.card().qi");
+await K.enter(); await sleep(100);
+check('card: Enter on a typed last row takes the answer (sends it, or moves on), the field stays shut', (await mode()) === 'normal' && (await ev('document.activeElement.id')) !== 'qa-own' && ((await ev(`__synopia.sent('answer')`)).length > sentQ || (await ev('__synopia.card()?.qi')) !== qi0), await st());
 await K.ctrlJ();
 check('card: Ctrl+J still switches sessions', (await shownId()) !== q);
 

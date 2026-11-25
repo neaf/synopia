@@ -182,7 +182,9 @@ export function qaKeys(e) {
     e.preventDefault(); // before the returns below: an Enter left to WKWebView makes AppKit beep
     const q = a.qs[st.qi];
     if (q && st.oi >= q.opts.length) { // the last row: Deny sends (its reason is optional), else it opens the field as i does
-      if (!q.otherEmptyOk) { st.target = st.qi; st.noteRow = null; setMode("insert", false); }
+      if (!q.otherEmptyOk && st.own[st.qi]?.trim()) { // typed already: Enter takes that answer, as on a picked row
+        delete st.picks[st.qi]; if (allAnswered(st, a)) { answerAsk(s, a); return true; } qaMove(s, a, "nextOpen"); }
+      else if (!q.otherEmptyOk) { st.target = st.qi; st.noteRow = null; setMode("insert", false); }
       else { if (!st.own[st.qi]) st.own[st.qi] = q.otherPrefix || q.otherLabel; delete st.picks[st.qi]; if (allAnswered(st, a)) { answerAsk(s, a); return true; } }
     } else {
       if (q && !q.multi) qaPick(s, a); // single choice: Enter picks the row under the cursor

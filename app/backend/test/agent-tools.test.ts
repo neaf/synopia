@@ -89,7 +89,10 @@ test('agent tools: start_session starts a session in the caller\'s folder and ma
   assert.ok(started, 'a new process started');
   assert.equal(started!.options.cwd, t.cwd);
   assert.equal(started!.options.resume, undefined);
-  assert.equal(started!.options.title, 'Next steps', 'the title as Options.title (a custom-title record)');
+  assert.equal(started!.options.title, undefined, 'no Options.title: no custom-title record');
+  assert.equal(t.store.state.written[NEW1]?.title, 'Next steps', 'the first title, as written text the writer replaces');
+  assert.equal(t.store.state.written[NEW1].now, undefined, 'no Now line until the writer writes');
+  assert.ok(!Object.keys(t.store.state.written).some((k) => k.startsWith('new-')), 'moved to the real id');
   assert.equal(started!.inputs[0].message.content, 'Read HANDOFF.md, then go on.\nMore detail.', 'the prompt is its first message');
   assert.equal(text, startedText(NEW1, 'Next steps'));
   assert.equal(sessionOf(START, text), NEW1);

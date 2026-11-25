@@ -26,6 +26,7 @@ import type { Known } from './folders.ts';
 import { rank } from '../../web/js/fuzzy.js';
 import { Layouts } from './layout.ts';
 import { toolServer } from './agent-tools.ts';
+import { seedTitle } from './writer.ts';
 import type { Host as ToolHost } from './agent-tools.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -142,11 +143,12 @@ export class Sessions {
   }
 
   // An empty session in `cwd` (absolute, or `~`-relative). It isn't stored until system/init gives its id.
-  // `title`: its title from the start (a session that start_session started, R3.15).
+  // `title`: its first title (a session that start_session started, R3.15), stored as written text
+  // the writer replaces after a turn; never a custom-title record.
   newSession(cwd: string, title = ''): string {
     const id = `new-${randomUUID()}`;
-    const s = this.add(id, this.expand(cwd), true, null);
-    s.newTitle = title;
+    if (title) seedTitle(this.store, id, title, this.now());
+    this.add(id, this.expand(cwd), true, null);
     this.layout.sync(); // last under Not in a group
     this.log('sessions.new', { sid: id });
     return id;
@@ -256,6 +258,7 @@ export class Sessions {
     if (!s) return gone;
     const running = s.close();
     this.live.delete(id);
+    if (s.placeholder && id in this.store.state.written) { delete this.store.state.written[id]; this.store.changed(); }
     const e = this.store.state.open.find((x) => x.id === id);
     if (e) {
       e.closedAt = this.now();
@@ -358,6 +361,7 @@ export class Sessions {
       st.open.push({ id: newId, cwd: s.cwd, openedAt: this.now(), closedAt: null });
       if (s.choice) st.models[newId] = s.choice;
       s.choice = null;
+      if (old in st.written) { st.written[newId] = st.written[old]; delete st.written[old]; } // its first title (R3.15)
     } else {
       for (const e of st.open) if (e.id === old) { e.id = newId; e.cwd = s.cwd; } // a fork into another folder moves it (R3.11)
       for (const k of ['models', 'rules', 'status', 'ended', 'endedFailed'] as const) {

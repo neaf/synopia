@@ -8,13 +8,16 @@
 // - The writer's one-shot call, and listSessions().
 // - The content of a message you send, with its `[Image #N]` tags and images.
 // - Synopia's in-process tool server for its sessions (agent-tools.ts defines the tools).
+// - The MCP control calls (mcpServerStatus, reconnectMcpServer, toggleMcpServer) of a process or of an
+//   idle probe, and the path of the bundled CLI that mcp.ts runs `claude mcp login|logout` with.
 // `query` and `listSessions` are injectable as one Sdk pair: tests pass a fake, dev a script.
 import { query as sdkQuery, listSessions as sdkListSessions, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import type {
-  CanUseTool, EffortLevel, ListSessionsOptions, McpSdkServerConfigWithInstance, ModelInfo, Options, PermissionUpdate,
+  CanUseTool, EffortLevel, ListSessionsOptions, McpSdkServerConfigWithInstance, McpServerStatus, ModelInfo, Options, PermissionUpdate,
   SDKControlInterruptResponse, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { ZodRawShape } from 'zod';
+import { createRequire } from 'node:module';
 import { MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES, IMAGE_TYPES } from '../../web/js/protocol.js';
 
 // The part of the SDK's Query that Synopia uses. `interrupt` takes `{cancelQueued}`, which the
@@ -28,6 +31,9 @@ export type QueryLike = AsyncIterable<SDKMessage> & {
   setModel?: (model?: string) => Promise<void>;
   applyFlagSettings?: (settings: { effortLevel?: EffortLevel | null }) => Promise<void>;
   backgroundTasks?: (toolUseId?: string) => Promise<boolean>;
+  mcpServerStatus?: () => Promise<McpServerStatus[]>;
+  reconnectMcpServer?: (name: string) => Promise<void>;
+  toggleMcpServer?: (name: string, enabled: boolean) => Promise<void>;
 };
 export type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options: Options }) => QueryLike;
 export type ListFn = (opts?: ListSessionsOptions) => Promise<SDKSessionInfo[]>;
@@ -160,12 +166,14 @@ export class SessionProcess {
   }
 
   // `images`: the pasted images the content carries, as the page sent them (an interrupt gives them back).
-  push(content: Content, uuid: string, images: Image[] = []): void {
+  // `now`: f, f with nothing queued (R9.8): `priority: 'now'` with a human origin, so the CLI moves
+  // what can go to the background, or interrupts the reply (docs/Agent SDK.md, "Sending queued messages now").
+  push(content: Content, uuid: string, images: Image[] = [], now = false): void {
     const text = typeof content === 'string' ? content
       : content.map((b) => (b.type === 'text' ? b.text : '')).filter(Boolean).join('\n');
     this.sent.set(uuid, { text, images });
     if (this.sent.size > KEEP_SENT) this.sent.delete(this.sent.keys().next().value as string);
-    this.input.push(userMessage(content, uuid));
+    this.input.push(now ? { ...userMessage(content, uuid), priority: 'now', origin: { kind: 'human' } } : userMessage(content, uuid));
     this.events.onPush?.(uuid);
   }
 
@@ -184,6 +192,14 @@ export class SessionProcess {
     const r = await this.q.interrupt?.(cancelQueued ? { cancelQueued: true } : undefined);
     const restored = (r?.cancelled ?? []).map((u) => this.sent.get(u)).filter((m): m is Returned => Boolean(m && (m.text.trim() || m.images.length)));
     return { cancelQueued, restored, stillQueued: (r?.still_queued ?? []).filter((u) => this.sent.has(u)).length };
+  }
+
+  // f, f with messages queued and nothing that can move (R9.8): the plain interrupt, without
+  // cancelQueued, so the queued messages stay and run next, in order (docs/Agent SDK.md, "Sending
+  // queued messages now").
+  async interruptKeepingQueue(): Promise<void> {
+    if (this.done || !this.q.interrupt) throw new Error('no running process');
+    await this.q.interrupt();
   }
 
   // Its input is closed (end or close): a push is dropped, so the caller waits for the exit.
@@ -252,6 +268,11 @@ export class SessionProcess {
     return { supportedCommands: () => (q.supportedCommands as () => Promise<SlashCommand[]>)(), supportedModels: () => (q.supportedModels as () => Promise<ModelInfo[]>)() };
   }
 
+  // The MCP control calls of this process, while it runs (mcp.ts).
+  mcpControl(): McpControl | null {
+    return this.done ? null : mcpControlOf(this.q);
+  }
+
   // The model for the next responses (undefined: the default), and the effort (null: the model's
   // default), through the typed setModel and applyFlagSettings.
   async setModel(model: string | undefined): Promise<void> {
@@ -265,11 +286,12 @@ export class SessionProcess {
   }
 
   // b, b (R9): every foreground Bash and subagent in flight goes to the background, as Ctrl+B does
-  // in the terminal (the typed Query.backgroundTasks, no tool use id). Throws when the session has
-  // background tasks turned off (docs/Agent SDK.md, "backgroundTasks() and the 2 s gap").
-  async backgroundTasks(): Promise<boolean> {
+  // in the terminal (the typed Query.backgroundTasks, no tool use id). f, f (R9.8) passes one main
+  // step's tool use id, which moves only that step (false: it matched no foreground task). Throws
+  // when the session has background tasks turned off (docs/Agent SDK.md, "backgroundTasks() and the 2 s gap").
+  async backgroundTasks(toolUseId?: string): Promise<boolean> {
     if (this.done || !this.q.backgroundTasks) throw new Error('no running process');
-    return this.q.backgroundTasks();
+    return toolUseId ? this.q.backgroundTasks(toolUseId) : this.q.backgroundTasks();
   }
 }
 
@@ -375,6 +397,45 @@ export async function probeMenu(query: QueryFn, cwd: string, opts: { timeoutMs?:
   } finally {
     release();
     try { q?.close?.(); } catch { /* already gone */ }
+  }
+}
+
+// ---------- MCP servers (mcp.ts; docs/Agent SDK.md, "MCP servers: status, sign-in") ----------
+
+export type McpControl = {
+  mcpServerStatus(): Promise<McpServerStatus[]>;
+  reconnectMcpServer(name: string): Promise<void>;
+  toggleMcpServer(name: string, enabled: boolean): Promise<void>;
+};
+
+export function mcpControlOf(q: QueryLike): McpControl | null {
+  const { mcpServerStatus, reconnectMcpServer, toggleMcpServer } = q;
+  if (!mcpServerStatus || !reconnectMcpServer || !toggleMcpServer) return null;
+  return {
+    mcpServerStatus: () => mcpServerStatus.call(q),
+    reconnectMcpServer: (name) => reconnectMcpServer.call(q, name),
+    toggleMcpServer: (name, on) => toggleMcpServer.call(q, name, on),
+  };
+}
+
+// The MCP servers of a folder with no running process: one idle query, as the menu probe's, open
+// until close(). It runs the folder's SessionStart hooks.
+export function mcpProbe(query: QueryFn, cwd: string): { control: McpControl | null; close: () => void } {
+  let release = () => {};
+  const stop = new Promise<void>((r) => (release = r));
+  const abortController = new AbortController();
+  const q = query({ prompt: idlePrompt(stop), options: { cwd, abortController } });
+  void (async () => { try { for await (const _ of q) { /* an idle query yields nothing to read */ } } catch { /* closed */ } })();
+  return { control: mcpControlOf(q), close: () => { release(); try { q.close?.(); } catch { /* already gone */ } abortController.abort(); } };
+}
+
+// The CLI the SDK runs, from its platform package (the SDK's optional dependency for this
+// machine), for `claude mcp login|logout`. Null when it isn't installed.
+export function bundledCli(): string | null {
+  try {
+    return createRequire(import.meta.url).resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`);
+  } catch {
+    return null;
   }
 }
 

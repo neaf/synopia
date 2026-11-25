@@ -81,3 +81,18 @@ Nothing in the CLI stops two processes from writing one session's JSONL: their r
 ## Permission mode at start
 
 A folder's `permissions.defaultMode` (`.claude/settings.json`) is read when the CLI process starts. Changing it under a running process changes nothing until the next start. Source: live run M1-final.
+
+## claude mcp login and logout
+
+`mcp.ts` runs the CLI the SDK bundles (`sdk.ts` `bundledCli`: the `claude` of `@anthropic-ai/claude-agent-sdk-<platform>-<arch>`, the one session processes run) as `claude mcp login <name>` and `claude mcp logout <name>`, in the session's folder, as server config can be project-scoped. Its output stays in memory for the error sentence and is never logged.
+
+From `--help` (CLI 2.1.330):
+- `mcp login [--no-browser] <name>`: "Authenticate with an MCP server (HTTP, SSE, or claude.ai connector)". `--no-browser` "Print[s] the authorization URL instead of opening a browser … paste the redirect URL back when prompted".
+- `mcp logout <name>`: "Clear stored OAuth credentials for an MCP server".
+- `mcp list` and `mcp get <name>` health-check the servers they show; `.mcp.json` servers not yet approved show as "Pending approval".
+
+Seen in live run MC-1 (2026-11-25):
+- An unknown name: exit 1, nothing on stdout, one stderr line `No MCP server named "<name>". Run \`claude mcp add\` to add one.`, in about 0.12 s; the same for login and logout.
+- `mcp add` under an enterprise policy that forbids it: exit 1, `Cannot add MCP server "<name>": not allowed by enterprise policy`.
+
+Unverified: a sign-in's own run with no TTY (whether it opens the browser itself, waits for the flow, what it prints and exits with), because no OAuth server could be configured here (policy) and none of the user's could be signed out of and back in to in one script. Synopia runs it with stdin closed and without `--no-browser`, so it is meant to open the browser and wait; it kills it after 5 min (`LOGIN_TIMEOUT_MS`) and shows the last stderr line's first sentence on a non-zero exit. Code: `mcp.ts` `cliRunner`. Test: `mcp.test.ts` (injected runner).
