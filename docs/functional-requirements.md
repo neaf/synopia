@@ -29,12 +29,12 @@ Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in
 
 ## Sessions (SES)
 - FR-SES-01: Only sessions Synopia holds open show; the open list persists across restarts with transcripts; the SDK process starts on the first message. R3.1
-- FR-SES-02: "New session" opens an empty session in the new-session folder (a stored setting; default the most recently opened session's folder, else `~`), no dialog, no worktree; placeholder id until `system/init`, old ids keep resolving; `conversation_reset` swaps the id the same way; a swap onto an id already open is refused with a toast. R3.3
-- FR-SES-03: "Open session" lists past sessions from `listSessions()`, newest 50, open ones excluded, filtered on title and folder; a terminal-held row says "Open in a terminal" and opens read-only; opening resumes by id on the first message and makes it the most recently opened. R3.2, R3.6
+- FR-SES-02: "New session" (the footer, or n) opens the folder list over the main area: the known folders (Synopia's open list and `listSessions()` cwds, closed ones included) newest first with their session count and last use, plus `~`; the folder of the session on screen selected, else the newest, else `~`; typing filters with the matcher (FR-SES-18); a typed `~` or `/` path completes on Tab with one read of the folder typed so far (direct child folders only), and Tab on a row fills its path. Enter sends `newSession {cwd}`: an empty session in that folder, no worktree, the box in insert mode; the backend refuses a folder that isn't there. Placeholder id until `system/init`, old ids keep resolving; `conversation_reset` swaps the id the same way; a swap onto an id already open is refused with a toast. R3.3
+- FR-SES-03: "Open session" (the footer, or o) lists past sessions from `listSessions()`, open ones excluded: with no filter the newest 50; with one, every past session ranked by the matcher (FR-SES-18) on "title folder", a tie to the row with more matched letters in its title, then the newer, at most 50. The reply carries the totals (sessions, folders, matches) for the header ("812 past sessions in 43 folders, newest first.") and the last line ("Newest 50 of 812. Type to search all of them." or "3 sessions match."). Ages past 60 days read in months. Rows on screen get one gone check per opening (FR-SES-16) and say "Folder gone". A terminal-held row says "Open in a terminal" and opens read-only; opening resumes by id on the first message and makes it the most recently opened. R3.2, R3.6
 - FR-SES-04: Close (x, x) ends the process, the `!` command and the cards, clears the session's "always allow" rules, marks `closedAt`, hides the session at its layout place and drops its UI state; reopening puts it back. R3.6, R9.6
 - FR-SES-05: Claude writes the title and the Now line live (haiku, 20 s debounce, one call at a time, no tools, hooks or MCP, `persistSession:false`); the CLI slug still shows small. No drift detection, no split. R3.4, R3.5
 - FR-SES-06: Title order: custom > written > CLI ai-title > first prompt > "New session"; an empty custom title clears a rename; a shown-title change is a quiet "Retitled" line ("by you" for a rename), none for the first title or an equal one. R5.12c
-- FR-SES-07: Model per session: the header shows it; click or `/model` opens the SDK's model list with effort; a running process gets `setModel` + `applyFlagSettings`, else it applies at next start. Choice > transcript model > `settings.model`, from one resolver. R3.7
+- FR-SES-07: Model per session: the header shows it; click or `/model` opens the SDK's model list with effort, filtered by what is typed after `/model ` with the matcher (FR-SES-18); a running process gets `setModel` + `applyFlagSettings`, else it applies at next start. Choice > transcript model > `settings.model`, from one resolver. R3.7
 - FR-SES-08: Terminals are seen through pid files: a file counts when its pid lives with the same UTC `procStart`, `kind: interactive`, `entrypoint: cli`, not Synopia's own child; a format break logs once; a live pid with another start time is logged once; a failed `ps` is never cached. R3.2
 - FR-SES-09: Yield: a terminal taking a held session makes Synopia interrupt, end its process and show read-only with "Open in a terminal (pid N). Type there, or send here to bring it back."; when the CLI exits the session is Synopia's again. R3.2
 - FR-SES-10: Take-over on send: when the CLI is idle, re-check, SIGTERM then SIGINT (never SIGKILL, 10 s cap, then a toast and the message stays), note to its tty after exit, transcript stable 500 ms, resume and send; busy or waiting: "Waiting for the terminal to finish…", any edit or Esc cancels. R3.2
@@ -43,9 +43,13 @@ Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in
 - FR-SES-13: Start options: permission mode unset (the user's `auto`) unless the transcript's last mode is plan; `perTaskStopAffordance`, `includePartialMessages`, `bashEditDiffEnabled`, state-events env flag. R6.5
 - FR-SES-14: Send: text plus PNG/JPEG images up to 5 MB each and 20 MB together; empty text or image data refused; held behind a card until the last card; during a process end queued for the next process. A send the backend refuses, or one lost before its ack, comes back to the box. R5.13
 - FR-SES-15 (`future`): Closing note with what was done and loose ends to triage. R3.6 ("comes later"). Nothing in `sessions.close` blocks it.
+- FR-SES-16: Gone folders. A session's folder is checked (one stat) when it is opened from the Open list, when it is shown (`view`), and when a send or `!` command finds it gone; a gone one has `gone: true` in its `session` frame, the header says "folder gone", and the box holds one line, "This folder no longer exists. Enter picks a folder to continue in.", with no field and no bash mode. Enter or a click opens the folder list as "Continue in a folder", filtered on the repo name (the folder's name up to its first dot), gone rows dimmed and skipped. Enter sends `continueSession {sid, cwd, create?}`: the backend forks the session into that folder (`resume` + `forkSession: true` + the new `cwd`, one `shouldQuery: false` context line naming both folders, no turn), the new id from `system/init` takes the session's place (layout, title, UI state, models), the open entry gets the new folder, and the transcript shows "Continued in <folder>" in place of that context line. The old id stays a past session in the Open list. No guess where a moved repo went. R3.11
+- FR-SES-17: With no open session the main area shows the folder list for good: Esc only leaves its filter (session keys then work: n back to it, o the Open list); the first launch with no history shows `~` and "No other folders yet. Type a path; Tab lists what is in it." R3.12
+- FR-SES-18: One matcher module, `app/web/js/fuzzy.js` (a port of nota's `FuzzyMatch` and `SearchIndex.search`, fzf v2), DOM-free, used by the folder list, the Open list (in the backend, over every past session), the `/` command menu and the model picker; the page highlights the matched letters (bold link blue, underlined on the selected row). R3.14, R5.14, R3.7
+- FR-SES-19: A typed path gets one existence check of exactly that path after typing stops (300 ms); a missing one shows one row, "Create folder <path> and start there"; Enter sends `newSession {cwd, create: true}` (or `continueSession` with `create`), and the backend runs `mkdir -p` on that one path, its only write to your folders, then starts there. R3.3
 
 ## UI state (STATE)
-- FR-STATE-01: Reopening shows exactly what was on screen: current session and subagent view, per-session scroll anchor (item + pixels, or pinned within 40 px of the end), draft (text, cursor, images as files 5 MB / 20 MB, mode), expanded steps, diffs, runs, background card, earlier range, half-answered cards, Open list, file preview, image viewer, theme. State lives in the backend; closed sessions drop it, and so do sessions no longer open at start; an id swap carries it; last writer wins; an emptied entry keeps `current` and `view`. R3.9
+- FR-STATE-01: Reopening shows exactly what was on screen: current session and subagent view, per-session scroll anchor (item + pixels, or pinned within 40 px of the end), draft (text, cursor, images as files 5 MB / 20 MB, mode), expanded steps, diffs, runs, background card, earlier range, half-answered cards, Open list, folder list (its filter, and the session it continues), file preview, image viewer, theme. State lives in the backend; closed sessions drop it, and so do sessions no longer open at start; an id swap carries it; last writer wins; an emptied entry keeps `current` and `view`. R3.9
 - FR-STATE-02: state.json: one file, atomic tmp+rename, 0600, at most one write per second, retried after a failed write, flushed on shutdown and on a crash; every entry validated on load; an unreadable file is kept as `.bad-<ms>`. R3.9
 
 ## Sidebar (SIDE)
@@ -82,7 +86,7 @@ Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in
 - FR-BOX-01: At least three lines, `❯` first, grows; a click focuses; no Send button or hint row; Enter sends, Shift+Enter breaks, placeholder "/ for commands". R5.13
 - FR-BOX-02: Image paste: thumbnails from the pasted image with ✕; `[Image #N]` tag at the caret, N counting through the session, never reused; deleting a tag dims its thumbnail and skips it; sent as one text block with tags then images in tag order; PNG/JPEG up to 5 MB each, 20 MB together (refused in the page, box kept); drafts keep tags and images. R5.13
 - FR-BOX-03: Bash mode: `!` first turns the prompt into a pink `!`; Enter runs `$SHELL -c` in the session folder with the login env, output streams, cut at 30,000 code points; one command per session; Esc, Esc ends it (SIGTERM to its group, SIGKILL after 3 s); command and output go to Claude as `<bash-input>`/`<bash-stdout>`/`<bash-stderr>` without a turn; the transcript shows it on a `!` band, 20 lines, stderr apart, exit noted; refused in a terminal-held session and while another process runs the turn. R5.13, R9.4
-- FR-BOX-04: `/` opens the session's real commands and skills (from the SDK, cached per folder; internal and server-only commands left out) with hints and descriptions; ↑↓, Tab or Enter fills, Esc closes. R5.14
+- FR-BOX-04: `/` opens the session's real commands and skills (from the SDK, cached per folder; internal and server-only commands left out) with hints and descriptions, matched on the name with the matcher (FR-SES-18), letters highlighted; ↑↓, Tab or Enter fills, Esc closes. R5.14
 
 ## Needs you (NEED)
 - FR-NEED-01: A blocked session shows "Needs you" everywhere: red seesawing stripes in the sidebar, red tint on the Main conversation row, red card header. R6.1
@@ -118,6 +122,7 @@ Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in
 - FR-KEY-03: ⌘⇧[ and ⌘⇧] switch sessions; window tabbing is off so the system does not take them. R9.3
 - FR-KEY-04: Esc in normal during a turn asks "Interrupt?" in the box; a second Esc interrupts the foreground turn only; queued messages come back to the box (`cancelQueued` when advertised, else a toast); a running `!` command is asked first; an open card field takes Esc first. R9.4
 - FR-KEY-05: b in normal, when the driven turn runs a foreground Bash or subagent, marks those steps and asks "Send to background?"; b again sends all; nothing to send or another process: no-op, toast only when nothing could go. R9.5
+- FR-KEY-07: n in normal mode opens the folder list (FR-SES-02), o the Open list (FR-SES-03); no ⌘N, ⌘O or menu items. In the folder list ↑↓ (j/k with an empty filter) move, Tab completes, Enter starts or continues, Esc closes (FR-SES-17 aside). On a gone-folder session Enter in normal mode opens "Continue in a folder", and i, a and `/` do nothing. R9.7, R3.11
 - FR-KEY-06: x in normal asks "Close this session? x again…" naming what will stop ("Remove it from Synopia?" for another process's); x again closes; one prompt at a time across Esc, b and x; in insert x types. R9.6
 
 ## Review (REV)
@@ -129,12 +134,12 @@ Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in
 - FR-LOOK-03: The look matches `prototype/app.html`, except decided differences: rail 320 px, one mark period, no kind edge on cards. AGENTS.md
 
 ## Tooling and checks (TOOL)
-- FR-TOOL-01: `app/check.sh` prints one line each for backend tests, shell (typecheck and `DaemonFilesTest`) and web (syntax, import rules, page unit tests); `--page` adds the 22 page suites; each line names what failed; nonzero on any failure. Every change must pass `app/check.sh --page`.
+- FR-TOOL-01: `app/check.sh` prints one line each for backend tests, shell (typecheck and `DaemonFilesTest`) and web (syntax, import rules, page unit tests); `--page` adds the 23 page suites; each line names what failed; nonzero on any failure. Every change must pass `app/check.sh --page`.
 - FR-TOOL-02: Each page-check run starts its own chrome-headless-shell and scripted-SDK backend on port 0 with temp state, and cleans both up on exit or signal. No other browser is ever started.
 - FR-TOOL-03: The scripted SDK (`app/backend/dev/scripted-sdk.ts`, `--sdk-script <file>`, `app/dev.sh --script`): per-session scripts of SDK messages and `canUseTool` calls over a fixture tree, so dev runs and every page check run the real Sessions code with no model call. It replaced the `--fake` driver (Q5).
 - FR-TOOL-04: Test hooks: `?agent=<id>`, `?open=1`; `window.__synopia` (state getters, ready signal, sent-frame spy, message injection); env `SYNOPIA_STATE_DIR`, `SYNOPIA_SDK_SCRIPT`, `SYNOPIA_EXIT_IDLE_MS`, `SYNOPIA_SNAPSHOT`, `SYNOPIA_DEBUG_DRAG` (shell), `SYNOPIA_CDP_THEME` (page checks).
 - FR-TOOL-05: `app/web/dev/compare.sh` screenshots prototype and port in 6 states for look review.
-- FR-TOOL-06: Perf scripts (`app/backend/perf`, opt-in, outside check.sh, real model calls): 5 haiku sessions' RSS; load time and memory of the N largest real sessions.
+- FR-TOOL-06: Perf scripts (`app/backend/perf`, opt-in, outside check.sh, real model calls): 5 haiku sessions' RSS; load time and memory of the N largest real sessions; `fork-cwd.mjs`, the one check behind CON-SDK-16.
 - FR-TOOL-07 (`dropped`, Q10): `check.html` backend smoke page.
 - FR-TOOL-08: `app/backend/test/upgrade.sh`, opt-in, outside check.sh: a daemon built from tag `rearch-base` hands over to this tree's code (one daemon after, protocol v2, open list, layout, marks and models kept).
 
@@ -150,6 +155,7 @@ Q numbers (Q1 to Q11) in this file, in [architecture.md](architecture.md) and in
 - NFR-09: Scale: one user, one 16 GB machine, 55 MB / 4,200-line transcripts, 50 MB parsed under 2 s (`tail.test.ts`), backend under 200 MB RSS with the 15 largest sessions; an idle `claude` child costs 100-256 MB, so idle processes end after 30 min.
 - NFR-10: Platform: macOS 26+ (Info.plist; the true floor is `unverified`), Node 22.13+ with `--experimental-strip-types` and no build step, Swift from the command line tools; nothing fetched at run time that Jamf could block (fonts bundled); the node path is baked in at build.
 - NFR-11: Privacy: never read `~/.claude/sessions/*.key`; never commit `prototype/transcripts.js`, `spike/logs/` or anything from `~/.claude/sessions` or `~/.claude/projects`; never resume, fork or message a session a live CLI holds; the tree holds invented data only.
+- NFR-13: No disk scans (R3.13): the folder list reads no folder; completion is one `readdir` of the folder typed so far, on Tab, never recursive (`folders.ts`, a test counts the reads); gone checks stat only the paths the page names (rows on screen, the row chosen, the path typed), and skip the protected folders (Desktop, Documents, Downloads, Pictures, Music, Movies, Library, `/Volumes`) unless the row is chosen; the one write is `mkdir -p` of the typed path on its create row. `git` is never run to find folders.
 - NFR-12: Persisted state is durable and validated: atomic writes, retry after a failed write, flush on any exit, entries validated on load, growing maps capped (reviewed 1000, answers 2000, plans 100).
 
 ## Constraints from external systems
@@ -185,6 +191,7 @@ Agent SDK (0.3.330, bundled CLI 2.1.330), [Agent SDK](Agent%20SDK.md):
 - CON-SDK-12: `stopTask` emits `task_notification` at once; the JSONL gets it only when the turn ends. Synopia does not call it (FR-BG-06).
 - CON-SDK-13: Resume and fork re-send the whole history (cost). `unverified`.
 - CON-SDK-14: `listSessions()` gives the cwd realpath and honours `CLAUDE_CONFIG_DIR`.
+- CON-SDK-16: A resume with another `cwd` keeps the id and appends to the old folder's transcript, which `listSessions()` keeps under the old folder; `resume` + `forkSession: true` + a new `cwd` gives a new id, a transcript in the new folder's project with the whole history, and `listSessions()` names the new folder. A `shouldQuery: false` message alone makes the fork with no model call.
 - CON-SDK-15: Bedrock error shapes for expired SSO, throttling and compaction are typings-based only, `unverified`; plan rate limits (5 h, weekly) are unavailable on Bedrock (R14).
 
 WKWebView and browsers, [WKWebView and AppKit](WKWebView%20and%20AppKit.md) and [Page checks](Page%20checks.md):
@@ -212,6 +219,8 @@ macOS, [macOS](macOS.md) and [Daemon files](Daemon%20files.md):
 - The `--fake` driver, replaced by the scripted SDK (FR-TOOL-03), 2026-11-24 (Q5). A daemon still accepts `--fake` and `--dry-open` once, so a check's old daemon can hand over to new code.
 - FR-TOOL-07 `check.html`, 2026-11-24 (Q10).
 - The fixed default folder (a work repo) in FR-SES-02: a stored setting, default the most recent session's folder or `~`, 2026-11-24.
+- That stored setting, `settings.newSessionCwd`, and its default rule: the folder list asks every time, 2026-11-25 (R3.3). A state.json that still has it loads; the field is ignored and dropped on the next write.
+- ⌘N/⌘O and File menu items, a "Choose in Finder…" row, worktree rows and worktree creation, guessing a moved repo's new folder: rejected 2026-11-25 (requirements Design notes).
 - The kept storyboards are design history; [requirements.md](requirements.md) (R6.4, R8.3) wins where they differ.
 
 ## Known gaps
@@ -254,6 +263,13 @@ Checks and tooling:
 - `compare.sh` "waiting" shot: the header says "Default" where the prototype says "Default (Fixture Large)", because that fixture session's folder has no menu.
 - `perf/processes.mjs` reads protocol v2 but was not run since (it makes real model calls).
 
+Folders (FR-SES-02, -03, -16 to -19):
+- Path completion lists real folders only: a symlink to a folder isn't listed (telling would mean a stat per entry). Typing its path still works.
+- The protected-folder list is fixed in `folders.ts`; a folder macOS protects that isn't on it (another app's container outside `~/Library`) can still prompt when its row is on screen.
+- A gone check is cached per opening of a list; a folder deleted while a list is open shows as there until the next opening, and the backend refuses it on Enter.
+- Continuing forks with one context line in the old history's new copy; the old session's sidebar state (scroll, draft) moves to the fork. A fork made by Synopia that then fails to start (no `system/init`) leaves the session on the old id, with the new folder, until the next send.
+- The Open list runs the matcher over every past session on each filter change (after 120 ms); at a few thousand sessions it is a few ms, not measured beyond.
+
 Known limits of the design:
 - A take-over that completes while you are on another session leaves its text in that session's draft (the page empties the box only while it is on screen).
 - The Now line follows 20 s (the writer's debounce) after a turn, background work or a waiting card changes, not at once.
@@ -262,12 +278,14 @@ Known limits of the design:
 - Backend updates: an action sent during the idle handover is refused with an ack ("Synopia is restarting…") and a send comes back to the box. A new daemon that loads but fails later is a lost daemon: the shell starts one after 20 s, and the error view shows if that fails too. Session processes end with the handover (they were idle) and resume on the next message.
 - Paths map only the real path of `/tmp` and of home back (`paths.ts`); a project folder reached through a symlink shows its real path.
 - A task ended by the SDK's `task_notification` between turns is kept in memory only; the JSONL's own notification (written at the next turn) or the process-end mark covers a restart.
-- The Open list shows the 50 newest sessions per filter, so an older one in a busy folder can't be reached from it.
 - Two writers on one transcript (a terminal and Synopia at once) can interleave records; the take-over keeps one writer only for sessions Synopia holds (CON-CC-12).
 
 Facts marked `unverified` in the topic docs (Bedrock error shapes, the macOS and WebKit floor, Jamf, resume cost, pid-file deletion) wait for a live check.
 
 Before any push: git history up to the Phase 2 commit of the rearchitecture holds real work data (Q1); scrub it first, asking the user.
+
+## Decisions (2026-11-25)
+Sessions in any folder, from `prototype/folders-storyboard.html`; the list and the reasons are in [requirements.md](requirements.md) section 15 and the Design notes. In short: keys n and o; one matcher for four lists; no disk scans; a create row as the only write; no worktree rows or creation; no guessing moved repos; no Finder row; a gone folder's session continues as a fork (CON-SDK-16).
 
 ## Decisions (2026-11-24)
 The user's answers for the rearchitecture.

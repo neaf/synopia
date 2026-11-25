@@ -46,15 +46,29 @@ These requirements come from a day of prototyping against the user's real sessio
   - A terminal takes a session Synopia holds (the user types there, or runs `claude --resume <id>`): Synopia yields at once. It interrupts its turn if one runs and ends its process. The session shows read-only, the transcript still live, and the message box holds one line: "Open in a terminal (pid 54166). Type there, or send here to bring it back." When that CLI exits, the session is Synopia's again, quietly.
   - Synopia takes a session a terminal holds (the user sends here): when the CLI is idle (nothing running or waiting in it), Synopia checks again right before, writes a note to the CLI's terminal, ends it (SIGTERM, then SIGINT, never SIGKILL; if it won't exit within 10 s the message stays in the box with a toast), waits for the transcript to settle, resumes the session and sends. The message stays in the box until then. When the CLI is busy or waiting, the box keeps it, marked "Waiting for the terminal to finish…", and the take-over runs once the CLI is idle; any edit or Esc cancels the wait.
   - The note, written to the CLI's own terminal after it exits: "Synopia took over this session at 12:04. To continue here instead: claude --resume <id>". Without a terminal to write to, it is skipped.
-  - "Open session" lists past sessions from the SDK's `listSessions()`, newest first; one a terminal holds says "Open in a terminal" in its row and opens read-only. Opening one resumes it by id on the first message.
-- R3.3 New session: "New session" opens an empty session in the new-session folder: a stored setting (`settings.newSessionCwd` in state.json) that defaults to the folder of the most recently opened session, or `~` when there is none (decided 2026-11-24). There's no dialog and no new worktree yet. The first prompt sets the tone, and Claude names the session from there.
+  - "Open session" (o in normal mode, R9.7) lists past sessions from the SDK's `listSessions()`, newest first; one a terminal holds says "Open in a terminal" in its row and opens read-only. Opening one resumes it by id on the first message. Since 2026-11-25:
+    - The header gives the totals ("812 past sessions in 43 folders, newest first."), and the last line says typing reaches all of them ("Newest 50 of 812. Type to search all of them.", or "3 sessions match.").
+    - Typing matches every past session, not only the 50 shown, with the one fuzzy matcher (R3.14), on the title and the folder; matched letters are highlighted.
+    - A row whose folder is gone says "Folder gone" and its folder is struck through (R3.11). Ages over 60 days read in months ("9 mo ago").
+- R3.3 New session asks where (decided 2026-11-25, replacing the stored new-session folder of 2026-11-24). "New session", or n in normal mode (R9.7), opens the folder list over the main area, drawn like the Open list. The session it starts is empty, with no new worktree; the first prompt sets the tone, and Claude names the session from there.
+  - The list holds the folders Synopia already knows: where its own sessions ran and the folders of `listSessions()`, newest first, each with its number of sessions and when it was last used, and `~` ("home folder"). Nothing else is read to find folders (R3.13).
+  - The folder of the session on screen is selected, so n, Enter starts there. With no session on screen the newest folder is; with none known, `~`.
+  - Typing filters the folders fuzzily (R3.14). Text that starts with `~` or `/` is a path: Tab reads that one folder (the path up to its last `/`) and lists its direct children, which typing then filters with no new read. Tab on a row fills the filter with its path, so the next Tab goes one folder deeper.
+  - A typed path that doesn't exist shows one row, "Create folder <path> and start there". Enter makes that one folder (`mkdir -p`) and starts there. It is Synopia's only write to your folders.
+  - Enter starts an empty session in the selected folder, with the message box in insert mode. Esc closes the list.
 - R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it.
 - R3.5 No drift detection. The user keeps one session per topic (see Rejected).
 - R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. x, x in normal mode (R9.6) marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
-- R3.7 Model per session: the header shows the model; clicking it, or typing `/model`, opens the model picker (list from the SDK). Effort levels come from the same list.
+- R3.7 Model per session: the header shows the model; clicking it, or typing `/model`, opens the model picker (list from the SDK). Typing after `/model ` filters it fuzzily (R3.14). Effort levels come from the same list.
 - R3.8 Rejected:
   - Listing every terminal session in the sidebar: only the sessions open in Synopia show (R3.1).
   - Drift detection ("Topic changed: …") and "Split into a new session": the user keeps one session per topic.
+  - ⌘N and ⌘O, and a File menu with New Session and Open Session (2026-11-25): Synopia's keys stay single letters in normal mode (R9.7), with no new menu items.
+  - A "Choose in Finder…" row in the folder list: a second way to a folder never used; the typed path with Tab covers it.
+  - Worktree rows from `git worktree list`, and a "New worktree…" row: the author starts in the repo and lets agents manage worktrees.
+  - Guessing where a moved repo went (the same git remote).
+  - A stored new-session folder (`settings.newSessionCwd`): the folder list asks every time, with the folder on screen selected.
+  - Hiding sessions whose folder is gone, and failing the send in a gone folder with only a toast.
 - R3.9 Exact state after a reload, a crash or a quit: reopening Synopia shows exactly what was on screen. The page is only UI; this state lives in the backend, so it survives page reloads, app crashes and quits. Restored:
   - the current session, and the subagent view if one was open;
   - each session's scroll position, on the same item and the same pixels into it (so it lands on the same content when the window size changed or new items arrived), or at the bottom, pinned there, if it was within 40 px of the end. An item that is gone (a rewritten file) lands at the bottom;
@@ -64,6 +78,20 @@ These requirements come from a day of prototyping against the user's real sessio
   - the Open list (open, with its filter), the file preview (its file, scroll and find query) and the image viewer.
   - A closed session's state is dropped; a `/clear` or a new session's real id carries it over. There's no live sharing between two pages: the last one to write wins.
 - R3.10 One writer, always: before any Synopia process starts on a session, Synopia checks for a live terminal that holds it. If one does and the take-over conditions of R3.2 aren't met, it doesn't start, and the message is kept.
+- R3.11 Gone folders (decided 2026-11-25). A session whose folder no longer exists (a deleted worktree, a moved repo) is named, not hidden:
+  - In the Open list its row says "Folder gone". Opened, it shows its whole transcript read-only, the header says "folder gone", and the message box holds one line instead of the field: "This folder no longer exists. Enter picks a folder to continue in."
+  - Enter (or a click on the line) opens the folder list titled "Continue in a folder", filtered on the repo's name (a worktree folder's name up to its first dot). Gone folders show dimmed and can't be picked; a typed path can be created as in R3.3.
+  - Enter forks the session into the folder picked: a new session id with the whole history, and Claude gets one quiet line of context saying the folder changed. The transcript marks the move with a quiet line in place, styled like "Retitled": "Continued in ~/dev/demo-app". The sidebar row keeps its place and title. The old session stays in the Open list as history, still "Folder gone". A plain resume in another folder would keep the id but write into the old folder's transcript, which keeps naming the gone folder ([Agent SDK](Agent%20SDK.md#sessions-list-resume-fork)).
+  - Synopia doesn't guess where a moved repo went.
+  - A session already in the sidebar whose folder goes shows the line once Synopia checks its folder: when you show it or send to it.
+- R3.12 With no open session, the main area shows the folder list (R3.3) and keeps it: Esc leaves its filter, n comes back to it, o opens the Open list. On a first launch with no history it holds only `~` and says "No other folders yet. Type a path; Tab lists what is in it."
+- R3.13 Never scan the disk (decided 2026-11-25):
+  - Never list the home folder or walk folders, on the first start or later: listing `~` sets off a run of macOS privacy prompts (Desktop, Documents, Downloads, Pictures, Music, other apps' data).
+  - The folder list comes only from the folders of known sessions (Synopia's and `listSessions()`).
+  - Path completion is one read of the folder typed so far, on Tab, never recursive, never as you type.
+  - "Folder gone" checks only the rows on screen, once per opening of a list, and the row you choose. A row inside a protected folder (Desktop, Documents, Downloads, Pictures, Music, Movies, Library, other volumes) is checked only when you choose it. A typed path gets one check of exactly that path, when you stop typing.
+  - A prompt you cause by typing a path into a protected folder is fine: you asked to look there.
+- R3.14 One fuzzy matcher for every list (decided 2026-11-25): the folder list, the Open list, the `/` command menu and the model picker match with one matcher, a port of nota's (fzf's v2 algorithm). A word's letters must appear in order, case and accents aside; a space splits the query and every word must match, in any order. Each matched letter scores 16; a word start earns a bonus (after a space 10, after `/ , : ; |` 9, after other punctuation 8, a capital or digit after a lowercase letter 7, double for the first letter); letters in a run keep at least 4 each; a gap costs 3, then 1 a letter. Higher scores first; ties keep the list's own order. In the Open list a tie goes to the row with more of the match in its title. Matched letters are bold in the link blue, and also underlined on the selected row.
 
 ## 4. Sidebar
 
@@ -156,7 +184,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - Pasted images show as thumbnails below the text (R5.12b sizes), each with a small ✕ on hover that removes it. Enter sends them with the text, as base64 PNG or JPEG of at most 5 MB each and 20 MB together (the socket caps a frame at 32 MB); more is refused with a toast. The thumbnails come from the pasted image itself, never the server (2026-11-24).
   - As in the Claude Code CLI, a paste puts an `[Image #N]` tag at the caret, with a space between it and any text it touches. N counts up through the session, as the CLI's does: one more than any tag in the session's prompts or the draft, never reused. The ✕ removes the image and its tag; the other tags keep their numbers. Deleting a tag's text leaves its thumbnail in the row, dimmed with a dashed line, and that image isn't sent (typing the tag back brings it back). The message goes as the CLI sends one: a text block with the tags in it, then the images in the order of their tags. Your prompts, sent from Synopia or from the CLI, show the tags in place as plain dim text, with the thumbnails below. A draft keeps its tags and images over a restart (R3.9) (2026-11-24).
   - Bash mode, as `!` in the Claude Code CLI (2026-11-24): a `!` typed as the first character turns the box's `❯` into a `!` in the CLI's bash pink (Synopia's `--bash`, light and dark), the `!` leaves the text, and the placeholder reads "Run a shell command in <folder>". Backspace on the empty box leaves the mode. There's no slash menu in it. Enter runs the command in the session's folder with your login shell (`$SHELL -c`, the login environment) and its output streams into the transcript, cut at 30,000 characters as the Bash tool's is. One command at a time per session: a second one stays in the box with a toast. Esc, Esc ends a running one (R9.4). The command and its output then go to Claude as context in the CLI's format (`<bash-input>`, `<bash-stdout>`, `<bash-stderr>`), without starting a turn, so Claude sees them with your next message. The transcript shows the command on your prompt's band with `!` for `❯`, its output under the drawn guide, cut at 20 lines with "Show all N lines", stderr apart (red, with a 1px rule at its edge), and a non-zero exit or "Stopped" noted, the same for a command run in the CLI. A session Synopia doesn't drive, or one a terminal holds, has no bash mode: the `!` is text, and the box shows its existing line.
-- R5.14 `/` opens an autocomplete of the session's real commands and skills, with argument hints and descriptions aligned. ↑↓ moves, Tab or Enter fills, Esc closes.
+- R5.14 `/` opens an autocomplete of the session's real commands and skills, with argument hints and descriptions aligned, matched fuzzily on the name with the letters highlighted (R3.14). ↑↓ moves, Tab or Enter fills, Esc closes.
 
 ### 5.4 Rejected
 - Separate "who" labels.
@@ -282,6 +310,7 @@ These requirements come from a day of prototyping against the user's real sessio
     - g/G: top or bottom of the transcript; g at the top loads earlier items (R5.12a).
     - i/a: insert.
     - `/`: insert with the command menu open.
+    - n: New session (the folder list, R3.3); o: Open session (R3.2). See R9.7.
   - Insert mode: typing goes to the message box, or to a field in the card. Esc returns to normal; the first Esc closes the command menu. A `!` first in the empty box is bash mode (R5.13), inside insert mode: the same keys, Enter runs the command, Backspace on the empty box leaves it, and the box keeps it when Esc goes to normal.
   - Clicking the message box enters insert mode.
 - R9.2 The only mode indicator is the message box: grey in normal mode, blue ring in insert mode.
@@ -298,6 +327,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - For a session another process runs, it asks "Remove it from Synopia? x again. Its other process keeps running.", and closing only removes it from Synopia.
   - One prompt at a time: Esc or b under it asks theirs instead, and x under theirs asks this.
   - In insert mode x types.
+- R9.7 New session and Open session by key (decided 2026-11-25): n opens the folder list and o the Open list, in normal mode; in insert mode Esc comes first, as for every normal-mode key. No ⌘N or ⌘O and no menu items. In the folder list: typing filters, ↑↓ move (j/k too while the filter is empty), Tab completes a path or fills in the selected row's path, Enter starts, Esc closes.
 
 ## 10. Deliverables for review
 
@@ -339,7 +369,7 @@ Verified in the spike and in live scripted runs. Details, sources and quirks: [C
   - Background work: task notifications in user messages carry the tool-use id, status and summary.
   - Reports: subagent reports arrive as `isMeta` user messages from `agent-message from="<aid>"`.
 - SDK:
-  - It lists, resumes and forks sessions.
+  - It lists, resumes and forks sessions. A fork can start in another folder: a new id with the whole history, filed under the new folder (R3.11).
   - It takes images, `canUseTool` (permissions, AskUserQuestion with `updatedInput.answers`), `supportedCommands()`, `supportedModels()`, `setModel()`, `interrupt()` and streaming input.
   - The transcript is read from the JSONL; the SDK stream carries control and live state.
   - Subagent task events are available.
@@ -372,10 +402,20 @@ The author's answers to the design questions (chat, 2026-11-23 and 2026-11-24), 
 - Q4 Transcript source: one reader tails every open session's JSONL and subagent files by byte offset, for terminal-held and Synopia-held sessions alike. The SDK stream carries only control and live state (pending `canUseTool`, `session_state_changed`, partial text).
 - Q5 Transport: the backend listens on 127.0.0.1 on a random port and checks a per-start token, Host and Origin; the shell loads `http://127.0.0.1:<port>/?token=…` in a WKWebView over one WebSocket. The shell keeps the window, menus, keys, opening files and links, and the backend's lifetime. The page also runs in a browser for checks.
 - Q6 Permission mode: keep the user's settings (`auto`), so a permission card appears only when `auto` would ask. Questions and plans come through `canUseTool`. Plan-mode sessions stay in plan mode (R6.5).
-- Q7 New session: a clean, empty session, no dialog, no worktree; the first prompt sets the tone and Claude names it. Its folder is a stored setting that defaults to the folder of the most recent session, or `~` when there is none (2026-11-24).
+- Q7 New session: a clean, empty session, no worktree; the first prompt sets the tone and Claude names it. Its folder comes from the folder list (R3.3; 2026-11-25, superseding the stored setting of 2026-11-24).
 - Q8 Stopping a turn: Esc, Esc in normal mode; messages still queued at the interrupt go back to the message box (R9.4).
 - Q11 Interrupt and background work: as in the CLI, Esc, Esc stops only the foreground turn; background subagents, shells and monitors keep running (`perTaskStopAffordance: true`). The per-item Stop row is dropped until a key is designed (2026-11-24), so Synopia sends no `stopTask`.
 - Q12 Terminal take-over, automatic both ways (supersedes Q1, Q9 and Q10): a terminal that opens a session Synopia holds takes it, and Synopia shows it read-only until the CLI exits. A send in Synopia on a terminal-held session waits until the CLI is idle, leaves a note on its terminal, ends it (SIGTERM, SIGINT at most, never SIGKILL) and resumes; while busy or waiting the box keeps the message ("Waiting for the terminal to finish…") and any edit or Esc cancels. One writer always (R3.2, R3.10).
+
+Sessions in any folder (2026-11-25), from `prototype/folders-storyboard.html`:
+- Keys n and o in normal mode; no ⌘N, ⌘O or menu items (R9.7).
+- One fuzzy matcher, the nota port, for the folder list, the Open list, the `/` menu and the model picker (R3.14).
+- Never scan the disk (R3.13): the folder list comes from known session folders only; completion is one read on Tab; "Folder gone" checks only rows on screen or the row chosen.
+- A typed path that doesn't exist offers "Create folder <path> and start there", Synopia's only write (R3.3).
+- No worktree creation and no worktree rows.
+- No guessing where a moved repo went.
+- No "Choose in Finder…" row.
+- Continuing a session whose folder is gone forks it into the folder picked, settled by one scripted check (R3.11, [Agent SDK](Agent%20SDK.md#sessions-list-resume-fork)).
 
 Rearchitecture decisions (2026-11-24):
 - Real work data stays out of the tree: fixtures, storyboards and captured menus hold invented data only.
@@ -421,6 +461,17 @@ Needs-you card (R6.4, R6.9), from the problems the first card had:
 - The status said nothing specific: it hid that there were two questions and how many were answered.
 - Six bordered boxes of equal weight made the card about 560 px tall, with every question open at once.
 - Numbers like "2.1" suggested a chord, but number keys reached only the first question.
+
+Sessions in any folder (R3.3, R3.8, R9.7), from `prototype/folders-storyboard.html`:
+- ⌘N and ⌘O in a File menu: the Mac convention, and they work in both modes, but every other Synopia key is a single letter in normal mode (i, x, b), and the author wants no new menu items. Both sets at once would be two ways to do each thing.
+- A "Choose in Finder…" row: familiar with a mouse, but it knows nothing about your folders, is slow by key, and is a second way to what the typed path with Tab already does.
+- Worktree rows (`git worktree list` in known repos): they would list a fresh worktree before its first session, but each opening runs git in the folders on screen, and the author starts in the repo and lets agents manage worktrees. A "New worktree…" row brings its own questions (branch, base, naming).
+- Guessing where a moved repo went (the same git remote): a wrong guess continues a session in the wrong place; a few typed letters find the right one.
+- The stored new-session folder (`settings.newSessionCwd`, default the most recent session's folder): no dialog, but a wrong folder showed only in small type and can't change after the first message. n, Enter costs one key more and shows the folder first.
+- Starting at once and changing the folder in the header until the first message, or two commands (here, or ask): the first fixes the folder too late, the second is two ways to one thing.
+- Listing folders on disk to fill the list: reading `~` and below sets off macOS privacy prompts, on every opening.
+- Folder first, then sessions, in the Open list: two steps every time, for a case typing covers.
+- Hiding sessions whose folder is gone: the history is still on disk and worth reading.
 
 Session list (R3.8, R4.9): the first prototype showed one dark card per session with "Your move", "Mark as handled", "Copy resume" and a drift prompt ("Topic changed to …, Move it there"). Cards and drift detection were rejected: the sidebar list replaces the cards, and the user keeps one session per topic.
 

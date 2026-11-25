@@ -1,4 +1,4 @@
-<!-- Design proposal for review, not the spec: docs/requirements.md wins until the author accepts a change. All data in it is invented. -->
+<!-- Approved design (2026-11-25), with the author's decisions in the summary. docs/requirements.md is the spec and wins where they differ. All data in it is invented. -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -272,36 +272,37 @@
         <h3>Recommended</h3>
         <ul>
           <li><b>New session asks where, with the answer ready.</b> <kbd>n</kbd> in normal mode opens a folder list over the main area, drawn like Open session. The folder of the session on screen is selected, so <kbd>n</kbd> <kbd>Enter</kbd> starts there.</li>
-          <li><b>The list is the folders Synopia already knows</b>: where sessions ran, plus the git worktrees of those repos. Nothing else is read to find folders.</li>
+          <li><b>The list is the folders Synopia already knows</b>: where sessions ran, from Synopia's own list and <code>listSessions()</code>. Nothing else is read to find folders.</li>
           <li><b>A path you type completes on <kbd>Tab</kbd></b>, one folder at a time: one read of the folder typed so far, never more.</li>
           <li><b>A path that doesn't exist can be made.</b> One row, “Create folder &lt;path&gt; and start there”; <kbd>Enter</kbd> makes that one folder and starts in it. It is Synopia's only write to your disk.</li>
-          <li><b>Both lists match fuzzily</b>, with the matcher from nota: letters in order, word starts and runs rank first, matched letters highlighted.</li>
+          <li><b>Every list matches fuzzily</b>, with the matcher from nota: the folder list, the Open list, the <code>/</code> command menu and the model picker. Letters in order, word starts and runs rank first, matched letters highlighted.</li>
           <li><b>No open session means this list.</b> First launch shows it in the main area, with only <code>~</code> in it.</li>
           <li><b>Open session says it searches everything</b> (“Newest 50 of 812”), and <kbd>o</kbd> in normal mode opens it.</li>
-          <li><b>A gone folder is named, not hidden.</b> Its sessions read “Folder gone” and open read-only; <kbd>Enter</kbd> picks a folder to continue in.</li>
+          <li><b>A gone folder is named, not hidden.</b> Its sessions read “Folder gone” and open read-only; <kbd>Enter</kbd> picks a folder to continue in, as a fork with a new id.</li>
         </ul>
       </div>
       <div>
         <h3>Requirement changes</h3>
         <ul>
           <li><span class="id">R3.3, FR-SES-02, Q7</span>: New session opens the folder list instead of starting at once. The session is still empty, with no new worktree. <code>settings.newSessionCwd</code> and its default rule go.</li>
-          <li><span class="id">R3.2, FR-SES-03</span>: the Open list matches fuzzily, its header gives the totals, rows whose folder is gone say “Folder gone”, ages over 60 days read in months.</li>
+          <li><span class="id">R3.2, FR-SES-03</span>: the Open list matches fuzzily over every past session, its header gives the totals, rows whose folder is gone say “Folder gone”, ages over 60 days read in months.</li>
           <li><span class="id">R3.3, new FR-SES-19</span>: a typed path that doesn't exist shows one row, “Create folder &lt;path&gt; and start there”. <kbd>Enter</kbd> runs <code>mkdir -p</code> on that one path, nothing else, and starts the session there. Synopia's only write to your disk.</li>
-          <li><span class="id">New FR-SES-18</span>: one fuzzy matcher, ported from nota, for the folder list and the Open list, with its ranking and highlights.</li>
-          <li><span class="id">New R3.11, FR-SES-16</span>: gone folders. A session whose folder no longer exists opens read-only and offers to continue in another folder. This replaces the failed send and its toast.</li>
+          <li><span class="id">New FR-SES-18</span>: one fuzzy matcher, ported from nota, for the folder list, the Open list, the <code>/</code> command menu and the model picker, with its ranking and highlights.</li>
+          <li><span class="id">New R3.11, FR-SES-16</span>: gone folders. A session whose folder no longer exists opens read-only and offers to continue in another folder, as a fork. This replaces the failed send and its toast.</li>
           <li><span class="id">New R3.12, FR-SES-17</span>: with no open session, the main area shows the folder list.</li>
-          <li><span class="id">New R3.13, NFR-10</span>: no directory scans, as in the box below.</li>
+          <li><span class="id">New R3.13, NFR-13</span>: no directory scans, as in the box below (NFR-10 was taken).</li>
           <li><span class="id">New R9.7, FR-KEY-07</span>: <kbd>n</kbd> New session and <kbd>o</kbd> Open session, in normal mode. No new menu items.</li>
         </ul>
       </div>
       <div>
-        <h3>Open questions</h3>
+        <h3>Decisions (2026-11-25)</h3>
         <ol>
-          <li>Continuing a session in another folder: same id or a fork with a new id? Not checked: one scripted run must show whether the SDK resumes a session by id from another folder. The docs say a fork lands in the current folder's project.</li>
-          <li>Is typing a path enough for a folder never used, or should the list also have one mouse row, “Choose in Finder…” (the macOS folder picker)?</li>
-          <li>A new worktree from this list (<code>git worktree add</code>): later, or never? R3.3 says no new worktree yet.</li>
-          <li>Should Synopia guess where a moved repo went (same git remote)? Proposed: no, you pick it.</li>
-          <li>Should the other lists (the <code>/</code> command menu, the model picker) use the same matcher? Proposed: yes, as one change after this one.</li>
+          <li><b>Continuing in another folder forks.</b> One scripted check: a fork with a new folder gets a new id, its file lands in the new folder's project with the whole history, and <code>listSessions()</code> names the new folder. A plain resume keeps the id but writes into the old folder's file, which still names the old folder. The old session stays in Open session as history.</li>
+          <li><b>No “Choose in Finder…” row.</b> One way to do each thing: the typed path with <kbd>Tab</kbd> covers a folder never used.</li>
+          <li><b>No worktree creation and no worktree rows.</b> The author starts in the repo and lets agents manage worktrees, so the list runs no <code>git worktree list</code>. The Open list still shows each session's real folder.</li>
+          <li><b>No guessing where a moved repo went.</b> You pick the folder.</li>
+          <li><b>The <code>/</code> command menu and the model picker use the same matcher</b>, in this change.</li>
+          <li><b>Plain <kbd>n</kbd> and <kbd>o</kbd></b>: no <kbd>⌘N</kbd> or <kbd>⌘O</kbd>, no menu items.</li>
         </ol>
       </div>
     </div>
@@ -309,11 +310,10 @@
       <h3>Constraint: no directory scans, ever</h3>
       <ul>
         <li><b>Never list the home folder or walk folders</b>, on first start or later. Listing <code>~</code> sets off a run of macOS privacy prompts: Desktop, Documents, Downloads, Pictures, Music, other apps' data, Library.</li>
-        <li><b>The folder list comes from what Synopia knows</b>: the folders of its own sessions and of <code>listSessions()</code>, plus <code>git worktree list</code> in repos already in that list.</li>
+        <li><b>The folder list comes from what Synopia knows</b>: the folders of its own sessions and of <code>listSessions()</code>. No <code>git worktree list</code>.</li>
         <li><b>Path completion reads one folder, on <kbd>Tab</kbd> only</b>: the direct children of the path typed so far. Never recursive, never as you type, never ahead of you. <code>~/</code> then <kbd>Tab</kbd> lists <code>~</code>, only then.</li>
         <li><b>A prompt you cause by typing is acceptable.</b> <code>~/Documents/</code> then <kbd>Tab</kbd> may ask for access to Documents, because you asked to look there.</li>
         <li><b>“Folder gone” stats known paths only, and late</b>: the rows on screen, once per opening of the list. A stat inside a protected folder can prompt too, so a row there is checked only when you choose it.</li>
-        <li><b>The same late rule for <code>git worktree list</code></b>: repos on screen, and inside a protected folder only once you choose a row there.</li>
       </ul>
     </div>
   </section>
@@ -359,7 +359,6 @@
     <table class="reads">
       <tr><th>Read</th><th>When</th><th>Never</th></tr>
       <tr><td>Session folders</td><td>From Synopia's own state and <code>listSessions()</code>, which reads <code>~/.claude</code>. No other folder is opened to find them.</td><td>Listing <code>~</code> or any folder to discover projects.</td></tr>
-      <tr><td><code>git worktree list</code></td><td>In a known repo whose row is on screen, once per opening of the list. Inside a protected folder, only when you choose a row there.</td><td>In folders that aren't already in the list.</td></tr>
       <tr><td>“Folder gone” check</td><td>One stat per known path, for the rows on screen, once per opening of the list. Inside a protected folder, only when you choose that row.</td><td>Checking the whole history, or checking ahead of scrolling.</td></tr>
       <tr><td>Path completion</td><td>On <kbd>Tab</kbd>: one read of the folder typed so far, listing its direct children. Typing then filters what that read returned.</td><td>Recursion, reading as you type, reading the next level before you ask.</td></tr>
       <tr><td>A typed path</td><td>One stat of exactly the path typed, when you stop typing, to show “Create folder …” if it doesn't exist; none when a <kbd>Tab</kbd> read already tells.</td><td>Stats of anything you didn't type.</td></tr>
@@ -467,6 +466,9 @@
       <li><b>Folder first, then sessions, in Open session.</b> Two steps every time, to fix a case typing already covers.</li>
       <li><b>Hiding sessions whose folder is gone.</b> The history is still on disk and still worth reading.</li>
       <li><b><kbd>⌘N</kbd> and <kbd>⌘O</kbd> in a File menu.</b> The author's call: Synopia's keys stay single letters in normal mode, like <kbd>i</kbd>, <kbd>x</kbd> and <kbd>b</kbd>, with no new menu items.</li>
+      <li><b>A “Choose in Finder…” row.</b> A second way to a folder never used; the typed path with <kbd>Tab</kbd> covers it (decided 2026-11-25).</li>
+      <li><b>Worktree rows from <code>git worktree list</code>, and a “New worktree…” row.</b> The author starts in the repo and lets agents manage worktrees (decided 2026-11-25).</li>
+      <li><b>Guessing where a moved repo went.</b> A wrong guess is worse than a few typed letters (decided 2026-11-25).</li>
     </ul>
   </section>
 
