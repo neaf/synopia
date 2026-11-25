@@ -25,7 +25,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const running = (ago = 0) => ({ ago, message: { type: 'system', subtype: 'session_state_changed', state: 'running' } });
 
 // A fixture tree copied to a temp folder, its script changed by `edit`, and the backend's parts over it.
-async function setup(tree = 'claude', edit?: (s: Script) => void) {
+// `pretend`: the script's home folders count as there (main.ts passes Scripted.pretendFolder).
+async function setup(tree = 'claude', edit?: (s: Script) => void, pretend = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-scripted-'));
   const claudeDir = path.join(root, 'claude'), stateDir = path.join(root, 'state');
   fs.cpSync(path.join(FIXTURES, tree), claudeDir, { recursive: true });
@@ -42,7 +43,7 @@ async function setup(tree = 'claude', edit?: (s: Script) => void) {
   let sessions: Sessions | null = null;
   const transcripts = new Transcripts({ claudeDir, home: scripted.home, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
   const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: scripted.home, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r) });
-  sessions = new Sessions({ store, transcripts, publisher, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer });
+  sessions = new Sessions({ store, transcripts, publisher, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer, ...(pretend ? { pretendFolder: scripted.pretendFolder } : {}) });
   sessions.start();
   scripted.attach(sessions);
   await scripted.whenPlayed();
@@ -242,4 +243,40 @@ test('scripted: a fork with another cwd gets a new id and a file under the new f
   assert.equal(fs.readFileSync(src, 'utf8'), before, 'the old file is left as it was');
   q.close?.();
   t.stop();
+});
+
+test('scripted: a call of Synopia\'s own tool asks, runs the tool from the session\'s server and writes both records (live run TL-1)', async () => {
+  const START = 'mcp__synopia__start_session';
+  const jsonLine = (l: string) => { try { return [JSON.parse(l)]; } catch { return []; } }; // the fixture keeps a broken line
+  const t = await setup('claude', (s) => {
+    s.sessions[S1] = { ...s.sessions[S1], steps: [running(), { call: { tool: START, input: { prompt: 'Read HANDOFF.md and go on.', title: 'Next steps' }, toolUseId: 'toolu_start1' } }] };
+  }, true);
+  try {
+    const req = t.publisher.pending().map((p) => p.request).find((r) => r.toolUseId === 'toolu_start1');
+    assert.ok(req, 'the call waits on the card');
+    assert.match((req!.own as { text: string }).text, /^Start a new session in \S+ with: Read HANDOFF\.md and go on\.$/);
+    assert.equal(t.sessions.get(S1)!.answer(req!.id, { choice: 'once' }).ok, true);
+    let file = '';
+    for (let i = 0; i < 100 && !file; i++) {
+      await sleep(20);
+      const f = t.scripted.fileOf(S1, '');
+      const recs = fs.readFileSync(f, 'utf8').split('\n').flatMap(jsonLine);
+      if (recs.some((r) => r.toolUseResult && r.message?.content?.[0]?.tool_use_id === 'toolu_start1')) file = f;
+    }
+    assert.ok(file, 'the tool_result record was written');
+    const recs = fs.readFileSync(file, 'utf8').split('\n').flatMap(jsonLine);
+    const use = recs.find((r) => r.type === 'assistant' && r.message.content[0]?.name === START);
+    assert.deepEqual(use.message.content[0].input, { prompt: 'Read HANDOFF.md and go on.', title: 'Next steps' });
+    const res = recs.find((r) => r.toolUseResult && r.message?.content?.[0]?.tool_use_id === 'toolu_start1');
+    const block = res.message.content[0];
+    assert.equal(block.tool_use_id, 'toolu_start1');
+    assert.equal(block.is_error, undefined, JSON.stringify(block.content));
+    const newId = /Started session (\S+) “Next steps”/.exec(block.content[0].text)?.[1];
+    assert.ok(newId && t.sessions.get(newId), 'the new session is open under its real id');
+    const titled = fs.readdirSync(path.join(t.claudeDir, 'projects'), { recursive: true }).map(String).find((f) => f.endsWith(`${newId}.jsonl`));
+    const newRecs = fs.readFileSync(path.join(t.claudeDir, 'projects', titled!), 'utf8').split('\n').flatMap(jsonLine);
+    assert.equal(newRecs.find((r) => r.type === 'custom-title')?.customTitle, 'Next steps', 'Options.title as a custom-title record');
+  } finally {
+    t.stop();
+  }
 });

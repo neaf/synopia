@@ -51,6 +51,8 @@
 /* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
 :root[data-theme="dark"] .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
 :root[data-theme="dark"] .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px var(--blue-bg), 0 0 0 3px var(--blue-line); }
+:root[data-theme="dark"] .log .jump-mark { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+:root[data-theme="dark"] .log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; }
 :root[data-theme="dark"] .md pre { background: var(--sub); }
 
 /* files changed and diffs: tinted rows, a stronger tint in the number gutter */
@@ -84,6 +86,7 @@
 :root[data-theme="dark"] .main-row[aria-current="true"] { border-color: var(--ink); }
 :root[data-theme="dark"] .main-row:hover { filter: brightness(1.12); }
 :root[data-theme="dark"] .rv { border-color: #2F5A88; background: #22344A; }
+:root[data-theme="dark"] .rv:hover:not(:has(.rv-done:hover)) { background: #29405A; }
 
 /* ---------- marks and kind tags: the dark tracks under the turning parts ---------- */
 :root[data-theme="dark"] .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }

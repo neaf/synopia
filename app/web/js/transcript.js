@@ -30,8 +30,12 @@ let onLive = null;
 const fgMark = t => isFg(t) && t.id !== onLive ? " data-fg" : "";
 /* a step a permission check denied with no card answer above it says who said no: auto mode, or you at a terminal */
 const deniedWord = t => t.state === "denied" && !t.answer ? (t.denied === "auto" ? "Blocked by auto mode" : "Denied") : "";
+/* a start_session step that started a session (R3.15): its result line links to it, as a subagent's name does */
+const startedHTML = t => `<span class="started">Started <button class="alink" data-session="${esc(t.session)}" title="Open this session">${esc(t.obj || "the new session")}</button></span>`;
+let showSession = () => {};
+export function onSession(fn) { showSession = fn; } // main.js: selects it, or opens it again
 function toolLine(t) {
-  const res = deniedWord(t) ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${deniedWord(t)}</span></div>`
+  const res = t.session ? `<div class="res"><span class="lcorner" aria-hidden="true"></span>${startedHTML(t)}</div>` : deniedWord(t) ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${deniedWord(t)}</span></div>`
     : t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
@@ -109,15 +113,15 @@ function toolsHTML(run) {
   if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
   const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `${n} Bash commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
-    Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills`, Watched: n => `started ${n} monitors` };
-  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "1 Bash command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor" };
+    Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills`, Watched: n => `started ${n} monitors`, "Start session": n => `started ${n} sessions` };
+  const one = { Plan: "showed a plan", "Loaded tools": "loaded tools", Ran: "1 Bash command", Read: "read 1 file", Edited: "edited 1 file", Wrote: "wrote 1 file", Searched: "searched once", Subagent: "started 1 subagent", Fetched: "fetched 1 page", Skill: "used 1 skill", Watched: "started 1 monitor", "Start session": "started 1 session" };
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
-      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)}>${row}</div>`;
     }).join("")}</div></details>${thumbsHTML(run.flatMap(t => (t.imgs || []).map(m => ({ ...m, from: imgFrom(t) }))), current, view)}</div>`; // one row for the run's images (R5.12b)
 }
@@ -268,7 +272,7 @@ export function itemsHTML(items, sessionBusy, s) {
       out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(a.review ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
-      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
+      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.own ? `permission to ${esc(it.request.own.wants)}` : it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
       /* the transcript's question (a card's ask is always pending with its request, above) */
@@ -526,13 +530,16 @@ function carryState(from, to) {
 }
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], #model-label");
+  const rv = e.target.closest(".rail .rv"); // a "To review" card: anywhere on it but "Mark reviewed" goes to the report
+  if (rv && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); toReport(rv.querySelector(".rv-open").dataset.agent); return; }
+  const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], [data-session], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
   else if (t.matches(".fc")) {
     const d = document.getElementById(t.getAttribute("aria-controls")); d.hidden = !d.hidden; t.setAttribute("aria-expanded", !d.hidden);
-  } else if (t.dataset.agent) {
+  } else if (t.dataset.session) { e.preventDefault(); e.stopPropagation(); showSession(t.dataset.session); }
+  else if (t.dataset.agent) {
     e.preventDefault(); e.stopPropagation();
     selectView(t.dataset.agent); renderConv();
   }
@@ -542,6 +549,24 @@ conv.addEventListener("click", e => {
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });
+/* A "To review" card (R7.1): Main conversation, scrolled so that subagent's "Report from" block is near the top,
+   briefly marked; its own transcript when this session's transcript has no report from it. Nothing is marked
+   reviewed. */
+function toReport(id) {
+  const s = cur(); if (!s || !id) return;
+  if (view) { selectView(null); renderConv(); }
+  ui.jumpTo(`${s.id}|`, `report:${id}`, found => {
+    if (found) markJump(`report:${id}`);
+    else if (cur()?.id === s.id) { selectView(id); renderConv(); }
+  });
+}
+/* the block a jump landed on: the selection tint with the 1px blue ring of b, b, held, then faded (css .jump-mark) */
+const JUMP_HOLD = 1500, JUMP_FADE = 600;
+function markJump(key) {
+  const el = document.querySelector(`#log .log-inner > [data-key="${CSS.escape(key)}"]`); if (!el) return;
+  clearTimeout(el._jump); el.classList.remove("fading"); el.classList.add("jump-mark");
+  el._jump = setTimeout(() => { el.classList.add("fading"); el._jump = setTimeout(() => el.classList.remove("jump-mark", "fading"), JUMP_FADE); }, JUMP_HOLD);
+}
 /* a step opened or closed by a click: remembered by item id, so a redraw keeps it (toggle doesn't bubble) */
 conv.addEventListener("toggle", e => {
   const d = e.target; if (!d.dataset || !d.dataset.step) return;

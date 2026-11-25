@@ -49,9 +49,10 @@ Rules the design keeps:
 | `sessions.ts` | The set of open sessions: open list, new (in a folder, made first on request)/open/close/continue (fork into another folder), `listRecent` (the matcher over every past session, with totals), `listFolders`, id aliases, one `rekey` that moves the whole per-session record. |
 | `folders.ts` | Folders on disk, the only module that touches them for the folder list (R3.13, NFR-13): the known-folders list from Synopia's open list and `listSessions()` (no read), `~` expansion, one-folder completion (one `readdir`, injectable for the test that counts reads), gone checks of named paths with the protected-folder rule, and the one write, `mkdir -p` of a typed path. |
 | `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background. |
+| `agent-tools.ts` | Synopia's tools for agents (R3.15), the one owner: the tool list (name, description, zod input, card words, step line, run), the server per process (through `sdk.ts` `toolServer`), the `Host` it needs from `sessions.ts`, `start_session` and its result text. A tool is one entry of `TOOLS`. |
 | `cards.ts` | Needs-you requests: park `canUseTool` FIFO per session, abort cleanup, answer mapping (questions, permission, plan), "always allow" session rules that clear on close (Q6). |
 | `bang.ts` | `!` commands: run in a process group, cap by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. |
-| `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
+| `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, the in-process tool server (`toolServer`), `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
 | `menu.ts` | Slash commands and model list per folder: cache, persisted models, backoff after a failed fill, one send per folder per connection. |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
@@ -128,7 +129,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 ### Tooling
 
-`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 24 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
+`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 27 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
 
 ## Data flow
 
@@ -157,7 +158,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 - Transport: `/ws`, `auth` first within 10 s, 32 MB cap, close 4001 on auth failure, 1009 on oversize.
 - `hello` carries `v` (protocol version) and `code` (daemon code hash). A page of another version shows "Updating…", sends nothing and waits; it reloads once for a newer daemon.
-- Server to page: `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
+- Server to page: `started` (a session started another, R3.15: a page viewing `from` shows `sid`), `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
 - Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
 - At run time a field more is ignored both ways; a frame that doesn't fit is dropped with a log line or console warning.
 - Contract tests: golden frames in `app/backend/test/golden/`, checked strictly against the schema by `protocol-golden.test.ts`.
@@ -350,6 +351,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-SES-17 | folder-list.js, transcript.js |
 | FR-SES-18 | fuzzy.js, sessions.ts, open-list.js, folder-list.js, composer.js |
 | FR-SES-19 | folders.ts, sessions.ts, folder-list.js |
+| FR-SES-20 | agent-tools.ts, sdk.ts (`toolServer`), sessions.ts (`toolHost`), layout.ts (`placeUnder`), cards.ts, transcript.ts, publisher.ts (`started`), card.js, transcript.js, main.js |
 | FR-STATE-01 | ui-state.ts, ui-state.js |
 | FR-STATE-02 | store.ts, daemon.ts |
 | FR-SIDE-01 | app.css, sidebar.js |

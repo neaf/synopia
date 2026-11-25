@@ -4,7 +4,7 @@
    on `window` except the test API (test-api.js). */
 import * as state from "./state.js";
 import { store, isCurrent, isViewed } from "./state.js";
-import { connect, hooks } from "./connection.js";
+import { connect, hooks, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import * as format from "./format.js";
 import * as rail from "./rail.js";
@@ -60,6 +60,10 @@ function onMessage(m) {
       syncPrompt(); syncTakeover(); syncGone(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
       if (!had || !state.mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
+      break;
+    }
+    case "started": { // a session started another (R3.15): shown only when you are looking at the one that started it
+      if (state.current === m.from && store.sessions.has(m.sid)) { state.select(m.sid); renderAll(); }
       break;
     }
     case "removed": {
@@ -157,6 +161,11 @@ function runHooks(m) {
 
 ui.useLog(transcript.renderLog, transcript.loadEarlier);
 sidebar.onPick(renderAll); // a row's click shows its session
+/* a start_session step's link (R3.15): the session it started, or, once closed, opened again from the Open list's route */
+transcript.onSession(sid => {
+  if (store.sessions.has(sid)) { state.select(sid); renderAll(); return; }
+  if (act({ t: "openSession", sid }, { done: ok => { if (!ok && want.open === sid) want.open = null; } })) want.open = sid;
+});
 onThemeChange(preview.previewRetheme); // bat's colours come from the backend
 onGraceEnd(() => render("side", "rail")); // a finished line's grace is over: it leaves
 installTestApi({ inject: onMessage, render });

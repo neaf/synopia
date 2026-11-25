@@ -2,13 +2,16 @@
 // subagent's own shells and monitors one level deeper, guides on every mark, the corner on each last child,
 // opening a subagent moving nothing, Past naming the subagent, and none of them on the main side. Then a shell
 // or monitor opened in the pane as a subagent is (R7.2): its header, its whole output, live, earlier output,
-// J/K, back to Main conversation, kept over a reload.
+// J/K, back to Main conversation, kept over a reload. Then "To review" cards (R7.1) on a made-up session: a click or
+// Enter goes to the subagent's report in Main conversation (earlier pages loaded, near the top, marked, kept over a
+// reload), "Mark reviewed" only marks, no report falls back to the subagent's view.
 // usage: run.sh rail (or node rail.mjs <url> <state-dir>); writes rail-tree.png, rail-open.png, rail-shell-*.png
 //        node rail.mjs make <claude-dir> <tasks-dir>: the shells' made-up output files, named in the copied transcripts
 import fs from 'node:fs';
 import path from 'node:path';
-import { shot as shotTo } from './helpers.mjs';
+import { shot as shotTo, spySent } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
+const RV = '77777777-0000-4000-8000-000000000007';
 if (process.argv[2] === 'make') {
   const [claude, tasks] = process.argv.slice(3);
   fs.mkdirSync(tasks, { recursive: true });
@@ -19,6 +22,28 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(tasks, 'bsub1.output'), 'resizing 48 images\n');
   fs.writeFileSync(path.join(tasks, 'bsub2.output'), '> demo@1.0.0 optimise\n> node scripts/optimise.mjs\n\nOptimising 48 images\n  hero.png      1.2 MB -> 380 KB\n  team.jpg      860 KB -> 240 KB\n  progress 12/48\r  progress 30/48\r  progress 31/48\n\nFATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n');
   fs.writeFileSync(path.join(tasks, 'bsub3.output'), Array.from({ length: 6000 }, (_, i) => `copied icons/icon-${String(i + 1).padStart(4, '0')}.svg -> out/icon-${String(i + 1).padStart(4, '0')}.svg\n`).join(''));
+  // "To review" (R7.1): a session with three finished deliverables; one reported long before the last 160 items,
+  // one just before the end, and one whose report isn't in the transcript
+  const dir = path.join(claude, 'projects', '-tmp-fixture'), sub = path.join(dir, RV, 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  const at = (n) => new Date(Date.UTC(2026, 10, 20, 14, 0, 0) + n * 5000).toISOString(), j = (o) => JSON.stringify(o) + '\n';
+  const agents = [['cccc0001', 'toolu_rv1', 'Write the launch post'], ['cccc0002', 'toolu_rv2', 'Sketch the pricing page'], ['cccc0003', 'toolu_rv3', 'List the open bugs']];
+  const report = (n, id, text) => j({ type: 'user', uuid: `rv-r${id}`, timestamp: at(n), isMeta: true, message: { role: 'user', content: `Another Claude session sent a message.\n<agent-message from="${id}">\nThe report follows:\n  ${text}\n</agent-message>` } });
+  let out = j({ type: 'user', uuid: 'rv-u1', timestamp: at(0), message: { role: 'user', content: 'Draft the launch pieces with a few helpers.' } });
+  agents.forEach(([, tid, d], i) => { out += j({ type: 'assistant', uuid: `rv-a1-${i}`, timestamp: at(1), message: { id: 'msg_rv-a1', role: 'assistant', content: [{ type: 'tool_use', id: tid, name: 'Agent', input: { description: `For review: ${d}`, subagent_type: 'general-purpose', prompt: 'made-up', run_in_background: true } }] } }); });
+  agents.forEach(([id, tid, d], i) => { out += j({ type: 'user', uuid: `rv-u2-${i}`, timestamp: at(2), toolUseResult: { status: 'async_launched', agentId: id, description: d, prompt: 'made-up', outputFile: '/tmp/o' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tid, content: 'Async agent launched successfully.' }] } }); });
+  out += report(3, 'cccc0001', 'The launch post is in launch.md.');
+  let n = 4;
+  const chat = (k) => { for (let i = 0; i < k; i++, n++) out += i % 2 ? j({ type: 'assistant', uuid: `rv-f${n}`, timestamp: at(n), message: { id: `msg_rv-f${n}`, role: 'assistant', content: [{ type: 'text', text: `Reply ${n}: made-up notes on the copy.` }] } }) : j({ type: 'user', uuid: `rv-f${n}`, timestamp: at(n), message: { role: 'user', content: `Prompt ${n}: tighten the copy.` } }); };
+  chat(400);
+  out += report(n++, 'cccc0003', 'Seven open bugs, listed in bugs.md.');
+  chat(30);
+  fs.writeFileSync(path.join(dir, `${RV}.jsonl`), out);
+  agents.forEach(([id, tid, d], i) => {
+    fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), j({ type: 'user', uuid: `${id}-u1`, timestamp: at(1), isSidechain: true, agentId: id, message: { role: 'user', content: `${d}.` } })
+      + j({ type: 'assistant', uuid: `${id}-a1`, timestamp: at(3 + i), isSidechain: true, agentId: id, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } }));
+    fs.writeFileSync(path.join(sub, `agent-${id}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description: `For review: ${d}`, toolUseId: tid, spawnDepth: 1, finished: true }));
+  });
   process.exit(0);
 }
 const [url, state] = process.argv.slice(2);
@@ -205,5 +230,66 @@ v = await view();
 check('after a reload the shell view is back, with its output and no box', v.view === 'toolu_rsh' && v.title === 'Serve the demo' && JSON.stringify(v.cur) === '["toolu_rsh"]' && await noBox(), JSON.stringify(v));
 await ev(`document.querySelector('[data-back-main]').click()`); await sleep(300);
 check("Main conversation's draft is back after the reload", (await ev(`document.getElementById('msg')?.value`)) === 'a main draft');
+// ---------- R7.1: a "To review" card goes to its subagent's report in Main conversation ----------
+let sent = null;
+const settled = `!__synopia.restoring() && __synopia.acting() === 0`;
+await ev(`document.querySelector('#groups .row[data-id^="77777777"]').click()`);
+await c.until(`(__synopia.current() || '').startsWith('77777777') && ${settled} && document.querySelectorAll('.rail .rv').length === 3`, 5000);
+const report = (id) => ev(`(() => { const log = document.getElementById('log'), b = log.querySelector('.log-inner > [data-key="report:${id}"]'), s = b && getComputedStyle(b);
+  return JSON.stringify({ view: __synopia.view(), y: b ? Math.round(b.getBoundingClientRect().top - log.getBoundingClientRect().top) : null, marked: !!b && b.classList.contains('jump-mark'),
+    ring: s ? s.boxShadow : '', tint: s ? s.backgroundColor : '', top: log.scrollTop, toast: document.getElementById('toast').classList.contains('show'), rv: document.querySelectorAll('.rail .rv').length }); })()`).then(JSON.parse);
+const nearTop = (r) => r.y !== null && r.y >= 0 && r.y <= 40;
+const ringed = (r) => r.marked && /rgb\(\d+, \d+, \d+\) 0px 0px 0px 4px/.test(r.ring) && !/rgba\(0, 0, 0, 0\)/.test(r.tint);
+const cursorOf = await ev(`getComputedStyle(document.querySelector('.rail .rv-open[data-agent="cccc0003"] .m')).cursor + ' ' + getComputedStyle(document.querySelector('.rail .rv')).cursor`);
+check('a To review card shows it is a link: the pointer cursor', cursorOf === 'pointer pointer', cursorOf);
+// from the subagent's own view, a click on the card's text: Main conversation, its report near the top, marked
+await ev(`document.querySelector('#log .alink[data-agent="cccc0003"]').click()`);
+await c.until(`__synopia.view() === 'cccc0003' && ${settled}`, 5000);
+sent = await spySent(c);
+await ev(`document.querySelector('.rail .rv-open[data-agent="cccc0003"] .m').click()`);
+await c.until(`__synopia.view() === null && ${settled} && !!document.querySelector('#log [data-key="report:cccc0003"].jump-mark')`, 5000);
+let r = await report('cccc0003');
+check('a card click from a subagent view shows Main conversation with that report near the top of the log', r.view === null && nearTop(r), JSON.stringify(r));
+check('the report is marked with the selection tint and the 1px blue ring of b, b', ringed(r), JSON.stringify(r));
+check('a card click marks nothing reviewed', (await sent('reviewed')).length === 0 && r.rv === 3, JSON.stringify(r));
+check('the mark fades and goes', await c.until(`!document.querySelector('#log .jump-mark')`, 4000));
+// "Mark reviewed" only marks reviewed: no view change, no scroll, no jump
+await ev(`document.getElementById('log').scrollTop -= 300`); await sleep(100);
+const top0 = (await report('cccc0003')).top;
+sent = await spySent(c);
+await ev(`document.querySelector('.rail [data-reviewed="cccc0003"]').click()`);
+await c.until(`document.querySelectorAll('.rail .rv').length === 2 && ${settled}`, 5000);
+r = await report('cccc0003');
+const marks = await sent('reviewed');
+check('"Mark reviewed" only marks it reviewed: the same view and place, nothing marked', marks.length === 1 && marks[0].agentId === 'cccc0003' && r.view === null && r.top === top0 && !r.marked
+  && (await sent('view', 'earlier')).length === 0, JSON.stringify({ r, top0, marks }));
+// a Past row still opens the subagent's view
+await ev(`document.querySelector('.rail .pr[data-agent="cccc0003"]').click()`);
+await c.until(`__synopia.view() === 'cccc0003' && ${settled}`, 5000);
+check("a Past row still opens the subagent's own transcript", (await ev('__synopia.view()')) === 'cccc0003');
+// a report older than the loaded items: earlier pages load until it is there
+await ev(`document.querySelector('.rail .rv-open[data-agent="cccc0001"]').click()`);
+await c.until(`__synopia.view() === null && ${settled} && !!document.querySelector('#log [data-key="report:cccc0001"].jump-mark')`, 8000);
+r = await report('cccc0001');
+check('a report older than the loaded items is found: earlier pages load, it sits near the top, marked', nearTop(r) && ringed(r), JSON.stringify(r));
+check('the earlier pages loaded through the restore, no second loader', (await sent('earlier')).length >= 2);
+// the jump is a reading position like any scroll: a reload comes back to it
+await sleep(800); // the UI state's patch goes
+check('the page reloads after the jump', await c.load(url));
+await c.until(`(__synopia.current() || '').startsWith('77777777') && ${settled} && !!document.querySelector('#log [data-key="report:cccc0001"]')`, 8000);
+r = await report('cccc0001');
+check('after a reload the log is back at the report: the jump updated the reading position', r.view === null && nearTop(r), JSON.stringify(r));
+// a report that isn't in the transcript: the subagent's own view, no error
+await ev(`document.querySelector('.rail .rv-open[data-agent="cccc0002"]').click()`);
+await c.until(`__synopia.view() === 'cccc0002' && ${settled}`, 8000);
+r = await report('cccc0002');
+check("a card whose report isn't in the transcript opens the subagent's own view, with no toast", r.view === 'cccc0002' && !r.toast && r.rv === 2, JSON.stringify(r));
+// Enter on a focused card does what a click does (rail rows are buttons)
+await ev(`document.querySelector('.rail .rv-open[data-agent="cccc0001"]').focus()`);
+await c.key('Shift', { code: 'ShiftLeft', vk: 16 }); // the first key after a load (cdp.mjs prime); then Enter with its text, as a keyboard sends it, so the focused button acts
+for (const type of ['keyDown', 'keyUp']) await c.cdp('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13, ...(type === 'keyDown' ? { text: '\r' } : {}) });
+await c.until(`__synopia.view() === null && ${settled} && !!document.querySelector('#log [data-key="report:cccc0001"].jump-mark')`, 8000);
+check('Enter on a focused card goes to its report', nearTop(await report('cccc0001')));
+await shot('rail-review-jump');
 c.print();
 c.close();

@@ -12,6 +12,8 @@ import { randomUUID } from 'node:crypto';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess, imageError, imagesIn, userContent } from './sdk.ts';
 import type { Content, Image, InterruptResult, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
+import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import { cardOf } from './agent-tools.ts';
 import { SessionStatus, queuesBehind } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
@@ -100,6 +102,9 @@ export type SessionDeps = {
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
   // The process reports another id (init of a new session, a reset): sessions.ts moves the record.
   rekey: (s: Session, newId: string, why: 'init' | 'reset' | 'moved') => void;
+  // Synopia's tools for agents (agent-tools.ts): a fresh server for each process, given the
+  // session's id as it is when a tool is called.
+  tools?: (caller: () => string) => Record<string, McpSdkServerConfigWithInstance>;
 };
 
 export class Session {
@@ -108,6 +113,7 @@ export class Session {
   gone = false; // its folder was checked and isn't there (R3.11)
   placeholder: boolean;
   choice: ModelChoice | null = null; // a placeholder's model and effort, stored once it has its id
+  newTitle = ''; // a placeholder's title, given by the session that started it (agent-tools.ts)
   readonly status: SessionStatus;
   readonly cards: Cards;
   private d: SessionDeps;
@@ -146,6 +152,7 @@ export class Session {
       count: (n) => this.status.setPending(n),
       drained: () => this.releaseHeld(),
       context: () => ({ cwd: d.tilde(this.cwd), modeBefore: d.transcripts.facts(this.id)?.modeBeforePlan || 'auto' }),
+      own: (name, input) => cardOf(name, input, d.tilde(this.cwd)), // Synopia's own tools word their card
       tilde: d.tilde,
       now: d.now,
     });
@@ -480,6 +487,8 @@ export class Session {
       effort: m.effort || undefined,
       plan: facts?.permissionMode === 'plan',
       allowedTools: this.cards.rules(),
+      mcpServers: this.d.tools?.(() => this.id),
+      title: this.placeholder && this.newTitle ? this.newTitle : undefined,
     };
   }
 

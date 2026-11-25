@@ -141,6 +141,11 @@ export class Publisher {
     client.send({ t: 'hello', v: VERSION, code: rest.code, sessions: this.sessions(), pending: this.pending(), layout: rest.layout, menu: rest.menu, ui: rest.ui, update: rest.update });
   }
 
+  // A session started `sid` (agent-tools.ts start_session): a page viewing `from` switches to it.
+  started(sid: string, from: string): void {
+    this.broadcast({ t: 'started', sid, from });
+  }
+
   // The sidebar's layout, whole, after it changed (layout.ts).
   layout(layout: unknown): void {
     this.broadcast({ t: 'layout', layout });

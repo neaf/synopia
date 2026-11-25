@@ -69,6 +69,8 @@ export const SERVER = {
     model: "any", effort: "any", ask: "obj?", outbox: "arr?", bang: "obj?", held: "arr?",
     agents: "arr?", background: "arr?", stream: "str?", layout: "obj?", gone: "bool?",
   },
+  /* a session started another (Synopia's start_session tool, R3.15): a page viewing `from` shows `sid` */
+  started: { sid: "str", from: "str" },
   /* the sidebar's groups and order, whole, closed sessions' ids included (hidden), after any change */
   layout: { layout: "obj" },
   removed: { id: "str" },

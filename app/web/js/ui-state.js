@@ -129,8 +129,11 @@ export function expectReset() {
   /* `back`: you come back to this view from another one (not the first view after a load, not a reconnect),
      so the line above what you haven't seen is placed again (placeNew) */
   const key = mounted, back = lastShown !== null && lastShown !== key; lastShown = key;
-  restoring = { key, back, tries: 0, got: !store.ui.connected, timer: setTimeout(() => { if (restoring?.key === key) { restoring = null; logFns.render(); } }, 5000) };
+  if (jump && jump.key !== key) jump = null; // another view came instead
+  restoring = { key, back, tries: 0, got: !store.ui.connected, timer: giveUp(key) };
 }
+/* a restore that waits too long shows what it has, and a jump it carried goes */
+const giveUp = key => setTimeout(() => { if (restoring?.key === key) { restoring = null; jump = null; logFns.render(); } }, 5000);
 /* the oldest item a view had loaded */
 export const from = (sid, agent) => uiS[sid]?.earlier[agent || ""] || null;
 /* a view just mounted shows nothing until its reset: no stale items, no short window first; a view
@@ -312,16 +315,43 @@ export function items(m) {
   const want = u.earlier[viewKey()], a = u.scroll[viewKey()];
   const more = list.length && (t.total || 0) > list.length;
   if (more && want && !list.some(i => i.id === want) && restoring.tries++ < 20) { logFns.earlier(); return; }
+  const j = jump && jump.key === mounted ? jump : null;
+  /* a jump's block came before the items loaded: the pages before them, until it is there or there are no more */
+  if (j && more && !hasBlock(j.block) && restoring.tries++ < JUMP_PAGES) { clearTimeout(restoring.timer); restoring.timer = giveUp(mounted); logFns.earlier(); return; }
   /* the block you last saw came before the last 160 items (a long turn while you were away): a few pages more */
-  if (more && a?.id && !hasBlock(a.id) && restoring.tries++ < 5) { logFns.earlier(); return; }
+  if (!j && more && a?.id && !hasBlock(a.id) && restoring.tries++ < 5) { logFns.earlier(); return; }
   restored();
 }
-/* the restore is done: the stored place, then the line above what you hadn't seen, placed again when you came back */
+/* the restore is done: the stored place (or the jump's block), then the line above what you hadn't seen, placed
+   again when you came back */
 function restored() {
   const back = restoring.back, u = sess(cur().id); clearTimeout(restoring.timer); restoring = null;
-  scrollTo(u.scroll[viewKey()]);
+  const j = jump && jump.key === mounted ? jump : null, found = !!j && hasBlock(j.block);
+  if (found) toBlock(j.block); else scrollTo(u.scroll[viewKey()]);
   if (back) placeNew(false); else drawNew();
+  if (j) endJump(found);
 }
+
+/* ---------- a jump to a block: the "To review" card goes to its subagent's report (R7.1) ---------- */
+/* { key: the view, block: its block's key, done(found) } until the block is on screen or the view has no such
+   block. It loads earlier pages as the restore does (items above) and lands as a scroll of yours. */
+let jump = null;
+const JUMP_PAGES = 50, JUMP_GAP = 12; // pages at most; the block's top this far under the log's top
+export function jumpTo(key, block, done) {
+  jump = { key, block, done };
+  if (mounted !== key || (restoring && restoring.key === key)) return; // its items are on their way: the restore lands it
+  if (hasBlock(block)) { toBlock(block); endJump(true); return; }
+  if (!logFns.earlier()) { endJump(false); return; } // the whole transcript is on the page: no such block
+  restoring = { key, back: false, tries: 1, got: true, reset: true, timer: giveUp(key) }; // its replies go through items()
+}
+function toBlock(key) {
+  const log = document.getElementById("log"), el = blocks(log).find(c => c.dataset.key === key);
+  log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - JUMP_GAP;
+  log.dispatchEvent(new Event("scroll")); // noted as a scroll of yours: the anchor, what you saw
+  const s = cur(), A = view && agentById(s, view), list = (A || s).items || [];
+  if (list.length && (A || s).total > list.length) { sess(s.id).earlier[viewKey()] = list[0].id; changed(); } // a reload asks for the pages it loaded
+}
+function endJump(found) { const j = jump; jump = null; j.done(found); }
 /* a shell's or monitor's output for the view on screen: finish a restore, or note the earlier output loaded
    (where it begins, so a reload asks from there) */
 export function output(m) {

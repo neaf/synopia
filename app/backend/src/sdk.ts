@@ -7,12 +7,14 @@
 // - The menu: commands and models from a running process or an idle probe, filtered and unescaped.
 // - The writer's one-shot call, and listSessions().
 // - The content of a message you send, with its `[Image #N]` tags and images.
+// - Synopia's in-process tool server for its sessions (agent-tools.ts defines the tools).
 // `query` and `listSessions` are injectable as one Sdk pair: tests pass a fake, dev a script.
-import { query as sdkQuery, listSessions as sdkListSessions } from '@anthropic-ai/claude-agent-sdk';
+import { query as sdkQuery, listSessions as sdkListSessions, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
 import type {
-  CanUseTool, EffortLevel, ListSessionsOptions, ModelInfo, Options, PermissionUpdate, SDKControlInterruptResponse,
-  SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand,
+  CanUseTool, EffortLevel, ListSessionsOptions, McpSdkServerConfigWithInstance, ModelInfo, Options, PermissionUpdate,
+  SDKControlInterruptResponse, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { ZodRawShape } from 'zod';
 import { MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES, IMAGE_TYPES } from '../../web/js/protocol.js';
 
 // The part of the SDK's Query that Synopia uses. `interrupt` takes `{cancelQueued}`, which the
@@ -54,6 +56,10 @@ export type StartOptions = {
   effort?: string;
   plan?: boolean; // the session's last permission-mode record is `plan`
   allowedTools?: string[];
+  // Synopia's tools for agents (agent-tools.ts): a fresh server per process, by its key in mcpServers.
+  mcpServers?: Record<string, McpSdkServerConfigWithInstance>;
+  // A new session's title (Options.title: the CLI writes it as the session's custom-title record).
+  title?: string;
 };
 
 export type ProcessEvents = {
@@ -130,6 +136,8 @@ export function buildOptions(o: StartOptions, canUseTool: CanUseTool, stderr: (d
   if (o.effort && EFFORTS.includes(o.effort)) opts.effort = o.effort as EffortLevel;
   if (o.plan) opts.permissionMode = 'plan';
   if (o.allowedTools?.length) opts.allowedTools = [...o.allowedTools];
+  if (o.mcpServers && Object.keys(o.mcpServers).length) opts.mcpServers = { ...o.mcpServers };
+  if (o.title && !o.resume) opts.title = o.title;
   return opts;
 }
 
@@ -269,6 +277,27 @@ export class SessionProcess {
 // ExitPlanMode doesn't (docs/Agent SDK.md, "Quirk: plan approval needs an explicit mode").
 export function planApproval(modeBefore: string): PermissionUpdate[] {
   return [{ type: 'setMode', mode: (modeBefore || 'auto') as 'auto', destination: 'session' }];
+}
+
+// ---------- Synopia's tools for agents ----------
+
+// One tool as agent-tools.ts defines it: the model reads `description` and `input` (a zod shape).
+export type ToolResult = { content: { type: 'text'; text: string }[]; isError?: boolean };
+export type ToolDef = {
+  name: string; description: string; input: ZodRawShape;
+  run: (args: Record<string, unknown>) => Promise<ToolResult>;
+};
+
+// The in-process MCP server (docs/Agent SDK.md, "Synopia's tools for agents"): the model sees each tool
+// as `mcp__<name>__<tool>`, with its full schema from the first turn (`alwaysLoad`, no tool search).
+// Every tool is `always_ask` with `destructiveHint`, so each call reaches canUseTool (the card):
+// neither an allow rule nor auto mode's classifier approves it in Synopia's place. Live run TL-1.
+export function toolServer(name: string, version: string, tools: ToolDef[]): McpSdkServerConfigWithInstance {
+  const srv = createSdkMcpServer({
+    name, version, alwaysLoad: true,
+    tools: tools.map((t) => sdkTool(t.name, t.description, t.input, (args) => t.run(args as Record<string, unknown>), { annotations: { destructiveHint: true } })),
+  });
+  return { ...srv, tools: tools.map((t) => ({ name: t.name, permission_policy: 'always_ask' as const })) };
 }
 
 // ---------- the menu ----------

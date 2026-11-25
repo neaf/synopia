@@ -351,6 +351,11 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
    selection tint, drawn outside the line (box-shadow) so nothing moves; their own running marks stay as they are */
 .log.bg-asking [data-fg] { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
 .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px #DDF4FF, 0 0 0 3px #54AEFF; }
+/* a block a jump landed on (the "To review" card goes to its report, R7.1): the same mark, held, then faded out
+   (transcript.js markJump); a highlight, not a running mark */
+.log .jump-mark { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; transition: background-color .6s linear, box-shadow .6s linear; }
+@media (prefers-reduced-motion: reduce) { .log .jump-mark.fading { transition: none; } }
 /* the Open list: past sessions over the main area, rows drawn like the command menu's */
 .app > .side { grid-column: 1; grid-row: 1; }
 .app > .conv { grid-column: 2; grid-row: 1; }
@@ -546,6 +551,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 .rv-open .m { font-size: 10px; color: var(--ink-2); }
 .rv-open .m .kind { margin-right: 4px; }
 .rv-done { font-size: 10.5px; margin-right: 4px; }
+/* the whole card goes to its report (transcript.js toReport): it shades on hover like the panel's other rows */
+.rv { cursor: pointer; }
+.rv:hover:not(:has(.rv-done:hover)) { background: #DDF4FF; }
 
 /* the kinds' colours (their words and tags; the marks use the --mk-* set) */
 :root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
@@ -773,6 +781,7 @@ button.acc:hover { background: var(--sub); }
 .qbody .cmd .ps { color: var(--ink-3); user-select: none; }
 .qbody .why2 { color: var(--ink-2); margin: 0 0 7px; max-width: 104ch; }
 .qbody .why2 .who { color: var(--ink-3); }
+.qbody .why2.own { color: var(--ink); } /* a call of Synopia's own tool: the line says what it does (R3.15) */
 
 .qnote { display: block; color: var(--ink); font-style: italic; margin-top: 1px; }
 .qa-note { display: block; margin-top: 3px; }

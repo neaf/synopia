@@ -16,6 +16,8 @@ What the CLI writes to disk is in [Claude Code transcripts](Claude%20Code%20tran
 | `env` | `{...process.env, CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1'}` | state events; `env` replaces |
 | `permissionMode` | unset, `plan` for a plan session | the user's `auto` applies |
 | `resume`, `model`, `effort`, `allowedTools` | per session | |
+| `mcpServers` | `{synopia: <a fresh in-process server>}` | Synopia's tools for agents (below) |
+| `title` | a started session's title, new sessions only | written as its `custom-title` record |
 
 Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 
@@ -215,6 +217,43 @@ Don't push `'now'` while anything is queued, because it overtakes the queue. Don
 
 Source: live run PR-1, 2026-11-25 (haiku; scratch folder `/tmp/synopia-priority/work`, eleven phases, shapes and timings only; SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.326). The script is outside the repo, at `/tmp/synopia-priority/check.mjs`.
 
+## Synopia's tools for agents
+
+Synopia gives the sessions it runs its own tools, through one in-process MCP server (R3.15). `agent-tools.ts` defines them; `sdk.ts` `toolServer` builds the server with the SDK's `createSdkMcpServer` and `tool()`, and `buildOptions` passes it as `mcpServers: {synopia: …}`, a fresh one for each process. The writer's call keeps `mcpServers: {}` and `strictMcpConfig`; the menu probe gets none.
+
+### Documented surface
+
+- [Give Claude custom tools](https://code.claude.com/docs/en/agent-sdk/custom-tools): `tool(name, description, zodShape, handler, {annotations})` in `createSdkMcpServer({name, version, tools})`, passed in `mcpServers`; the handler returns `{content: [{type: 'text', text}], isError?}`. TypeScript schemas are Zod (a peer dependency; `zod` is in `package.json`).
+- The name is `mcp__<server key>__<tool>` ([MCP, tool naming](https://code.claude.com/docs/en/agent-sdk/mcp#tool-naming-convention)).
+- `permission_policy: 'always_ask'` on the config's `tools` list (SDK 0.3.301+, CLI 2.1.301+) makes each call reach `canUseTool` even where an allow rule or `allowedTools` covers it. In `auto` mode the classifier may still approve a call unless the tool sets `destructiveHint: true`; for `always_ask` calls an unset hint counts as false ([TypeScript reference, permission modes that can approve an always_ask call](https://code.claude.com/docs/en/agent-sdk/typescript#permission-modes-that-can-approve-an-always_ask-call)).
+- `alwaysLoad: true` on the server keeps its tools out of tool search, at full schema from the first turn.
+- The docs name no streaming-input requirement for in-process servers; Synopia's prompt is an AsyncIterable anyway.
+- `Options.title`: "Custom title for a new session"; a resumed session keeps its stored title.
+
+### Live run TL-1
+
+One scripted check, 2026-11-25 (haiku; scratch folder `/tmp/synopia-tools/work`; SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.326; the user's `defaultMode: auto`; shapes only). The script is outside the repo, at `/tmp/synopia-tools/check.mjs`; its two throwaway sessions were deleted after it.
+
+| Phase | What happened |
+|---|---|
+| Server, no policy, `destructiveHint: true`, `alwaysLoad` | `system/init` lists `mcp__synopia__start_session` in `tools` and `{name: 'synopia', status: 'connected'}` in `mcp_servers`. Four calls ran; `canUseTool` was never called: auto mode's classifier approved every one. |
+| `always_ask` policy and `destructiveHint: true` | `canUseTool` was called for every call, also after an allow that passed `updatedPermissions`. `toolName` is the full name; `input` `{prompt, title}`; `suggestions` is empty (no "Always allow" from the CLI), `decisionReasonType: 'rule'`, `displayName: 'Start Session'`, no `title` or `description`; option keys `agentID, blockedPath, decisionReason, decisionReasonType, defaultToNo, description, displayName, mcpServer, requestId, serverPolicyAskOnly, suggestions, suppressAlwaysAllowRule, title, toolUseID`. A deny gave an `is_error` result and the call in `result.permission_denials`. |
+| Resumed (`resume` of the first session, a new server) | The tool was listed and ran the same. |
+| The writer's options, in the same process | `result/success`, no MCP server and no `mcp__` tool in `system/init`, no new project folder. |
+| `Options.title` on a new session | The JSONL got one `custom-title` record (`{type, customTitle, sessionId}`) with the title. |
+
+Transcript records:
+- `tool_use`: an `assistant` record whose block is `{type: 'tool_use', id, name: 'mcp__synopia__start_session', input: {prompt, title}}`.
+- `tool_result` of a call that ran: a `user` record, block `{type: 'tool_result', content: [{type: 'text', text}]}`, `toolUseResult` the same array; record keys besides the usual: `mcpCallNotReadOnly`, `permissionDecision`, `promptId`, `serverClassifierContext` (not always), `sourceToolAssistantUUID`.
+- A handler's `isError: true` and a denial: `is_error: true`, `content` and `toolUseResult` a plain string; a denial adds `toolDenialKind` and `holdsPersonsWords`.
+
+### What Synopia does with it
+
+- Every tool is `always_ask` with `destructiveHint: true` (`sdk.ts` `toolServer`), so each call reaches the card under `auto` too.
+- The CLI suggests no rule, so Synopia makes the "Always allow" row itself: an `addRules` session suggestion for the tool's name, stored in `state.json` `rules` as a card's rule is, and a later call it covers is allowed without a card (`cards.ts` `park`). The CLI's own copy of the rule changes nothing, as `always_ask` overrides it. It goes when the session closes (Q6).
+- The transcript names the new session through the result's text (`agent-tools.ts` `startedText`, `startedFrom`); a refused call's string content has no id.
+- Code: `agent-tools.ts`, `sdk.ts` `toolServer`, `buildOptions`; `cards.ts` `park`; `transcript.ts` `toolLine`. Test: `agent-tools.test.ts`, `scripted-sdk.test.ts`.
+
 ## Sessions: list, resume, fork
 
 - `listSessions()` gives `sessionId`, `cwd` (the realpath), `summary`, `customTitle`, `firstPrompt`, `gitBranch`, `lastModified`, `fileSize`. It honours `CLAUDE_CONFIG_DIR` (page checks rely on it). It took 87 ms over this machine's sessions. Code: `sdk.ts` `realSdk.listSessions`, `sessions.ts` `listRecent`. Source: live run S2-1.
@@ -270,6 +309,7 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 - A `shouldQuery: false` message joins the transcript and starts no turn ("Streaming input and control calls"). A message that starts a turn is written to the transcript as the CLI writes a prompt.
 - `supportedCommands` and `supportedModels` return the script's `menu` in the SDK's shapes, HTML-escaped hints included ("Command and model list shapes").
 - `resume` with `forkSession: true` gives a new id and copies the transcript into the new cwd's project folder with the new id and folder ("Resume and fork in another folder"); a process that took only `shouldQuery: false` context sends `system/init` and no turn.
+- A `call` step calls one of Synopia's own tools as the CLI does ("Synopia's tools for agents"): the `tool_use` record, `canUseTool` with no suggestions, the tool from the session's `mcpServers` (`agent-tools.ts` `callServed`), then the `tool_result` record, text blocks when it ran, a string with `is_error` when it refused or was denied. A new session's `Options.title` becomes a `custom-title` record with its first prompt.
 - `listSessions()` gives one `SDKSessionInfo` per fixture transcript: `cwd` and `firstPrompt` from its records, `customTitle` and `summary` from its `custom-title` and `ai-title` records, `lastModified` from its mtime.
 
 The script format and what it seeds are in docs/Page checks.md, "The scripted SDK". Test: `app/backend/test/scripted-sdk.test.ts`.

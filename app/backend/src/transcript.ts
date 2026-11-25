@@ -6,6 +6,7 @@ import os from 'node:os';
 import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
 import { BANG_CAP } from './bang.ts';
+import { stepOf, sessionOf } from './agent-tools.ts';
 import type { BashOutput } from './bang.ts';
 import { classify, agentMetaOf } from './claude-jsonl.ts';
 import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, Denial, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
@@ -40,6 +41,7 @@ export type Item = {
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
   input?: string; out?: Output; // tool: its input as the expanded step shows it, and its result's preview (R5.6)
   fg?: boolean; // tool: a foreground Bash or Agent still running, which b, b can send to the background (R9)
+  session?: string; // tool: the session a finished start_session started (R3.15), which its result line links to
   denied?: Denial; // tool, state denied: who said no when it has no card answer (auto mode, or you at a terminal)
   qs?: Question[]; answer?: string | null; // ask
 };
@@ -89,6 +91,8 @@ function tilde(p: string, home: string): string {
 // read here for display only.
 export function toolLine(name: string, input: JsonRecord, home: string): [string, string] {
   const inp = input;
+  const ours = stepOf(name, inp); // Synopia's own tools (agent-tools.ts): "Start session(<title>)"
+  if (ours) return ours;
   if (name === 'Bash') return ['Ran', str(inp.description) || str(inp.command).slice(0, 120)];
   if (name === 'Read' || name === 'Edit' || name === 'Write' || name === 'NotebookEdit') {
     const p = str(inp.file_path) || str(inp.notebook_path);
@@ -934,8 +938,11 @@ export class Transcript {
         planItem.text = clip(plan);
         r.changed.add(planItem.id);
       }
-      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (imgs && it.imgs !== imgs) || (answer && it.answer !== answer) || it.denied !== denial) {
+      const started = state === 'done' && out ? sessionOf(it.name ?? '', out.text) : null;
+      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (imgs && it.imgs !== imgs) || (answer && it.answer !== answer) || it.denied !== denial || (it.session ?? null) !== started) {
         it.state = state;
+        if (started) it.session = started;
+        else delete it.session;
         if (denial) it.denied = denial;
         else delete it.denied;
         if (out) it.out = out;

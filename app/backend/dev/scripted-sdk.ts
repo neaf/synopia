@@ -22,6 +22,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { CanUseTool, ModelInfo, Options, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { CANCEL_QUEUED } from '../src/sdk.ts';
+import { callServed } from '../src/agent-tools.ts';
 import type { ListFn, QueryFn, QueryLike, Sdk } from '../src/sdk.ts';
 import type { Probe, EndDeps } from '../src/cli-terminals.ts';
 import type { Timer } from '../src/status.ts';
@@ -38,6 +39,10 @@ export type Step = {
   ask?: { tool: string; input: Record<string, unknown>; id?: string; toolUseId?: string; agentId?: string; suggestions?: unknown[]; [k: string]: unknown };
   append?: Record<string, unknown>[]; // transcript records, as the CLI writes them (timestamp, sessionId, cwd filled in)
   send?: string; // a message you send, as the page's `send` does (it reaches Sessions.send)
+  // a call of one of Synopia's own tools (agent-tools.ts), as the CLI makes it: the tool_use record,
+  // canUseTool (the next step waits for the answer), the tool from the session's mcpServers, its
+  // tool_result record (docs/Agent SDK.md, "Synopia's tools for agents")
+  call?: { tool: string; input: Record<string, unknown>; toolUseId?: string };
 };
 export type SessionScript = {
   // seeded into a fresh state folder: the status and its age, the open entry's folder, and how long
@@ -206,12 +211,16 @@ class ScriptedSession implements QueryLike {
   private seqs = new Set<Turn>();
   private inited = false; // its system/init went out
   private held: { uuid: string; text: string }[] = []; // shouldQuery:false messages not yet in the transcript
+  private mcpServers: Record<string, unknown> | undefined; // Synopia's tools for agents, for `call`
+  private title: string; // a new session's Options.title: its custom-title record with the first prompt
 
   constructor(env: Scripted, options: Options, prompt: AsyncIterable<SDKUserMessage>) {
     this.env = env;
     this.sid = options.resume ?? randomUUID();
     this.cwd = options.cwd ?? '';
     this.canUseTool = options.canUseTool as CanUseTool;
+    this.mcpServers = options.mcpServers as Record<string, unknown> | undefined;
+    this.title = !options.resume && typeof options.title === 'string' ? options.title : '';
     // a fork (docs/Agent SDK.md, "Resume and fork in another folder"): a new id, the whole history copied
     // into a new file under the new cwd's project folder
     if (options.resume && options.forkSession) {
@@ -282,6 +291,8 @@ class ScriptedSession implements QueryLike {
       }
       this.running = true;
       this.env.append(this.sid, this.cwd, [{ type: 'user', uuid, message: { role: 'user', content: m.message.content } }]);
+      if (this.title) this.env.append(this.sid, this.cwd, [{ type: 'custom-title', customTitle: this.title }]);
+      this.title = '';
       const on = this.env.script.sessions[this.sid]?.onSend ?? this.env.script.onSend ?? [];
       void this.play([{ message: this.init() }, { message: { type: 'system', subtype: 'session_state_changed', state: 'running' } }, ...on], false);
     }
@@ -355,7 +366,28 @@ class ScriptedSession implements QueryLike {
         ...rest, signal: ac.signal, toolUseID: tu, requestId: id ?? tu, agentID: agentId, suggestions: (suggestions ?? []) as never,
       } as Parameters<CanUseTool>[2]).catch(() => null) };
     }
+    if (step.call) return { answer: this.call(step.call, t) };
     return { answer: null };
+  }
+
+  // A tool call of Synopia's own as the CLI makes it (live run TL-1): always asks; on allow the tool
+  // runs and its result is a text block, a refusal or a denial is a string with is_error.
+  private async call(c: NonNullable<Step['call']>, t: Turn): Promise<void> {
+    const tu = c.toolUseId ?? `toolu_${randomUUID().slice(0, 8)}`;
+    this.env.append(this.sid, this.cwd, [{ type: 'assistant', message: { role: 'assistant', id: `msg_${randomUUID().slice(0, 8)}`, content: [{ type: 'tool_use', id: tu, name: c.tool, input: c.input }] } }]);
+    const ac = new AbortController();
+    t.asks.push(ac);
+    const r = await this.canUseTool(c.tool, c.input, { signal: ac.signal, toolUseID: tu, requestId: tu, suggestions: [] } as unknown as Parameters<CanUseTool>[2]).catch(() => null);
+    let content: unknown;
+    let isError = false;
+    if (!r || r.behavior !== 'allow') { content = r?.message || 'Interrupted by the user'; isError = true; }
+    else {
+      const res = await (callServed(this.mcpServers, c.tool, (r.updatedInput ?? c.input) as Record<string, unknown>) ?? Promise.resolve({ content: [{ type: 'text' as const, text: `No such tool: ${c.tool}` }], isError: true }));
+      isError = res.isError === true;
+      content = isError ? res.content.map((b) => b.text).join('\n') : res.content;
+    }
+    if (t.cancelled || this.out.closed) return;
+    this.env.append(this.sid, this.cwd, [{ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tu, content, ...(isError ? { is_error: true } : {}) }] }, toolUseResult: content }]);
   }
 }
 

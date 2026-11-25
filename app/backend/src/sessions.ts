@@ -25,6 +25,8 @@ import { Folders, knownFolders } from './folders.ts';
 import type { Known } from './folders.ts';
 import { rank } from '../../web/js/fuzzy.js';
 import { Layouts } from './layout.ts';
+import { toolServer } from './agent-tools.ts';
+import type { Host as ToolHost } from './agent-tools.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { displayPath, isDir } from './paths.ts';
@@ -73,6 +75,7 @@ export class Sessions {
   private live = new Map<string, Session>();
   private aliases = new Map<string, string>();
   private recent = new Map<string, Recent>(); // the last Open list, for openSession's folder
+  private idWaits = new Map<string, ((id: string) => void)[]>(); // a new session's id, awaited by start_session
   // The sidebar's layout (layout.ts): the open list gives it its ids.
   readonly layout: Layouts;
   readonly folders: Folders;
@@ -139,9 +142,11 @@ export class Sessions {
   }
 
   // An empty session in `cwd` (absolute, or `~`-relative). It isn't stored until system/init gives its id.
-  newSession(cwd: string): string {
+  // `title`: its title from the start (a session that start_session started, R3.15).
+  newSession(cwd: string, title = ''): string {
     const id = `new-${randomUUID()}`;
-    this.add(id, this.expand(cwd), true, null);
+    const s = this.add(id, this.expand(cwd), true, null);
+    s.newTitle = title;
     this.layout.sync(); // last under Not in a group
     this.log('sessions.new', { sid: id });
     return id;
@@ -278,6 +283,37 @@ export class Sessions {
     this.live.get(sid)?.landed(messageId, types);
   }
 
+  // ---------- Synopia's tools for agents (agent-tools.ts) ----------
+
+  // What the tools reach: the calling session, a new session with its first message, its place
+  // under the caller (layout.ts), the pages, and the new session's id once its init gives it.
+  readonly toolHost: ToolHost = {
+    caller: (id) => {
+      const s = this.get(id);
+      if (!s || s.placeholder || !s.hasProcess) return null;
+      return { id: s.id, cwd: s.cwd, title: this.publisher.meta(s.id)?.title || 'New session', gone: () => s.checkFolder() };
+    },
+    newSession: (cwd, prompt, title) => {
+      const id = this.newSession(cwd, title);
+      const r = this.live.get(id)?.send(prompt) ?? gone;
+      if (!r.ok) { this.close(id); return r; }
+      this.log('tools.startSession', { sid: id });
+      return { ok: true, sid: id };
+    },
+    placeUnder: (sid, caller, group) => this.layout.placeUnder(this.resolve(sid), this.resolve(caller), group),
+    started: (sid, caller) => this.publisher.started(this.resolve(sid), this.resolve(caller)),
+    idOf: (sid, ms) => {
+      if (this.resolve(sid) !== sid) return Promise.resolve(this.resolve(sid));
+      return new Promise((done) => {
+        const t = setTimeout(() => finish(), ms);
+        t.unref?.();
+        const finish = () => { clearTimeout(t); done(this.resolve(sid)); };
+        this.idWaits.set(sid, [...(this.idWaits.get(sid) ?? []), finish]);
+      });
+    },
+    tilde: (p) => this.tilde(p),
+  };
+
   // ---------- the set ----------
 
   private terminalsChanged(): void {
@@ -293,6 +329,7 @@ export class Sessions {
       isDir: (p) => Boolean(this.opts.pretendFolder?.(p)) || isDir(p),
       onTurnEnded: this.opts.onTurnEnded, onWaiting: this.opts.onWaiting, onCommands: this.opts.onCommands,
       rekey: (x, newId, why) => this.rekey(x, newId, why),
+      tools: (caller) => toolServer(this.toolHost, caller),
     });
     this.live.set(id, s);
     s.open();
@@ -336,6 +373,9 @@ export class Sessions {
     this.store.changed();
     this.transcripts.rekey(old, newId); // the reading starts again; the pages follow (publisher.ts)
     this.log('sessions.swap', { from: old, to: newId, why });
+    const waits = this.idWaits.get(old);
+    this.idWaits.delete(old);
+    for (const w of waits ?? []) w(newId);
   }
 
   private expand(p: string): string {

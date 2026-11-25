@@ -1,10 +1,12 @@
 // The sidebar's layout (FR-SIDE-03..05): groups and the order inside them, the user's own (no
 // sorting). This module is its only writer. The page sends intents (`moveSession`, `newGroup`,
 // `renameGroup`, router.ts resolves their ids first, so a late one with an old id still lands); the
-// open list adds and renames ids (sessions.ts); every change goes whole to every page as `layout`.
+// open list adds and renames ids (sessions.ts); a session another one started goes right under it
+// (`placeUnder`, agent-tools.ts); every change goes whole to every page as `layout`.
 // A closed session keeps its place, hidden, so reopening it puts it back where it was. A rename
 // (a new session's real id, a reset) is not sent alone: it goes with the `session` frame that
 // carries `replaces` (publisher.ts), so a page never sees the layout and the session disagree.
+import { randomUUID } from 'node:crypto';
 import type { OpenEntry, Store } from './store.ts';
 
 export type Group = { id: string; name: string; ids: string[] };
@@ -107,6 +109,17 @@ export function renameGroup(layout: Layout, group: string, name: string): Layout
   return out;
 }
 
+// A session a session started (agent-tools.ts start_session, R3.15): `id` right under `caller` in the
+// caller's group, or, when the caller is in none, a new group `group` of the two named after the
+// caller (last among the groups, as a drop makes one).
+export function placeUnder(layout: Layout, id: string, caller: string, group: string, name: string): Layout | string {
+  if (id === caller) return 'A session can\'t start itself.';
+  const inGroup = layout.groups.some((g) => g.ids.includes(caller));
+  if (inGroup) return moveSession(layout, id, { after: caller });
+  if (!layout.others.includes(caller)) return "That session isn't in the sidebar any more.";
+  return newGroup(layout, id, caller, group, name);
+}
+
 // A session's id changed: it keeps its place (or goes last under Not in a group when it had none).
 export function renameId(layout: Layout, old: string, id: string): Layout {
   const swap = (ids: string[]) => ids.map((x) => (x === old ? id : x));
@@ -149,6 +162,17 @@ export class Layouts {
 
   renameGroup(group: string, name: string): Result {
     return this.apply(renameGroup(this.get(), group, name));
+  }
+
+  // ---------- Synopia's tools for agents ----------
+
+  // A started session goes right under the session that started it (placeUnder); a new group gets
+  // an id no group has.
+  placeUnder(id: string, caller: string, name: string): Result {
+    if (!this.placed(id) || !this.placed(caller)) return { ok: false, error: "That session isn't open any more." };
+    let group = '';
+    do group = `g${randomUUID().slice(0, 8)}`; while (this.get().groups.some((g) => g.id === group));
+    return this.apply(placeUnder(this.get(), id, caller, group, name));
   }
 
   // ---------- the open list ----------

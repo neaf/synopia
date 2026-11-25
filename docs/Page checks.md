@@ -7,7 +7,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | Command | Runs |
 |---|---|
 | `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script and the page unit tests (`node --test app/web/test/*.test.js`); one pass or fail line each |
-| `app/check.sh --page` | the above, then `run.sh all` (25 suites); four pass lines |
+| `app/check.sh --page` | the above, then `run.sh all` (27 suites); four pass lines |
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
 | `app/web/dev/cdp/run.sh all` | every suite one after the other, a table of suite and result, failures under it; each suite's full output stays in the folder it prints |
 | `SYNOPIA_CDP_THEME=dark app/web/dev/cdp/run.sh <suite>` | the suite with the system appearance dark |
@@ -17,7 +17,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 - Each `run.sh` run starts its own headless browser (a temp `--user-data-dir`, `--remote-debugging-port=0`, the port read from `DevToolsActivePort`) and its own backend (`--port 0`, the port read from the ready line) on a fresh state folder. A `trap` stops both on exit, Ctrl-C too, and only its own pids. So two runs, other agents' runs and an open app never share anything.
 - A run prints `N/M pass`, the failures and where its shots are. Its exit code is the result: 0 only when every check passed and at least one ran.
 - The backend under the suites runs the real Sessions, status, writer and menu code on the scripted SDK (below), over a copy of `app/backend/test/fixtures/claude/` in the run's state folder with its `sdk-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), an idle session with diffs whose process gives the menu (`#11111111`). `run.sh` passes `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`, and `--dry-run` for `preview`.
-- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps` and `scroll` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
+- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps`, `scroll` and `agenttools` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
 - Page hooks: `?agent=<id>` opens a subagent, `&open=1` expands the last diff. `rail.mjs` and `restore.mjs` use them.
 
 ## The scripted SDK
@@ -35,7 +35,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | `sessions.<id>.steps` | played once, when its first process starts in this daemon |
 | `sessions.<id>.onSend` | played on each message that starts a turn |
 
-A step has one or more of: `message` (an SDK message the query yields; `session_id` and `uuid` filled in), `ask` (a `canUseTool` call: `tool`, `input`, `id` the request id, `toolUseId`, `suggestions`, `agentId`; the next step waits for its answer), `append` (records written to the transcript), `send` (a message you send, through `Sessions.send`), plus `after` (ms after the step before) and `ago` (ms: the step plays in the past).
+A step has one or more of: `call` (a call of one of Synopia's own tools, `{tool, input, toolUseId}`: the records the CLI writes, `canUseTool`, then the tool itself; the next step waits for it), `message` (an SDK message the query yields; `session_id` and `uuid` filled in), `ask` (a `canUseTool` call: `tool`, `input`, `id` the request id, `toolUseId`, `suggestions`, `agentId`; the next step waits for its answer), `append` (records written to the transcript), `send` (a message you send, through `Sessions.send`), plus `after` (ms after the step before) and `ago` (ms: the step plays in the past).
 - The clock: while a step with `ago` plays, Sessions' clock reads that much earlier, so a status, a card's `since` or a stale timer starts in the past. Steps play one at a time across sessions, each handled before the clock moves back.
 - A check that injects a `session` frame to change a status sends the whole `state` the backend would (`background.mjs`, `tween.mjs`): the page derives nothing from `status`.
 - Seeding: a state folder whose `state.json` has no `open` list gets every `projects/*/<id>.jsonl` of the tree in id order, each with the script's status, else "your turn" since its last record. Fields already there stay (titles.mjs writes `written` first). A restart on the same folder seeds nothing and plays the steps again.
