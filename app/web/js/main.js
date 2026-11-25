@@ -12,8 +12,9 @@ import * as sidebar from "./sidebar.js";
 import * as preview from "./preview.js";
 import * as transcript from "./transcript.js";
 import { renderCard, qstate } from "./card.js";
-import { syncPrompt, syncTakeover, restoreTexts } from "./composer.js";
-import { want, applyRecent, recentAgain } from "./open-list.js";
+import { syncPrompt, syncTakeover, syncGone, restoreTexts } from "./composer.js";
+import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-list.js";
+import { applyFolders, applyCompletion, applyFolderState, foldersAgain } from "./folder-list.js";
 import { renderAll } from "./keys.js";
 import { setMode } from "./mode.js";
 import { toast } from "./toast.js";
@@ -37,7 +38,7 @@ function onMessage(m) {
   switch (m.t) {
     case "hello": {
       state.applyHello(m); ui.applyHello(m.ui); state.pickCurrent(); // the stored ui state first: no default view flashes
-      transcript.clearAsked(); recentAgain(); // requests sent before a drop get no reply: ask again
+      transcript.clearAsked(); recentAgain(); foldersAgain(); // requests sent before a drop get no reply: ask again
       showUpdate(m.update);
       /* a reconnect onto the view on screen: it keeps its log until its reset comes, so the log never blanks
          for a frame (hello has no items) and the message box stays as it was */
@@ -55,7 +56,7 @@ function onMessage(m) {
       if (!had && want.new && m.id.startsWith("new-")) { want.new = false; state.select(m.id); setMode("insert", false); renderAll(); break; }
       if (want.open === m.id) { want.open = null; state.select(m.id); renderAll(); break; } // opened from the Open list
       if (!state.current) state.pickCurrent();
-      syncPrompt(); syncTakeover(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
+      syncPrompt(); syncTakeover(); syncGone(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
       if (!had || !state.mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
       break;
@@ -107,6 +108,9 @@ function onMessage(m) {
     case "toast": transcript.clearAsked(); toast(m.text); break; // a failed toolOutput replies with a toast
     case "toolOutput": transcript.applyToolOutput(m); break;
     case "recent": applyRecent(m); break;
+    case "folders": applyFolders(m); break;
+    case "completion": applyCompletion(m); break;
+    case "folderState": applyFolderState(m); applyOpenFolderState(m); break;
     case "preview": preview.showPreview(m); break;
     case "restore": restoreTexts(m.sid, m.texts, m.images); break;
     case "update": showUpdate(m.pending); break;

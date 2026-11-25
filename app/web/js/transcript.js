@@ -14,6 +14,7 @@ import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
 import { mountComposer, modelName, paintBash, unattach, openModelPicker } from "./composer.js";
+import { syncFixed } from "./folder-list.js";
 
 /* ---------- conversation, rendered like the CLI ---------- */
 
@@ -245,6 +246,8 @@ export function itemsHTML(items, sessionBusy, s) {
     if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }
     if (titles.length && it.k !== "you" && !(it.k === "tool" && it.answer)) { flush(); putTitles(); }
     flush();
+    /* it continued in another folder (R3.11): a quiet line in place, as a title change */
+    if (it.k === "moved") { out.push([it.id, `<div class="done retitle moved">Continued in <span class="t">${esc(it.cwd || "another folder")}</span></div>`]); continue; }
     if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
@@ -342,8 +345,10 @@ export function renderConv() {
   if (!s) {
     setMounted(null);
     conv.innerHTML = `<div class="missing"><p>${store.ui.connected ? "No open sessions." : "Connecting to the Synopia backend…"}</p></div>`;
+    if (store.ui.connected) syncFixed(true); // no open session: the folder list is the main area (R3.12)
     return;
   }
+  syncFixed(false);
   if (view && !agentById(s, view)) selectView(null);
   const key = `${s.id}|${view || ""}`;
   if (mounted !== key) {
@@ -375,7 +380,7 @@ export function renderHeader() {
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title" title="${esc(s.title)}">${esc(s.title)}</h2>
         <p class="c-now"${s.now ? ` title="${esc(s.now)}"` : ""}>${isEmpty(s) || !s.now ? "&nbsp;" : `Now: ${esc(s.now)}`}</p>
-        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
+        <p class="c-meta">Folder <span class="mono">${esc(s.cwd)}</span>${s.gone ? ', <span class="gone">folder gone</span>' : ""}${s.prs.length ? `, PRs ${s.prs.slice(-4).map(p => `#${esc(p)}`).join(" ")}` : ""}.${s.name ? ` Tab “${esc(s.name)}”.` : ""}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`;
   /* the subagent view's composer still sends to the main conversation, so it names the session */
   paintBash(s); // the placeholder: the message's, or bash mode's (composer.js)

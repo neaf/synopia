@@ -156,7 +156,7 @@ const terminals = new CliTerminals({
   dir: join(claudeDir, 'sessions'), log, probe: scripted?.probe, end: scripted?.end ?? (dryRun ? dryEnd : undefined),
 });
 const sessions = new Sessions({
-  store, transcripts, publisher, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer,
+  store, transcripts, publisher, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer, pretendFolder: scripted?.pretendFolder,
   idleMs: ms('idle-ms'), terminals,
   onTurnEnded: (sid) => writer.turnEnded(sid),
   onOpened: (sid) => writer.opened(sid),

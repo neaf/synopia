@@ -10,6 +10,8 @@ import { closeStops, closeSession } from "./sidebar.js";
 import { setMode } from "./mode.js";
 import { toast } from "./toast.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES } from "./protocol.js";
+import { rank, marked } from "./fuzzy.js";
+import { showFolderList } from "./folder-list.js";
 
 /* pasted images: { id, n (its [Image #n] tag in the text), mediaType, url (an object URL, for the thumbnail), data (its data: URL, for sending) } */
 export const attachments = [];
@@ -29,26 +31,18 @@ export const modelName = () => {
   const name = !m ? modelLabel(s?.model) : m.value === "default" && cm ? `Default (${cm[1].trim()})` : m.name;
   return s?.effort ? `${name}, ${s.effort} effort` : name;
 };
-function rank(list, q, key) {
-  q = q.toLowerCase();
-  const scored = list.map(x => {
-    const n = key(x).toLowerCase();
-    const i = n.indexOf(q);
-    const parts = n.split(/[-:_]/);
-    const word = parts.some(p => p.startsWith(q));
-    return { x, s: !q ? 1 : n.startsWith(q) ? 0 : word ? 1 : i >= 0 ? 2 : 9 };
-  }).filter(r => r.s < 9);
-  return scored.sort((a, b) => a.s - b.s || key(a.x).localeCompare(key(b.x))).map(r => r.x);
-}
+/* the commands by name, then the one matcher (fuzzy.js, R3.14): ties keep that order */
+const commandsFor = q => rank([...MENU().commands].sort((a, b) => a.name.localeCompare(b.name)), q, c => c.name);
 function attachSlash(ta, onModel) {
   const box = document.getElementById("slash");
-  let mode = null, items = [], sel = 0, eff = null; // eff: the effort level picked on the selected model row
+  let mode = null, items = [], ats = [], sel = 0, eff = null; // eff: the effort level picked on the selected model row; ats: each row's matched letters
+  const fill = hits => { items = hits.map(h => h.row); ats = hits.map(h => h.at); };
   const close = () => { box.hidden = true; mode = null; };
   const draw = () => {
-    if (!items.length) { box.innerHTML = `<div class="head">No matching command</div>`; box.hidden = false; return; }
+    if (!items.length) { box.innerHTML = `<div class="head">${mode === "model" ? "No matching model" : "No matching command"}</div>`; box.hidden = false; return; }
     box.innerHTML = (mode === "model" ? `<div class="head">Choose a model for this session${items.some(m => (m.effort || []).length) ? ", ← → for the effort" : ""}</div>` : "") + items.slice(0, 40).map((it, i) => mode === "model"
-      ? `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">${it.value === modelValue() ? "❯ " : "  "}${esc(it.name)}</span><span class="d">${esc(it.description || "")}</span>${i === sel && (it.effort || []).length ? effortRow(it) : ""}</div>`
-      : `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">/${esc(it.name)}${it.hint ? ` <span class="h">${esc(it.hint)}</span>` : ""}</span><span class="d">${esc(it.description)}</span></div>`).join("");
+      ? `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">${it.value === modelValue() ? "❯ " : "  "}${marked(it.name, ats[i])}</span><span class="d">${esc(it.description || "")}</span>${i === sel && (it.effort || []).length ? effortRow(it) : ""}</div>`
+      : `<div class="it" role="option" data-i="${i}" aria-selected="${i === sel}"><span class="n">/${marked(it.name, ats[i])}${it.hint ? ` <span class="h">${esc(it.hint)}</span>` : ""}</span><span class="d">${esc(it.description)}</span></div>`).join("");
     box.hidden = false;
     box.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
     box.querySelectorAll(".it").forEach(el => el.onmousedown = e => {
@@ -64,11 +58,15 @@ function attachSlash(ta, onModel) {
   const effortRow = m => `<span class="eff" role="radiogroup" aria-label="Effort"><span class="eff-l">Effort</span>${m.effort.map(l =>
     `<span class="eff-o" role="radio" data-eff="${esc(l)}" aria-checked="${l === eff}">${esc(l)}</span>`).join("")}</span>`;
   const update = () => {
-    if (mode === "model") return;
+    if (mode === "model") { // typing after "/model " filters the models
+      if (!ta.value.startsWith("/model ")) { close(); return; }
+      fill(rank(MENU().models, ta.value.slice(7), m => m.name || m.value)); sel = 0; eff = effortFor(items[sel]); draw();
+      return;
+    }
     if (ta.dataset.bash) { close(); return; } // bash mode: no slash menu
     const m = ta.value.match(/^\/(\S*)$/);
     if (!m) { close(); return; }
-    mode = "cmd"; items = rank(MENU().commands, m[1], c => c.name); sel = 0; draw();
+    mode = "cmd"; fill(commandsFor(m[1])); sel = 0; draw();
   };
   const pick = () => {
     const it = items[sel];
@@ -78,14 +76,15 @@ function attachSlash(ta, onModel) {
     ta.value = `/${it.name} `; close(); ta.focus();
   };
   const openModels = () => {
-    mode = "model"; items = MENU().models; sel = Math.max(0, items.findIndex(m => m.value === modelValue())); eff = effortFor(items[sel]); ta.value = "/model "; draw();
+    mode = "model"; items = MENU().models; ats = []; sel = Math.max(0, items.findIndex(m => m.value === modelValue())); eff = effortFor(items[sel]); ta.value = "/model "; draw();
   };
   ta.openModels = openModels;
   ta.addEventListener("input", update);
   /* while the menu shows it has the box's keys; first of the box's listeners, so its Esc and Enter come first */
   ta.addEventListener("keydown", e => {
     if (box.hidden) return;
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopImmediatePropagation(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; if (mode === "model") eff = effortFor(items[sel]); draw(); }
+    if ((e.key === "ArrowDown" || e.key === "ArrowUp") && !items.length) { e.preventDefault(); e.stopImmediatePropagation(); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopImmediatePropagation(); sel = (sel + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length; if (mode === "model") eff = effortFor(items[sel]); draw(); }
     else if (mode === "model" && (e.key === "ArrowLeft" || e.key === "ArrowRight") && (items[sel]?.effort || []).length) {
       e.preventDefault(); e.stopImmediatePropagation();
       const lv = items[sel].effort, i = lv.indexOf(eff), step = e.key === "ArrowRight" ? 1 : -1;
@@ -348,6 +347,23 @@ export function mountComposer(s) {
   tagLoose(s, ta);
   takeReturned(s.id);
   mountTakeover(s, ta);
+  mountGone(s, ta);
+}
+
+/* ---------- its folder is gone (R3.11): the box's one line instead of the field ----------
+   Enter in normal mode (keys.js) or a click on the line opens "Continue in a folder" (folder-list.js). */
+function mountGone(s, ta) {
+  const box = ta.closest(".composer");
+  box.insertAdjacentHTML("beforeend", `<p class="gone-line" role="status">This folder no longer exists. <b>Enter</b> picks a folder to continue in.</p>`);
+  box.querySelector(".gone-line").addEventListener("mousedown", e => { e.preventDefault(); e.stopPropagation(); const c = cur(); if (c?.gone) showFolderList({ sid: c.id }); });
+  syncGone();
+}
+export function syncGone() {
+  const s = cur(), ta = document.getElementById("msg"), box = ta?.closest(".composer");
+  if (!s || !box) return;
+  const gone = Boolean(s.gone);
+  box.classList.toggle("gone", gone);
+  if (gone && document.activeElement === ta) { ta.blur(); setMode("normal"); }
 }
 
 /* ---------- bash mode (R5.13): `!` as the first character runs a shell command, as in the Claude Code CLI ----------

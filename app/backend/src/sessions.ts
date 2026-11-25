@@ -27,7 +27,7 @@ import { rank } from '../../web/js/fuzzy.js';
 import { Layouts } from './layout.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { displayPath } from './paths.ts';
+import { displayPath, isDir } from './paths.ts';
 import { pruneUi, pruneUiTo, rekeyUi } from './ui-state.ts';
 
 export const RECENT = 50;
@@ -56,6 +56,8 @@ export type SessionsOptions = {
   // The terminals that hold sessions (cli-terminals.ts); none without it.
   terminals?: TerminalSource;
   folders?: Folders; // the disk side of the folder list (tests count its reads); else the real one
+  // Folders taken as there without a stat: the scripted SDK's made-up home (dev and checks only).
+  pretendFolder?: (abs: string) => boolean;
 };
 
 const gone: SendResult = { ok: false, error: "That session isn't open any more." };
@@ -83,7 +85,7 @@ export class Sessions {
     this.log = opts.log ?? nullLog;
     this.home = opts.home ?? os.homedir();
     this.now = opts.now ?? Date.now;
-    this.folders = opts.folders ?? new Folders(this.home);
+    this.folders = opts.folders ?? new Folders(this.home, undefined, opts.pretendFolder);
     this.layout = new Layouts({ store: this.store, entries: () => this.layoutEntries(), publish: (l) => this.publisher.layout(l) });
   }
 
@@ -288,6 +290,7 @@ export class Sessions {
     const s = new Session(id, cwd, placeholder, init, {
       store: this.store, transcripts: this.transcripts, publisher: this.publisher, log: this.log, sdk: this.opts.sdk ?? realSdk, terminals: this.opts.terminals ?? null,
       now: this.now, timer: this.opts.timer, idleMs: this.opts.idleMs ?? IDLE_MS, tilde: (p) => this.tilde(p),
+      isDir: (p) => Boolean(this.opts.pretendFolder?.(p)) || isDir(p),
       onTurnEnded: this.opts.onTurnEnded, onWaiting: this.opts.onWaiting, onCommands: this.opts.onCommands,
       rekey: (x, newId, why) => this.rekey(x, newId, why),
     });

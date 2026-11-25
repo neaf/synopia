@@ -257,7 +257,7 @@ Shell and the one-time update:
 
 Checks and tooling:
 - `menu.mjs` reads state.json after a fixed 1.2 s sleep (the store writes on a 1 s timer); it can flake under load.
-- Page suites share fixed sandbox folders (`/tmp/synopia-bang`, `-images`, `-close`, `-steps`, `-titles`, `-background`, `-queued`, `-earlier`), and `compare.sh` a fixed port (4718) and folder, so two runs at once collide. `run.sh` leaves each run's state folder in `$TMPDIR`.
+- Page suites share fixed sandbox folders (`/tmp/synopia-bang`, `-images`, `-close`, `-steps`, `-titles`, `-background`, `-queued`, `-earlier`, `-folders`), and `compare.sh` a fixed port (4718) and folder, so two runs at once collide. `run.sh` leaves each run's state folder in `$TMPDIR`.
 - `preview.mjs` and `restore.mjs` preview `app/backend/src/open.ts` and assert on its text: a refactor of open.ts fails them.
 - `run.sh` and `check.sh` do not check that `app/backend/node_modules` exists (`dev.sh` does).
 - `compare.sh` "waiting" shot: the header says "Default" where the prototype says "Default (Fixture Large)", because that fixture session's folder has no menu.
@@ -268,6 +268,8 @@ Folders (FR-SES-02, -03, -16 to -19):
 - The protected-folder list is fixed in `folders.ts`; a folder macOS protects that isn't on it (another app's container outside `~/Library`) can still prompt when its row is on screen.
 - A gone check is cached per opening of a list; a folder deleted while a list is open shows as there until the next opening, and the backend refuses it on Enter.
 - Continuing forks with one context line in the old history's new copy; the old session's sidebar state (scroll, draft) moves to the fork. A fork made by Synopia that then fails to start (no `system/init`) leaves the session on the old id, with the new folder, until the next send.
+- The "Continued in" line lands inside the old session's last turn, so it shows above that turn's "Worked for" line, not after it.
+- Under the scripted SDK, folders under the script's made-up home count as there (`Scripted.pretendFolder`), so no check covers a gone folder there; the `folders` check covers one under `/tmp`.
 - The Open list runs the matcher over every past session on each filter change (after 120 ms); at a few thousand sessions it is a few ms, not measured beyond.
 
 Known limits of the design:

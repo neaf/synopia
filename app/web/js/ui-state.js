@@ -16,13 +16,14 @@ import { viewer, showViewer, imageUrl } from "./images.js";
 import { mode, setMode } from "./mode.js";
 import { themePref, themeSet } from "./theme-switch.js";
 import { openList, openListShown, restoreOpenList } from "./open-list.js";
+import { fl, folderListShown, restoreFolderList } from "./folder-list.js";
 
 const uiS = {}; // sid -> { scroll: {view: anchor}, earlier: {view: oldest item id}, diffs: Set, folds: Set }
 const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not on screen
 const stored = new Set(); // pasted image ids the backend has as files
 let sentTop = {}, sentSess = {}; // what the backend has, as JSON per field
 let uiLoaded = false, timer = null, firstChange = 0, restoring = null, typing = null, afterFirst = null;
-const TOP = ["current", "view", "mode", "openBg", "openList", "preview", "viewer", "theme"];
+const TOP = ["current", "view", "mode", "openBg", "openList", "folderList", "preview", "viewer", "theme"];
 const sess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set() });
 const viewKey = () => view || "";
 /* the steps opened by a click, "<sid>|<view>|<item id>" (transcript.js): a redraw and a reload keep them */
@@ -82,6 +83,7 @@ export function applyHello(u) {
 /* the overlays come back once the view is on screen: the Open list, the file preview, the image viewer */
 export function afterRender() {
   const u = afterFirst; afterFirst = null; if (!u) return;
+  if (u.folderList && typeof u.folderList.filter === "string") restoreFolderList(u.folderList);
   if (u.openList && typeof u.openList.filter === "string") restoreOpenList(u.openList.filter);
   if (u.preview && u.preview.path) restorePreview(u.preview);
   if (u.viewer && Array.isArray(u.viewer.srcs) && u.viewer.srcs.length)
@@ -213,6 +215,7 @@ function top() {
   return {
     current, view: view || null, mode, openBg: openBg || null, theme: themePref(),
     openList: openListShown() ? { filter: openList.filter } : null,
+    folderList: folderListShown() && !fl.fixed ? { filter: fl.filter, sid: fl.sid } : null,
     preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
     viewer: viewer ? (keep => keep.length ? { srcs: keep.map(k => viewer.srcs[k].replace(/([?&])token=[^&]*&?/, "$1")), froms: keep.map(k => viewer.froms[k] || ""), i: Math.max(0, keep.indexOf(viewer.i)) } : null)(viewer.srcs.map((s, k) => k).filter(k => viewer.srcs[k].startsWith("/api/image?"))) : null,
   };

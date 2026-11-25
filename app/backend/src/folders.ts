@@ -77,9 +77,12 @@ export function knownFolders(
 export class Folders {
   private home: string;
   private io: FolderIo;
-  constructor(home: string, io: FolderIo = realIo) {
+  private pretend: (abs: string) => boolean;
+  // `pretend`: folders taken as there without a stat (the scripted SDK's made-up home, dev and checks only)
+  constructor(home: string, io: FolderIo = realIo, pretend: (abs: string) => boolean = () => false) {
     this.home = home;
     this.io = io;
+    this.pretend = pretend;
   }
 
   expand(p: string): string | null {
@@ -116,6 +119,7 @@ export class Folders {
   }
 
   async isDir(abs: string): Promise<boolean> {
+    if (this.pretend(abs)) return true;
     try {
       return (await this.io.stat(abs)).isDirectory();
     } catch {

@@ -65,7 +65,7 @@
 :root[data-theme="dark"] .status[data-state="red"] { background: var(--red-bg); border-bottom-color: var(--red-line); }
 :root[data-theme="dark"] body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px var(--blue-line); }
 :root[data-theme="dark"] .slash { box-shadow: var(--shadow); }
-:root[data-theme="dark"] .slash .it[aria-selected="true"], :root[data-theme="dark"] .ol-it[aria-selected="true"] { background: var(--blue-bg); }
+:root[data-theme="dark"] .slash .it[aria-selected="true"], :root[data-theme="dark"] .ol-it[aria-selected="true"], :root[data-theme="dark"] .fl-it[aria-selected="true"] { background: var(--blue-bg); }
 :root[data-theme="dark"] .thumb-wrap .unattach { color: var(--panel); }
 
 /* needs you: the question card, its options, the own-answer field */

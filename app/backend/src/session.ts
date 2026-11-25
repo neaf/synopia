@@ -25,7 +25,6 @@ import type { Client } from './server.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
-import { isDir } from './paths.ts';
 import { movedContext } from './claude-jsonl.ts';
 import type { BangRun } from './bang.ts';
 
@@ -92,6 +91,7 @@ export type SessionDeps = {
   timer?: Timer;
   idleMs: number;
   tilde: (p: string) => string;
+  isDir: (abs: string) => boolean; // its folder is there (paths.ts isDir; the scripted SDK pretends its home's are)
   onTurnEnded?: (sid: string) => void;
   onWaiting?: (sid: string) => void;
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
@@ -319,7 +319,7 @@ export class Session {
     // one writer: a turn another process runs would get the command's context in the middle of it
     if (!this.proc && this.status.externalTurn) return { ok: false, error: 'Another Claude Code process is running this session\'s turn. Run the command once it ends.' };
     if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
-    if (this.checkFolder()) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
+    if (this.checkFolder() || !this.cwd) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     const bang = new Bang({
       id, cmd, cwd: this.cwd, now: this.d.now,
@@ -357,7 +357,7 @@ export class Session {
   // One stat of its folder (the session was chosen: opened, shown or sent to; R3.13). True when it is gone;
   // the page then shows the gone line instead of the message field.
   checkFolder(): boolean {
-    this.setGone(!isDir(this.cwd));
+    this.setGone(Boolean(this.cwd) && !this.d.isDir(this.cwd)); // no folder known (a record without one): not gone
     return this.gone;
   }
 
@@ -406,7 +406,7 @@ export class Session {
   // Starts the process, or says why not: '' (starting), 'terminal' (a live terminal holds it at the
   // last check; one writer), else the error for the toast. `anyFolder`: startIdle's.
   private start(anyFolder = false): string {
-    if (!anyFolder && this.checkFolder()) {
+    if (!anyFolder && (this.checkFolder() || !this.cwd)) {
       this.status.failed();
       this.d.log('session.noFolder', { sid: this.id });
       return `Folder ${this.d.tilde(this.cwd)} no longer exists`;
