@@ -278,6 +278,12 @@ Transcript records:
 - `tool_result` of a call that ran: a `user` record, block `{type: 'tool_result', content: [{type: 'text', text}]}`, `toolUseResult` the same array; record keys besides the usual: `mcpCallNotReadOnly`, `permissionDecision`, `promptId`, `serverClassifierContext` (not always), `sourceToolAssistantUUID`.
 - A handler's `isError: true` and a denial: `is_error: true`, `content` and `toolUseResult` a plain string; a denial adds `toolDenialKind` and `holdsPersonsWords`.
 
+### Live run MC-2
+
+One scripted check, 2026-11-25 (same SDK and CLI; `/tmp/synopia-mcp-login/check.mjs`, outside the repo; details in [Claude Code terminals](Claude%20Code%20terminals.md#claude-mcp-login-and-logout)). The user's Sign in on an HTTP server had failed with "this isn't an interactive terminal".
+- `claude mcp login <name>` refuses to run with no TTY (exit 1, that sentence). Under `script -q /dev/null` (a pseudo-terminal) it opens the browser itself and waits for the OAuth callback. The `--no-browser` paste flow and an "Open in Terminal" fallback weren't needed.
+- Still unverified: whether `reconnectMcpServer(name)` after a completed login connects the running session with no restart. The check stopped before the browser step, as no harmless OAuth server could be signed in to here (the MC-1 policy refuses test servers). Synopia still reconnects after both login and logout.
+
 ### What Synopia does with it
 
 - Every tool is `always_ask` with `destructiveHint: true` (`sdk.ts` `toolServer`), so each call reaches the card under `auto` too.
@@ -312,7 +318,6 @@ One scripted check, 2026-11-25 (SDK 0.3.330 with its bundled CLI, `claude --vers
 Unverified, as nothing could be signed in to here (the policy refuses every test server, and the user's machine has no OAuth server to sign out of and back in to in one script):
 - whether `mcpServerStatus()` of a CLI-dialed HTTP server reads `needs-auth` before a sign-in, and its `config` and `scope` values;
 - whether `reconnectMcpServer(name)` after `claude mcp login <name>` connects the running session with no restart, and whether a running session's status changes after `claude mcp logout` without a reconnect. Synopia reconnects after both;
-- how `claude mcp login` behaves with no TTY (see the terminals doc);
 - whether a CLI-dialed server's URL elicitation reaches `onElicitation`. Synopia passes no `onElicitation`, so such a request is declined; a portal's sign-in link that comes back as a tool's text shows as a link (R5.16).
 - whether `toggleMcpServer` on an idle probe lasts to the session's next process.
 
@@ -320,7 +325,8 @@ Unverified, as nothing could be signed in to here (the policy refuses every test
 
 - `mcp.ts` reads the status of the session's process (`SessionProcess.mcpControl`), or of an idle probe in the session's folder while no process runs (`sdk.ts` `mcpProbe`, closed 3 min after the panel last asked). A fresh source's empty answer and a `pending` server are read again every 0.5 s, 20 times at most.
 - No Reconnect on an `sdk` server or a disabled one; Enable/Disable on all.
-- Sign in and Sign out reconnect the server afterwards; a failed reconnect after a sign-in is its own sentence.
+- Sign in runs `claude mcp login` under a pseudo-terminal (MC-2). While it waits the row reads "Waiting for the browser…" and has one action, Cancel, which kills the run; a cancelled sign-in shows no error and doesn't reconnect.
+- Sign in and Sign out reconnect the server afterwards; a failed reconnect after a sign-in is its own sentence. Error sentences carry no URL.
 - Code: `mcp.ts`, `sdk.ts` `mcpControlOf`, `mcpProbe`, `bundledCli`. Test: `mcp.test.ts`, `scripted-sdk.test.ts`.
 
 ## Sessions: list, resume, fork
@@ -380,7 +386,7 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 - `supportedCommands` and `supportedModels` return the script's `menu` in the SDK's shapes, HTML-escaped hints included ("Command and model list shapes").
 - `resume` with `forkSession: true` gives a new id and copies the transcript into the new cwd's project folder with the new id and folder ("Resume and fork in another folder"); a process that took only `shouldQuery: false` context sends `system/init` and no turn.
 - A `call` step calls one of Synopia's own tools as the CLI does ("Synopia's tools for agents"): the `tool_use` record, `canUseTool` with no suggestions, the tool from the session's `mcpServers` (`agent-tools.ts` `callServed`), then the `tool_result` record, text blocks when it ran, a string with `is_error` when it refused or was denied. A new session's `Options.title` becomes a `custom-title` record with its first prompt.
-- MCP: every query answers `mcpServerStatus`, `reconnectMcpServer` and `toggleMcpServer` from the script's `mcp.servers`, a session's own `mcpServers` as `source: sdk` (no reconnect, as MC-1), a disabled one refusing a reconnect; `Scripted.mcpRunner` is a pretend `claude mcp login|logout`: a sign-in takes `mcp.loginMs`, and the next reconnect connects ("MCP servers: status, sign-in").
+- MCP: every query answers `mcpServerStatus`, `reconnectMcpServer` and `toggleMcpServer` from the script's `mcp.servers`, a session's own `mcpServers` as `source: sdk` (no reconnect, as MC-1), a disabled one refusing a reconnect; `Scripted.mcpRunner` is a pretend `claude mcp login|logout`: a sign-in takes `mcp.loginMs`, and the next reconnect connects; a login asked with no pty fails as the CLI's does (MC-2), and an abort (Cancel) ends it ("MCP servers: status, sign-in").
 - `listSessions()` gives one `SDKSessionInfo` per fixture transcript: `cwd` and `firstPrompt` from its records, `customTitle` and `summary` from its `custom-title` and `ai-title` records, `lastModified` from its mtime.
 
 The script format and what it seeds are in docs/Page checks.md, "The scripted SDK". Test: `app/backend/test/scripted-sdk.test.ts`.

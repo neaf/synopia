@@ -24,8 +24,8 @@ function setup(o: { list?: McpServerStatus[]; runner?: McpRunner; terminal?: boo
   const list = o.list ?? [http('figma', 'needs-auth'), { name: 'synopia', status: 'connected', scope: 'dynamic', source: 'sdk' } as McpServerStatus];
   const { control, calls } = fakeControl(list, signedIn);
   const frames: Frame[] = [];
-  const runs: { args: string[]; cwd: string }[] = [];
-  const runner: McpRunner = o.runner ?? (async (args, r) => { runs.push({ args, cwd: r.cwd }); if (args[1] === 'login') signedIn.add(args[2]); else signedIn.delete(args[2]); return { code: 0, stdout: '', stderr: '' }; });
+  const runs: { args: string[]; cwd: string; pty: boolean }[] = [];
+  const runner: McpRunner = o.runner ?? (async (args, r) => { runs.push({ args, cwd: r.cwd, pty: r.pty }); if (args[1] === 'login') signedIn.add(args[2]); else signedIn.delete(args[2]); return { code: 0, stdout: '', stderr: '' }; });
   let probes = 0, closed = 0;
   const mcp = new Mcp({ runner, send: (m) => frames.push(m as Frame), settleMs: 2, probe: () => { probes++; return { control, close: () => { closed++; } }; } });
   const t: McpTarget = { id: 'S', cwd: '/work/app', terminal: o.terminal ?? false, control: () => (o.own ? control : null) };
@@ -45,6 +45,8 @@ test('mcp: one sentence from what the CLI said', () => {
   assert.equal(sentence('Opening browser\nNo MCP server named "x". Run `claude mcp add` to add one.\n'), 'No MCP server named "x".');
   assert.equal(sentence('\x1b[31merror: refused\x1b[0m'), 'error: refused.');
   assert.equal(sentence(''), '');
+  // a sign-in under a pty: carriage returns, an echoed ^D, the authorization URL; none of it reaches the panel
+  assert.equal(sentence('^D\x04Starting…\r\nVisit: https://auth.example.test/authorize?state=x\r\nAuthentication failed: see https://example.test/help for more.\r\n'), 'Authentication failed: see  for more.');
 });
 
 test('mcp: list reads the status, through a probe when no process runs', async () => {
@@ -66,7 +68,7 @@ test('mcp: the session\'s own process wins over a probe', async () => {
 
 test('mcp: sign in runs `claude mcp login <name>` in the session\'s folder, shows it busy, then reconnects', async () => {
   let release = () => {};
-  const s = setup({ runner: (args, r) => new Promise((res) => { release = () => { res({ code: 0, stdout: '', stderr: '' }); }; assert.equal(r.cwd, '/work/app'); assert.deepEqual(args, ['mcp', 'login', 'figma']); }) });
+  const s = setup({ runner: (args, r) => new Promise((res) => { release = () => { res({ code: 0, stdout: '', stderr: '' }); }; assert.equal(r.cwd, '/work/app'); assert.deepEqual(args, ['mcp', 'login', 'figma']); assert.equal(r.pty, true); }) });
   await s.mcp.list(s.t);
   const p = s.mcp.act(s.t, 'figma', 'login');
   await new Promise((r) => setTimeout(r, 5));
@@ -85,6 +87,7 @@ test('mcp: login then reconnect makes a needs-auth server connected; logout brin
   assert.equal(s.last().error, null);
   await s.mcp.act(s.t, 'figma', 'logout');
   assert.deepEqual(s.runs.map((r) => r.args.join(' ')), ['mcp login figma', 'mcp logout figma']);
+  assert.deepEqual(s.runs.map((r) => r.pty), [true, false]); // MC-2: login refuses a run with no TTY; logout needs none
   assert.equal(s.last().servers.find((r) => r.name === 'figma')?.status, 'needs-auth');
 });
 
@@ -93,6 +96,23 @@ test('mcp: a failed sign-in is one sentence in the panel, the ack is ok', async 
   assert.deepEqual(await s.mcp.act(s.t, 'figma', 'login'), { ok: true });
   assert.equal(s.last().error, 'Sign-in to figma failed: Authentication failed: the server refused.');
   assert.ok(!s.calls.includes('reconnect figma'));
+});
+
+test('mcp: Cancel kills a waiting sign-in: no error, no reconnect, the row is free again', async () => {
+  let aborted = false;
+  const s = setup({ runner: (_args, r) => new Promise((res) => { r.signal.addEventListener('abort', () => { aborted = true; res({ code: null, stdout: '', stderr: '' }); }, { once: true }); }) });
+  await s.mcp.list(s.t);
+  assert.equal((await s.mcp.act(s.t, 'figma', 'cancel')).ok, false); // nothing runs yet
+  const p = s.mcp.act(s.t, 'figma', 'login');
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(s.last().servers.find((r) => r.name === 'figma')?.busy, 'login');
+  assert.deepEqual(await s.mcp.act(s.t, 'figma', 'cancel'), { ok: true });
+  assert.deepEqual(await p, { ok: true });
+  assert.ok(aborted);
+  assert.equal(s.last().error, null);
+  assert.ok(!s.calls.includes('reconnect figma'));
+  const fig = s.last().servers.find((r) => r.name === 'figma');
+  assert.deepEqual([fig?.busy, fig?.status], [null, 'needs-auth']);
 });
 
 test('mcp: a sign-in that never finishes times out with its own sentence', async () => {

@@ -53,7 +53,7 @@ export const PAGE = {
   moveSession: { id: "str?", sid: "str", before: "str?", after: "str?", group: "str?" },
   newGroup: { id: "str?", sid: "str", onto: "str", group: "str", name: "str?" },
   renameGroup: { id: "str?", group: "str", name: "str" },
-  /* /mcp (R5.15): one server's action: login, logout, reconnect, enable or disable (mcp.ts); its outcome comes as `mcp` */
+  /* /mcp (R5.15): one server's action: login, logout, reconnect, enable, disable, or cancel (kills a running sign-in) (mcp.ts); its outcome comes as `mcp` */
   mcpAction: { id: "str?", sid: "str", name: "str", action: "str" },
 };
 

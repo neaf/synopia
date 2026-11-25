@@ -2,7 +2,8 @@
    session, as the Open list does. The backend owns what it shows (mcp.ts): each server's status, the action
    running on it, the last action's error; every `mcp` frame replaces it whole. ↑↓ (j k) move between servers,
    ← → choose an action, Enter does it, Esc closes. A server shows its status as a mark and a word: Connected,
-   Needs sign-in, Failed, Connecting, Disabled; only Connecting and a running action have a moving mark. */
+   Needs sign-in, Failed, Connecting, Disabled; only Connecting and a running action have a moving mark. A sign-in
+   that waits for the browser has one action, Cancel, which kills it. */
 import { request, act } from "./connection.js";
 import { esc } from "./format.js";
 import { ind } from "./marks.js";
@@ -19,16 +20,19 @@ const STATUS = {
   disabled: ["mcp_off", "Disabled"],
 };
 const BUSY = { login: "Waiting for the browser…", logout: "Signing out…", reconnect: "Reconnecting…", enable: "Enabling…", disable: "Disabling…" };
-const LABEL = { login: "Sign in", logout: "Sign out", reconnect: "Reconnect", enable: "Enable", disable: "Disable" };
+const LABEL = { cancel: "Cancel", login: "Sign in", logout: "Sign out", reconnect: "Reconnect", enable: "Enable", disable: "Disable" };
 const KIND = { http: "HTTP", sse: "SSE", ws: "WebSocket", stdio: "Local command", sdk: "Synopia's own", "claudeai-proxy": "claude.ai connector", other: "Server" };
 
-/* a server's actions, in one order; the one Enter does first comes from its status */
+/* a server's actions, in one order; the one Enter does first comes from its status. While busy: Cancel
+   for a sign-in, else none. */
 function actionsOf(r) {
+  if (r.busy) return r.busy === "login" ? ["cancel"] : [];
   if (r.status === "disabled") return [...(r.signIn ? ["logout"] : []), "enable"];
   return [...(r.signIn ? ["login", "logout"] : []), ...(r.reconnect ? ["reconnect"] : []), "disable"];
 }
 function primary(r) {
   const a = actionsOf(r);
+  if (r.busy) return a[0] ?? null;
   const want = r.status === "needs-auth" ? "login" : r.status === "disabled" ? "enable" : r.status === "failed" ? (r.reconnect ? "reconnect" : "login") : "reconnect";
   return a.includes(want) ? want : a[0];
 }
@@ -92,7 +96,7 @@ function draw() {
   box.innerHTML = mp.servers.map((r, i) => {
     const [mark, word] = r.busy ? ["work", BUSY[r.busy] || "Working…"] : STATUS[r.status] || ["stopped", r.status];
     const on = i === mp.sel;
-    const acts = r.busy ? "" : actionsOf(r).map(a => `<span class="act" role="button" data-act="${a}"${on && a === mp.act ? ' aria-pressed="true"' : ""}>${LABEL[a]}</span>`).join("");
+    const acts = actionsOf(r).map(a => `<span class="act" role="button" data-act="${a}"${on && a === mp.act ? ' aria-pressed="true"' : ""}>${LABEL[a]}</span>`).join("");
     return `<div class="mcp-it st-${esc(r.busy ? "busy" : r.status)}" role="option" data-i="${i}" data-name="${esc(r.name)}" aria-selected="${on}">
       <span class="n">${esc(r.name)}</span><span class="st">${ind(mark)}<span class="w">${esc(word)}</span></span><span class="f">${esc(KIND[r.kind] || KIND.other)}${r.scope ? `, ${esc(r.scope)}` : ""}</span><span class="acts">${acts}</span></div>`;
   }).join("");
@@ -100,7 +104,7 @@ function draw() {
 }
 
 function run() {
-  const r = mp.servers[mp.sel]; if (!r || r.busy || !mp.act) return;
+  const r = mp.servers[mp.sel]; if (!r || !mp.act || !actionsOf(r).includes(mp.act)) return;
   act({ t: "mcpAction", sid: mp.sid, name: r.name, action: mp.act });
 }
 
@@ -110,8 +114,9 @@ export function mcpKey(e) {
   const n = mp.servers.length;
   const move = step => { if (n) { mp.sel = (mp.sel + step + n) % n; mp.act = null; draw(); } };
   const choose = step => {
-    const r = mp.servers[mp.sel]; if (!r || r.busy) return;
-    const a = actionsOf(r), i = Math.max(0, a.indexOf(mp.act));
+    const r = mp.servers[mp.sel]; if (!r) return;
+    const a = actionsOf(r); if (!a.length) return;
+    const i = Math.max(0, a.indexOf(mp.act));
     mp.act = a[Math.min(a.length - 1, Math.max(0, i + step))]; draw();
   };
   if (e.key === "Escape") hide();
