@@ -2,7 +2,8 @@
 // and its pretend `claude mcp login|logout`, dev/scripted-sdk.ts). Checks: /mcp typed in the box opens the MCP
 // panel instead of sending, and so does /mcp from the / menu; each server's status word and mark (Connected,
 // Needs sign-in, Failed, Connecting, Disabled), a moving mark only while connecting; Sign in shows "Waiting for
-// the browser…" with a moving mark, then Connected; Sign out gives Needs sign-in; Reconnect; Disable and Enable;
+// the browser…" with a moving mark and one action, Cancel; Cancel ends it with no error, back to Needs sign-in; a
+// second Sign in ends Connected; Sign out gives Needs sign-in; Reconnect; Disable and Enable;
 // a failed sign-in's one sentence in the panel; ↑↓ j k, ← →, Enter, Esc; a session a terminal holds says to use
 // /mcp there; /unknowncmd is not sent, the box keeps it, a toast says it works only in a terminal; a command in
 // the session's list is still sent. Writes mcp-*.png (also to /tmp/synopia-mcp/shots/).
@@ -28,7 +29,7 @@ if (process.argv[2] === 'make') {
     about: 'mcp.mjs: made up',
     menu: { commands: [{ name: 'compact', description: 'Clear the history but keep a summary', argumentHint: '' }, { name: 'review', description: 'Review a pull request', argumentHint: '' }], models: [] },
     mcp: {
-      loginMs: 1500, pendingMs: 2500, failLogin: ['wiki'],
+      loginMs: 2500, pendingMs: 2500, failLogin: ['wiki'],
       servers: [
         { name: 'figma', status: 'needs-auth', kind: 'http', scope: 'user' },
         { name: 'portal', status: 'connected', kind: 'http', scope: 'project' },
@@ -101,8 +102,15 @@ await shot('needs-sign-in');
 // 3. Sign in: waiting for the browser, then Connected
 await K.enter();
 check('Sign in: Waiting for the browser…, a moving mark', await wordIs('figma', 'Waiting for the browser…', 3000) && (await row('figma')).moving, JSON.stringify(await row('figma')));
-check('while it waits the row has no actions', (await row('figma')).acts.length === 0, JSON.stringify(await row('figma')));
+check('while it waits the row has one action, Cancel, boxed', JSON.stringify((await row('figma')).acts) === '["Cancel"]' && (await row('figma')).pressed === 'Cancel', JSON.stringify(await row('figma')));
 await shot('waiting');
+check('← → keep Cancel while it waits', await (async () => { await K.right(); await K.left(); return (await row('figma')).pressed === 'Cancel'; })(), JSON.stringify(await row('figma')));
+await K.enter();
+check('Cancel: back to Needs sign-in, still mark', await wordIs('figma', 'Needs sign-in', 2000) && !(await row('figma')).moving, JSON.stringify(await row('figma')));
+check('Cancel: no error in the panel', (await panel()).error === null && await ev(`document.getElementById('mcp-err').hidden`), String((await panel()).error));
+check('after Cancel, Sign in is boxed again', (await row('figma')).pressed === 'Sign in', JSON.stringify(await row('figma')));
+await K.enter();
+check('Sign in again: waiting', await wordIs('figma', 'Waiting for the browser…', 3000), JSON.stringify(await row('figma')));
 check('the sign-in ends Connected (reconnected, no restart)', await wordIs('figma', 'Connected', 6000), JSON.stringify(await row('figma')));
 check('no error after a good sign-in', (await panel()).error === null, String((await panel()).error));
 

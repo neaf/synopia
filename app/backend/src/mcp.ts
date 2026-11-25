@@ -4,8 +4,9 @@
 // every page (protocol.js). The status and the control calls come from the session's process, or,
 // while none runs, from an idle probe in its folder (sdk.ts mcpProbe), closed after a quiet while.
 // Sign-in and sign-out run the bundled CLI's `claude mcp login|logout <name>` in the session's
-// folder, as server config can be project-scoped; a sign-in opens your browser and ends when its
-// flow does. Facts: docs/Agent SDK.md, "MCP servers: status, sign-in" (live run MC-1), and
+// folder, as server config can be project-scoped. A sign-in runs under a pseudo-terminal (the CLI
+// refuses one without a TTY); it opens your browser itself and ends when its flow does, or when the
+// panel's Cancel kills it. Facts: docs/Agent SDK.md, "MCP servers: status, sign-in" (live runs MC-1, MC-2), and
 // docs/Claude Code terminals.md, "claude mcp login and logout".
 import { spawn } from 'node:child_process';
 import type { McpServerStatus } from '@anthropic-ai/claude-agent-sdk';
@@ -20,6 +21,7 @@ export const PROBE_IDLE_MS = 3 * 60_000; // a probe closes this long after the p
 export const SETTLE_MS = 500; // the next read while a server connects, or the first read came back empty
 export const SETTLE_TRIES = 20;
 const OUT_CAP = 64 * 1024;
+const SCRIPT = '/usr/bin/script';
 
 export const TERMINAL_NOTE = 'A terminal holds this session. Type /mcp in that terminal to manage its MCP servers.';
 export const NO_CONTROL = 'Synopia couldn\'t read the MCP servers of this session.';
@@ -32,7 +34,8 @@ export type Kind = 'http' | 'sse' | 'ws' | 'stdio' | 'sdk' | 'claudeai-proxy' | 
 export type McpRow = { name: string; status: McpServerStatus['status']; kind: Kind; scope: string | null; signIn: boolean; reconnect: boolean; busy: Action | null };
 
 export type RunResult = { code: number | null; stdout: string; stderr: string; timedOut?: boolean };
-export type McpRunner = (args: string[], o: { cwd: string; timeoutMs: number; signal: AbortSignal }) => Promise<RunResult>;
+// `pty`: run it under a pseudo-terminal, as `claude mcp login` needs one (MC-2).
+export type McpRunner = (args: string[], o: { cwd: string; timeoutMs: number; signal: AbortSignal; pty: boolean }) => Promise<RunResult>;
 export type McpTarget = { id: string; cwd: string; terminal: boolean; control(): McpControl | null };
 export type ProbeFn = (cwd: string) => { control: McpControl | null; close: () => void };
 export type Result = { ok: true } | { ok: false; error: string };
@@ -50,6 +53,7 @@ export type McpDeps = {
 type Panel = {
   rows: McpRow[];
   busy: Map<string, Action>;
+  runs: Map<string, AbortController>; // a server's running CLI, for Cancel
   error: string | null;
   note: string | null;
   reading: boolean;
@@ -74,9 +78,11 @@ export function rowOf(s: McpServerStatus, busy: Action | null = null): McpRow {
   return { name: s.name, status: s.status, kind, scope: s.scope ?? null, signIn: REMOTE.includes(kind), reconnect: kind !== 'sdk' && s.status !== 'disabled', busy };
 }
 
-// One sentence from what a CLI or a control call said: its last line, the first sentence of it.
+// One sentence from what a CLI or a control call said: its last line, the first sentence of it, with
+// no URL (a sign-in prints its authorization URL; the panel never shows one) and no echoed ^D
+// (script(1) sends one when its stdin, /dev/null, ends).
 export function sentence(text: string): string {
-  const lines = text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const lines = text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\x1b\][^\x07]*\x07/g, '').replace(/[\x00-\x08\x0b-\x1f]/g, '').replace(/\^D/g, '').replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, '').split('\n').map((l) => l.trim()).filter(Boolean);
   const last = lines.pop() ?? '';
   const m = /^(.+?[.!?])(\s|$)/.exec(last);
   const s = (m ? m[1] : last).slice(0, 200);
@@ -107,9 +113,10 @@ export class Mcp {
   }
 
   // One action on one server. The ack is ok once it ran (its error shows in the panel); a refusal
-  // (a terminal holds it, the server is busy) is the ack's error.
-  async act(t: McpTarget, name: string, action: Action): Promise<Result> {
+  // (a terminal holds it, the server is busy) is the ack's error. `cancel` kills a running sign-in.
+  async act(t: McpTarget, name: string, action: Action | 'cancel'): Promise<Result> {
     if (t.terminal) return { ok: false, error: TERMINAL_NOTE };
+    if (action === 'cancel') return this.cancel(t.id, name);
     if (!MCP_ACTIONS.includes(action)) return { ok: false, error: 'Synopia doesn\'t know that MCP action.' };
     const p = this.panel(t.id);
     if (p.busy.has(name)) return { ok: false, error: `${name} is still busy. Wait for it to finish.` };
@@ -127,6 +134,15 @@ export class Mcp {
     }
     if (p.error) this.log('mcp.failed', { sid: t.id, action });
     await this.refresh(t, p);
+    return { ok: true };
+  }
+
+  // Cancel: the running CLI on that server is killed; its row goes back to what the status says.
+  cancel(sid: string, name: string): Result {
+    const run = this.panels.get(sid)?.runs.get(name);
+    if (!run) return { ok: false, error: `Nothing runs on ${name}.` };
+    this.log('mcp.cancel', { sid });
+    run.abort();
     return { ok: true };
   }
 
@@ -155,7 +171,7 @@ export class Mcp {
 
   private panel(sid: string): Panel {
     let p = this.panels.get(sid);
-    if (!p) this.panels.set(sid, p = { rows: [], busy: new Map(), error: null, note: null, reading: false, probe: null, probeCwd: '', idle: null, fresh: true, seq: 0 });
+    if (!p) this.panels.set(sid, p = { rows: [], busy: new Map(), runs: new Map(), error: null, note: null, reading: false, probe: null, probeCwd: '', idle: null, fresh: true, seq: 0 });
     return p;
   }
 
@@ -218,7 +234,9 @@ export class Mcp {
   // The action; its error sentence, or null.
   private async run(t: McpTarget, p: Panel, name: string, action: Action): Promise<string | null> {
     if (action === 'login' || action === 'logout') {
-      const r = await this.cli(['mcp', action, name], t.cwd, action === 'login' ? this.d.loginTimeoutMs ?? LOGIN_TIMEOUT_MS : CLI_TIMEOUT_MS);
+      const login = action === 'login';
+      const r = await this.cli(p, name, ['mcp', action, name], t.cwd, login ? this.d.loginTimeoutMs ?? LOGIN_TIMEOUT_MS : CLI_TIMEOUT_MS, login);
+      if (r.cancelled) return null;
       if (r.timedOut) return action === 'login' ? `The sign-in to ${name} didn't finish within ${Math.round((this.d.loginTimeoutMs ?? LOGIN_TIMEOUT_MS) / 60_000)} minutes.` : failed(action, name, 'the CLI didn\'t answer');
       if (r.code !== 0) return failed(action, name, sentence(r.stderr || r.stdout) || `the CLI ended with code ${r.code}`);
       // the running session picks the new credentials up on a reconnect (logout too: it drops the old ones)
@@ -237,24 +255,31 @@ export class Mcp {
     return null;
   }
 
-  private async cli(args: string[], cwd: string, timeoutMs: number): Promise<RunResult> {
+  private async cli(p: Panel, name: string, args: string[], cwd: string, timeoutMs: number, pty: boolean): Promise<RunResult & { cancelled: boolean }> {
     const ac = new AbortController();
     this.aborts.add(ac);
+    p.runs.set(name, ac);
     try {
-      return await this.d.runner(args, { cwd, timeoutMs, signal: ac.signal });
+      const r = await this.d.runner(args, { cwd, timeoutMs, signal: ac.signal, pty });
+      return { ...r, cancelled: ac.signal.aborted };
     } finally {
       this.aborts.delete(ac);
+      if (p.runs.get(name) === ac) p.runs.delete(name);
     }
   }
 }
 
-// The real runner: the bundled CLI, no TTY (stdin closed), its output kept in memory for the
-// error sentence and never logged. Killed at the timeout or on abort.
+// The real runner: the bundled CLI, its output kept in memory for the error sentence and never
+// logged (a sign-in's holds its authorization URL). With `pty` it runs under macOS's script(1)
+// (`script -q /dev/null <cli> …`: a pseudo-terminal, the child's exit code as its own; its stdin
+// /dev/null, as script refuses a socket there), else with no TTY. Killed at the timeout or on abort:
+// script's end hangs the pty up, which ends the CLI (MC-2).
 export const cliRunner: McpRunner = (args, o) => new Promise((resolve) => {
   const cli = bundledCli();
   if (!cli) { resolve({ code: 127, stdout: '', stderr: 'Synopia can\'t find the Claude Code CLI that came with the Agent SDK.' }); return; }
   let stdout = '', stderr = '', timedOut = false;
-  const p = spawn(cli, args, { cwd: o.cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const [cmd, argv] = o.pty ? [SCRIPT, ['-q', '/dev/null', cli, ...args]] : [cli, args];
+  const p = spawn(cmd, argv, { cwd: o.cwd, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   p.stdout.on('data', (d) => { if (stdout.length < OUT_CAP) stdout += d; });
   p.stderr.on('data', (d) => { if (stderr.length < OUT_CAP) stderr += d; });
   const kill = () => { try { p.kill('SIGTERM'); } catch { /* gone */ } };

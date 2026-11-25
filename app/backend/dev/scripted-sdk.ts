@@ -550,9 +550,11 @@ export class Scripted {
     if (enabled) this.mcpOff.delete(name); else this.mcpOff.add(name);
   }
 
-  // A pretend `claude mcp login|logout <name>`: no CLI, no browser.
+  // A pretend `claude mcp login|logout <name>`: no CLI, no browser. A login asked with no pty fails as
+  // the CLI's does (MC-2); Cancel (the abort) ends it with no code.
   readonly mcpRunner: McpRunner = async (args, o) => {
     const [, verb, name] = args;
+    if (verb === 'login' && !o.pty) return { code: 1, stdout: '', stderr: `Couldn't complete authentication for "${name}": this isn't an interactive terminal.\n` };
     const m = this.mcpScript(name);
     this.log('scripted.mcp', { verb });
     if (!m) return { code: 1, stdout: '', stderr: `No MCP server named "${name}". Run \`claude mcp add\` to add one.\n` };

@@ -234,7 +234,7 @@ export class Router {
         return to ? sessions.layout.move(sessions.resolve(m.sid as string), to) : { ok: false, error: UNREADABLE };
       },
       newGroup: (_client, m) => sessions.layout.newGroup(sessions.resolve(m.sid as string), sessions.resolve(m.onto as string), m.group as string, str(m.name) ?? undefined),
-      mcpAction: (_client, m) => this.act(m.sid, (s) => this.o.mcp?.act(mcpTarget(s), m.name as string, m.action as McpAction) ?? { ok: false, error: 'MCP servers can\'t be managed here.' }),
+      mcpAction: (_client, m) => this.act(m.sid, (s) => this.o.mcp?.act(mcpTarget(s), m.name as string, m.action as McpAction | 'cancel') ?? { ok: false, error: 'MCP servers can\'t be managed here.' }),
       renameGroup: (_client, m) => sessions.layout.renameGroup(m.group as string, m.name as string),
     };
   }
