@@ -1,5 +1,5 @@
 /* Keys (requirements R9): the page's one keyboard dispatcher. What is on top takes the keys, and nothing under
-   it sees them: the file preview, then the image viewer, the Open list, a sidebar drag; with none of them up,
+   it sees them: the file preview, then the image viewer, the Open list, the MCP panel, a sidebar drag; with none of them up,
    the session keys below. Text fields keep their own editing keys on the field itself (the message box and
    its menu, composer.js; a card's field, card.js; a group's name, sidebar.js; the Open list's filter types):
    the session keys leave a focused field alone, except ⌘⇧[ ] and the box's Esc (composer.js). */
@@ -8,18 +8,20 @@ import { mode, setMode, paintMode } from "./mode.js";
 import { KEYS, renderSide } from "./sidebar.js";
 import { drag, dragKey } from "./dnd.js";
 import { renderConv, loadEarlier, toEnd } from "./transcript.js";
-import { promptKey, askInterrupt, askBackground, askClose } from "./composer.js";
+import { promptKey, askInterrupt, askBackground, askClose, askNow } from "./composer.js";
 import { qaKeys } from "./card.js";
 import { openListShown, openListKey, showOpenList } from "./open-list.js";
 import { folderListKeys, folderListKey, openNewSession, showFolderList } from "./folder-list.js";
 import { previewShown, previewKey } from "./preview.js";
 import { viewer, viewerKey } from "./images.js";
+import { mcpShown, mcpKey } from "./mcp-panel.js";
 
 /* top first: while one is shown it has every key */
 const LAYERS = [
   { shown: previewShown, key: previewKey },
   { shown: () => !!viewer, key: viewerKey },
   { shown: openListShown, key: openListKey },
+  { shown: mcpShown, key: mcpKey },
   { shown: folderListKeys, key: folderListKey },
   { shown: () => !!drag?.started, key: dragKey },
 ];
@@ -47,9 +49,10 @@ function sessionKey(e) {
   if (e.metaKey || e.ctrlKey || e.altKey || inField(e.target)) return;
   if (e.target.closest && e.target.closest("button") && e.key === " ") e.preventDefault();
   /* Esc, Esc interrupts a running turn; b, b sends its foreground steps to the background; x, x closes the
-     session; under the prompt any other key dismisses it, and another prompt's first key replaces it (composer.js) */
+     session; f, f sends the queued messages now; under the prompt any other key dismisses it, and another
+     prompt's first key replaces it (composer.js) */
   if (promptKey(e)) return;
-  if ((e.key === "Escape" && askInterrupt()) || (e.key === "b" && askBackground()) || (e.key === "x" && askClose())) { e.preventDefault(); return; }
+  if ((e.key === "Escape" && askInterrupt()) || (e.key === "b" && askBackground()) || (e.key === "x" && askClose()) || (e.key === "f" && askNow())) { e.preventDefault(); return; }
   if (qaKeys(e)) return;
   const log = document.getElementById("log"), gone = Boolean(cur()?.gone);
   if (gone && /^[ia/]$/.test(e.key)) { e.preventDefault(); return; } // its folder is gone: no field to type in (R3.11)

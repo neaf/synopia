@@ -41,6 +41,7 @@ export type Item = {
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
   input?: string; out?: Output; // tool: its input as the expanded step shows it, and its result's preview (R5.6)
   fg?: boolean; // tool: a foreground Bash or Agent still running, which b, b can send to the background (R9)
+  bg?: boolean; // tool: a step still running in the background (a background subagent), not the main turn's own (R5.5)
   session?: string; // tool: the session a finished start_session started (R3.15), which its result line links to
   denied?: Denial; // tool, state denied: who said no when it has no card answer (auto mode, or you at a terminal)
   qs?: Question[]; answer?: string | null; // ask
@@ -790,6 +791,18 @@ export class Transcript {
     this.refreshTool(tid); // a foreground step can go to the background from now (`fg`)
   }
 
+  // f, f (R9.8): the main conversation's running foreground Bash and Agent steps by tool use id.
+  // `ready`: its task_started came, so backgroundTasks(id) moves it; `early`: not yet (the 2 s gap).
+  foreground(): { ready: string[]; early: string[] } {
+    const ready: string[] = [], early: string[] = [];
+    for (const it of this.r.items) {
+      if (it.k !== 'tool' || it.state !== 'running' || !(it.name === 'Bash' || it.name === 'Agent' || it.name === 'Task')) continue;
+      if (it.fg) ready.push(it.id);
+      else if (!this.sdkTasks.has(it.id) && !this.r.bgTool.get(it.id) && !this.r.bg.has(it.id)) early.push(it.id);
+    }
+    return { ready, early };
+  }
+
   // The SDK's background_tasks_changed: the whole set of the process's live background tasks (task
   // ids; the caller leaves ambient ones out). A foreground Bash or Agent that joins it went to the
   // background (b, b or Ctrl+B): at once a running shell, or an Agent that runs until its
@@ -930,6 +943,13 @@ export class Transcript {
       if (Boolean(it.fg) !== fg) {
         if (fg) it.fg = true;
         else delete it.fg;
+        r.changed.add(tid);
+      }
+      // A subagent or shell that runs in the background: not the main turn's own step, so the live line doesn't name it
+      const bg = state === 'running' && (Boolean(r.bgTool.get(tid)) || r.bg.has(tid));
+      if (Boolean(it.bg) !== bg) {
+        if (bg) it.bg = true;
+        else delete it.bg;
         r.changed.add(tid);
       }
       const plan = it.name === 'ExitPlanMode' ? this.planOf(tid) : undefined;

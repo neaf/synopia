@@ -7,17 +7,16 @@ import { request, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
 import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
-import { md, parseAnswers, parseNotes } from "./md.js";
-import { ind } from "./marks.js";
+import { md, parseAnswers, parseNotes, linkText } from "./md.js";
+import { ind, kind } from "./marks.js";
 import { bgOf, bgState, renderRail } from "./rail.js";
 import { shownBg, bgHeaderHTML, bgLogEntries, loadEarlierOutput } from "./bg-view.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
-import { mountComposer, modelName, paintBash, unattach, openModelPicker } from "./composer.js";
+import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent } from "./composer.js";
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
-import { land } from "./send-tween.js";
 import { fitTables, watchTables } from "./table-fit.js";
 
 /* ---------- conversation, rendered like the CLI ---------- */
@@ -39,7 +38,7 @@ function toolLine(t) {
     : t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  const line = `<span class="name">${esc(toolName(t))}</span>${objOf(t)}${res}`;
+  const line = `<span class="name">${esc(toolName(t))}</span>${objOf(t)}${editCounts(t)}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
   return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
 }
@@ -55,7 +54,20 @@ let stepAsked = null; // the step whose full result was asked for, until the rep
    "Show all" and "Show N earlier" may ask again (main.js) */
 export function clearAsked() { stepAsked = null; earlierAsked = null; }
 const stepKey = id => `${current}|${view || ""}|${id}`;
-const hasStep = t => !!(t.input || t.out);
+const hasStep = t => !!(t.input || t.out || editOf(t));
+/* an Edit, MultiEdit or Write that went through expands to its diff (R5.6, 2026-11-25), in the view a Files
+   changed row opens (diffBox), and its line shows the counts; a failed or denied one keeps its error and has no patch */
+const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write"]);
+const editOf = t => EDIT_TOOLS.has(t.name) && t.state === "done" && t.patch && !t.patch.bare && t.patch.hunks?.length ? t.patch : null;
+const editCounts = t => editOf(t) ? ` <span class="dc">${countsHTML(t.patch.add, t.patch.del)}</span>` : "";
+/* the diff is on the page (400 lines at most), so the 20-line cut is made here and "Show all" (key `diff:<id>`) opens it in place */
+const DIFF_LINES = 20, openDiffs = new Set();
+function editHTML(t) {
+  const p = editOf(t), total = p.hunks.reduce((n, h) => n + h.lines.length, 0), key = `diff:${t.id}`;
+  const cut = total > DIFF_LINES && !openDiffs.has(stepKey(key));
+  const more = cut ? `<p class="earlier more"><button data-full="${esc(key)}">Show all ${total} lines</button></p>` : "";
+  return `<div class="step-out"><div class="res"><span class="lcorner" aria-hidden="true"></span>${diffBox([p], "", cut ? DIFF_LINES : Infinity)}</div>${more}</div>`;
+}
 const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.id)}"` : ` data-step="${esc(t.id)}"`;
 /* One run, expanded: a tool step (R5.6, running or finished) and a `!` command share it.
    runView({ key, input, desc, out, err, truncatedTotal, running, startedAt, note, exit, stopped })
@@ -69,8 +81,8 @@ const stepOpen = t => openSteps.has(stepKey(t.id)) ? ` open data-step="${esc(t.i
    The result rows sit under the drawn guide: the first carries the corner, the rest align with it. */
 function runView({ key = "", input = "", desc = "", out = null, err = "", truncatedTotal = 0, running = false, startedAt = null, note = "", exit = null, stopped = false } = {}) {
   const rows = [], row = (html, cls = "") => rows.push([html, cls]);
-  if (out) row(`<span class="out">${esc(out)}</span>`);
-  if (err) row(`<span class="out err">${esc(err)}</span>`);
+  if (out) row(`<span class="out">${linkText(out)}</span>`); // a URL in it is a link (an MCP server's sign-in link)
+  if (err) row(`<span class="out err">${linkText(err)}</span>`);
   const more = truncatedTotal ? `<p class="earlier more"><button data-full="${esc(key)}">Show all ${+truncatedTotal} lines</button></p>` : "";
   const after = [];
   if (running) {
@@ -88,6 +100,7 @@ function runView({ key = "", input = "", desc = "", out = null, err = "", trunca
   return `<div class="step-out${running ? " running" : ""}">${head}${rows.map(res).join("")}${more}${after.map((r, i) => res(r, rows.length + i)).join("")}</div>`;
 }
 function stepHTML(t) {
+  if (editOf(t)) return editHTML(t);
   const o = t.out, full = fullOut.get(stepKey(t.id)), running = t.state === "running" && !o;
   /* the SDK's tool_progress carries only the elapsed time (sdk.d.ts SDKToolProgressMessage), so a
      driven session's step says its output comes at the end; a session Synopia doesn't drive has no progress */
@@ -100,6 +113,7 @@ function stepHTML(t) {
 function showAll(id) {
   const key = stepKey(id);
   if (id.startsWith("bang:")) { openBangs.add(key); renderLog(); return; } // a `!` command's output is all on the page
+  if (id.startsWith("diff:")) { openDiffs.add(key); renderLog(); return; } // so is an edit's diff
   if (stepAsked === key) return;
   if (request({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id })) stepAsked = key;
 }
@@ -121,7 +135,7 @@ function toolsHTML(run) {
   const cls = fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
-      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${editCounts(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)}>${row}</div>`;
     }).join("")}</div></details>${thumbsHTML(run.flatMap(t => (t.imgs || []).map(m => ({ ...m, from: imgFrom(t) }))), current, view)}</div>`; // one row for the run's images (R5.12b)
 }
@@ -149,21 +163,28 @@ function diffDigits(ps) {
   return String(max).length;
 }
 /* unnumbered: a diff from the tool's input (a subagent's edit), whose place in the file isn't known: no numbers */
-function diffHTML(p) {
+/* max: the rows to show, for an expanded step's cut (editHTML) */
+function diffHTML(p, max = Infinity) {
   const out = [], num = k => p.unnumbered ? "" : k;
+  let left = max;
   p.hunks.forEach((h, hi) => {
+    if (left <= 0) return;
     if (hi) out.push(`<div class="dgap">⋯</div>`);
     let o = h.o, n = h.n;
     for (const l of h.lines) {
+      if (left-- <= 0) break;
       const sg = l[0], txt = esc(l.slice(1));
       if (sg === "+") out.push(`<div class="dl a"><span class="no">${num(n++)}</span><span class="sg">+</span><span>${txt}</span></div>`);
       else if (sg === "-") out.push(`<div class="dl d"><span class="no">${num(o++)}</span><span class="sg">-</span><span>${txt}</span></div>`);
       else { out.push(`<div class="dl c"><span class="no">${num(n)}</span><span class="sg"> </span><span>${txt}</span></div>`); o++; n++; }
     }
   });
-  if (p.cut) out.push(`<div class="dgap">⋯ diff cut at 400 lines</div>`);
+  if (p.cut && max === Infinity) out.push(`<div class="dgap">⋯ diff cut at 400 lines</div>`);
   return out.join("");
 }
+/* one diff view, for a Files changed row and an expanded edit step: attrs are the row's id and hidden */
+const diffBox = (ps, attrs = "", max = Infinity) => `<div class="diff"${attrs} style="--dn:${diffDigits(ps)}ch">${ps.map(p => diffHTML(p, max)).join(`<div class="dgap">⋯ next edit</div>`)}</div>`;
+const countsHTML = (add, del) => `<span class="add">+${add}</span> <span class="del">−${del}</span>`;
 /* every file is a link: a click sends its path to the preview or to `open` (the click handler at the end),
    so the href is only for the status bar and copying */
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
@@ -188,8 +209,8 @@ export function filesHTML(patches, key, more = 0) { // key: stable diff ids, so 
     for (const f of files) {
       const id = esc(`diff-${key}-${fileSeq++}`), diffs = f.list.filter(p => !p.bare);
       body += `<div class="frow"><span class="lcorner" aria-hidden="true"></span><a class="fp" href="${esc(fileUrl(f))}" data-path="${esc(absOf(f))}" target="_blank" rel="noreferrer" title="Open ${esc(f.file)}">${esc(f.rel)}</a>
-        ${diffs.length ? `<button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}<span class="add">+${f.add}</span> <span class="del">−${f.del}</span></button></div>
-        <div class="diff" id="${id}" style="--dn:${diffDigits(diffs)}ch" hidden>${diffs.map(diffHTML).join(`<div class="dgap">⋯ next edit</div>`)}</div>` : `<span></span></div>`}`;
+        ${diffs.length ? `<button class="fc" aria-expanded="false" aria-controls="${id}" title="Show the diff">${f.created ? `<span class="new">new </span>` : ""}${countsHTML(f.add, f.del)}</button></div>
+        ${diffBox(diffs, ` id="${id}" hidden`)}` : `<span></span></div>`}`;
     }
     body += `</div>`;
   }
@@ -340,19 +361,36 @@ const queuedHTML = s => { const q = queuedOf(s); return q.length ? [["queue", `<
    compacting, rate limited or no updates instead, and say a message you sent is queued. When it names
    the newest step and that step runs, a click expands it: the same open state as the step's own line
    (openSteps, by item id), so opening either opens both (R5.6). */
-const liveStep = t => !!t && t.state === "running" && hasStep(t) && !(t.name === "Agent" || t.name === "Task");
-/* the step named on the live line: the newest step only while it runs. Once it's done (Claude writing,
-   thinking, between steps) the line just says Working, rather than naming a finished step */
-const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool"); return last && last.state === "running" ? last : null; };
+const isAgent = t => t.name === "Agent" || t.name === "Task";
+const liveStep = t => !!t && t.state === "running" && hasStep(t) && !isAgent(t);
+/* the step named on the live line: the turn's own newest step only while it runs, as the CLI's spinner line.
+   Once it's done (Claude writing, thinking, between steps) the line just says Working, rather than naming a
+   finished step. Background work (`bg`, a background subagent) is never the turn's step: the panel shows it. */
+const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool" && !x.bg); return last && last.state === "running" ? last : null; };
 /* the main conversation's step the live line names, when b, b could send it */
 const liveFg = s => { const t = s.state.light === "green" && !phaseText(s) ? runningStep(s.items) : null; return t && isFg(t) ? t.id : null; };
+/* what the live line names: a subagent or fork by the panel's kind tag and its name; any other tool by its
+   CLI name, Bash(…) */
+const liveName = (s, t) => { if (!isAgent(t)) return `${esc(toolName(t))}${objOf(t)}`; const a = agentByTool(s, t.toolUseId); return `${kind(a?.fork ? "fork" : "sub")} ${esc(a ? a.description : t.obj || "")}`; };
+/* the main turn over, background work still running (the panel's tree: a subagent's own shells hang under it):
+   the one that runs by its kind tag and name, or the panel's "N running in the background" */
+function bgRunning(s) {
+  const agents = agentsOf(s).filter(a => !a.finished), shells = bgOf(s).filter(b => bgState(b) === "running" && !agents.some(a => a.id === b.agentId));
+  const order = { fork: 0, sub: 1, shell: 2, mon: 3 };
+  return [...agents.map(a => ({ k: a.fork ? "fork" : "sub", name: a.description })), ...shells.map(b => ({ k: b.kind === "monitor" ? "mon" : "shell", name: b.description || b.command }))]
+    .sort((p, q) => order[p.k] - order[q.k]);
+}
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "") => {
-    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${objOf(t)}` : "")}</span>`;
-    const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
-    return `<div class="ln liveln rule" data-state="${A ? "green" : s.state.tone}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}><span class="g">${ind(mark)}</span>${body}</div>`;
+  const line = (mark, t, word = "Working", extra = "", state = A ? "green" : s.state.tone) => {
+    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? liveName(s, t) : "")}</span>`;
+    const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
+    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}><span class="g">${ind(mark)}</span>${body}</div>`;
   };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
+  if (s.state.light === "amber") {
+    const bg = bgRunning(s);
+    return bg.length ? line("k_" + bg[0].k, null, "Working", bg.length === 1 ? `${kind(bg[0].k)} ${esc(bg[0].name)}` : `${bg.length} running in the background`, "green") : "";
+  }
   if (s.state.light !== "green") return "";
   return line(s.state.mark, runningStep(s.items), s.state.word, phaseText(s));
 }
@@ -480,15 +518,24 @@ export function renderLog() {
   patchChildren(log.querySelector(".log-inner"), B ? bgLogEntries(s, B, runView) : logEntries(s, view && agentById(s, view)));
   ui.afterLog(); // open diffs and folds stay open (ui-state.js)
   fitTables(log);
-  if (follow) log.scrollTop = log.scrollHeight;
+  const sent = follow && takeSent(id => log.querySelector(`[data-key="q:${CSS.escape(id)}"]`) || landedBlock(id));
+  if (sent) toEnd({ smooth: true }); // a message you sent at the end: you see it and the Working line (R5.5)
+  else if (performance.now() < chasing) toEnd({ smooth: true }); // the end it scrolls to grew meanwhile
+  else if (follow) log.scrollTop = log.scrollHeight;
   ui.note(log); // where you are and what you saw (ui-state.js)
-  land(conv, landedBlock); // a message you just sent moves from the box into its place (send-tween.js)
   paintBash(s); // the placeholder counts the messages that wait
 }
 /* a sent message's prompt block, once its record replaced the sent band */
 const landedBlock = id => { const o = (cur()?.outbox || []).find(q => q.id === id); return o?.landed ? conv.querySelector(`#log [data-key="you:${CSS.escape(o.landed)}"]`) : null; };
-/* G: the end of the log */
-export function toEnd() { const log = document.getElementById("log"); if (log) log.scrollTop = log.scrollHeight; }
+/* G, and a message you send: the end of the log. `smooth` scrolls there (a jump with reduced motion), and for a
+   moment after, a render that makes the log longer scrolls on to its new end */
+let chasing = 0;
+export function toEnd({ smooth = false } = {}) {
+  const log = document.getElementById("log"); if (!log) return;
+  smooth &&= !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  chasing = smooth ? performance.now() + 600 : 0;
+  if (smooth) log.scrollTo({ top: log.scrollHeight, behavior: "smooth" }); else log.scrollTop = log.scrollHeight;
+}
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ui.note(document.getElementById("log")); });
 function patchChildren(parent, entries) {
   const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
@@ -515,7 +562,7 @@ function patchChildren(parent, entries) {
 function carryState(from, to) {
   const was = [...from.querySelectorAll("details:not([data-step])")], now = [...to.querySelectorAll("details:not([data-step])")];
   was.forEach((d, i) => { if (now[i]) now[i].open = d.open; });
-  from.querySelectorAll(".diff:not([hidden])").forEach(d => {
+  from.querySelectorAll(".diff[id]:not([hidden])").forEach(d => {
     const n = to.querySelector(`#${CSS.escape(d.id)}`); if (!n) return;
     n.hidden = false; to.querySelector(`[aria-controls="${CSS.escape(d.id)}"]`)?.setAttribute("aria-expanded", "true");
   });

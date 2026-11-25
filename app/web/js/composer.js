@@ -1,7 +1,7 @@
 /* Composer: the message box, pasted images, the slash menu and the model picker (split from prototype/app.html),
-   bash mode, the box's one prompt line (Esc, b, x) and the terminal-held line. mountComposer runs once per
+   bash mode, the box's one prompt line (Esc, b, x, f) and the terminal-held line. mountComposer runs once per
    session view (transcript.js renderConv), so data never resets what you type. */
-import { store, cur, current, view, mounted, queuedOf } from "./state.js";
+import { store, cur, current, view, mounted, queuedOf, requestsOf } from "./state.js";
 import { act } from "./connection.js";
 import { esc, modelLabel } from "./format.js";
 import { thumbHTML } from "./images.js";
@@ -12,7 +12,7 @@ import { toast } from "./toast.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES } from "./protocol.js";
 import { rank, marked } from "./fuzzy.js";
 import { showFolderList } from "./folder-list.js";
-import { takeOff } from "./send-tween.js";
+import { showMcp } from "./mcp-panel.js";
 
 /* pasted images: { id, n (its [Image #n] tag in the text), mediaType, url (an object URL, for the thumbnail), data (its data: URL, for sending) } */
 export const attachments = [];
@@ -33,7 +33,25 @@ export const modelName = () => {
   return s?.effort ? `${name}, ${s.effort} effort` : name;
 };
 /* the commands by name, then the one matcher (fuzzy.js, R3.14): ties keep that order */
-const commandsFor = q => rank([...MENU().commands].sort((a, b) => a.name.localeCompare(b.name)), q, c => c.name);
+/* Synopia's own commands (R5.15): Synopia runs them, the message goes nowhere; a session's row of the same name gives way */
+const OWN = [{ name: "mcp", description: "Sign in to MCP servers, reconnect, enable or disable them", hint: "" }];
+const commandsOf = () => [...OWN, ...MENU().commands.filter(c => !OWN.some(o => o.name === c.name))];
+const commandsFor = q => rank(commandsOf().sort((a, b) => a.name.localeCompare(b.name)), q, c => c.name);
+/* A typed `/name` the session can't run (R5.16): not Synopia's, not in the session's command list (the menu; the
+   backend leaves out only `__` names and server-side ones, sdk.ts toCommands). A path (`/Users/…`) is no command,
+   and with no menu read yet nothing is refused. Returns the name refused, else null. */
+function terminalOnly(text) {
+  const m = /^\/([^\s/]+)(?:\s|$)/.exec(text.trimStart()); if (!m) return null;
+  const name = m[1], cmds = MENU().commands;
+  if (!cmds.length || name.startsWith("__") || OWN.some(o => o.name === name) || cmds.some(c => c.name === name)) return null;
+  return name;
+}
+/* /mcp: the panel, and the box empties as after a send */
+function runOwn(ta) {
+  const s = cur(); if (!s) return;
+  ta.value = ""; ta.style.height = "auto"; ta.dispatchEvent(new Event("input")); ui.changed();
+  showMcp(s.id);
+}
 function attachSlash(ta, onModel) {
   const box = document.getElementById("slash");
   let mode = null, items = [], ats = [], sel = 0, eff = null; // eff: the effort level picked on the selected model row; ats: each row's matched letters
@@ -74,6 +92,7 @@ function attachSlash(ta, onModel) {
     if (!it) { if (mode === "cmd" && ta.value.trim() === "/model") openModels(); return; } // a menu without the /model row
     if (mode === "model") { close(); ta.value = ""; onModel(it, (it.effort || []).includes(eff) ? eff : null); return; }
     if (it.name === "model") { openModels(); return; }
+    if (it.name === "mcp") { close(); runOwn(ta); return; }
     ta.value = `/${it.name} `; close(); ta.focus();
   };
   const openModels = () => {
@@ -170,12 +189,13 @@ export function openModelPicker() {
   ta.focus(); ta.openModels?.();
 }
 
-/* ---------- the box's one prompt line (R9.4-R9.6): Esc, Esc interrupts; b, b sends to the background; x, x closes ----------
+/* ---------- the box's one prompt line (R9.4-R9.6, R9.8): Esc, Esc interrupts; b, b sends to the background; x, x closes;
+   f, f sends the queued messages now ----------
    The first key asks in the box, the same key again does it; any other key or a click dismisses it, and
    another prompt's first key replaces it. A view switch, the turn's end or the steps' end take it away too. */
-let ask = null; // { kind: "interrupt" | "background" | "close", sid }
+let ask = null; // { kind: "interrupt" | "background" | "close" | "now", sid }
 export const prompt = () => ask?.kind || null;
-const AGAIN = { interrupt: "Escape", background: "b", close: "x" };
+const AGAIN = { interrupt: "Escape", background: "b", close: "x", now: "f" };
 /* a running turn, or one waiting on a card, or a running `!` command (sessions.ts ends it first); never for
    a session another process runs */
 const canInterrupt = s => Boolean(s) && s.state.driven && !termPid(s) && (s.state.light === "green" || s.state.light === "red" && s.state.status === "waiting" || bangRunning(s));
@@ -183,6 +203,12 @@ const bangRunning = s => Boolean(s?.bang?.running);
 /* the main conversation's steps that can go: a running foreground Bash or Agent (the backend's `fg`), in a
    running turn of a session Synopia drives */
 const bgSteps = s => !s || !s.state.driven || termPid(s) || view || s.state.light !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
+/* the box's draft as a message: text or a tagged image, not a `!` command (that runs, it isn't sent) */
+const draftIn = ta => Boolean(ta) && !ta.dataset.bash && Boolean(ta.value.trim() || attachments.some(a => tagged(a, ta.value)));
+/* f, f: the main turn of a session Synopia drives runs, no card waits (it comes first), and messages are queued
+   or a draft is in the box; the backend picks how the turn changes (session.ts nowRoute) */
+const canSendNow = s => Boolean(s) && s.state.driven && !termPid(s) && !view && s.state.light === "green" && !requestsOf(s).length
+  && (queuedOf(s).length > 0 || draftIn(document.getElementById("msg")));
 function askInBox(kind, html) {
   const box = conv().querySelector(".dock .composer"); if (!box) return false;
   dismiss();
@@ -194,7 +220,7 @@ function askInBox(kind, html) {
 }
 function dismiss() {
   ask = null;
-  document.getElementById("log")?.classList.remove("bg-asking");
+  document.getElementById("log")?.classList.remove("bg-asking", "now-asking");
   conv().querySelectorAll(".composer.asking").forEach(b => b.classList.remove("asking"));
 }
 /* the first Esc */
@@ -206,6 +232,13 @@ export function askBackground() {
   const log = document.getElementById("log");
   if (!log || !bgSteps(cur()).length || !askInBox("background", `<b>Send to background?</b> <kbd>b</kbd> again. Any other key to keep it in front.`)) return false;
   log.classList.add("bg-asking");
+  return true;
+}
+/* the first f: the queued bands that will go are marked; false when there is nothing to send */
+export function askNow() {
+  const log = document.getElementById("log");
+  if (!log || !canSendNow(cur()) || !askInBox("now", `<b>Send all now?</b> <kbd>f</kbd> again. Any other key to keep them queued.`)) return false;
+  log.classList.add("now-asking");
   return true;
 }
 /* the first x: with what will stop; a session another process drives is only removed from Synopia */
@@ -225,6 +258,7 @@ function confirm() {
   if (a.kind === "interrupt" && canInterrupt(s)) act({ t: "interrupt", sid: s.id });
   else if (a.kind === "background" && bgSteps(s).length) act({ t: "background", sid: s.id });
   else if (a.kind === "close") closeSession(s);
+  else if (a.kind === "now" && canSendNow(s)) sendNow(s);
 }
 /* a key while the prompt shows (keys.js); true when it took the key */
 export function promptKey(e) {
@@ -232,7 +266,7 @@ export function promptKey(e) {
   if (/^(Shift|Meta|Control|Alt|CapsLock)$/.test(e.key)) return true;
   e.preventDefault();
   if (e.key === AGAIN[ask.kind]) confirm();
-  else if (!((e.key === "Escape" && askInterrupt()) || (e.key === "b" && askBackground()) || (e.key === "x" && askClose()))) dismiss();
+  else if (!((e.key === "Escape" && askInterrupt()) || (e.key === "b" && askBackground()) || (e.key === "x" && askClose()) || (e.key === "f" && askNow()))) dismiss();
   return true;
 }
 /* each session or items frame (main.js): the turn ended, the steps finished or the view changed under the prompt */
@@ -241,7 +275,8 @@ export function syncPrompt() {
   const s = cur(), log = document.getElementById("log");
   if (ask.sid !== current || !conv().querySelector(".composer.asking")
     || ask.kind === "interrupt" && !canInterrupt(s)
-    || ask.kind === "background" && (!bgSteps(s).length || !log?.classList.contains("bg-asking"))) dismiss();
+    || ask.kind === "background" && (!bgSteps(s).length || !log?.classList.contains("bg-asking"))
+    || ask.kind === "now" && (!canSendNow(s) || !log?.classList.contains("now-asking"))) dismiss();
 }
 document.addEventListener("mousedown", () => { if (ask) dismiss(); }, true);
 
@@ -302,6 +337,9 @@ function sendMsg(s, ta) {
   const going = attachments.filter(a => tagged(a, ta.value)); // an image whose tag was deleted stays behind
   if (!ta.value.trim() && !going.length) return;
   if (ta.value.trim() === "/model" && !going.length) { openModelPicker(); return; } // typed in full: the picker, not a message
+  if (ta.value.trim() === "/mcp" && !going.length) { runOwn(ta); return; } // Synopia's panel, not a message (R5.15)
+  const only = terminalOnly(ta.value);
+  if (only) { toast(`/${only} works only in a terminal`); return; } // the box keeps it (R5.16)
   const images = imagesOf(going); if (!images) return;
   const text = ta.value, held = Boolean(termPid(cur())) || takeoverWait?.sid === s.id;
   const done = ok => {
@@ -313,7 +351,33 @@ function sendMsg(s, ta) {
   if (!act({ t: "send", sid: s.id, text, images, uuid }, { done, refused: KEPT })) return;
   if (held) { takeoverWait = { sid: s.id, text, seen: false }; syncTakeover(); return; } // the box keeps it until the session is back from the terminal
   for (const a of going) flying.add(a);
-  takeOff(uuid, ta.closest(".composer")); // its band moves up from the box once it shows (send-tween.js)
+  const log = document.getElementById("log"); // sent at the end, the log scrolls on to show it; scrolled up, it stays where you read
+  sent = log && ui.atEnd(log) ? { id: uuid, at: performance.now() } : null;
+  clearBox(ta);
+}
+/* The message just sent (R5.5): once its band shows (its `q:<uuid>` block, or its prompt once landed), transcript.js
+   scrolls the log smoothly to the end, so you see it and the Working line below it. `shown(id)`: its block is in the log. */
+let sent = null; // { id, at }
+export function takeSent(shown) {
+  if (!sent) return null;
+  if (performance.now() - sent.at > 3000) { sent = null; return null; } // refused, or another view: no scroll
+  if (!shown(sent.id)) return null;
+  const s = sent; sent = null; return s;
+}
+
+/* f, f (R9.8): one `sendNow`; the draft goes with it as a send's would (its band shows as queued), and comes
+   back to the box when the backend couldn't do it */
+function sendNow(s) {
+  const ta = document.getElementById("msg");
+  if (!draftIn(ta)) { act({ t: "sendNow", sid: s.id }); return; }
+  const going = attachments.filter(a => tagged(a, ta.value));
+  const images = imagesOf(going); if (!images) return;
+  const text = ta.value, uuid = newUuid();
+  const done = ok => { for (const a of going) flying.delete(a); if (ok) free(going); else giveBack(s.id, [text], going); };
+  if (!act({ t: "sendNow", sid: s.id, draft: { text, images, uuid } }, { done, refused: KEPT })) return;
+  for (const a of going) flying.add(a);
+  const log = document.getElementById("log"); // as a send: at the end, the log scrolls on to show its band (takeSent)
+  sent = log && ui.atEnd(log) ? { id: uuid, at: performance.now() } : null;
   clearBox(ta);
 }
 

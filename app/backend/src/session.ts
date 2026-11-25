@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess, imageError, imagesIn, userContent } from './sdk.ts';
-import type { Content, Image, InterruptResult, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
+import type { Content, Image, InterruptResult, McpControl, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
 import { cardOf } from './agent-tools.ts';
 import { SessionStatus, queuesBehind } from './status.ts';
@@ -57,11 +57,39 @@ export type ShownBang = BangRun & { landed?: string };
 export type Phase = 'idle' | 'starting' | 'running' | 'ending' | 'yielded' | 'takingOver';
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
+// f, f (R9.8): how "send queued messages now" changes the turn, as the CLI's Ctrl+Enter does
+// (docs/Agent SDK.md, "Sending queued messages now", live runs PR-1 and PR-2). `queued`: messages in
+// the CLI's queue (pushed during the turn, not yet taken in); `fg`: the main conversation's running
+// foreground Bash and Agent steps, `ready` once their task_started came.
+//   send        the turn is over: the draft goes as any message
+//   now         nothing queued, a draft: it goes as `priority: 'now'` with a human origin
+//   background  messages queued, foreground main steps: backgroundTasks(id) for each, then the draft
+//   wait        messages queued, a main step not yet registered as a task: wait for it, then again
+//   interrupt   messages queued, Claude only writing or running a step that can't move: the plain
+//               interrupt (the queue stays and runs next), then the draft
+//   none        nothing it can do, and why: a card waits (it comes first), no process of ours, nothing queued
+// Never 'now' while anything is queued: it would overtake the queue.
+export type NowRoute = { kind: 'send' | 'now' | 'interrupt' } | { kind: 'background' | 'wait'; ids: string[] } | { kind: 'none'; error: string };
+export const NOTHING_QUEUED = 'Nothing is queued any more.';
+export function nowRoute(o: { driven: boolean; working: boolean; cards: number; queued: number; draft: boolean; fg: { ready: string[]; early: string[] } }): NowRoute {
+  if (!o.driven) return { kind: 'none', error: 'Synopia isn\'t running this session\'s turn.' };
+  if (o.cards) return { kind: 'none', error: 'Claude is waiting for your answer above. Answer it first.' };
+  if (!o.working) return o.draft ? { kind: 'send' } : { kind: 'none', error: NOTHING_QUEUED };
+  if (!o.queued) return o.draft ? { kind: 'now' } : { kind: 'none', error: NOTHING_QUEUED };
+  if (o.fg.early.length) return { kind: 'wait', ids: o.fg.early };
+  if (o.fg.ready.length) return { kind: 'background', ids: o.fg.ready };
+  return { kind: 'interrupt' };
+}
+// How long f, f waits for a just-started step's task_started (2 to 5 s for Bash, live run PR-2), and how often it looks.
+export const NOW_WAIT_MS = 8000;
+const NOW_POLL_MS = 100;
+
 // A message for the process: your prompt (a turn), or bash mode's context (`shouldQuery: false`, no
 // turn). `inBox`: the page still holds the prompt (a take-over), so a refusal leaves it there.
 // `by`: the page that sent it, which gets it back in its box if it can't go.
-// `images`: the pasted images the content carries, which go back with the text.
-type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By };
+// `images`: the pasted images the content carries, which go back with the text. `now`: f, f's draft
+// with nothing queued, pushed as `priority: 'now'` (R9.8).
+type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By; now?: boolean };
 type Context = { kind: 'context'; text: string; uuid: string };
 type Input = Prompt | Context;
 
@@ -113,7 +141,6 @@ export class Session {
   gone = false; // its folder was checked and isn't there (R3.11)
   placeholder: boolean;
   choice: ModelChoice | null = null; // a placeholder's model and effort, stored once it has its id
-  newTitle = ''; // a placeholder's title, given by the session that started it (agent-tools.ts)
   readonly status: SessionStatus;
   readonly cards: Cards;
   private d: SessionDeps;
@@ -201,16 +228,21 @@ export class Session {
     return this.proc?.menuSource() ?? null;
   }
 
+  // The MCP control calls of its running process (mcp.ts), else null.
+  mcpControl(): McpControl | null {
+    return this.proc?.mcpControl() ?? null;
+  }
+
   // ---------- sending ----------
 
   // `uuid`: the page's id for the message; the page shows it at once (queued while a turn runs).
   // `by`: the page that sent it.
-  send(text: string, images: Image[] = [], uuid?: string, by: By = null): SendResult {
+  send(text: string, images: Image[] = [], uuid?: string, by: By = null, now = false): SendResult {
     const bad = imageError(images);
     if (bad) return { ok: false, error: bad };
     const content: Content = userContent(text, images); // the text, then the images whose tags it holds
     if (typeof content === 'string' && !text.trim()) return { ok: false, error: 'Nothing to send.' };
-    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, images: imagesIn(content, images), by };
+    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, images: imagesIn(content, images), by, ...(now ? { now } : {}) };
     if (this.terminal) return this.queueTakeover(m);
     const queues = queuesBehind(this.status.status); // a turn runs: it shows queued until it lands (R5.5)
     const r = this.deliver(m);
@@ -249,7 +281,7 @@ export class Session {
     const proc = this.proc;
     if (!proc) return;
     for (const m of list) {
-      if (m.kind === 'prompt') proc.push(m.content, m.uuid, m.images);
+      if (m.kind === 'prompt') proc.push(m.content, m.uuid, m.images, m.now);
       else proc.pushQuiet(m.text, m.uuid);
     }
     if (prompt) {
@@ -488,7 +520,6 @@ export class Session {
       plan: facts?.permissionMode === 'plan',
       allowedTools: this.cards.rules(),
       mcpServers: this.d.tools?.(() => this.id),
-      title: this.placeholder && this.newTitle ? this.newTitle : undefined,
     };
   }
 
@@ -685,6 +716,49 @@ export class Session {
     }
     this.d.log('sessions.background', { sid: this.id, moved });
     return moved ? { ok: true, sid: this.id } : { ok: false, error: 'Nothing could go to the background.' };
+  }
+
+  // f, f (R9.8): the queued messages go now, the draft (if any) as from the box. The route is
+  // nowRoute's; the queued messages stay in the CLI's queue and the turn changes so it drains. A
+  // just-started step is waited for (its task_started, NOW_WAIT_MS at most). An error only when
+  // nothing could be done; the draft then stays the page's.
+  async sendNow(draft: { text: string; images: Image[]; uuid?: string } | null, by: By = null): Promise<SendResult> {
+    const has = Boolean(draft && (draft.text.trim() || draft.images.length));
+    if (has) { const bad = imageError(draft!.images); if (bad) return { ok: false, error: bad }; }
+    const deadline = this.d.now() + NOW_WAIT_MS;
+    let r = this.route(has);
+    while (r.kind === 'wait' && this.d.now() < deadline) {
+      await new Promise((ok) => setTimeout(ok, NOW_POLL_MS));
+      r = this.route(has);
+    }
+    this.d.log('session.sendNow', { sid: this.id, route: r.kind, queued: this.status.queuedCount, steps: 'ids' in r ? r.ids.length : 0, draft: has });
+    if (r.kind === 'none') return { ok: false, error: r.error };
+    if (r.kind === 'wait') return { ok: false, error: 'Claude\'s step can\'t go to the background yet. Your messages stay queued.' };
+    const proc = this.proc!;
+    try {
+      if (r.kind === 'background') {
+        let moved = false;
+        for (const id of r.ids) moved = (await proc.backgroundTasks(id)) || moved;
+        if (!moved) return { ok: false, error: 'Claude\'s step couldn\'t go to the background. Your messages stay queued.' };
+      } else if (r.kind === 'interrupt') {
+        this.status.hurried(); // no Stop: the queued messages run next, and the queue isn't given back
+        await proc.interruptKeepingQueue();
+      }
+    } catch {
+      this.status.interruptFailed();
+      this.d.log('session.sendNowFailed', { sid: this.id, route: r.kind });
+      return { ok: false, error: r.kind === 'background' ? 'Nothing could go to the background: background tasks are turned off for this session (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).' : 'Synopia couldn\'t change Claude\'s turn. Your messages stay queued.' };
+    }
+    return has ? this.send(draft!.text, draft!.images, draft!.uuid, by, r.kind === 'now') : { ok: true, sid: this.id };
+  }
+
+  private route(draft: boolean): NowRoute {
+    const proc = this.proc;
+    return nowRoute({
+      driven: Boolean(proc) && !proc!.done && this.state === 'running' && !this.terminalHolds,
+      working: this.status.working, cards: this.cards.size, queued: this.status.queuedCount, draft,
+      fg: this.d.transcripts.foreground(this.id),
+    });
   }
 
   // A card's answer settles its canUseTool request (cards.ts); held messages go after the last card.

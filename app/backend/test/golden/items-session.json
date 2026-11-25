@@ -36,6 +36,7 @@
       "state": "running",
       "toolUseId": "toolu_ag2",
       "input": "description: Rewrite the demo tests\nsubagent_type: general-purpose\nprompt: made-up\nrun_in_background: true",
+      "bg": true,
       "out": {
         "text": "Async agent launched successfully.",
         "lines": 1,
@@ -68,6 +69,7 @@
       "state": "running",
       "toolUseId": "toolu_ag4",
       "input": "description: For review: Draft the demo release notes\nprompt: made-up\nrun_in_background: true",
+      "bg": true,
       "out": {
         "text": "Async agent launched successfully.",
         "lines": 1,

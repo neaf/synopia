@@ -109,7 +109,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .earlier button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 
 /* transcript: mono, gutter glyphs like the CLI */
-.log, .send-ghost, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+.log, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
 .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
 .ln > .g { user-select: none; }
 .ln.claude > .g { color: var(--ink); }
@@ -146,6 +146,9 @@ details.step > summary::-webkit-details-marker { display: none; }
 .step-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; } /* shape as well as colour: a 1px rule at its edge */
 .step-out .res.note { color: var(--faint); }
 details.step[open] > summary .res.run { display: none; }
+/* an edit step's diff (R5.6): the Files changed view, under the guide instead of under its row */
+.step-out .res > .diff { grid-column: auto; margin: 2px 0 3.5px; color: var(--ink); }
+.dc { font-variant-numeric: tabular-nums; }
 /* the band runs from the panel's inner edge (-16px, the log's padding), so its 2.5px edge shows whole */
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
@@ -154,6 +157,9 @@ details.step[open] > summary .res.run { display: none; }
    text. When Claude takes one, only the mark and the ink change; nothing changes size */
 .prompt.qc > .md { color: var(--ink-3); }
 .prompt.qc { opacity: .5; } /* not taken yet: the whole band, its fill, edge and clock, at half strength (2026-11-25) */
+/* under "Send all now?" (f, R9.8) the bands that will go carry b, b's mark: the selection tint and a 1px blue ring,
+   inside the band since it runs edge to edge, at full strength while asked */
+.log.now-asking .prompt.qc { opacity: 1; background: #DDF4FF; box-shadow: inset 0 0 0 1px #54AEFF; }
 /* the queued clock sits where the ❯ would: centred on its cell and on its ink, --dot-lift above the line's middle (below) */
 .prompt > .g { position: relative; }
 .prompt > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
@@ -174,9 +180,6 @@ details.step[open] > summary .res.run { display: none; }
 .nl-at { display: block; position: relative; height: 0; }
 .nl-at::before { content: ""; position: absolute; left: -100vw; right: -16px; top: -.5px; height: 1px; background: var(--link); z-index: 1; }
 .nl-at > .nlab { position: absolute; right: -4px; top: -6.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
-/* the send tween (send-tween.js): a copy of your new band moves up from the box; the band waits hidden in its place */
-.send-ghost { position: fixed; z-index: 20; margin: 0; pointer-events: none; --dot-lift: calc(var(--log-font) * .084); }
-.prompt.landing { visibility: hidden; }
 /* bash mode (R5.13): the command on the prompt band, `!` and its edge in the bash pink; the output under the
    guide through runView, as a step's result */
 .bang { margin: 0 0 11px; }
@@ -203,6 +206,8 @@ details.step[open] > summary .res.run { display: none; }
 .md pre code { color: var(--ink); }
 .md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
 .md a { color: var(--link); }
+/* a path in a reply that is there (R5.9, path-links.js): with ⌘ held it reads as a link; as plain code otherwise */
+.cmd-held .md code.path-ok { color: var(--link); text-decoration: underline 1px; text-underline-offset: 2.5px; cursor: pointer; }
 /* tables (R5.10): 11px, 1px rules between rows; md.js marks each column (num, short, prose, c0 the first)
    and table-fit.js fits the table: only the long text wraps, then the first column, then it scrolls in its box */
 .md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
@@ -397,6 +402,26 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .ol-list b.m, .slash b.m { font-weight: 700; color: var(--link); }
 .ol-list [aria-selected="true"] b.m, .slash [aria-selected="true"] b.m { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
 .fl-it.gone b.m { color: inherit; }
+/* the MCP panel (R5.15): drawn like the Open list; a server, its status (a mark and a word), its kind, its actions.
+   The actions are words like the effort row's: the one Enter does is boxed, on the selected row only. */
+.mcp-it { display: grid; grid-template-columns: minmax(0, 1fr) 27ch 24ch 42ch; gap: 2ch; align-items: baseline; padding: 2px 14.5px; cursor: pointer; }
+.mcp-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-it .st { display: flex; align-items: baseline; gap: .8ch; color: var(--ink-2); }
+.mcp-it .st .ind { flex: none; align-self: center; }
+.mcp-it.st-needs-auth .st, .mcp-it.st-failed .st { color: var(--red); }
+.mcp-it.st-disabled .st, .mcp-it.st-disabled .n, .mcp-it .f { color: var(--ink-3); }
+.mcp-it.st-busy .st { color: var(--ink); }
+.mcp-it .acts { display: flex; gap: 0 1ch; justify-content: flex-end; color: var(--ink-3); }
+.mcp-it .act { padding: 0 .6ch; border: 1px solid transparent; border-radius: 4px; }
+.mcp-it .act:hover { color: var(--link); }
+.mcp-it:not([aria-selected="true"]) .acts { visibility: hidden; }
+.mcp-it:hover .acts { visibility: visible; }
+.mcp-it[aria-selected="true"] { background: #DDF4FF; }
+.mcp-it[aria-selected="true"] .n { color: var(--link); }
+.mcp-it[aria-selected="true"] .act { color: var(--ink-2); }
+.mcp-it .act[aria-pressed="true"] { border-color: var(--link); color: var(--link); }
+.mcp-it:hover:not([aria-selected="true"]) { background: var(--sub); }
+.mcp-err { color: var(--red); }
 /* its folder is gone (R3.11): one line instead of the field */
 .gone-line { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-3); cursor: pointer; }
 .gone-line b { color: var(--ink); font-weight: 400; }
@@ -613,7 +638,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--log-font) * var(--log-lh) / 2 - .5px); height: 1px; background: var(--line); }
 .log-inner > .liveln.rule > .g { background: var(--rule-bg); box-shadow: -5px 0 0 var(--rule-bg); }
 .log-inner > .liveln.rule > :not(.g) { position: relative; }
-.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div { display: inline; background: var(--rule-bg); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+/* the line is a grid, so its children are blocks: the break is the words' own inline box (summary, .lh), not the column */
+.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div > .lh { display: inline; background: var(--rule-bg); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
 .log-inner > .liveln.rule > details { display: inline; }
 .log.bg-asking .liveln.rule[data-fg] { --rule-bg: #DDF4FF; }
 

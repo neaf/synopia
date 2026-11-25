@@ -9,8 +9,8 @@
 // stay pinned to the panel's bottom, at most half of it, with a 1px line at the queue's top. The first lands
 // (its queued_command appended to the fixture file): it becomes the posted prompt above the live line, the two swap
 // places and nothing else moves; the second lands the same way: none waits. A third, then Esc, Esc: it disappears and its text is back in the box. A message
-// sent while nothing runs isn't queued and shows at once: its band moves up from the box (a copy, fixed on
-// screen), ends in place, the band itself never moves; with reduced motion nothing moves. A queued message
+// sent while nothing runs isn't queued and shows at once at the log's end, no copy of it moving: sent at the end, the log
+// scrolls smoothly to the end (with reduced motion it jumps); sent while scrolled up, the log stays (2026-11-25). A queued message
 // with a pasted (made-up) image: its thumbnail opens the viewer; landed, the same size. Writes queued-two.png,
 // queued-landed.png, queued-image.png, and in $SYNOPIA_SHOTS when that is set default-, typed-, queued-typed-
 // and scrolled-<theme>.png.
@@ -121,7 +121,6 @@ check('the live line keeps Working, without the "queued" sentence', await ev(`((
 check('the sidebar says how many wait, its mark queued (blue centre)', await ev(`/Working, 2 messages queued/.test(document.querySelector('.row[data-id="${A}"]').textContent) && !!document.querySelector('.row[data-id="${A}"] .ind circle[fill="var(--mk-0550AE)"]')`),
   await ev(`document.querySelector('.row[data-id="${A}"]').textContent`));
 check('the empty box says how many wait', (await placeholder()) === "2 waiting for Claude's next step", await placeholder());
-await c.until(`!document.querySelector('.send-ghost')`);
 await shot('queued-two.png');
 check('a draft goes in the box, insert mode', (await typeDraft(DRAFT)) === 'insert');
 await keep('queued-typed');
@@ -192,25 +191,38 @@ await keep('default');
 await typeDraft('Read them again.');
 await keep('typed');
 await ev('__synopia.spy()');
-// every frame for 600 ms: the copy that moves, and the band in its place
-const SAMPLE = (text) => `new Promise(res => { const out = [], t0 = performance.now(), ta = document.getElementById('msg'), from = ta.closest('.composer').getBoundingClientRect().top;
-  const f = () => { const g = document.querySelector('.send-ghost'), b = [...document.querySelectorAll('#log .prompt')].find(p => !p.matches('.send-ghost') && p.textContent.includes(${JSON.stringify(text)}));
-    out.push({ g: g ? g.getBoundingClientRect().top : null, b: b ? b.getBoundingClientRect().top : null, hid: b ? getComputedStyle(b).visibility === 'hidden' : null });
-    if (performance.now() - t0 < 600) requestAnimationFrame(f); else res({ from, out }); };
-  ta.value = ${JSON.stringify(text)}; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); requestAnimationFrame(f); })`;
+// a short window, so B's log scrolls; at its end before each send
+await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 420, deviceScaleFactor: 2, mobile: false });
+const toBottom = async (up = 0) => { await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight - l.clientHeight - ${up}; })()`); await sleep(200); };
+// every frame for 900 ms after Enter: the log's scroll, its end, your band in the log and any copy of it outside
+const SAMPLE = (text) => `new Promise(res => { const T = ${JSON.stringify(text)}, log = document.getElementById('log'), ta = document.getElementById('msg'), out = [], t0 = performance.now(), from = log.scrollTop;
+  const f = () => { const bands = [...document.querySelectorAll('#log [data-key^="q:"], #log [data-key^="you:"]')].filter(e => e.textContent.includes(T));
+    const copies = [...document.querySelectorAll('.prompt, [data-key^="q:"]')].filter(e => !e.closest('#log') && e.textContent.includes(T)).length
+      + [...document.querySelectorAll('body *')].filter(e => e.textContent.includes(T) && /fixed|absolute/.test(getComputedStyle(e).position) && !e.closest('#log .log-inner > *')).length;
+    out.push({ top: log.scrollTop, end: log.scrollHeight - log.clientHeight, n: bands.length, copies });
+    if (performance.now() - t0 < 900) requestAnimationFrame(f); else {
+      const last = [...log.querySelectorAll('.log-inner > :not(.qpin), .qpin > *')].filter(e => !e.matches('.liveln')).pop(), r = last.getBoundingClientRect(), lr = log.getBoundingClientRect();
+      res({ from, out, atEnd: !!last && last.textContent.includes(T), inView: r.top >= lr.top - 0.5 && r.bottom <= lr.bottom + 0.5 }); } };
+  ta.value = T; ta.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); requestAnimationFrame(f); })`;
+const between = (r) => r.out.filter((x) => x.top > r.from + 0.5 && x.end - x.top > 0.5).length; // frames on the way to the end
+const settled = (r) => { const z = r.out[r.out.length - 1]; return z.end - z.top < 1; };
+const once = (r) => r.out.some((x) => x.n === 1) && r.out.every((x) => x.n <= 1 && x.copies === 0); // your band once, in the log; no copy flies
+await toBottom();
 const tw = await ev(SAMPLE('Read them again.'));
-const withBand = tw.out.filter((x) => x.b !== null), ghosts = tw.out.filter((x) => x.g !== null), last = tw.out[tw.out.length - 1];
 check('idle session: sent, nothing waits, the prompt shows at once', (await ev(`__synopia.sent('send').length`)) === 1
-  && (await ev(`__synopia.cur().outbox.length >= 1 && __synopia.cur().outbox[0].queued === false`)) && withBand.length > 0 && (await queuedRows()) === 0);
-check('send tween: a copy moves up from the box to the band\'s place, never down', ghosts.length >= 3 && ghosts[0].g > withBand[0].b + 5 && ghosts.every((x, i) => i === 0 || x.g <= ghosts[i - 1].g + 0.01)
-  && Math.abs(ghosts[ghosts.length - 1].g - withBand[0].b) < 8, JSON.stringify(tw).slice(0, 600));
-check('send tween: the band itself never moves, is hidden only while the copy moves, and ends in place, shown', withBand.every((x) => Math.abs(x.b - withBand[0].b) <= 0.5) && withBand.every((x) => x.hid === (x.g !== null))
-  && last.g === null && last.hid === false && await ev(`!document.querySelector('.send-ghost')`), JSON.stringify(tw).slice(0, 600));
+  && (await ev(`__synopia.cur().outbox.length >= 1 && __synopia.cur().outbox[0].queued === false`)) && tw.out.some((x) => x.n === 1) && (await queuedRows()) === 0);
+check('sent at the end: your band ends the log, in view, and no copy of it moves across the log', tw.atEnd && tw.inView && once(tw), JSON.stringify(tw).slice(0, 600));
+check('sent at the end: the log scrolls smoothly to the end (a few frames between, never back)', between(tw) >= 2 && settled(tw) && tw.out.every((x, i) => i === 0 || x.top >= tw.out[i - 1].top - 0.5), JSON.stringify(tw.out.map((x) => [x.top, x.end])).slice(0, 600));
 check('the box empties at once', await ev(`document.getElementById('msg').value === ''`));
+await toBottom();
 await c.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
 const tr = await ev(SAMPLE('And list the demo files.'));
-check('reduced motion: no tween, the band shows in place at once', tr.out.every((x) => x.g === null) && tr.out.some((x) => x.b !== null) && tr.out.every((x) => !x.hid), JSON.stringify(tr).slice(0, 400));
+check('reduced motion: sent at the end, the log jumps to the end (no frame between)', between(tr) === 0 && settled(tr) && tr.atEnd && tr.inView && once(tr), JSON.stringify(tr).slice(0, 600));
 await c.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+await toBottom(150);
+const tu = await ev(SAMPLE('Then count the demo notes.'));
+check('sent while scrolled up: the log stays where you read, your band still ends the transcript', tu.out.every((x) => Math.abs(x.top - tu.from) <= 0.5) && tu.atEnd && once(tu), JSON.stringify(tu).slice(0, 600));
+await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 2, mobile: false });
 
 // a queued message with a pasted image: the waiting band with its thumbnail
 await ev(`document.querySelector('.row[data-id="${C}"]').click()`);
@@ -224,7 +236,6 @@ await key('Enter', { code: 'Enter', vk: 13 });
 const QI = `[...document.querySelectorAll('${Q}')].find(p => p.textContent.includes('Make the header'))`;
 check('queued with its image: the thumbnail shows, loaded from the backend', await c.until(`(() => { const q = ${QI}, i = q && q.querySelector('.thumbs .thumb.sized img'); return !!i && i.complete && i.naturalWidth === 240 && /ref=queued%3A/.test(i.src); })()`, 8000),
   await ev(`${QI}?.outerHTML.slice(0, 400) || 'none'`));
-await c.until(`!document.querySelector('.send-ghost')`);
 const shape = (row) => `(() => { const p = ${row}; if (!p) return 'none';
   const t = p.querySelector('.thumb').getBoundingClientRect(), r = p.getBoundingClientRect(); return JSON.stringify({ thumb: [Math.round(t.width), Math.round(t.height)], width: Math.round(r.width), height: Math.round(r.height * 2) / 2 }); })()`;
 const qShape = await ev(shape(QI));

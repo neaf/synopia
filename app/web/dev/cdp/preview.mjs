@@ -4,10 +4,12 @@
 //        node preview.mjs <url> <state-dir> <claude-dir>
 // Checks: the overlay, bat's colours, aligned line numbers, the diff's first changed line, j/k/g/G, find
 // with / and Cmd+F, n and Enter, Esc first, a click outside, the modes and keys after it, Open in app,
-// a binary and an HTML file falling back to `open`, and Alt-click on HTML showing its source.
+// a binary and an HTML file falling back to `open`, and Alt-click on HTML showing its source. Paths in a reply (inline code,
+// 2026-11-25): ⌘ held shows the link look only on those that are there; ⌘-click opens a text file in the
+// preview, an image in the viewer and a folder through `open`; a plain click does nothing.
 import fs from 'node:fs';
 import path from 'node:path';
-import { shot, keyTable } from './helpers.mjs';
+import { shot, keyTable, png } from './helpers.mjs';
 import { fileURLToPath } from 'node:url';
 
 const SID = 'f0f0f0f0-0000-4000-8000-0000000000f0';
@@ -15,15 +17,19 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../.
 const SRC = path.join(REPO, 'app/backend/src/open.ts');
 const line = (o) => JSON.stringify(o) + '\n';
 const ts = (i) => new Date(Date.UTC(2026, 10, 24, 9, 0, i)).toISOString();
-const extra = (dir) => ({ bin: path.join(dir, 'files', 'blob'), html: path.join(dir, 'files', 'report.html') });
+const extra = (dir) => ({ bin: path.join(dir, 'files', 'blob'), html: path.join(dir, 'files', 'report.html'), notes: path.join(dir, 'files', 'notes.txt'), img: path.join(dir, 'files', 'chart.png'), folder: path.join(dir, 'files') });
+const REL = 'app/backend/src/open.ts', MISSING = 'docs/no-such-notes.md';
+const REPLY = (x) => `Done. See \`${REL}\`, \`${x.notes}\`, \`${x.img}\`, \`${x.folder}\`, \`${MISSING}\` and \`npm test\`.`;
 
 if (process.argv[2] === 'make') {
   const dir = process.argv[3], proj = path.join(dir, 'projects', '-tmp-synopia-preview');
-  const { bin, html } = extra(dir);
+  const x = extra(dir), { bin, html } = x;
   fs.mkdirSync(proj, { recursive: true });
   fs.mkdirSync(path.dirname(bin), { recursive: true });
   fs.writeFileSync(bin, Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 1, 2]));
   fs.writeFileSync(html, '<!doctype html>\n<p class="x">Report &amp; notes</p>\n');
+  fs.writeFileSync(x.notes, 'Invented notes for the path check.\n');
+  fs.writeFileSync(x.img, png(40, 30));
   const base = (i) => ({ uuid: `p${i}`, timestamp: ts(i), cwd: REPO, sessionId: SID });
   const edit = (id, file, patch) => [
     { ...base(id), type: 'assistant', message: { id: `msg_${id}`, role: 'assistant', content: [{ type: 'tool_use', id: `toolu_${id}`, name: 'Edit', input: { file_path: file, old_string: 'a', new_string: 'b' } }] } },
@@ -34,7 +40,7 @@ if (process.argv[2] === 'make') {
     ...edit(10, SRC, [{ oldStart: 24, oldLines: 3, newStart: 24, newLines: 3, lines: [' export type OpenRequest = { path?: unknown; url?: unknown };', '-export type OpenPlan =', '+export type OpenPlan =', ' '] }]),
     ...edit(20, bin, [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-x', '+y'] }]),
     ...edit(30, html, [{ oldStart: 2, oldLines: 1, newStart: 2, newLines: 1, lines: ['-<p>', '+<p class="x">Report &amp; notes</p>'] }]),
-    { ...base(40), type: 'assistant', message: { id: 'msg_40', role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
+    { ...base(40), type: 'assistant', message: { id: 'msg_40', role: 'assistant', content: [{ type: 'text', text: REPLY(x) }] } },
   ];
   fs.writeFileSync(path.join(proj, `${SID}.jsonl`), recs.map(line).join(''));
   process.exit(0);
@@ -42,7 +48,7 @@ if (process.argv[2] === 'make') {
 
 const { connect, sleep } = await import('./cdp.mjs');
 const [url, stateDir, claudeDir] = process.argv.slice(2);
-const { bin, html } = extra(claudeDir);
+const X = extra(claudeDir), { bin, html } = X;
 const c = await connect();
 const { ev, check, key, until } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
@@ -135,5 +141,55 @@ await clickAt(row(html), { alt: true });
 check('HTML with Alt: its source in the preview', await until(`__synopia.preview().shown && /^HTML, 2 lines/.test(document.getElementById('pv-meta').textContent)`));
 check('HTML source is shown as text', (await ev(`document.querySelector('#pv-lines .pl:nth-child(2) .tx').textContent`)) === '<p class="x">Report &amp; notes</p>');
 await K.esc();
+
+// paths in the reply: resolved once, the link look only with ⌘ held and only on those that are there
+const code = (t) => `[...document.querySelectorAll('#log .md code')].find(e => e.textContent === ${JSON.stringify(t)})`;
+const look = (t) => ev(`(() => { const s = getComputedStyle(${code(t)}); return s.textDecorationLine + '|' + s.cursor; })()`);
+const OK = [REL, X.notes, X.img, X.folder];
+const okAll = `${JSON.stringify(OK)}.every(t => [...document.querySelectorAll('#log .md code.path-ok')].some(e => e.textContent === t))`;
+check('paths: the ones there resolve, the missing one and a command do not', (await until(okAll)) && !(await ev(`${code(MISSING)}.classList.contains('path-ok') || !!${code('npm test')}.dataset.pc`)));
+const cmdKey = async (down) => c.cdp('Input.dispatchKeyEvent', { type: down ? 'rawKeyDown' : 'keyUp', key: 'Meta', code: 'MetaLeft', windowsVirtualKeyCode: 91, modifiers: down ? 4 : 0 });
+const hover = async (t, mod) => {
+  const r = await ev(`(() => { const e = ${code(t)}; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+  await c.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: r.x, y: r.y, modifiers: mod }); return r;
+};
+const plain = await look(REL);
+check('without ⌘: plain code', !plain.startsWith('underline') && plain.endsWith('|auto'), plain);
+await cmdKey(true); await hover(REL, 4);
+const looks = {}; for (const t of [...OK, MISSING]) looks[t] = await look(t);
+check('⌘ held: the link look on each path that is there', OK.every(t => looks[t] === 'underline|pointer'), JSON.stringify(looks));
+check('⌘ held: the missing one stays plain', looks[MISSING] !== 'underline|pointer', looks[MISSING]);
+check('⌘ held: the link colour', await ev(`getComputedStyle(${code(REL)}).color === getComputedStyle(${code(REL)}).textDecorationColor`));
+await shot(c, path.join(stateDir, 'preview-paths-cmd.png'));
+await cmdKey(false); await hover(REL, 0);
+check('⌘ let go: plain again', (await look(REL)) === plain);
+await ev(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Meta', metaKey: true })); window.dispatchEvent(new Event('blur'))`);
+check('a blur clears ⌘', (await look(REL)) === plain);
+
+const clickCode = async (t, mod) => {
+  const r = await hover(t, mod);
+  await c.cdp('Input.dispatchMouseEvent', { type: 'mousePressed', x: r.x, y: r.y, button: 'left', buttons: 1, clickCount: 1, modifiers: mod });
+  await c.cdp('Input.dispatchMouseEvent', { type: 'mouseReleased', x: r.x, y: r.y, button: 'left', buttons: 0, clickCount: 1, modifiers: mod });
+};
+await ev('__synopia.spy()');
+await clickCode(X.notes, 0); await sleep(400);
+check('a plain click does nothing', !(await shown()) && (await ev(`__synopia.sent('preview', 'open').length === 0 && !document.querySelector('.viewer')`)));
+await clickCode(X.notes, 4);
+check('⌘-click on a text file opens the preview', await until(`__synopia.preview().shown && __synopia.preview().path === ${JSON.stringify(X.notes)}`));
+await K.esc();
+await clickCode(REL, 4);
+check('⌘-click on a relative path previews it under the session folder', await until(`__synopia.preview().shown && __synopia.preview().path === ${JSON.stringify(path.join(REPO, REL))}`));
+await K.esc();
+await clickCode(X.img, 4);
+check('⌘-click on an image opens the viewer with it', await until(`(() => { const i = document.querySelector('.viewer .v-stage img'); return !!i && i.complete && i.naturalWidth === 40; })()`));
+await shot(c, path.join(stateDir, 'preview-paths-viewer.png'));
+await K.esc();
+check('Esc closes the viewer', await until(`!document.querySelector('.viewer')`));
+await ev('__synopia.spy()');
+await clickCode(X.folder, 4);
+check('⌘-click on a folder sends open', await until(`__synopia.sent('open').some(m => m.path === ${JSON.stringify(X.folder)})`) && !(await shown()));
+await clickCode(MISSING, 4); await sleep(300);
+check('⌘-click on the missing one does nothing', (await ev(`__synopia.sent('open', 'preview').length`)) === 1 && !(await shown()));
+await cmdKey(false);
 c.print();
 c.close();

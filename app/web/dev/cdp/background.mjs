@@ -5,7 +5,8 @@
 // one) and turns the message box into the prompt; another key, a click or the turn ending cancels it; the
 // second b sends `background {sid}`; Esc and b replace each other's prompt; nothing in a session Synopia
 // doesn't drive; b types in insert mode; a step the live line names is marked there only, not on its group
-// row, also expanded and when the live line re-renders. Writes background-asking.png and background-live.png.
+// row, also expanded and when the live line re-renders; the live line names a subagent by its kind tag and
+// name, a Bash as Bash(…), never a background subagent while the turn runs, and that one once the turn ended. Writes background-asking.png and background-live.png.
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, fresh, keyTable, spySent, writeScript, running, shot } from './helpers.mjs';
@@ -46,8 +47,34 @@ const sent = () => sentOf('background', 'interrupt');
 const PROMPT = 'Send to background? b again. Any other key to keep it in front.';
 
 check('starts in normal mode, nothing asked', (await ev('document.body.dataset.mode')) === 'normal' && (await asking()) === null);
+// the live line names the turn's own step, the foreground subagent, as the panel does: kind tag and name, no Agent(…)
+const liveText = () => ev(`document.querySelector('#log .liveln')?.textContent.trim().replace(/\\s+/g, ' ') ?? null`);
+const liveKind = () => ev(`[...document.querySelectorAll('#log .liveln .kind')].map(k => k.className + ':' + k.textContent)`);
+check('the live line names the running foreground subagent by its kind tag and name, not Agent(…)', (await liveText()) === 'Working subagent Look around the demo folder'
+  && JSON.stringify(await liveKind()) === JSON.stringify(['kind kd-sub:subagent']), JSON.stringify([await liveText(), await liveKind()]));
+// The rule breaks only for the mark and the words: on a wide and a narrow panel, nothing opaque between the
+// live line and the point a few px past the label's last glyph, the middle of the rest, and the panel's right edge,
+// while the last glyph itself sits on the break. Measured against the words' own range rect, through elementFromPoint.
+const ruleClear = async (what) => {
+  for (const width of [2000, 760]) {
+    await c.cdp('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 1, mobile: false });
+    await sleep(120);
+    const m = await ev(`(() => { const L = document.querySelector('#log .liveln'); L.scrollIntoView({ block: 'center' });
+      const words = L.querySelector('summary, .lh'), r = document.createRange(); r.selectNodeContents(words);
+      const rs = [...r.getClientRects()].filter(x => x.width), last = rs[rs.length - 1], box = L.getBoundingClientRect();
+      const y = rs[0].top + parseFloat(getComputedStyle(words).lineHeight) / 2; // the rule's line: the first line's middle
+      const opaque = x => { for (let el = document.elementFromPoint(x, y); el && el !== L; el = el.parentElement) { const bg = getComputedStyle(el).backgroundColor; if (bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') return true; } return false; };
+      const pts = [last.right + 10, (last.right + box.right) / 2, box.right - 3];
+      return { onGlyph: opaque(last.right - 2), clear: pts.map(x => !opaque(x)), lines: rs.length, right: Math.round(last.right), edge: Math.round(box.right) }; })()`);
+    check(`${what}, ${width}px: the rule shows from a few px past the words to the panel's edge`, m.onGlyph && m.clear.length === 3 && m.clear.every(Boolean), JSON.stringify(m));
+  }
+  await c.cdp('Emulation.clearDeviceMetricsOverride', {});
+  await sleep(120);
+};
+await ruleClear('a subagent named');
+check('the background subagent is flagged as background work', await ev(`__synopia.cur().items.some(i => i.id === 'toolu_bbg' && i.bg === true && i.state === 'running') && !__synopia.cur().items.find(i => i.id === 'toolu_bfg').bg`));
 check('the steps that can go carry the mark, the background Agent not', (await ev(`document.querySelectorAll('#log [data-fg]').length`)) === 2
-  && (await ev(`!!document.querySelector('#log .ln.tool[data-fg]') && !!document.querySelector('#log .wgrid [data-fg]')`)), await ev(`document.querySelectorAll('#log [data-fg]').length`));
+  && (await ev(`!!document.querySelector('#log .ln.tool[data-fg]') && !!document.querySelector('#log .liveln[data-fg]')`)), await ev(`document.querySelectorAll('#log [data-fg]').length`));
 check('no highlight before b', (await marked()).length === 0);
 
 await K.b();
@@ -115,6 +142,20 @@ check('another key: the live line loses its ring too', (await asking()) === null
 await addLive({ state: 'done', fg: false }); // the step ends: the live line names nothing
 check('the step done: the live line carries no mark', await c.until(`!document.querySelector('#log .liveln')?.hasAttribute('data-fg')`));
 
+// the live line (R5.5): while the main turn runs it names only the turn's own foreground step, never the
+// background subagent from before (the panel shows that)
+const upsert = (list) => ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total + ${JSON.stringify(list.map(i => i.id))}.filter(id => !s.items.some(i => i.id === id)).length, upsert: ${JSON.stringify(list)} }))(__synopia.cur())`);
+const iso = new Date().toISOString();
+await upsert([{ id: 'toolu_bfg', k: 'tool', ts: iso, name: 'Agent', verb: 'Agent', obj: 'Look around the demo folder', state: 'done', toolUseId: 'toolu_bfg' }]);
+await upsert([{ id: 'b-u2', k: 'you', ts: iso, text: 'And the changelog?' }]);
+check('a new turn thinking, a background subagent from before: just "Working"', await c.until(`document.querySelector('#log .liveln')?.textContent.trim() === 'Working'`), await liveText());
+await ruleClear('"Working" alone');
+await upsert([{ id: 'toolu_bnew', k: 'tool', ts: iso, name: 'Bash', verb: 'Bash', obj: 'git log -5', state: 'running', toolUseId: 'toolu_bnew' }]);
+check('its foreground Bash: Bash(…), no Agent( and no kind tag', await c.until(`document.querySelector('#log .liveln')?.textContent.trim() === 'Working Bash(git log -5)'`)
+  && (await liveKind()).length === 0, await liveText());
+await ruleClear('a Bash named');
+await upsert([{ id: 'toolu_bnew', k: 'tool', ts: iso, name: 'Bash', verb: 'Bash', obj: 'git log -5', state: 'done', toolUseId: 'toolu_bnew' }]);
+
 // the turn ending, or the steps going to the background some other way, cancels it
 await K.b();
 await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'idle', light: 'amber', tone: 'amber', word: 'Your turn', mark: 'stopped', since: Date.now() } })`);
@@ -132,6 +173,16 @@ check('with nothing that can go, b asks nothing', (await asking()) === null && (
 await K.i(); await K.b();
 check('insert mode: b types', (await ev('document.getElementById("msg").value')) === 'b' && (await asking()) === null);
 await ev('document.getElementById("msg").value = ""'); await K.esc();
+
+// the main turn over, only the background subagent running: the live line names it as the panel does
+const bgAgent = { id: 'abbg1', type: 'general-purpose', fork: false, description: 'Draft the notes', toolUseId: 'toolu_bbg', model: null, depth: 0, finished: false, running: true, review: false, stopped: false, start: iso, end: null, total: 0 };
+await ev(`(s => __synopia.inject({ t: 'session', id: '${A}', agents: [...(s.agents || []).filter(a => a.toolUseId !== 'toolu_bbg'), ${JSON.stringify(bgAgent)}].map(a => a.toolUseId === 'toolu_bbg' || a.finished ? a : { ...a, finished: true, running: false }), background: [],
+  state: { ...s.state, status: 'idle', light: 'amber', tone: 'amber', word: 'Your turn', mark: 'stopped', since: Date.now() } }))(__synopia.cur())`);
+check('the turn over, a background subagent running: Working, its kind tag and name', await c.until(`document.querySelector('#log .liveln')?.textContent.trim().replace(/\\s+/g, ' ') === 'Working subagent Draft the notes'`)
+  && JSON.stringify(await liveKind()) === JSON.stringify(['kind kd-sub:subagent']) && (await ev(`document.querySelector('#log .liveln').dataset.state`)) === 'green'
+  && (await ev(`!!document.querySelector('#log .liveln > .g .ind .rot')`)), // the subagent's own moving mark
+  JSON.stringify([await liveText(), await liveKind()]));
+await ruleClear('the turn over, a background subagent');
 
 // a session Synopia doesn't drive: the first b does nothing. Its Bash runs in the other process's
 // foreground (no SDK task of Synopia's marks it `fg`: task_started reaches only the process that runs it)

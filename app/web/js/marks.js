@@ -23,6 +23,8 @@ export const MARKS = {
   failed: ['', '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.3" y="2.3" width="7.4" height="7.4" rx="1.1" fill="var(--red)"/></svg>'],
   timeout: ['', '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1" fill="none" stroke="var(--amber)" stroke-width="1" vector-effect="non-scaling-stroke"/></svg>'],
   done: ['', '<i class="chk"></i>'],
+  /* an MCP server turned off (R5.15): a grey ring with a bar across, still */
+  mcp_off: ['', '<svg class="k" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.6" stroke="var(--ink-3)" stroke-width="1.4"/><line x1="3.4" y1="6" x2="8.6" y2="6" stroke="var(--ink-3)" stroke-width="1.6" stroke-linecap="round"/></svg>'],
   review: ['', '<i class="badge"></i><i class="badge-chk"></i>'],
   /* kinds, running: a subagent's dot in orbit, a fork's two dots parting, a shell's >_ with the underscore
      stretching, a monitor's radar hand sweeping */

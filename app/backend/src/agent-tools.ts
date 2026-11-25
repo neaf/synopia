@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { toolServer as sdkToolServer } from './sdk.ts';
 import type { ToolDef, ToolResult } from './sdk.ts';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import { limit, MAX_TITLE } from './writer.ts';
 
 export const SERVER = 'synopia';
 const VERSION = '1';
@@ -25,6 +26,7 @@ export type Host = {
   // The session Synopia runs with this id (through its aliases), or null: closed, or none of Synopia's.
   caller(id: string): { id: string; cwd: string; title: string; gone(): boolean } | null;
   // A new session in `cwd` with `prompt` as its first message, as New session and a send do (R3.3).
+  // `title` ('' none) is only its first title: the writer's text until the writer writes its own.
   newSession(cwd: string, prompt: string, title: string): Started;
   // `sid` right under `caller` in the caller's group, or in a new group of the two named `group`
   // when the caller is in none (layout.ts is the owner).
@@ -62,7 +64,9 @@ export function firstWords(s: string): string {
   if (t.length > 60) return t.slice(0, 59).trimEnd() + '…';
   return words.length > 8 ? t + '…' : t;
 }
-const titleOf = (input: Input): string => str(input.title).trim().slice(0, 120) || firstWords(str(input.prompt));
+// The caller's title, cut as a written title is (writer.ts), else the prompt's first words.
+const givenTitle = (input: Input): string => limit(str(input.title), MAX_TITLE);
+const titleOf = (input: Input): string => givenTitle(input) || firstWords(str(input.prompt));
 
 // ---------- start_session ----------
 
@@ -100,7 +104,7 @@ const startSession: Tool = {
     if (!caller) return refuse('This session isn\'t one Synopia runs, so it can\'t start a session.');
     if (caller.gone()) return refuse(`The folder ${host.tilde(caller.cwd)} no longer exists.`);
     const title = titleOf(input);
-    const r = host.newSession(caller.cwd, prompt, str(input.title).trim().slice(0, 120));
+    const r = host.newSession(caller.cwd, prompt, givenTitle(input));
     if (!r.ok) return refuse(r.error);
     const placed = host.placeUnder(r.sid, caller.id, caller.title);
     if (!placed.ok) return refuse(placed.error);

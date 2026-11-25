@@ -17,7 +17,7 @@ What the CLI writes to disk is in [Claude Code transcripts](Claude%20Code%20tran
 | `permissionMode` | unset, `plan` for a plan session | the user's `auto` applies |
 | `resume`, `model`, `effort`, `allowedTools` | per session | |
 | `mcpServers` | `{synopia: <a fresh in-process server>}` | Synopia's tools for agents (below) |
-| `title` | a started session's title, new sessions only | written as its `custom-title` record |
+| `title` | unset (2026-11-25) | the CLI writes it as a `custom-title` record, which Claude's titles never replace; a started session's title is seeded as its written title instead (`writer.ts` `seedTitle`) |
 
 Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 
@@ -168,7 +168,7 @@ Source: live run SM-1 (2026-11-25; haiku; scratch folder `/tmp/synopia-subagent-
 
 ## Sending queued messages now
 
-f, f sends every queued message at once, like the CLI's Ctrl+Enter. Nothing in the code uses this yet.
+f, f sends every queued message at once, like the CLI's Ctrl+Enter (R9.8). `session.ts` `nowRoute` picks the route below, `sendNow` runs it.
 
 ### Documented surface
 
@@ -217,6 +217,37 @@ Don't push `'now'` while anything is queued, because it overtakes the queue. Don
 
 Source: live run PR-1, 2026-11-25 (haiku; scratch folder `/tmp/synopia-priority/work`, eleven phases, shapes and timings only; SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.326). The script is outside the repo, at `/tmp/synopia-priority/check.mjs`.
 
+### Live run PR-2: `backgroundTasks(toolUseId)`, a pending permission, bash mode's context
+
+The same script with five more phases, one fresh session each, the same setup (pushes 5 s after the Bash `tool_use`).
+
+| Phase | What happened |
+|---|---|
+| Foreground Bash, two at default, `backgroundTasks('toolu_…')` with an id no tool has, then with the Bash's id, then a third at default | The wrong id returned `false` and moved nothing. The Bash's id returned `true`: `background_tasks_changed` (1 task), then the Bash `tool_result` with `backgroundTaskId` and `backgroundedByUser` 0.7 s later. All three messages folded into the same turn, in order (one `status` listing the three uuids, three `queued_command` attachments in order). The sleep ran on; its `task_notification` started a turn later. |
+| Foreground subagent running its own foreground sleep, two at default, `backgroundTasks(<Agent tool_use id>)` | `true`; `background_tasks_changed` with 1 task: only the subagent moved. The Agent `tool_result` came at once (`isAsync, status, agentId, …`), both messages folded into main's turn in order, and the subagent's own sleep ran to its end before its next step: unlike `backgroundTasks()` with no id, its work did not change course. |
+| Foreground Bash, one at default 0.3 s after the `tool_use`, then `backgroundTasks(id)` before `task_started` and again after it | Before `task_started` (4 to 4.6 s after the `tool_use` in this run): `false`, nothing moved. After it: `true`, and the message folded into the same turn. With an id the call says when it moved nothing; with no id it returns `true` either way (see "`backgroundTasks()` and the 2 s gap"). |
+| A Bash waiting on `canUseTool` (`permissionMode: 'default'`, `settingSources: []`, a command that writes), one at default, then `backgroundTasks(id)` and `backgroundTasks()` | With the id: `false`. With none: `true`, but nothing moved. Once allowed, the Bash ran in the foreground to its end, and the message folded in after its `tool_result`. A pending permission blocks the route: nothing can move until it is answered. |
+| Foreground Bash, two `shouldQuery: false` context messages (bash mode's), two at default, `backgroundTasks(id)` | `true`; the Bash moved and all four folded into the same turn, in order (the `status` listed the context uuids first). Bash mode's context doesn't change the route. |
+
+Harm: none. No message was lost or reordered, and no stream ended. `sleep` alone didn't reach `canUseTool` even in `default` mode (a read-only command needs no permission), hence the writing command in the permission phase.
+
+### What f, f does (R9.8)
+
+| Situation | Route |
+|---|---|
+| A card waits (Synopia holds messages behind it, so the CLI's queue is empty anyway) | Nothing: the card comes first. The page doesn't offer f; the backend refuses with a toast. |
+| Nothing queued, a draft | The draft with `priority: 'now'` and `origin: {kind: 'human'}`. |
+| Messages queued, main-thread foreground Bash or Agent steps with their `task_started` | `backgroundTasks(id)` for each, then the draft at the default priority. |
+| The same, but a step's `task_started` hasn't come (the 2 s gap) | Wait for it, up to 8 s, then the above. Still not there: nothing changes, a toast. |
+| Messages queued, Claude writing or running a tool that can't move | The plain `interrupt()`, then the draft at the default priority. The aborted result is not a Stop (`status.ts` `hurried`), and nothing goes back to the box. |
+| A `!` command running | No change: it runs in Synopia, outside the turn; its context goes when it ends, and PR-2 shows that context doesn't change the route. |
+
+Still unchecked: WebFetch and WebSearch, which `'now'` detaches (`{detachedToolCall: true}`). Synopia doesn't count them as movable, so with a queue they take the interrupt route.
+
+Code: `session.ts` `nowRoute`, `sendNow`; `sdk.ts` `SessionProcess.push` (`now`), `interruptKeepingQueue`, `backgroundTasks(toolUseId)`; `transcript.ts` `foreground`. Test: `send-now.test.ts`.
+
+Source: live run PR-2, 2026-11-25 (haiku; scratch folder `/tmp/synopia-priority/work`; SDK 0.3.330 with its bundled CLI; shapes and timings only; each phase's session files deleted after it). The phases are `bg-id-bash`, `bg-id-agent`, `bg-id-early`, `perm-bg` and `bang-ctx` in `/tmp/synopia-priority/check.mjs`.
+
 ## Synopia's tools for agents
 
 Synopia gives the sessions it runs its own tools, through one in-process MCP server (R3.15). `agent-tools.ts` defines them; `sdk.ts` `toolServer` builds the server with the SDK's `createSdkMcpServer` and `tool()`, and `buildOptions` passes it as `mcpServers: {synopia: …}`, a fresh one for each process. The writer's call keeps `mcpServers: {}` and `strictMcpConfig`; the menu probe gets none.
@@ -253,6 +284,44 @@ Transcript records:
 - The CLI suggests no rule, so Synopia makes the "Always allow" row itself: an `addRules` session suggestion for the tool's name, stored in `state.json` `rules` as a card's rule is, and a later call it covers is allowed without a card (`cards.ts` `park`). The CLI's own copy of the rule changes nothing, as `always_ask` overrides it. It goes when the session closes (Q6).
 - The transcript names the new session through the result's text (`agent-tools.ts` `startedText`, `startedFrom`); a refused call's string content has no id.
 - Code: `agent-tools.ts`, `sdk.ts` `toolServer`, `buildOptions`; `cards.ts` `park`; `transcript.ts` `toolLine`. Test: `agent-tools.test.ts`, `scripted-sdk.test.ts`.
+
+## MCP servers: status, sign-in
+
+`/mcp` is the CLI's interactive screen; a CLI the SDK drives takes the prompt and answers nothing. Synopia's `/mcp` (R5.15) is a panel instead, over the documented control calls and the CLI's `claude mcp login|logout` ([Claude Code terminals](Claude%20Code%20terminals.md#claude-mcp-login-and-logout)).
+
+### Documented surface
+
+- `Query.mcpServerStatus(): McpServerStatus[]`: `name`, `status` (`connected | failed | needs-auth | pending | disabled`), `serverInfo?`, `error?` (when failed), `config?` (`McpServerStatusConfig`: the process-transport configs with `type` `stdio` (optional) `| sse | http | sdk`, or `{type: 'claudeai-proxy', url, id}`), `scope?` ("project, user, local, claudeai, managed"), `source?` (`sdk | plugin |` a config scope, an open set), `tools?`.
+- `reconnectMcpServer(name)` and `toggleMcpServer(name, enabled)`: "Throws on failure".
+- Nothing in the typings says whether a server uses OAuth. Synopia offers Sign in for the kinds `claude mcp login` names: `http`, `sse`, `claudeai-proxy`.
+- `Options.onElicitation`: a `url` mode request carries `url` and `elicitationId`; without the callback "elicitation requests that aren't handled by hooks will be declined automatically". `system/elicitation_complete` names the server and the id.
+
+### Live run MC-1
+
+One scripted check, 2026-11-25 (SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.330; haiku for the one model turn; scratch folder `/tmp/synopia-mcp/`, scripts `check.mjs`, `dyn.mjs`, `sdksrv.mjs`, `elicit.mjs` and a throwaway OAuth MCP server `server.mjs` outside the repo; shapes only; the throwaway sessions were deleted after it).
+
+| Phase | What happened |
+|---|---|
+| The user's own config, read only (an idle query in a scratch folder) | `mcpServerStatus()` gave `[]` at once and 8 s later: this machine has no CLI-configured MCP server (`claude mcp list`: none, in the scratch folder and the repo). |
+| `claude mcp add` / `add-json` of a 127.0.0.1 test server (temp `CLAUDE_CONFIG_DIR`) | refused: `Cannot add MCP server "<name>": not allowed by enterprise policy`, exit 1. A project `.mcp.json` with it is not listed (`get`: "No MCP server named"). |
+| `Options.mcpServers` with `http`, `sse` and `stdio` servers | under the same policy none is listed by `mcpServerStatus()` and each control call throws `Server not found: <name>`: the policy drops them silently. |
+| An in-process server (`createSdkMcpServer`) | the first `mcpServerStatus()` right after `query()` gave `[]`, the next one (at once) the server. Entry keys: `name, scope, serverInfo {name, version}, source, status, tools [{name, annotations}], transport` (`transport` is not in the typings); `status: connected, scope: dynamic, source: sdk`, no `config`. `reconnectMcpServer` threw "SDK servers should be handled in print.ts". `toggleMcpServer(false)` gave `disabled`, `true` `connected` again; reconnecting a disabled server threw "… is disabled — enable it (mcp_toggle) before reconnecting". Unknown names throw `Server not found: <name>`. |
+| An in-process server's tool returns a text with a sign-in URL (one haiku turn) | the result is a `tool_result` with `content: [{type: 'text', text}]`, `toolUseResult` the same array, in the stream and the JSONL: the URL is plain text. |
+| The same server asks a URL-mode elicitation (`server.elicitInput({mode: 'url', …})`), with and without `onElicitation` | `onElicitation` was never called; the server got "Client does not support url elicitation." in both runs. |
+
+Unverified, as nothing could be signed in to here (the policy refuses every test server, and the user's machine has no OAuth server to sign out of and back in to in one script):
+- whether `mcpServerStatus()` of a CLI-dialed HTTP server reads `needs-auth` before a sign-in, and its `config` and `scope` values;
+- whether `reconnectMcpServer(name)` after `claude mcp login <name>` connects the running session with no restart, and whether a running session's status changes after `claude mcp logout` without a reconnect. Synopia reconnects after both;
+- how `claude mcp login` behaves with no TTY (see the terminals doc);
+- whether a CLI-dialed server's URL elicitation reaches `onElicitation`. Synopia passes no `onElicitation`, so such a request is declined; a portal's sign-in link that comes back as a tool's text shows as a link (R5.16).
+- whether `toggleMcpServer` on an idle probe lasts to the session's next process.
+
+### What Synopia does with it
+
+- `mcp.ts` reads the status of the session's process (`SessionProcess.mcpControl`), or of an idle probe in the session's folder while no process runs (`sdk.ts` `mcpProbe`, closed 3 min after the panel last asked). A fresh source's empty answer and a `pending` server are read again every 0.5 s, 20 times at most.
+- No Reconnect on an `sdk` server or a disabled one; Enable/Disable on all.
+- Sign in and Sign out reconnect the server afterwards; a failed reconnect after a sign-in is its own sentence.
+- Code: `mcp.ts`, `sdk.ts` `mcpControlOf`, `mcpProbe`, `bundledCli`. Test: `mcp.test.ts`, `scripted-sdk.test.ts`.
 
 ## Sessions: list, resume, fork
 
@@ -306,10 +375,12 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 - A query is told apart by its options: `canUseTool` set is a session's process, `persistSession: false` the writer's call, neither the idle menu probe.
 - A turn starts with `system/init` (with `capabilities: ["interrupt_cancel_queued_v1"]`) and `session_state_changed: running`, and ends with `result`, then `session_state_changed: idle` ("State events need an undocumented flag").
 - A user message sent during a turn is queued. `interrupt({cancelQueued: true})` lists under `cancelled` the queued uuids not yet in the transcript, and the turn ends `result/error_during_execution` with `terminal_reason: aborted_streaming`.
+- For f, f ("Sending queued messages now"): `backgroundTasks()` takes the queued messages into the running turn as `queued_command` attachments, in order; a plain `interrupt()` ends the turn the same way, then runs them next as one turn; a message with `priority: 'now'` during a turn is taken in at once.
 - A `shouldQuery: false` message joins the transcript and starts no turn ("Streaming input and control calls"). A message that starts a turn is written to the transcript as the CLI writes a prompt.
 - `supportedCommands` and `supportedModels` return the script's `menu` in the SDK's shapes, HTML-escaped hints included ("Command and model list shapes").
 - `resume` with `forkSession: true` gives a new id and copies the transcript into the new cwd's project folder with the new id and folder ("Resume and fork in another folder"); a process that took only `shouldQuery: false` context sends `system/init` and no turn.
 - A `call` step calls one of Synopia's own tools as the CLI does ("Synopia's tools for agents"): the `tool_use` record, `canUseTool` with no suggestions, the tool from the session's `mcpServers` (`agent-tools.ts` `callServed`), then the `tool_result` record, text blocks when it ran, a string with `is_error` when it refused or was denied. A new session's `Options.title` becomes a `custom-title` record with its first prompt.
+- MCP: every query answers `mcpServerStatus`, `reconnectMcpServer` and `toggleMcpServer` from the script's `mcp.servers`, a session's own `mcpServers` as `source: sdk` (no reconnect, as MC-1), a disabled one refusing a reconnect; `Scripted.mcpRunner` is a pretend `claude mcp login|logout`: a sign-in takes `mcp.loginMs`, and the next reconnect connects ("MCP servers: status, sign-in").
 - `listSessions()` gives one `SDKSessionInfo` per fixture transcript: `cwd` and `firstPrompt` from its records, `customTitle` and `summary` from its `custom-title` and `ai-title` records, `lastModified` from its mtime.
 
 The script format and what it seeds are in docs/Page checks.md, "The scripted SDK". Test: `app/backend/test/scripted-sdk.test.ts`.

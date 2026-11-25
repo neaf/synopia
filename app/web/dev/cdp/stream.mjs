@@ -2,7 +2,7 @@
 // usage: node stream.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node stream.mjs <url> <state-dir>
 // The scripted SDK streams the reply in small text deltas (6 to 14 characters every 20 ms, so rows are cut
-// before their closing pipe), after a message sent from the box (the send tween). While it streams the check
+// before their closing pipe), after a message sent from the box (the log scrolls to the end). While it streams the check
 // resizes the viewport, scrolls up and back to the end, and switches to another session and back. Checks: no
 // long task over 200 ms, an evaluate answers within 500 ms all through, the streamed tables show as tables
 // while they stream, and the landed reply holds its three tables. Then a reload of the long session read from its

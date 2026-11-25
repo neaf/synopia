@@ -311,6 +311,11 @@ export class Transcripts {
     this.edit(sid, (t) => t.taskStarted(toolUseId, taskId));
   }
 
+  // f, f (R9.8): the main conversation's running foreground Bash and Agent steps (Transcript.foreground).
+  foreground(sid: string): { ready: string[]; early: string[] } {
+    return this.live.get(sid)?.t.foreground() ?? { ready: [], early: [] };
+  }
+
   // The SDK's background_tasks_changed: the task ids of its live background work (REPLACE semantics).
   backgroundTasks(sid: string, taskIds: string[]): void {
     this.edit(sid, (t) => t.backgroundTasks(taskIds, new Date().toISOString()));
