@@ -26,6 +26,7 @@ import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
 import { isDir } from './paths.ts';
+import { movedContext } from './claude-jsonl.ts';
 import type { BangRun } from './bang.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
@@ -100,7 +101,8 @@ export type SessionDeps = {
 
 export class Session {
   id: string;
-  readonly cwd: string; // absolute
+  cwd: string; // absolute; another only when it continues in another folder (continueIn)
+  gone = false; // its folder was checked and isn't there (R3.11)
   placeholder: boolean;
   choice: ModelChoice | null = null; // a placeholder's model and effort, stored once it has its id
   readonly status: SessionStatus;
@@ -125,6 +127,7 @@ export class Session {
   private outboxTimer: NodeJS.Timeout | null = null;
   private shownBang: ShownBang | null = null; // the `!` run the page shows, until its records land
   private bangBy: By = null; // the page that ran it
+  private forkNext = false; // the next process forks it into `cwd` (continueIn)
 
   constructor(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null, d: SessionDeps) {
     this.id = id;
@@ -316,7 +319,7 @@ export class Session {
     // one writer: a turn another process runs would get the command's context in the middle of it
     if (!this.proc && this.status.externalTurn) return { ok: false, error: 'Another Claude Code process is running this session\'s turn. Run the command once it ends.' };
     if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
-    if (!isDir(this.cwd)) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
+    if (this.checkFolder()) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     const bang = new Bang({
       id, cmd, cwd: this.cwd, now: this.d.now,
@@ -349,6 +352,47 @@ export class Session {
     this.d.log('bang.shared', { sid: this.id, newProcess: fresh });
   }
 
+  // ---------- its folder (R3.11) ----------
+
+  // One stat of its folder (the session was chosen: opened, shown or sent to; R3.13). True when it is gone;
+  // the page then shows the gone line instead of the message field.
+  checkFolder(): boolean {
+    this.setGone(!isDir(this.cwd));
+    return this.gone;
+  }
+
+  private setGone(gone: boolean): void {
+    if (this.gone === gone) return;
+    this.gone = gone;
+    this.d.publisher.setGone(this.id, gone);
+  }
+
+  // Its folder is gone: it goes on in `abs` as a fork (docs/Agent SDK.md, "Resume and fork in another
+  // folder"). The process starts now, resuming it with forkSession in the new folder, and takes one context
+  // line that starts no turn (the transcript shows "Continued in …"). Its system/init brings the fork's id,
+  // which takes this session's place (sessions.ts rekey); the old id stays a past session.
+  continueIn(abs: string): SendResult {
+    if (this.placeholder) return { ok: false, error: 'This session has nothing to continue yet.' };
+    if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}).` };
+    if (this.state !== 'idle') return { ok: false, error: 'This session is still running. Try again once it stops.' };
+    const from = this.cwd;
+    this.cwd = abs;
+    this.forkNext = true;
+    this.d.transcripts.moveCwd(this.id, abs);
+    this.setGone(false);
+    const why = this.start();
+    if (why) { // as it was
+      this.cwd = from;
+      this.forkNext = false;
+      this.d.transcripts.moveCwd(this.id, from);
+      this.checkFolder();
+      return { ok: false, error: why === 'terminal' ? 'A terminal holds this session.' : why };
+    }
+    this.input([{ kind: 'context', text: movedContext(this.d.tilde(abs), abs, this.d.tilde(from)), uuid: randomUUID() }]);
+    this.d.log('session.continue', { sid: this.id });
+    return { ok: true, sid: this.id };
+  }
+
   // ---------- the process ----------
 
   // Test-only (the scripted SDK, app/backend/dev/scripted-sdk.ts): the process starts now with no
@@ -362,7 +406,7 @@ export class Session {
   // Starts the process, or says why not: '' (starting), 'terminal' (a live terminal holds it at the
   // last check; one writer), else the error for the toast. `anyFolder`: startIdle's.
   private start(anyFolder = false): string {
-    if (!anyFolder && !isDir(this.cwd)) {
+    if (!anyFolder && this.checkFolder()) {
       this.status.failed();
       this.d.log('session.noFolder', { sid: this.id });
       return `Folder ${this.d.tilde(this.cwd)} no longer exists`;
@@ -412,6 +456,7 @@ export class Session {
       },
     }, this.d.sdk.query);
     this.proc = proc;
+    this.forkNext = false; // asked once: the fork's own id comes with its system/init
     this.state = 'running';
     this.contextOnly = true; // until a prompt goes in
     this.feedRunning(); // our process drives it now: the transcript's open turn is ours
@@ -427,6 +472,7 @@ export class Session {
     return {
       cwd: this.cwd,
       resume: this.placeholder ? undefined : this.id,
+      fork: this.forkNext && !this.placeholder,
       model: m.model && m.model !== 'default' ? m.model : undefined,
       effort: m.effort || undefined,
       plan: facts?.permissionMode === 'plan',

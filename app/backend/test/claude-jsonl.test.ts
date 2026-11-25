@@ -2,7 +2,7 @@
 // transcripts.md records (made-up content). Assistant records hold one block each, as the CLI writes them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, agentMetaOf, fileEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords } from '../src/claude-jsonl.ts';
+import { classify, agentMetaOf, fileEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords, movedContext } from '../src/claude-jsonl.ts';
 import type { ClaudeRecord, UserRecord, AssistantRecord, ToolUse } from '../src/claude-jsonl.ts';
 
 const ts = '2026-11-24T10:00:00.000Z';
@@ -139,4 +139,11 @@ test('subagent meta, and lookups in a record read again', () => {
   assert.deepEqual(imageIn({ type: 'attachment', uuid: 'q1', attachment: { prompt: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'BB' } }] } }, 'q1', [0]), { mediaType: 'image/gif', data: 'BB' });
   assert.deepEqual(imageBlocks([{ type: 'image', source: { type: 'url', url: 'x' } }]), [{ index: 0, mediaType: '', data: null }]);
   assert.equal(cwdOfRecords([{ type: 'x' }, { cwd: '/a' }, { cwd: '/b' }]), '/a');
+});
+
+test('the moved context line (R3.11): Synopia\'s own, read back as "Continued in" with its folder', () => {
+  const text = movedContext('~/dev/a "b"', '/Users/demo/dev/a "b"', '~/dev/gone');
+  assert.match(text, /^<synopia-moved to="~\/dev\/a &quot;b&quot;">This session continues in \/Users\/demo\/dev\/a "b"\. Its folder ~\/dev\/gone no longer exists/);
+  assert.deepEqual(bodyOf(text), { kind: 'moved', to: '~/dev/a "b"' });
+  assert.deepEqual(bodyOf('<synopia-other>x</synopia-other>'), { kind: 'system' });
 });

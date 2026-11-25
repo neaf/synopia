@@ -210,8 +210,14 @@ class ScriptedSession implements QueryLike {
     this.sid = options.resume ?? randomUUID();
     this.cwd = options.cwd ?? '';
     this.canUseTool = options.canUseTool as CanUseTool;
+    // a fork (docs/Agent SDK.md, "Resume and fork in another folder"): a new id, the whole history copied
+    // into a new file under the new cwd's project folder
+    if (options.resume && options.forkSession) {
+      this.sid = randomUUID();
+      env.fork(options.resume, this.sid, this.cwd);
+    }
     const script = env.script.sessions[this.sid];
-    if (options.resume && script?.steps?.length && !env.played.has(this.sid)) {
+    if (options.resume && !options.forkSession && script?.steps?.length && !env.played.has(this.sid)) {
       env.played.add(this.sid);
       void this.play([{ message: this.init() }, ...script.steps], true);
     }
@@ -455,6 +461,14 @@ export class Scripted {
     const f = path.join(this.claudeDir, 'projects', (cwd || '/tmp').replace(/[^A-Za-z0-9]/g, '-'), `${sid}.jsonl`);
     this.files.set(sid, f);
     return f;
+  }
+
+  // A fork's file: every record of the old session, with the new id and folder.
+  fork(from: string, to: string, cwd: string): void {
+    const recs = records(this.fileOf(from, '')).map((r) => ({ ...r, sessionId: to, ...('cwd' in r ? { cwd } : {}) }));
+    const file = this.fileOf(to, cwd);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, recs.map((r) => JSON.stringify(r) + '\n').join(''));
   }
 
   append(sid: string, cwd: string, recs: Record<string, unknown>[]): void {

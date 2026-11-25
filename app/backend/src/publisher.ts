@@ -28,6 +28,7 @@ export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   state: SessionState; model: unknown; effort: unknown;
   ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null;
+  gone: boolean; // its folder was checked and isn't there (R3.11)
 };
 
 // What a session shows that it owns itself (session.ts): its queued messages and its `!` run, and
@@ -75,6 +76,7 @@ type Pub = {
   since: Map<string, number>; // tool use id -> when a running tool started, from the SDK's tool_progress (R5.6)
   shown: Shown | null;
   queued: boolean;
+  gone: boolean;
 };
 
 export class Publisher {
@@ -165,6 +167,14 @@ export class Publisher {
     p.status = status;
     p.statusAt = at;
     p.statusDetail = detail;
+    this.changed(sid);
+  }
+
+  // Its folder is gone, or back (session.ts checkFolder).
+  setGone(sid: string, gone: boolean): void {
+    const p = this.pub(sid);
+    if (!p) return;
+    p.gone = gone;
     this.changed(sid);
   }
 
@@ -468,7 +478,7 @@ export class Publisher {
     if (p || !this.transcripts.has(sid)) return p;
     p = {
       id: sid, status: null, statusAt: 0, statusDetail: {}, choice: null, pending: [], held: [], stream: null,
-      sent: '', ran: '', working: new Set(), since: new Map(), shown: null, queued: false,
+      sent: '', ran: '', working: new Set(), since: new Map(), shown: null, queued: false, gone: false,
     };
     this.pubs.set(sid, p);
     return p;
@@ -517,6 +527,7 @@ export class Publisher {
       ...resolveModel(p.choice, { model: typeof t.requestedModel === 'string' ? t.requestedModel : null, effort: effortOf(t.effort) }, this.opts.defaultModel?.()),
       outbox: p.shown?.outbox() ?? [],
       bang: p.shown?.bang() ?? null,
+      gone: p.gone,
     };
   }
 

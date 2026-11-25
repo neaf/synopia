@@ -11,9 +11,9 @@ import { cleanLayout } from './layout.ts';
 import type { Layout } from './layout.ts';
 
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
-// `newSessionCwd`: the folder of new sessions when set (else newSessionFolder's default).
 // `model`: the model of new sessions when set (else the CLI's default).
-export type Settings = { newSessionCwd?: string; writerModel: string; model?: string };
+// A `newSessionCwd` an older state.json has is dropped: New session asks for the folder (R3.3).
+export type Settings = { writerModel: string; model?: string };
 
 // The subagents marked reviewed (R10.2), newest last: the oldest go past this many.
 export const REVIEWED_MAX = 1000;
@@ -72,15 +72,6 @@ export function defaultState(): State {
   };
 }
 
-// The folder a new session opens in (R3.3): the stored setting, else the folder of the most
-// recently opened session, else the home folder.
-export function newSessionFolder(state: State): string {
-  if (state.settings.newSessionCwd) return state.settings.newSessionCwd;
-  let last: OpenEntry | null = null;
-  for (const e of state.open) if (!last || e.openedAt > last.openedAt) last = e;
-  return last ? last.cwd : '~';
-}
-
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStrArr = (v: unknown): v is string[] => Array.isArray(v) && v.every((x) => typeof x === 'string');
@@ -135,7 +126,6 @@ export function normalize(raw: unknown): State {
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
     const st = raw.settings;
-    if (typeof st.newSessionCwd === 'string' && st.newSessionCwd) s.settings.newSessionCwd = st.newSessionCwd;
     if (typeof st.writerModel === 'string') s.settings.writerModel = st.writerModel;
     if (typeof st.model === 'string' && st.model) s.settings.model = st.model;
   }

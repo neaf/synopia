@@ -47,6 +47,9 @@ export const EFFORTS: readonly string[] = ['low', 'medium', 'high', 'xhigh', 'ma
 export type StartOptions = {
   cwd: string;
   resume?: string;
+  // With resume: a new session id with the whole history, in `cwd` (a gone folder's session continued
+  // elsewhere, docs/Agent SDK.md "Resume and fork in another folder").
+  fork?: boolean;
   model?: string;
   effort?: string;
   plan?: boolean; // the session's last permission-mode record is `plan`
@@ -122,6 +125,7 @@ export function buildOptions(o: StartOptions, canUseTool: CanUseTool, stderr: (d
     stderr,
   };
   if (o.resume) opts.resume = o.resume;
+  if (o.resume && o.fork) opts.forkSession = true;
   if (o.model) opts.model = o.model;
   if (o.effort && EFFORTS.includes(o.effort)) opts.effort = o.effort as EffortLevel;
   if (o.plan) opts.permissionMode = 'plan';

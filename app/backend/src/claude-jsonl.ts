@@ -152,6 +152,7 @@ export type UserBody =
   | { kind: 'command'; text: string } // a slash command you typed: `/name args`
   | { kind: 'system' } // reminders, local command output, hooks: skipped
   | { kind: 'interrupt'; interrupt: Interrupt }
+  | { kind: 'moved'; to: string } // Synopia continued the session in another folder (movedContext)
   | { kind: 'prompt' };
 
 type Base = { uuid: string; ts: string | null; sidechain: boolean };
@@ -189,6 +190,16 @@ function reportOf(text: string): { agent: string | null; text: string } {
   return { agent: frm ? frm[1] : null, text: body };
 }
 
+// Synopia's own context line when it continues a session whose folder is gone in another folder (R3.11):
+// a `shouldQuery: false` user message, so Claude reads it with your next message and no turn starts. The
+// transcript shows it as "Continued in <to>". `to` is the folder as the page shows it, `abs` the real path.
+export const MOVED_TAG = '<synopia-moved';
+const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const unescapeAttr = (s: string) => s.replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+export function movedContext(to: string, abs: string, from: string): string {
+  return `${MOVED_TAG} to="${escAttr(to)}">This session continues in ${abs}. Its folder ${from} no longer exists, so work in ${abs} from here.</synopia-moved>`;
+}
+
 function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolean): UserBody {
   if (onlyResults) return { kind: 'results' };
   if (text.startsWith('<bash-input>')) return { kind: 'bash-input', cmd: parseBashInput(text) };
@@ -201,6 +212,7 @@ function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolea
     const args = /<command-args>([^<]*)/.exec(text);
     return { kind: 'command', text: `${m ? m[1] : ''} ${args ? args[1] : ''}`.trim() };
   }
+  if (text.startsWith(MOVED_TAG)) return { kind: 'moved', to: unescapeAttr(/^<synopia-moved to="([^"]*)"/.exec(text)?.[1] ?? '') };
   if (text.startsWith('<') && !images) return { kind: 'system' };
   if (text.startsWith(TURNED_DOWN_MARKER)) return { kind: 'interrupt', interrupt: 'toolUse' };
   if (text.startsWith(STOP_MARKER)) return { kind: 'interrupt', interrupt: 'stop' };

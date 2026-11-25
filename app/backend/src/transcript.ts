@@ -24,7 +24,8 @@ export type Output = { text: string; lines: number; cut: boolean; interrupted?: 
 // content); the page loads it from `GET /api/image`. `w` and `h` come from the image's header when cheap.
 export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
 export type Item = {
-  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang'; ts: string | null;
+  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang' | 'moved'; ts: string | null;
+  cwd?: string; // moved: the folder the session continues in (R3.11), as the page shows it
   cmd?: string; sh?: BashOutput; // bang: a bash-mode command (`!`) and its output, from Synopia or the CLI (R5.13)
   title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
   text?: string; images?: number; workedMs?: number; // you
@@ -578,6 +579,11 @@ export class Transcript {
         b.sh = { ...body.out, out: clip(body.out.out, BANG_CAP), err: clip(body.out.err, BANG_CAP) };
         r.changed.add(b.id);
       }
+      return;
+    }
+    // Synopia continued it in another folder (R3.11): a quiet line in place, not a turn
+    if (body.kind === 'moved') {
+      this.put({ id: uuid, k: 'moved', ts: u.ts, cwd: body.to });
       return;
     }
     for (const n of u.notes) this.note(n, u.ts);

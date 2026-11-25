@@ -1,6 +1,6 @@
 {
   "t": "hello",
-  "v": 2,
+  "v": 3,
   "code": "<code>",
   "sessions": [
     {
@@ -33,6 +33,7 @@
       "effort": "high",
       "outbox": [],
       "bang": null,
+      "gone": false,
       "agents": [],
       "background": [],
       "stream": null,
@@ -63,6 +64,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "gone": false,
       "agents": [],
       "background": [],
       "stream": null,
@@ -93,6 +95,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "gone": false,
       "agents": [],
       "background": [
         {
@@ -161,6 +164,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "gone": false,
       "agents": [
         {
           "id": "aaaa0001",
@@ -288,6 +292,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "gone": false,
       "agents": [],
       "background": [],
       "stream": null,
