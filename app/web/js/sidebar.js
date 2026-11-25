@@ -7,9 +7,9 @@ import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
 import { lineTweens, inGrace } from "./tween.js";
-import { bgOf, bgState, scanGrace, setOpenBg } from "./rail.js";
+import { bgOf, bgState, scanGrace } from "./rail.js";
 
-/* the sessions in sidebar order (J/K, keys.js) */
+/* the sessions in sidebar order (Ctrl+J/K, keys.js) */
 export let KEYS = [];
 
 /* one session row (exported for the escape test) */
@@ -90,7 +90,7 @@ export function renderSide() {
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
   rendered.forEach(f => f(el));
-  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); setOpenBg(null); picked(); }; });
+  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); picked(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
   if (inp) {

@@ -451,7 +451,7 @@ test('rekey: a card, the held messages and the stream preview move to the new id
   assert.deepEqual([s.held, s.stream], [['wait'], 'Partly']);
 });
 
-test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', () => {
+test('meta: the CLI ai-title is the name, shown when it is not the title and a terminal holds it (L3)', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000ce';
   const dir = tempSession(id, you(1) + line({ type: 'ai-title', aiTitle: 'Count the lines', sessionId: id }));
   const clients = new Set<Client>();
@@ -460,7 +460,11 @@ test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', 
   transcripts.open(id);
   assert.deepEqual([publisher.meta(id)?.title, publisher.meta(id)?.name], ['Count the lines', '']);
   written = { title: 'Counting fixture lines' };
+  assert.deepEqual([publisher.meta(id)?.title, publisher.meta(id)?.name], ['Counting fixture lines', ''], 'no tab: Synopia runs it or nothing does');
+  publisher.setStatus(id, 'idle', 5, { terminal: 4242 });
   assert.deepEqual([publisher.meta(id)?.title, publisher.meta(id)?.name], ['Counting fixture lines', 'Count the lines']);
+  publisher.setStatus(id, 'idle', 6);
+  assert.equal(publisher.meta(id)?.name, '', 'the terminal let go of it');
 });
 
 test('work: a question or plan another process asks is a work line until answered (R6.8)', () => {
@@ -709,4 +713,66 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   sessions.stop();
   transcripts.stop(); publisher.stop();
   store.close();
+});
+
+test("a shell's and a monitor's view (R7.2): its output as one reset, then what it adds, earlier output, nothing of the main conversation", async () => {
+  const id = 'aaaaaaaa-0000-4000-8000-00000000b0b0';
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-shell-')), 'bsh1.output');
+  fs.writeFileSync(out, 'Serving demo\n');
+  const ts = (s: number) => `2026-11-20T10:00:${String(s).padStart(2, '0')}.000Z`;
+  const dir = tempSession(id, you(1)
+    + line({ type: 'assistant', uuid: 'a1', timestamp: ts(2), message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: 'Bash', input: { command: 'npx serve demo', description: 'Serve the demo', run_in_background: true } }] } })
+    + line({ type: 'user', uuid: 'u2', timestamp: ts(3), toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bsh1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sh', content: `Command running in background with ID: bsh1. Output is being written to: ${out} You will be notified when it completes.` }] } })
+    + line({ type: 'assistant', uuid: 'a2', timestamp: ts(4), message: { id: 'm2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_mon', name: 'Monitor', input: { command: 'tail -f build.log', description: 'Watch the build', timeout_ms: 600000 } }] } })
+    + line({ type: 'user', uuid: 'u3', timestamp: ts(5), toolUseResult: { taskId: 'bmon1', timeoutMs: 600000, persistent: false }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_mon', content: 'Monitor started (task bmon1, expires in 10m).' }] } }));
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  const { clients, transcripts, publisher } = setup(dir);
+  const c = client();
+  clients.add(c);
+  transcripts.open(id);
+  await Promise.resolve();
+  c.take();
+  await publisher.view(c, id, null, null, 'toolu_sh');
+  assert.deepEqual(c.take('output'), [{ t: 'output', sid: id, bg: 'toolu_sh', text: 'Serving demo\n', from: 0, to: 13, total: 13, reset: true }]);
+  // the file grows: the next look sends only what came; a new main item doesn't reach this view
+  fs.appendFileSync(out, 'GET / 200\n');
+  fs.appendFileSync(file, you(9));
+  await transcripts.poll();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(c.take('output').map((m) => [m.text, m.from, m.to, m.reset ?? false]), [['GET / 200\n', 13, 23, false]]);
+  assert.equal(c.take('items').length, 0, 'no main items in a shell view');
+  // a long output: the last window in whole lines, the part before it on asking, and from where the page's began after a reload
+  const rows = Array.from({ length: 15000 }, (_, i) => `row ${i}\n`).join('');
+  fs.appendFileSync(out, rows);
+  const whole = 'Serving demo\nGET / 200\n' + rows;
+  await publisher.view(c, id, null, null, 'toolu_sh');
+  const [tail] = c.take('output') as { text: string; from: number; to: number }[];
+  assert.ok(tail.from > 0 && tail.to === whole.length && whole.slice(tail.from) === tail.text && /^row \d+\n/.test(tail.text));
+  await publisher.earlierOutput(c, id, 'toolu_sh', tail.from);
+  const [before] = c.take('output') as { text: string; from: number; to: number; prepend: boolean }[];
+  assert.ok(before.prepend && before.to === tail.from && whole.slice(before.from, before.to) === before.text);
+  await publisher.view(c, id, null, String(before.from), 'toolu_sh');
+  assert.deepEqual(c.take('output').map((m) => [m.from, m.to]), [[before.from, whole.length]]);
+  // a gone file reads as gone
+  fs.rmSync(out);
+  await publisher.view(c, id, null, null, 'toolu_sh');
+  assert.equal(c.take('output')[0].lost, 'gone');
+  // a monitor: its events
+  const event = (s: number, text: string) => line({ type: 'user', uuid: `ev${s}`, timestamp: ts(s), message: { role: 'user', content: `<task-notification>\n<task-id>bmon1</task-id>\n<summary>Monitor event: "Watch the build"</summary>\n<event>${text}</event>\n</task-notification>` } });
+  fs.appendFileSync(file, event(10, 'step 1 of 2'));
+  await transcripts.poll();
+  await publisher.view(c, id, null, null, 'toolu_mon');
+  assert.deepEqual(c.take('output').map((m) => [m.text, m.from, m.to, m.total, m.reset]), [['step 1 of 2', 0, 1, 1, true]]);
+  fs.appendFileSync(file, event(11, 'step 2 of 2\nbuilt'));
+  await transcripts.poll();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(c.take('output').map((m) => [m.text, m.from, m.to]), [['step 2 of 2\nbuilt', 1, 2]]);
+  // back to the main conversation: items again, no output
+  publisher.view(c, id, null);
+  assert.equal(c.take('items').length, 1);
+  fs.appendFileSync(file, event(12, 'more'));
+  await transcripts.poll();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(c.take('output').length, 0);
+  transcripts.stop(); publisher.stop();
 });

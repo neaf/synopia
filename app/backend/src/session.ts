@@ -20,7 +20,8 @@ import { Cards } from './cards.ts';
 import type { CardAnswer } from './cards.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Publisher } from './publisher.ts';
-import type { Item } from './transcript.ts';
+import type { ImageRef, Item } from './transcript.ts';
+import { imageSize } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
@@ -38,9 +39,11 @@ export type By = Client | null;
 
 // A message you sent while a turn ran, shown pending at the end of the transcript until it lands.
 // `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
-// `queued`: sent during a turn.
-export type QueuedMessage = { id: string; text: string; images: number; landed?: string; queued?: boolean };
-type Outbox = QueuedMessage & { at: number };
+// `queued`: sent during a turn. `imgs`: its pasted images as the page loads them (`GET /api/image`
+// with ref `queued:<id>:<n>`, queuedImage), in the order the message sends them, so they show as a
+// posted prompt's do (R5.5, R5.13).
+export type QueuedMessage = { id: string; text: string; images: number; imgs?: ImageRef[]; landed?: string; queued?: boolean };
+type Outbox = QueuedMessage & { at: number; pics: Image[] };
 // A queued message that hasn't landed by this long after the turn stopped running is dropped (it
 // landed in a form the match missed, or it is gone).
 export const OUTBOX_GRACE_MS = 5000;
@@ -204,7 +207,7 @@ export class Session {
     if (this.terminal) return this.queueTakeover(m);
     const queues = queuesBehind(this.status.status); // a turn runs: it shows queued until it lands (R5.5)
     const r = this.deliver(m);
-    if (r.ok && uuid && !this.terminalHolds && !this.held.includes(m)) this.sent(uuid, text, images.length, queues);
+    if (r.ok && uuid && !this.terminalHolds && !this.held.includes(m)) this.sent(uuid, text, images.length, sentImages(content), queues);
     return r;
   }
 
@@ -861,14 +864,21 @@ export class Session {
 
   // A message the process took: the page shows it pending (queued while a turn runs, R5.5) until
   // its prompt lands in the transcript. Not one held behind a card.
-  private sent(uuid: string, text: string, images: number, queued: boolean): void {
+  private sent(uuid: string, text: string, images: number, pics: Image[], queued: boolean): void {
     if (this.outbox.some((o) => o.id === uuid)) return;
-    this.outbox.push({ id: uuid, text, images, at: Date.now(), queued });
+    const imgs = pics.map((p, i) => ({ ref: `queued:${uuid}:${i}`, mediaType: p.mediaType, ...imageSize(p.mediaType, p.data) }));
+    this.outbox.push({ id: uuid, text, images, ...(imgs.length ? { imgs } : {}), at: Date.now(), queued, pics });
     this.d.publisher.changed(this.id);
   }
 
   private shownOutbox(): QueuedMessage[] {
-    return this.outbox.map(({ id, text, images, landed, queued }) => (landed ? { id, text, images, landed, queued } : { id, text, images, queued }));
+    return this.outbox.map(({ id, text, images, imgs, landed, queued }) => ({ id, text, images, ...(imgs ? { imgs } : {}), ...(landed ? { landed } : {}), queued }));
+  }
+
+  // GET /api/image with ref `queued:<id>:<n>`: a queued message's pasted image, while it is in the outbox.
+  queuedImage(ref: string): { status: 200; type: string; body: Buffer } | { status: 404 } {
+    const m = /^queued:([^:]+):(\d+)$/.exec(ref), im = m ? this.outbox.find((o) => o.id === m[1])?.pics[+m[2]] : undefined;
+    return im ? { status: 200, type: im.mediaType, body: Buffer.from(im.data, 'base64') } : { status: 404 };
   }
 
   // Before each flush (publisher.ts), with the main items that just changed.
@@ -967,6 +977,12 @@ export class Session {
 }
 
 type Msg = { type: string; subtype?: string; [k: string]: unknown };
+
+// The images a prompt's content sends, in its order (userContent: the order of their tags).
+function sentImages(content: Content): Image[] {
+  if (typeof content === 'string') return [];
+  return content.flatMap((b) => (b.type === 'image' && b.source.type === 'base64' ? [{ mediaType: b.source.media_type, data: b.source.data }] : []));
+}
 
 // Whether a prompt item is a queued message: written no earlier than it was sent (2 s of clock
 // slack), with its text (the transcript cuts a long one) or, for images alone, no text.

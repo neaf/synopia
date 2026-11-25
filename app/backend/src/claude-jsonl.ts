@@ -3,8 +3,8 @@
 // so transcript.ts reduces typed records and never a raw field. Pure: no I/O.
 import path from 'node:path';
 import type { JsonRecord } from './tail.ts';
-import { parseBashInput, parseBashOutput } from './bang.ts';
-import type { BashOutput } from './bang.ts';
+import { parseBashOutput, splitBash } from './bang.ts';
+import type { BashOutput, BashRun } from './bang.ts';
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const obj = (v: unknown): JsonRecord => (v && typeof v === 'object' && !Array.isArray(v) ? (v as JsonRecord) : {});
@@ -109,14 +109,27 @@ const CUT_SHORT = /^\[(Request interrupted by user|Tool call interrupted)/;
 const STOP_MARKER = '[Request interrupted by user';
 const TURNED_DOWN_MARKER = '[Request interrupted by user for tool use';
 
-// A tool_result block. `text`: what Claude got (images aren't text). `cutShort`: an error result
-// the CLI wrote for an interrupt.
-export type ToolResult = { index: number; toolUseId: string; isError: boolean; text: string; cutShort: boolean; images: ImageBlock[] };
+// A tool call that never ran because a permission check said no (docs/Claude Code
+// transcripts.md#denied-tool-calls): `auto`, auto mode's classifier blocked it; `you`, you turned it
+// down at the terminal's permission prompt. The user record's `toolDenialKind` says which; an
+// auto-mode block is also known by its result's fixed prefix. A hook or rule block (`permission-rule`)
+// is neither: Claude reads its reason and carries on, so it stays a failed step.
+export type Denial = 'auto' | 'you';
+const DENIAL_KINDS = new Map<string, Denial>([['automode-blocked', 'auto'], ['user-rejected', 'you']]);
+const AUTO_MODE_BLOCKED = 'Permission for this action was denied by the Claude Code auto mode classifier';
 
-function toolResultOf(b: JsonRecord, index: number): ToolResult {
+// A tool_result block. `text`: what Claude got (images aren't text). `cutShort`: an error result
+// the CLI wrote for an interrupt. `denial`: an error result for a call a permission check denied.
+// `outputFile`: where a background shell's output goes, as its result text names it ("Output is being
+// written to: <path>"; docs/Claude Code transcripts.md#background-output), else ''.
+export type ToolResult = { index: number; toolUseId: string; isError: boolean; text: string; cutShort: boolean; denial: Denial | null; images: ImageBlock[]; outputFile: string };
+const OUTPUT_FILE = /Output is being written to: (\/\S+?\.output)(?=\s|$)/;
+
+function toolResultOf(b: JsonRecord, index: number, denialKind: unknown): ToolResult {
   const text = textOf(b.content);
   const isError = Boolean(b.is_error);
-  return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), images: imageBlocks(b.content) };
+  const denial = !isError ? null : DENIAL_KINDS.get(str(denialKind)) ?? (text.trimStart().startsWith(AUTO_MODE_BLOCKED) ? 'auto' : null);
+  return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), denial, images: imageBlocks(b.content), outputFile: OUTPUT_FILE.exec(text)?.[1] ?? '' };
 }
 
 // A user record's `toolUseResult`, for its first tool_result. `taskId`: the id that stops it
@@ -127,14 +140,19 @@ export type ToolUseResult = {
 };
 
 // One `<task-notification>` (docs/Claude Code transcripts.md#background-work). A monitor's event has
-// no tool-use id; a subagent woken again has its task id only.
-export type TaskNote = { taskId: string | null; toolUseId: string | null; status: string | null; summary: string | null; result: string | null };
+// no tool-use id; a subagent woken again has its task id only. `event`: the monitor output lines it
+// carries; `outputFile`: the task's output file, named at its end.
+export type TaskNote = {
+  taskId: string | null; toolUseId: string | null; status: string | null; summary: string | null; result: string | null;
+  event: string | null; outputFile: string | null;
+};
 
 export function taskNotes(text: string): TaskNote[] {
   const out: TaskNote[] = [];
   for (const tn of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
     const tag = (name: string) => new RegExp(`<${name}>([^<]+)`).exec(tn[1])?.[1] ?? null;
-    out.push({ taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary'), result: /<result>([\s\S]*?)<\/result>/.exec(tn[1])?.[1] ?? null });
+    out.push({ taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary'), result: /<result>([\s\S]*?)<\/result>/.exec(tn[1])?.[1] ?? null,
+      event: /<event>([\s\S]*?)<\/event>/.exec(tn[1])?.[1] ?? null, outputFile: tag('output-file') });
   }
   return out;
 }
@@ -144,7 +162,8 @@ export function taskNotes(text: string): TaskNote[] {
 export type Interrupt = 'stop' | 'toolUse';
 export type UserBody =
   | { kind: 'results' } // tool results only
-  | { kind: 'bash-input'; cmd: string | null }
+  // `!` commands (splitBash): `then` is the body of the text after them (`rest`), as one record can hold the next prompt too
+  | { kind: 'bash-input'; runs: BashRun[]; rest: string; then: UserBody | null }
   | { kind: 'bash-output'; out: BashOutput | null }
   | { kind: 'meta' } // an isMeta note: skipped
   | { kind: 'notification' } // task notifications only (in `notes`)
@@ -202,7 +221,11 @@ export function movedContext(to: string, abs: string, from: string): string {
 
 function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolean): UserBody {
   if (onlyResults) return { kind: 'results' };
-  if (text.startsWith('<bash-input>')) return { kind: 'bash-input', cmd: parseBashInput(text) };
+  if (text.startsWith('<bash-input>')) {
+    const b = splitBash(text);
+    if (!b) return { kind: 'bash-input', runs: [], rest: '', then: null };
+    return { kind: 'bash-input', ...b, then: b.rest ? bodyOf(d, b.rest, images, false) : null };
+  }
   if (text.startsWith('<bash-stdout>')) return { kind: 'bash-output', out: parseBashOutput(text) };
   if (d.isMeta && !text.startsWith(REPORT_PREFIX)) return { kind: 'meta' };
   if (text.startsWith('<task-notification>')) return { kind: 'notification' };
@@ -221,7 +244,7 @@ function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolea
 
 function userOf(d: JsonRecord, base: Base, content: unknown): UserRecord {
   const blocks = Array.isArray(content) ? content : [];
-  const results = blocks.map((b, i) => (isBlock(b, 'tool_result') ? toolResultOf(obj(b), i) : null)).filter((r): r is ToolResult => r !== null);
+  const results = blocks.map((b, i) => (isBlock(b, 'tool_result') ? toolResultOf(obj(b), i, d.toolDenialKind) : null)).filter((r): r is ToolResult => r !== null);
   const tur = d.toolUseResult && typeof d.toolUseResult === 'object' && !Array.isArray(d.toolUseResult) ? (d.toolUseResult as JsonRecord) : null;
   let toolUse: ToolUseResult | null = null;
   if (tur && results.length) {
@@ -262,7 +285,8 @@ export function classify(d: JsonRecord): ClaudeRecord {
     const images = blocks ? blocks.some((b) => isBlock(b, 'image')) : false;
     if (a.type !== 'queued_command' || (!prompt && !images)) return { ...base, kind: 'other' };
     const typed = a.commandMode === 'prompt' && (!prompt.startsWith('<') || images);
-    const shown = typed || prompt.startsWith('<task-notification>') || prompt.startsWith('<agent-message');
+    // a `!` command taken in by a running turn comes as two of these: its input, then its output (bang.ts)
+    const shown = typed || (a.commandMode === 'prompt' && (prompt.startsWith('<bash-input>') || prompt.startsWith('<bash-stdout>'))) || prompt.startsWith('<task-notification>') || prompt.startsWith('<agent-message');
     return { ...base, kind: 'queued', user: shown ? userOf(d, base, blocks ?? prompt) : null };
   }
   if (t === 'user') return userOf(d, base, obj(d.message).content);

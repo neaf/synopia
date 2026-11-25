@@ -58,6 +58,7 @@ Rules the design keeps:
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
 | `tail.ts` | File tailing by byte offset and the subagent folder watcher: 4 MB slices, `fs.watch` plus the 1 s poll, reset on shrink, inode change or content rewrite (not on a bare touch). |
 | `transcripts.ts` | The reading set: one Tailer + Transcript per open session and subagent, the new-session finder, the one 1 s poll, facts for other modules, async rereads for `toolOutput` and `/api/image`. |
+| `task-output.ts` | A shown shell's output file read by byte window (whole lines, whole UTF-8 characters) and a monitor's events cut the same way (R7.2); the publisher sends them as `output`. |
 | `status.ts` | The one status derivation: SDK events, transcript facts, pending cards and terminal state to a `SessionState` (status, since, detail, light, tone, word, mark, stopped, needsYou, review, driven). Keeps the badge count incrementally (`BadgeCounter`) and words the quit check (`quitSummary`). Pure apart from a clock. |
 | `cli-terminals.ts` | Adapter for terminal-run Claude Code CLIs: pid files, liveness, procStart match, ours-vs-theirs, take-over signals (SIGTERM, SIGINT, never SIGKILL), tty note, transcript stable wait; logs a live pid whose procStart mismatches. |
 | `macos.ts` | Process probes, all async: `ps -o lstart=` under `LC_ALL=C TZ=UTC`, `ps -o tty=`, liveness, process-group signals, ancestry. Transient failures are not cached. |
@@ -91,10 +92,12 @@ Dev and test only (not loaded in production):
 | `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
 | `js/rail.js` | Background work panel. |
-| `js/transcript.js` | Header and the keyed log: blocks, steps, files changed, earlier link, live line, queued prompts. |
+| `js/bg-view.js` | A shell's or monitor's view (R7.2): its header, its output as a terminal run, earlier output; holds the `output` the page has. |
+| `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps, files changed, earlier link, live line, the sticky queue of queued prompts. |
 | `js/images.js` | Thumbnails and the image viewer. |
 | `js/preview.js` | File preview pane and find. |
 | `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back. |
+| `js/send-tween.js` | The send tween: a sent message's band moves up from the box into its place (composer.js starts it, transcript.js lands it). |
 | `js/card.js` | Needs-you card and the status line; keeps picks until the answer is acked. |
 | `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, folder list, sidebar drag), then the session keys (n, o among them); `renderAll`. |
 | `js/mode.js` | Normal and insert mode (`setMode`, `paintMode`); the box is the only indicator. |
@@ -153,8 +156,8 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 - Transport: `/ws`, `auth` first within 10 s, 32 MB cap, close 4001 on auth failure, 1009 on oversize.
 - `hello` carries `v` (protocol version) and `code` (daemon code hash). A page of another version shows "Updating…", sends nothing and waits; it reloads once for a newer daemon.
-- Server to page: `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
-- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from}`, `earlier`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
+- Server to page: `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
+- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
 - At run time a field more is ignored both ways; a frame that doesn't fit is dropped with a log line or console warning.
 - Contract tests: golden frames in `app/backend/test/golden/`, checked strictly against the schema by `protocol-golden.test.ts`.
 
@@ -206,7 +209,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
   "written":  {"<sid>": {"title": "…", "now": "…", "at": 0, "history": [{"title": "…", "at": 0}]}},
   "settings": {"writerModel": "haiku", "model": "…"},
   "ui": {
-    "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "openBg": "<key>|null", "theme": "light|dark|null",
+    "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "theme": "light|dark|null",
     "openList": {"filter": "…"}, "folderList": {"filter": "…", "sid": "<sid continued>|null"}, "preview": {"path": "…", "scroll": 0, "find": "…"},
     "viewer": {"srcs": ["/api/image?sid=…&ref=…"], "froms": ["…"], "i": 0},
     "sessions": {"<sid>": {
@@ -357,7 +360,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-01 | transcript.js, publisher.ts |
 | FR-VIEW-02 | transcript.js, app.css, fonts |
 | FR-VIEW-03 | transcript.ts, transcript.js |
-| FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js |
+| FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js, send-tween.js, marks.js |
 | FR-VIEW-05 | transcript.ts, publisher.ts, transcript.js |
 | FR-VIEW-06 | transcript.ts, transcript.js |
 | FR-VIEW-07 | transcript.ts, transcript.js |

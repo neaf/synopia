@@ -1,11 +1,11 @@
 // The session states of R8.2 that status.ts wires (queued, compacting, rate limited, signed out,
-// no updates), on the states fixture's SDK script: the sidebar's word and mark per row, the
+// no updates), on the states fixture's SDK script, and needs you after a step auto mode blocked: the sidebar's word and mark per row, the
 // transcript's last line, and the signed-out status line. Writes states-<n>.png in the state folder.
 // usage: run.sh states (or node states.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
 import { writeFileSync } from 'node:fs';
 const [url, stateDir] = process.argv.slice(2);
-const want0 = 7; // sessions in the states fixture
+const want0 = 8; // sessions in the states fixture
 const c = await connect();
 const { ev, check } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 760, deviceScaleFactor: 2, mobile: false });
@@ -40,5 +40,15 @@ for (const [p, state, word, mark, line] of want) {
   const shot = await c.cdp('Page.captureScreenshot', { format: 'png' });
   writeFileSync(`${stateDir}/states-${++n}.png`, Buffer.from(shot.result.data, 'base64'));
 }
+// a terminal session whose ended turn has a step auto mode blocked: needs you, and the step says why (R8.2)
+const blk = await row('a8a8');
+check('a8a8: row state red', blk?.state === 'red', JSON.stringify(blk?.state));
+check('a8a8: row word', /^Needs you, blocked, /.test(blk?.word ?? ''), JSON.stringify(blk?.word));
+check('a8a8: row mark', (blk?.mark ?? '').includes('class="bars"'), (blk?.mark ?? '').slice(0, 120));
+await ev(`document.querySelector('.row[data-id^="a8a8"]').click()`); await sleep(1000);
+const stepRes = await ev(`[...document.querySelectorAll('.ln.tool.denied summary .res')].map(e => e.textContent.trim()).join('|')`);
+check('a8a8: the step reads blocked by auto mode, not failed', stepRes === 'Blocked by auto mode' && !(await ev(`!!document.querySelector('.ln.tool.failed')`)), JSON.stringify(stepRes));
+const shot = await c.cdp('Page.captureScreenshot', { format: 'png' });
+writeFileSync(`${stateDir}/states-${++n}.png`, Buffer.from(shot.result.data, 'base64'));
 c.print();
 c.close();

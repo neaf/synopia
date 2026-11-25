@@ -11,6 +11,7 @@ import * as rail from "./rail.js";
 import * as sidebar from "./sidebar.js";
 import * as preview from "./preview.js";
 import * as transcript from "./transcript.js";
+import { applyOutput } from "./bg-view.js";
 import { renderCard, qstate } from "./card.js";
 import { syncPrompt, syncTakeover, syncGone, restoreTexts } from "./composer.js";
 import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-list.js";
@@ -76,6 +77,15 @@ function onMessage(m) {
       runHooks(m);
       break;
     }
+    case "output": { // a shown shell's or monitor's output (R7.2)
+      if (!applyOutput(m)) break;
+      ui.resetIn(m);
+      const log = document.getElementById("log"), h = log ? log.scrollHeight : 0, top = log ? log.scrollTop : 0;
+      render("log");
+      if (m.prepend && log) log.scrollTop = top + log.scrollHeight - h; // earlier output: what you read stays in place
+      ui.output(m);
+      break;
+    }
     case "agents": {
       if (!state.applyAgents(m)) break;
       render("side", ...(isCurrent(m.sid) ? ["header", "log", "rail"] : []));
@@ -83,7 +93,8 @@ function onMessage(m) {
     }
     case "background": {
       if (!state.applyBackground(m)) break;
-      render("side", ...(isCurrent(m.sid) ? ["rail", "card"] : []));
+      const shown = isCurrent(m.sid) && m.upsert.some(b => b.toolUseId === state.view); // the shell or monitor on screen changed
+      render("side", ...(isCurrent(m.sid) ? ["rail", "card", ...(shown ? ["header", "log"] : [])] : []));
       break;
     }
     case "pending": {

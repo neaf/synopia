@@ -1,7 +1,7 @@
 /* Composer: the message box, pasted images, the slash menu and the model picker (split from prototype/app.html),
    bash mode, the box's one prompt line (Esc, b, x) and the terminal-held line. mountComposer runs once per
    session view (transcript.js renderConv), so data never resets what you type. */
-import { store, cur, current, view, mounted } from "./state.js";
+import { store, cur, current, view, mounted, queuedOf } from "./state.js";
 import { act } from "./connection.js";
 import { esc, modelLabel } from "./format.js";
 import { thumbHTML } from "./images.js";
@@ -12,6 +12,7 @@ import { toast } from "./toast.js";
 import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES } from "./protocol.js";
 import { rank, marked } from "./fuzzy.js";
 import { showFolderList } from "./folder-list.js";
+import { takeOff } from "./send-tween.js";
 
 /* pasted images: { id, n (its [Image #n] tag in the text), mediaType, url (an object URL, for the thumbnail), data (its data: URL, for sending) } */
 export const attachments = [];
@@ -110,10 +111,11 @@ function nextImageNumber(s, text) {
   for (const a of attachments) max = Math.max(max, a.n || 0);
   return max + 1;
 }
-/* the tag goes in at the caret, a space between it and any text it touches */
+/* the tag goes in at the caret, a space before it when it touches text, and a space after it unless one
+   follows already, so typing goes on as a new word */
 function insertTag(ta, n) {
   const v = ta.value, i = ta.selectionStart, j = ta.selectionEnd;
-  const tag = (i > 0 && !/\s/.test(v[i - 1]) ? " " : "") + imageTag(n) + (j < v.length && !/\s/.test(v[j]) ? " " : "");
+  const tag = (i > 0 && !/\s/.test(v[i - 1]) ? " " : "") + imageTag(n) + (/\s/.test(v[j] || "") ? "" : " ");
   ta.setRangeText(tag, i, j, "end");
   ta.dispatchEvent(new Event("input"));
 }
@@ -307,15 +309,18 @@ function sendMsg(s, ta) {
     for (const a of going) flying.delete(a);
     if (ok) free(going); else giveBack(s.id, [text], going);
   };
-  if (!act({ t: "send", sid: s.id, text, images, uuid: newUuid() }, { done, refused: KEPT })) return;
+  const uuid = newUuid();
+  if (!act({ t: "send", sid: s.id, text, images, uuid }, { done, refused: KEPT })) return;
   if (held) { takeoverWait = { sid: s.id, text, seen: false }; syncTakeover(); return; } // the box keeps it until the session is back from the terminal
   for (const a of going) flying.add(a);
+  takeOff(uuid, ta.closest(".composer")); // its band moves up from the box once it shows (send-tween.js)
   clearBox(ta);
 }
 
 export function mountComposer(s) {
   const ta = document.getElementById("msg");
   ask = null; // switching sessions or views cancels a prompt
+  if (!ta) return; // a subagent, shell or monitor view has no box (R5.12); the draft waits for Main conversation
   renderAttachments();
   /* a pick is stored per session (the backend's session message updates the header) and applied to a running process (setModel, the effort through applyFlagSettings) */
   attachSlash(ta, (m, effort) => {
@@ -382,7 +387,9 @@ export function paintBash(s) {
   box.classList.toggle("bash", on);
   box.querySelector(":scope > .g").textContent = on ? "!" : "❯";
   ta.setAttribute("aria-label", on ? "Shell command" : "Message");
-  ta.placeholder = on ? `Run a shell command in ${s.cwd}` : `Message ${s.title}, / for commands`;
+  /* while messages wait for the turn (R5.5) the empty box says how many; the queue above the box shows which */
+  const waiting = queuedOf(s).length;
+  ta.placeholder = on ? `Run a shell command in ${s.cwd}` : waiting ? `${waiting} waiting for Claude's next step` : `Message ${s.title}, / for commands`;
 }
 function mountBash(s, ta) {
   ta.addEventListener("beforeinput", () => { ta.bashBefore = ta.value; });

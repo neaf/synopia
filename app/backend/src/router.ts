@@ -144,12 +144,13 @@ export class Router {
       // ---------- requests ----------
       view: (client, m) => {
         const sid = sessions.resolve(m.sid as string);
-        publisher.view(client, sid, agent(m), str(m.from));
-        if (!agent(m)) sessions.get(sid)?.checkFolder(); // the session you chose: its folder gone or not (R3.11)
+        void publisher.view(client, sid, agent(m), str(m.from), str(m.bg));
+        if (!agent(m) && !str(m.bg)) sessions.get(sid)?.checkFolder(); // the session you chose: its folder gone or not (R3.11)
         const folder = publisher.meta(sid)?.cwd, s = sessions.get(sid);
         if (folder && s) void menus.viewed(client, folder, s.cwd, s.menuSource());
       },
       earlier: (client, m) => { publisher.earlier(client, sessions.resolve(m.sid as string), agent(m), m.before as string); },
+      earlierOutput: (client, m) => publisher.earlierOutput(client, sessions.resolve(m.sid as string), m.bg as string, m.before as number),
       toolOutput: async (client, m) => { await publisher.toolOutput(client, sessions.resolve(m.sid as string), agent(m), m.toolUseId as string); },
       listRecent: (client, m) => {
         const filter = str(m.filter) ?? '';

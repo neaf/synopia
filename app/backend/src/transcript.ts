@@ -8,7 +8,7 @@ import { displayIn } from './paths.ts';
 import { BANG_CAP } from './bang.ts';
 import type { BashOutput } from './bang.ts';
 import { classify, agentMetaOf } from './claude-jsonl.ts';
-import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
+import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, Denial, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
 
 export type { Question } from './claude-jsonl.ts';
 export type Hunk = { o: number; n: number; lines: string[] };
@@ -29,6 +29,7 @@ export type Item = {
   cmd?: string; sh?: BashOutput; // bang: a bash-mode command (`!`) and its output, from Synopia or the CLI (R5.13)
   title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
   text?: string; images?: number; workedMs?: number; // you
+  queued?: boolean; // you: a message a running turn took in from its queue (a `queued_command`), not a turn's start
   // you: an interrupt marker. `interrupted`: you stopped the turn; `turnedDown`: you turned a tool
   // down and Claude carries on (docs/Claude Code transcripts.md#interrupts).
   interrupted?: boolean; turnedDown?: boolean;
@@ -38,6 +39,7 @@ export type Item = {
   patches?: Patch[]; moreFiles?: number; // tool: the files a Bash command changed (bashEditDiff), and how many more it didn't list
   input?: string; out?: Output; // tool: its input as the expanded step shows it, and its result's preview (R5.6)
   fg?: boolean; // tool: a foreground Bash or Agent still running, which b, b can send to the background (R9)
+  denied?: Denial; // tool, state denied: who said no when it has no card answer (auto mode, or you at a terminal)
   qs?: Question[]; answer?: string | null; // ask
 };
 export type Background = {
@@ -58,10 +60,17 @@ export type PendingAsk = { kind: 'question' | 'plan'; toolUseId: string; agentId
 // A title Synopia's writer gave the session, and when (ms): state.json `written[sid].history`.
 export type WrittenTitle = { title: string; at: number };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
+// One event of a monitor (its notification's `<event>`): `n` counts its events from 0, so a reader's
+// place survives the oldest ones being dropped past MAX_EVENTS.
+export type OutEvent = { n: number; ts: string | null; text: string };
+// Where a background shell's or monitor's output is (R7.2): a shell's output file (null until its
+// result names it), a monitor's events.
+export type BgOutput = { kind: 'shell' | 'monitor'; file: string | null; events: OutEvent[] };
 
 const MAX_TEXT = 6000;
 const MAX_BANG_CMD = 4000;
 const MAX_DIFF_LINES = 400;
+const MAX_EVENTS = 20000;
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const titleKey = (s: string): string => s.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -295,6 +304,8 @@ class ReadState {
   bgTool = new Map<string, boolean>(); // tool_use id -> runs in the background (input flag or async launch)
   fgBash = new Map<string, Pick<Background, 'description' | 'command' | 'timeout' | 'start'>>(); // foreground Bash uses, in case one moves to the background
   notes = new Map<string, Note>();
+  outFiles = new Map<string, string>(); // tool_use id -> a background shell's output file (its result, or its end notification)
+  events = new Map<string, OutEvent[]>(); // task id -> a monitor's events, oldest first (the last MAX_EVENTS)
   taskIds: Map<string, string>; // tool_use id -> the SDK task id (background_tasks_changed lists these)
   reportKind = new Map<string, 'message' | 'result'>(); // agent id -> where its report came from
   bg = new Map<string, Background>();
@@ -303,6 +314,7 @@ class ReadState {
   changedAgents = new Set<string>();
   metaChanged = false;
   interrupted = new Set<string>(); // tool uses whose result the CLI wrote for an interrupt
+  denials = new Map<string, Denial>(); // tool uses a permission check denied (claude-jsonl.ts Denial)
   lastErrors: string[] = []; // the error results of the record just read, if it held results
   // Title items (R5.x): the shown title's sources as read so far, in record and time order (a
   // custom-title, else the writer's, else the ai-title, as the header picks), the last shown one's
@@ -480,7 +492,7 @@ export class Transcript {
         if (foreign) return;
         r.turnOpen = true; // written when a turn takes it in
         r.afterMarker = false;
-        if (rec.user) this.user(rec.user, rec.uuid || `attachment@${r.seq}`);
+        if (rec.user) this.user(rec.user, rec.uuid || `attachment@${r.seq}`, true);
         return;
       case 'user':
         if (!foreign) this.user(rec, rec.uuid || `user@${r.seq}`);
@@ -517,7 +529,7 @@ export class Transcript {
     }
   }
 
-  private user(u: UserRecord, uuid: string): void {
+  private user(u: UserRecord, uuid: string, queued = false): void {
     const r = this.r;
     const tu = u.toolUse;
     if (tu && tu.toolUseId) {
@@ -547,9 +559,11 @@ export class Transcript {
       for (const res of u.results) {
         const tid = res.toolUseId;
         r.results.set(tid, res.isError);
+        if (res.outputFile) r.outFiles.set(tid, res.outputFile);
         r.fgBash.delete(tid);
         if (res.isError) errors.push(tid);
         if (res.cutShort) r.interrupted.add(tid);
+        if (res.denial) r.denials.set(tid, res.denial);
         if (r.asks.has(tid)) r.answers.set(tid, clip(res.text, 2000));
         else {
           const interrupted = r.interrupted.has(tid) || (res === u.results[0] && tu?.interrupted === true);
@@ -565,13 +579,22 @@ export class Transcript {
       }
       r.lastErrors = errors;
     }
-    const body = u.body;
+    let body = u.body, text = u.text;
     if (body.kind === 'results' || body.kind === 'meta') return;
-    // Bash mode (R5.13), as the CLI records it: a `<bash-input>` record, then one with its output.
-    // Neither is a turn.
+    // Bash mode (R5.13), as the CLI records it: a `<bash-input>` record, then one with its output, or
+    // one record with both, several commands, or the next prompt after them (docs/Claude Code
+    // transcripts.md, "Bash mode records"). Each command is an item of its own, in place; the record's
+    // uuid goes to its only command, or to the prompt after them. None is a turn.
     if (body.kind === 'bash-input') {
-      if (body.cmd !== null) r.lastBang = this.put({ id: uuid, k: 'bang', ts: u.ts, cmd: clip(body.cmd, MAX_BANG_CMD) });
-      return;
+      const { runs, then } = body;
+      for (let n = 0; n < runs.length; n++) {
+        const out = runs[n].out;
+        r.lastBang = this.put({ id: n || then ? `${uuid}:bang${n}` : uuid, k: 'bang', ts: u.ts, cmd: clip(runs[n].cmd, MAX_BANG_CMD),
+          ...(out ? { sh: { ...out, out: clip(out.out, BANG_CAP), err: clip(out.err, BANG_CAP) } } : {}) });
+      }
+      if (!then) return;
+      text = body.rest;
+      body = then;
     }
     if (body.kind === 'bash-output') {
       const b = r.lastBang;
@@ -604,7 +627,7 @@ export class Transcript {
       return;
     }
     const images = u.images.length;
-    const item: Item = { id: uuid, k: 'you', ts: u.ts, text: clip(u.text), images };
+    const item: Item = { id: uuid, k: 'you', ts: u.ts, text: clip(text), images, ...(queued ? { queued } : {}) };
     if (images) {
       item.imgs = imageRefs(uuid, u.images);
       if (r.span) r.imageSpans.set(uuid, r.span);
@@ -639,6 +662,13 @@ export class Transcript {
     const r = this.r;
     // A subagent woken again after its first end notifies by task id only.
     const tid = n.toolUseId ?? (n.taskId ? this.toolOfAgent(n.taskId) : null);
+    if (n.event !== null && n.taskId) { // a monitor's output lines, by its task id (its view shows them, R7.2)
+      const list = r.events.get(n.taskId) ?? [];
+      list.push({ n: (list.at(-1)?.n ?? -1) + 1, ts, text: clip(n.event, 4000) });
+      if (list.length > MAX_EVENTS) list.splice(0, list.length - MAX_EVENTS);
+      r.events.set(n.taskId, list);
+    }
+    if (tid && n.outputFile) r.outFiles.set(tid, n.outputFile);
     if (!tid) return; // a monitor's event: it keeps running
     if (n.taskId) this.setTask(tid, n.taskId);
     r.notes.set(tid, { status: n.status ?? 'completed', summary: n.summary ?? '', end: ts });
@@ -867,11 +897,13 @@ export class Transcript {
     } else if (it && it.k === 'tool') {
       let state: string;
       const answer = res !== undefined ? this.answerOf(tid) : undefined;
+      const denial = res ? r.denials.get(tid) : undefined;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
         state = note || !r.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
       } else if (res !== undefined) {
-        // You denied it, or sent the plan back: your answer above says so, it didn't fail.
-        state = !res ? 'done' : r.interrupted.has(tid) ? 'stopped' : answer && /^(Denied|Changes)\b/.test(answer) ? 'denied' : 'failed';
+        // You denied it, or sent the plan back: your answer above says so, it didn't fail. Auto mode
+        // blocked it, or you turned it down at a terminal: denied too, before the marker that follows.
+        state = !res ? 'done' : denial ? 'denied' : r.interrupted.has(tid) ? 'stopped' : answer && /^(Denied|Changes)\b/.test(answer) ? 'denied' : 'failed';
       }
       // A plan with no answer stays running: the page shows it as "Not answered".
       else if (it.name !== 'ExitPlanMode' && this.endedBefore(it.ts)) state = this.endedFailed ? 'failed' : 'stopped';
@@ -894,8 +926,10 @@ export class Transcript {
         planItem.text = clip(plan);
         r.changed.add(planItem.id);
       }
-      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (imgs && it.imgs !== imgs) || (answer && it.answer !== answer)) {
+      if (it.state !== state || it.patch !== patch || (bash && it.patches !== bash.patches) || (out && it.out !== out) || (imgs && it.imgs !== imgs) || (answer && it.answer !== answer) || it.denied !== denial) {
         it.state = state;
+        if (denial) it.denied = denial;
+        else delete it.denied;
         if (out) it.out = out;
         if (imgs) it.imgs = imgs;
         if (patch) it.patch = patch;
@@ -954,6 +988,20 @@ export class Transcript {
       if (sub) for (const b of sub.background()) out.push(this.subBackground(aid, sub, b));
     }
     return out;
+  }
+
+  // A shell's or monitor's output source, from this file and its subagents' (a subagent's monitor
+  // can be notified in either).
+  outputOf(id: string): BgOutput | undefined {
+    const b = this.getBackground(id);
+    if (!b) return undefined;
+    const reads = [this.r, ...[...this.agentMeta.values()].flatMap((a) => (a.sub ? [a.sub.r] : []))];
+    const file = reads.map((r) => r.outFiles.get(id)).find(Boolean) ?? null;
+    const events = b.taskId ? reads.flatMap((r) => r.events.get(b.taskId as string) ?? []) : [];
+    if (reads.filter((r) => b.taskId && r.events.has(b.taskId)).length < 2) return { kind: b.kind, file, events };
+    // both files have some: by time, counted again (each keeps far fewer than MAX_EVENTS)
+    events.sort((x, y) => (x.ts ?? '').localeCompare(y.ts ?? ''));
+    return { kind: b.kind, file, events: events.map((e, n) => ({ ...e, n })) };
   }
 
   getBackground(id: string): Background | undefined {

@@ -12,8 +12,11 @@ export const PAGE = {
   /* the token, first and only once (server.ts) */
   auth: { token: "str" },
   /* requests: answered by data */
-  view: { sid: "str", agent: "str?", from: "str?" },
+  /* a conversation (agent null for the main one), or a background shell's or monitor's output (bg, its tool use id;
+     from: where the output the page had loaded began) */
+  view: { sid: "str", agent: "str?", from: "str?", bg: "str?" },
   earlier: { sid: "str", agent: "str?", before: "str" },
+  earlierOutput: { sid: "str", bg: "str", before: "num" },
   toolOutput: { sid: "str", agent: "str?", toolUseId: "str" },
   listRecent: { filter: "str?" },
   /* the folder list (R3.3, R3.13): the known folders; one folder's child folders, on Tab; whether named paths are
@@ -77,6 +80,10 @@ export const SERVER = {
   menu: { cwd: "str", commands: "arr", models: "arr" },
   toast: { text: "str" },
   toolOutput: { sid: "str", agent: "str?", toolUseId: "str", text: "str" },
+  /* a shown shell's or monitor's output (R7.2): a part [from, to) of total, in bytes for a shell, in events for a
+     monitor; a reset, the part before what the page has (prepend), else what came after it. lost: "unnamed" (no
+     output file named) or "gone" (it can't be read) */
+  output: { sid: "str", bg: "str", text: "str", from: "num", to: "num", total: "num", reset: "bool?", prepend: "bool?", lost: "str?" },
   /* the Open list: at most 50 rows, and the totals: past sessions, their folders, how many match the filter */
   recent: { filter: "str", sessions: "arr", total: "num?", folders: "num?", matched: "num?", error: "bool?" },
   /* the known folders ({path, sessions, lastUsed}), newest first */

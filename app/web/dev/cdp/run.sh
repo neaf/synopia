@@ -12,14 +12,14 @@
 #   app/web/dev/cdp/run.sh preview the file preview (R5.9) on a generated session pointing at a repo file, a binary and HTML, with --dry-run
 #   app/web/dev/cdp/run.sh tween   sidebar sub-lines: height then fade, fade then height, no jump, guides aligned, instant with reduced motion (R8.1, R4.3)
 #   app/web/dev/cdp/run.sh images  image thumbnails, the viewer and pasted images (R5.13), on made-up images generated into the temp state, with shots
-#   app/web/dev/cdp/run.sh rail    the background panel's tree on the rail fixture: a subagent's own shells and monitors under it, guides, no Stop row (R7.1), with shots
+#   app/web/dev/cdp/run.sh rail    the background panel's tree on the rail fixture: a subagent's own shells and monitors under it, guides, no Stop row (R7.1), a shell or monitor opened in the pane with its output (R7.2), with shots
 #   app/web/dev/cdp/run.sh motion  running marks always move (R8.1), the sub-line tween, reduced motion (R8.5), square marks, marks on the box and gutter (R8.6)
 #   app/web/dev/cdp/run.sh extcard a question and a plan asked in another process: needs you, the read-only card, then answered (R6.8), with shots
 #   app/web/dev/cdp/run.sh restore the exact UI state after a page reload and two backend restarts on the same state folder (R3.9)
 #   app/web/dev/cdp/run.sh background  b, b sends foreground steps to the background (R9): the highlight, the prompt, cancel, send, not driven, with a shot
 #   app/web/dev/cdp/run.sh dark    dark mode (section 11): follows the system live, the switch stored and kept over a reload, no light background left, with shots
 #   app/web/dev/cdp/run.sh titles  title changes in the transcript (R5.12c): two Retitled lines in place, kept over a reload and a backend restart, with a shot
-#   app/web/dev/cdp/run.sh queued  messages sent during a turn show pending (R5.5): in order above the live line, one lands in place, an interrupt puts the other back in the box, with shots
+#   app/web/dev/cdp/run.sh queued  the pane as one panel and messages sent during a turn (R5, R5.5): the box as the last row under its line, the band edge whole and edge to edge, clock bands below the live line, pinned when scrolled up, the box counts them, they land with nothing moving, the send tween, an interrupt puts one back in the box, long tokens wrap, with shots
 #   app/web/dev/cdp/run.sh bang    bash mode (R5.13): ! enters it, Backspace leaves it, a command's output, stderr and exit, Show all, one at a time, Esc, Esc ends a sleep, with shots
 #   app/web/dev/cdp/run.sh close  x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
 #   app/web/dev/cdp/run.sh folders  New session and Open session in any folder (R3.3, R3.11-R3.14, R9.7): n and o, the folder list, Tab, the create row, gone folders and continue as a fork, the matcher in four lists, no open session, with shots
@@ -81,6 +81,8 @@ if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/
 if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
 # the scripted SDK writes to the transcripts as a CLI would: never to a tracked fixture tree
 if [ "$fix" != "$state/claude" ]; then cp -R "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
+# the rail check's shells write their output under this run's state folder (made up, R7.2)
+if [ "$name" = rail ]; then node "$here/rail.mjs" make "$fix" "$state/tasks" || exit 1; fi
 
 # the made-up sessions' sandbox folders under /tmp exist, as a real session's folder does (a missing one reads
 # "Folder gone", R3.11); the folders check keeps its gone one gone

@@ -3,10 +3,9 @@
    the session keys below. Text fields keep their own editing keys on the field itself (the message box and
    its menu, composer.js; a card's field, card.js; a group's name, sidebar.js; the Open list's filter types):
    the session keys leave a focused field alone, except ⌘⇧[ ] and the box's Esc (composer.js). */
-import { current, cur, view, select, selectView, agentById } from "./state.js";
+import { current, cur, view, select, selectView, agentById, bgById } from "./state.js";
 import { mode, setMode, paintMode } from "./mode.js";
 import { KEYS, renderSide } from "./sidebar.js";
-import { setOpenBg } from "./rail.js";
 import { drag, dragKey } from "./dnd.js";
 import { renderConv, loadEarlier } from "./transcript.js";
 import { promptKey, askInterrupt, askBackground, askClose } from "./composer.js";
@@ -43,11 +42,8 @@ export function renderAll() { renderSide(); renderConv(); paintMode(); if (mode 
 function sessionKey(e) {
   /* ⌘⇧[ and ⌘⇧] move to the previous or next session, like tabs in iTerm, in insert mode too */
   if (e.metaKey && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight")) { e.preventDefault(); stepSession(e.code === "BracketRight" ? 1 : -1); return; }
-  /* Ctrl+J / Ctrl+K: the next or previous conversation inside the session; normal mode only, so Ctrl+K never fights a text field */
-  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === "j" || e.key === "k")) {
-    if (mode !== "insert" && !inField(e.target)) { e.preventDefault(); stepView(e.key === "j" ? 1 : -1); }
-    return;
-  }
+  /* Ctrl+J / Ctrl+K: the next or previous session, in insert mode too (it takes Ctrl+K from a text field) */
+  if (e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey && (e.key === "j" || e.key === "k")) { e.preventDefault(); stepSession(e.key === "j" ? 1 : -1); return; }
   if (e.metaKey || e.ctrlKey || e.altKey || inField(e.target)) return;
   if (e.target.closest && e.target.closest("button") && e.key === " ") e.preventDefault();
   /* Esc, Esc interrupts a running turn; b, b sends its foreground steps to the background; x, x closes the
@@ -57,12 +53,13 @@ function sessionKey(e) {
   if (qaKeys(e)) return;
   const log = document.getElementById("log"), gone = Boolean(cur()?.gone);
   if (gone && /^[ia/]$/.test(e.key)) { e.preventDefault(); return; } // its folder is gone: no field to type in (R3.11)
+  if (!document.getElementById("msg") && /^[ia/!]$/.test(e.key)) { e.preventDefault(); return; } // a view with no box (R5.12): normal mode stays
   switch (e.key) {
     case "n": e.preventDefault(); openNewSession(); break; // New session (R9.7)
     case "o": e.preventDefault(); showOpenList(); break; // Open session (R9.7)
     case "Enter": if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); } break; // Continue in a folder (R3.11)
-    case "J": e.preventDefault(); stepSession(1); break;
-    case "K": e.preventDefault(); stepSession(-1); break;
+    case "J": e.preventDefault(); stepView(1); break; // the next or previous conversation inside the session
+    case "K": e.preventDefault(); stepView(-1); break;
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;
     case "k": e.preventDefault(); log?.scrollBy({ top: -60 }); break;
     case "g": e.preventDefault(); if (log) { if (log.scrollTop <= 0) loadEarlier(); else log.scrollTop = 0; } break; // at the top: earlier items
@@ -75,17 +72,19 @@ function sessionKey(e) {
   }
 }
 
-/* J/K and ⌘⇧[ ]: the next or previous shown session, in sidebar order (KEYS, from renderSide) */
+/* Ctrl+J/K and ⌘⇧[ ]: the next or previous shown session, in sidebar order (KEYS, from renderSide); from
+   insert mode the next session's box takes the focus (the render blurs the old one) */
 function stepSession(step) {
   if (!KEYS.length) return;
-  const i = KEYS.indexOf(current);
-  select(i < 0 ? KEYS[step > 0 ? 0 : KEYS.length - 1] : KEYS[(i + step + KEYS.length) % KEYS.length]); setOpenBg(null); renderAll();
+  const i = KEYS.indexOf(current), was = mode;
+  select(i < 0 ? KEYS[step > 0 ? 0 : KEYS.length - 1] : KEYS[(i + step + KEYS.length) % KEYS.length]); renderAll();
+  if (was === "insert" && mode !== "insert" && document.getElementById("msg")) setMode("insert");
 }
-/* Ctrl+J / Ctrl+K: Main conversation, then the subagents and forks as the background panel shows them, top
-   to bottom; past the last one it wraps to Main conversation */
+/* J/K: Main conversation, then the subagents, forks, shells and monitors as the background panel shows
+   them, top to bottom (each opens in the pane, R7.2); past the last one it wraps to Main conversation */
 function stepView(step) {
   const s = cur(); if (!s) return;
-  const ids = [...new Set([...document.querySelectorAll(".rail [data-agent]")].map(el => el.dataset.agent))].filter(id => agentById(s, id));
+  const ids = [...new Set([...document.querySelectorAll(".rail [data-agent], .rail [data-bg]")].map(el => el.dataset.agent || el.dataset.bg))].filter(id => agentById(s, id) || bgById(s, id));
   const order = [null, ...ids];
   if (order.length < 2) return;
   const i = Math.max(0, order.indexOf(view || null));

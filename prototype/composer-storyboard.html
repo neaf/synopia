@@ -1,0 +1,780 @@
+<!-- Design history, not the spec: where this storyboard differs from docs/requirements.md (R5 message box, R5.5 queued messages, R5.12 views without a box), the requirements win. All data in it is invented. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: message box storyboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  /* the palette, as app.css :root */
+  :root {
+    --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+    --red: #CF222E; --green: #1A7F37; --link: #0550AE; --dot-green: #2DA44E; --guide: #B1BAC4;
+    --band: #F0F3F6; --sel: #DDF4FF; --ring: #54AEFF;
+    --nd-bg: #FFEBE9; --nd-line: #FFCECB;
+    --mk-blue: #0550AE; --mk-green: #1A7F37; --mk-track: #C6E9D0; --mk-shell: #0B7A82; --mk-shell-track: #B6E0E3;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --log-font: 12px; --log-lh: 1.45;
+  }
+  /* dark mode, as css/dark.css */
+  .dark {
+    --canvas: #2A3038; --side: #22272E; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+    --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1;
+    --red: #FF7B72; --green: #56D364; --link: #6CB6FF; --dot-green: #3FB950; --guide: #606B78;
+    --band: #2C3644; --sel: #1F3B5C; --ring: #4493F8;
+    --nd-bg: #4A2A2D; --nd-line: #7A3B3E;
+    --mk-blue: #4493F8; --mk-green: #3FB950; --mk-track: #1F4D2C; --mk-shell: #39C5CF; --mk-shell-track: #1B4B50;
+    color: var(--ink);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F6F7F9; color: #1F2328; font: 400 14.5px/1.5 var(--sans); }
+  :focus-visible { outline: 2px solid #0550AE; outline-offset: 2px; }
+
+  .page { max-width: 1560px; margin: 0 auto; padding: 28px 32px 80px; }
+  header.top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -.01em; }
+  header.top p { margin: 0 0 6px; color: #4B535C; max-width: 84ch; }
+  h2 { font-size: 21px; margin: 44px 0 4px; line-height: 1.25; }
+  h2 + .lede { margin: 0 0 14px; color: #4B535C; max-width: 92ch; }
+  .part { margin-top: 64px; padding-top: 18px; border-top: 1px solid #D0D7DE; font-size: 25px; }
+
+  /* the key: what each variant is, above the rows */
+  .key { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 22px 0 0; }
+  .key div { background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; padding: 10px 13px; font-size: 13.5px; color: #4B535C; }
+  .key b { display: block; color: #1F2328; font-size: 15px; margin-bottom: 2px; }
+  .key div.rec { box-shadow: 0 0 0 2px #0550AE; border-color: transparent; }
+
+  .row4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .row2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; max-width: 760px; }
+  .fr { min-width: 0; }
+  .fr > .tag { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; font-size: 13.5px; font-weight: 700; }
+  .fr > .cap { margin: 8px 2px 0; font-size: 13px; color: #4B535C; }
+  .rec-tag { font-size: 11.5px; font-weight: 700; color: #fff; background: #0550AE; border-radius: 4px; padding: 0 6px; line-height: 18px; }
+  .fr.rec .crop { box-shadow: 0 0 0 2px #0550AE; }
+  .why { margin: 18px 0 0; padding: 12px 16px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; font-size: 14px; color: #4B535C; max-width: 112ch; }
+  .why b { color: #1F2328; }
+  .why p { margin: 0 0 8px; } .why p:last-child { margin: 0; }
+  ol.qs { margin: 0; padding: 14px 20px 14px 40px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; display: grid; gap: 8px; max-width: 112ch; font-size: 14px; }
+  ol.qs li span { color: #6E7781; }
+  kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 2.5px; padding: 0 3.5px; background: var(--panel); color: var(--ink-2); }
+
+  /* ---------- the conversation pane crop: on the canvas, as .conv (9px padding and gaps) ---------- */
+  .crop { background: var(--canvas); color: var(--ink); border-radius: 9px; padding: 9px; display: flex; flex-direction: column; gap: 9px; height: var(--h, 380px); border: 1px solid #D0D7DE; font: 400 13px/1.5 var(--sans); }
+  .dark.crop { border-color: #22272E; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+  .c-head { flex: none; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
+  .c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
+  .c-now { color: var(--ink-2); margin: 0; }
+  .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; line-height: 16.5px; height: 16.5px; }
+  .c-meta .mono { font-family: var(--mono); color: var(--ink-2); }
+  .c-meta .link { color: var(--link); }
+  .c-head > p, .c-head > h3 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .c-acts { grid-row: 1 / 4; grid-column: 2; display: flex; align-items: center; }
+  .btn { background: none; border: 1px solid transparent; border-radius: 5.5px; padding: 4.5px 11px; font: 500 12px/1.5 var(--sans); color: var(--ink-2); }
+
+  /* the transcript, as app.css .log; the frames hold it scrolled to the bottom */
+  .log { position: relative; overflow: hidden; padding: 11px 16px 12.5px; min-height: 0; flex: 1 1 0; display: flex; flex-direction: column; justify-content: flex-end;
+    font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; }
+  .log-inner { min-width: 0; }
+  .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
+  .ln > .g { position: relative; user-select: none; }
+  .ln.tool > .g { color: var(--dot-green); }
+  .ln .name { font-weight: 700; }
+  .ln .dim, .res { color: var(--ink-3); }
+  .res { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
+  .res > .lcorner { align-self: start; margin: 2px 0 0 3px; width: 7px; height: 7px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+  .liveln b { color: var(--green); }
+  .ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(.87em - .5em); }
+  .md p { margin: 0; }
+  .md code { color: var(--link); }
+  .step-out { margin: 2px 0 5.5px; }
+  .step-out .cmd, .step-out .out { color: var(--ink-2); white-space: pre-wrap; }
+  .step-out .cmd { color: var(--ink); }
+  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+  .prompt > .g { color: var(--link); }
+  /* the queued veil, as app.css .qveil: the canvas grey at 50% and a 1px faint line at its top; placed by the script below */
+  .qveil { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; pointer-events: none; background: color-mix(in srgb, var(--canvas) 50%, transparent); box-shadow: inset 0 1px 0 var(--faint); }
+
+  .caret { display: inline-block; width: 1.5px; height: 1.2em; background: var(--ink); vertical-align: -.25em; margin-left: 1px; }
+  .ph { color: var(--faint); }
+  .ask-l b { color: var(--ink); }
+  .ask-l { color: var(--ink-2); }
+
+  /* ---------- today: the dock, as app.css .dock and .composer ---------- */
+  .dock { flex: none; padding: 0; }
+  .composer { display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+  .composer > .g { color: var(--link); align-self: start; }
+  .composer .ta { min-height: 3lh; white-space: pre-wrap; }
+  .dock.nm { opacity: .5; }                              /* normal mode: the whole box at half opacity */
+  .dock.ins { box-shadow: 0 0 0 2px var(--ring); }       /* insert mode: a 2px ring */
+  .composer.asking > .g { color: var(--ink); }
+
+  /* Claude's question card, as app.css .qa-card */
+  .qa-card { border-bottom: 1px solid var(--line-2); font-family: var(--sans); }
+  .nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: var(--nd-bg); border-bottom: 1px solid var(--nd-line); font-size: 12px; }
+  .dock .nd-head { border-radius: 7px 7px 0 0; }
+  .nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+  .nd-head .why2 { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .qbody { padding: 9px 12.5px; font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+  .qbody .qt { margin: 0 0 7px; }
+  .opts { display: grid; grid-template-columns: 1.4ch 11px max-content minmax(0, 1fr); column-gap: 1.2ch; row-gap: 1px; margin: 0 0 0 -.6ch; }
+  .o { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline; padding: 2px .6ch; border-radius: 4px; }
+  .o > .k { color: var(--link); font-weight: 700; text-align: right; }
+  .o > .l { font-weight: 700; white-space: nowrap; }
+  .o > .d { color: var(--ink-3); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .o.on { background: var(--sel); } .o.on > .l { color: var(--link); }
+  .radio { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; }
+  .o.on > .radio { border-color: var(--link); }
+  .o.on > .radio::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--link); }
+  .nd-foot { display: flex; gap: 12px; padding: 6px 12.5px 7px; font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
+
+  /* ---------- A: one panel, the box its last row under a 1px line ---------- */
+  .one { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+  .one > .log { border: 0; }
+  /* in the variants a posted band starts at the panel's inner edge, so its 2.5px edge shows (today's -18px margin clips it to 0.5px) */
+  .one .prompt { margin-left: -16px; }
+  .va .one > .log { padding-bottom: 12.5px; }
+  .brow { flex: none; display: grid; grid-template-columns: 2ch minmax(0, 1fr); border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent;
+    padding: 9px 16px 9px 13.5px; font-family: var(--mono); font-size: 12px; line-height: 1.45; } /* ❯ 16px in: where a posted band's ❯ sits */
+  .brow > .g { color: var(--link); }
+  .brow .ta { min-height: 3lh; white-space: pre-wrap; }
+  .brow.asking > .g { color: var(--ink); }
+  .one > .qa-card { flex: none; border-top: 1px solid var(--line-2); border-bottom: 0; }
+  .one > .qa-card .nd-head { border-radius: 0; }
+  /* A's mode: normal mode dims the row's text, insert mode moves today's ring onto the row */
+  .va .brow.nm > * { opacity: .5; }
+  .va .brow.ins { box-shadow: inset 0 0 0 2px var(--ring); border-radius: 0 0 6px 6px; }
+
+  /* ---------- B: an empty ❯ band at the end of the transcript, pinned to the panel's bottom ---------- */
+  .vb .one > .log { padding-bottom: 0; }
+  .pin { flex: none; padding: 0 0 8px; position: relative; }
+  .pin > .band { display: grid; grid-template-columns: 2ch minmax(0, 1fr); border-left: 2.5px solid transparent; margin-top: 3.5px; padding: 3.5px 16px 3.5px 13.5px;
+    font-family: var(--mono); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+  .pin > .band > .g { color: var(--ink-3); }
+  .pin > .band.ins { background: var(--band); border-left-color: var(--link); }
+  .pin > .band.ins > .g { color: var(--link); }
+  .pin > .band.asking > .g { color: var(--ink); }
+  .pin.under { box-shadow: inset 0 1px 0 var(--line-2); padding-top: 4px; }   /* scrolled up: a 1px line only while text runs under it */
+  .pin > .qa-card { border-top: 1px solid var(--line-2); margin: 11px 0 0; }
+  .pin > .qa-card .nd-head { border-radius: 0; }
+
+  /* ---------- C: one panel end to end, header included ---------- */
+  .vc .one > .c-head { border-bottom: 1px solid var(--line-2); }
+  .vc .brow.nm > * { opacity: .5; }
+  .vc .brow.ins { background: var(--band); border-left-color: var(--link); }
+
+  /* marks, as js/marks.js */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+  @keyframes bounce { 0% { transform: translateX(0) scaleX(.42); } 25% { transform: translateX(0) scaleX(1); } 50% { transform: translateX(2.44px) scaleX(.42); } 75% { transform: translateX(0) scaleX(1); } 100% { transform: translateX(0) scaleX(.42); } }
+  .ind { display: inline-grid; place-items: center; width: 1em; height: 1em; line-height: 0; vertical-align: middle; flex: none; font-size: 11px; }
+  .ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
+  .ind .rot { transform-box: view-box; transform-origin: 50% 50%; animation: spin 2s linear infinite; }
+  .ind .bounce { transform-box: fill-box; transform-origin: 0 50%; animation: bounce 2s linear infinite; }
+  .ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
+  .ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; animation: see 2s linear infinite; }
+  .ind .bars i + i { animation-delay: -.55s; }
+  @media (prefers-reduced-motion: reduce) { .ind *, .ind *::before { animation: none !important; } }
+
+  /* ---------- v3: v1's C, queued messages without a veil ---------- */
+  .v3c .log .prompt { margin-left: -16px; margin-right: -16px; position: relative; } /* the band's 2.5px edge whole */
+  .v3c .brow { border-top-color: transparent; }
+  .v3c .brow.lined { border-top-color: var(--line-2); }
+  .v3c .log.top { justify-content: flex-start; }
+  /* the line above the first queued message: halfway into the 11px gap, taking no space */
+  .prompt.l1::before { content: ""; position: absolute; left: -2.5px; right: 0; top: -6px; height: 1px; background: var(--line-2); }
+  .ln.tool.stopped > .g { color: var(--ink-3); }
+  .prompt.qc > .md { color: var(--ink-3); }                         /* clock band: the same band, a still clock, lighter text */
+  .prompt > .g > .ind { font-size: 10px; vertical-align: -1px; }
+  .prompt.qh { background: none; border-left-style: dashed; box-shadow: inset 0 0 0 1px var(--line); } /* hollow band */
+  .prompt.qh > .g, .prompt.qh > .md { color: var(--ink-3); }
+  .pin3 { flex: none; position: relative; padding: 0 16px; font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; }
+  .pin3 .prompt { margin-left: -16px; margin-right: -16px; position: relative; }
+  .pin3.edge { box-shadow: inset 0 1px 0 var(--line-2); padding-top: 5.5px; }
+  .pin3.edge .prompt:first-child { margin-top: 2px; }
+  .pin3 .prompt.l1:first-child::before { top: -5.5px; }
+  .v3c.tw .c-head { position: relative; z-index: 3; background: var(--panel); border-radius: 7px 7px 0 0; }
+  .v3c.tw .one { overflow: visible; }
+  .v3c.tw .log { overflow: visible; clip-path: inset(0 -20px -300px -20px); }
+  .v3c .prompt.ghost { z-index: 2; }
+  /* ---------- v2: C with two sections, one line between them ---------- */
+  .row3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .v2c .one > .c-head { flex: none; border-bottom: 1px solid var(--line-2); }
+  .v2c .log { padding-bottom: 12.5px; }
+  .v2c .log.has2 { padding-bottom: 0; }
+  .v2c .log.top { justify-content: flex-start; }
+  .v2c .log .prompt { margin-left: -16px; margin-right: -16px; } /* the band's 2.5px edge whole, at the panel's inner edge */
+  /* section 2: what Claude doesn't have yet. Its top line is the veil's line; it starts halfway into the 11px gap */
+  .s2 { flex: none; margin-top: -5.5px; padding: 2px 0 8px; position: relative; z-index: 1;
+    background: color-mix(in srgb, var(--canvas) 50%, var(--panel)); box-shadow: inset 0 1px 0 var(--faint);
+    font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; }
+  .s2.capped { max-height: 50%; overflow: hidden; }
+  .s2 .prompt { margin: 3.5px 0 11px; position: relative; }
+  .s2 .prompt.q::after { content: ""; position: absolute; inset: 0 0 0 -2.5px; background: color-mix(in srgb, var(--canvas) 50%, transparent); } /* dimmed as the veil dims it */
+  .s2 .box { display: grid; grid-template-columns: 2ch minmax(0, 1fr); border-left: 2.5px solid transparent; margin-top: 3.5px; padding: 3.5px 16px 3.5px 13.5px; white-space: pre-wrap; }
+  .s2 .box > .g { color: var(--link); }
+  .s2 .box.nm > * { opacity: .5; }
+  .s2 .box.ins { background: var(--band); border-left-color: var(--link); }
+  .s2 .box.asking > .g { color: var(--ink); }
+  .card2 { margin: 0 -16px 11px; border-top: 1px solid var(--line-2); }
+  .card2 .qa-card { border-bottom: 1px solid var(--line-2); }
+  .card2 .nd-head { border-radius: 0; }
+  .ruled { display: grid; grid-template-columns: minmax(0, 1fr) 80px; position: relative; }
+  .ruler { position: relative; }
+  .tick { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid #D0D7DE; font: 400 10.5px/1 var(--mono); color: #8C959F; }
+  .tick span { position: absolute; left: 4px; top: -6px; background: #F6F7F9; padding-right: 2px; }
+  .tick.sp { border-top-color: #54AEFF; } .tick.sp span { color: #0550AE; left: auto; right: 4px; padding: 0 0 0 2px; }
+
+  @media (max-width: 1200px) { .row3 { grid-template-columns: minmax(0, 1fr); } .row4, .key { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 700px) { .row4, .key, .row2 { grid-template-columns: minmax(0, 1fr); } .page { padding: 18px 14px 60px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h1>The message box inside the transcript</h1>
+    <p>v3 goes back to v1's variant C as you liked it in its typed row: one panel from the title down, with the box as its last row under a 1px line. In insert mode the box becomes a <code>❯</code> band with the band's fill and blue left edge, in the place it will land. There is no veil and no grey section.</p>
+    <p>The pane holds three kinds of thing: sent messages (the <code>❯</code> bands), queued messages (sent from the box, not yet taken by Claude), and the message you are writing. Each must read as what it is. Below are three ways to draw the queued ones, each with a place for the line. v2 and v1 follow for comparison.</p>
+  </header>
+
+  <h2 class="part">v3: sent, queued and being written</h2>
+  <div class="key" style="grid-template-columns: repeat(3, minmax(0, 1fr))">
+    <div><b>A. Clock band, line above the box</b>A queued message keeps the sent band's fill and edge, but a still clock takes the place of <code>❯</code> and its text is a lighter grey. The line stays right above the box.</div>
+    <div><b>B. Hollow band, line above the queue</b>A queued message is an outline: no fill, a 1px outline and a dashed left edge, its text grey. The line moves up to above the first queued message, so queued and written share the section under it.</div>
+    <div class="rec"><b>C. Clock band, line above the queue</b>A's clock band with B's line. Everything under the line is yours and not taken yet; the clock and the <code>❯</code> tell queued from written.</div>
+  </div>
+
+  <h2>1. Default: idle, empty box, normal mode</h2>
+  <p class="lede">Exactly v1's C: the line right above the box, the box at 50%.</p>
+  <div class="row3" id="x1"></div>
+  <h2>2. Typed: a draft, insert mode</h2>
+  <p class="lede">v1's typed row, unchanged.</p>
+  <div class="row3" id="x2"></div>
+  <h2>3. Queued: two messages waiting, empty box</h2>
+  <p class="lede">Claude is running the specs. You sent two messages; they wait for its next step.</p>
+  <div class="row3" id="x3"></div>
+  <h2>4. Queued and typed</h2>
+  <p class="lede">The test: sent, queued and written must each read as what they are, at a glance.</p>
+  <div class="row3" id="x4"></div>
+  <h2>5. Subagent view: no box</h2>
+  <p class="lede">Nothing here is yours to send: no box, no line. The panel ends with the log.</p>
+  <div class="row3" id="x5"></div>
+  <h2>6. Shell view: no box</h2>
+  <p class="lede">A background shell in the main pane: its output and the running line. No box, no line.</p>
+  <div class="row3" id="x6"></div>
+
+  <div class="why">
+    <p><b>Recommended: C, the clock band with the line above the queue.</b></p>
+    <p>The clock is a shape in the place where <code>❯</code> stands, so a queued message differs from a sent one by shape, and from your draft too, which keeps its <code>❯</code> and caret. The band itself stays the band, so when Claude takes a message, only the clock turns into <code>❯</code> and its text darkens: nothing changes size. The line above the queue gathers everything not yet taken into one section, the part that stays pinned when you scroll up, so the pinned part has one edge (see "Scrolled up"). In A the queue sits above the line, so pinned, it needs a second line at its top. B's outline is the weakest signal: on a bright screen a 1px outline and a dashed edge are easy to read as a sent band with no fill.</p>
+  </div>
+
+  <h2>A draft of three lines</h2>
+  <p class="lede">The box grows as you type, and the transcript keeps its bottom on it, so its oldest lines scroll out at the top.</p>
+  <div class="row3" id="x7"></div>
+  <h2>A question from Claude</h2>
+  <p class="lede">The card is Claude's, so it ends the transcript, above the line. The box stays under the line, at full strength while Claude waits.</p>
+  <div class="row3" id="x8"></div>
+  <h2>Esc, then "Interrupt?", then Esc again</h2>
+  <p class="lede">The box asks first, at full strength. Esc again stops the turn: the queued messages are cancelled, and their text goes back into the box, above your draft, in the order sent. Shown in C.</p>
+  <div class="row3" id="x9"></div>
+  <h2>Scrolled up</h2>
+  <p class="lede">The unsent part, the queue and the box, stays pinned to the bottom, at most half the panel. Only the transcript scrolls.</p>
+  <div class="row3" id="x10"></div>
+  <h2>Claude takes a queued message</h2>
+  <p class="lede">Shown in C. At its next step Claude takes the first message: its clock turns into <code>❯</code>, its text darkens, and the line moves down past it. Nothing else moves. The numbers at the right are each band's top, in pixels from the top of the transcript; the blue tick is the line.</p>
+  <div class="row3" id="x11"></div>
+  <h2>Sending a draft while Claude is idle</h2>
+  <p class="lede">Shown in C. You press <kbd>Enter</kbd>. The box empties at once and your text moves up into place as the new <code>❯</code> band, in a short tween; the line ends below it. The strip shows the start, the middle and the end of that move.</p>
+  <div class="row3" id="x12"></div>
+  <h2>Dark mode: default, typed, queued and typed</h2>
+  <p class="lede">One row per variant.</p>
+  <div class="row3" id="x13"></div>
+  <div class="row3" id="x14" style="margin-top:14px"></div>
+  <div class="row3" id="x15" style="margin-top:14px"></div>
+
+  <h2>Open questions for v3</h2>
+  <ol class="qs">
+    <li>Is the still clock the right mark for a queued message, or should it be the session's own "queued" mark, the turning arc with the blue centre? <span>The arc moves, and a waiting message doesn't run, so this page uses the still clock.</span></li>
+    <li>Should a queued message's text be the lighter grey, as drawn, or stay full ink, with the clock alone saying it waits?</li>
+    <li>How long should the send tween be? <span>A layout tween at the app's usual 150 to 200 ms is the guess here.</span></li>
+    <li>If more is queued than fits in half the panel, should the queue scroll by itself above the box, or fold into a count such as "and 3 more"?</li>
+    <li>After Esc, Esc, should the text that came back from the queue be marked in the box, for example as a selection, so one key can drop it?</li>
+    <li>Can you edit or take back a single queued message, for example with the box's up arrow, as the CLI does?</li>
+    <li>In bash mode (<kbd>!</kbd>), does a queued shell command get the clock band in pink, or does it run at once and never queue?</li>
+  </ol>
+  <p class="why"><b>To fix in the app.</b> Today a sent band's 2.5px left edge is clipped to about 0.5px: <code>.prompt</code> has a -18px side margin inside <code>.log</code>'s 16px padding, and the log clips to its padding box. v3 draws the edge whole, with a -16px margin.</p>
+
+  <h2 class="part">v2: two sections, for comparison</h2>
+  <header class="top">
+    <h1 style="font-size:22px">v2: what Claude has, and what it doesn't have yet</h1>
+    <p>You picked C: one panel from the title down, and you type your next message where it will land. v2 adds one rule. A single 1px line splits the pane in two. Above it is what Claude has: the transcript. Below it is what Claude doesn't have yet: your queued messages and the message you are typing.</p>
+    <p>The line is the queued veil's top line, the 1px faint grey (<code>--faint</code>), and below it the pane takes the veil's tone, the canvas grey at 50%. With nothing queued, the line sits right above the box. With messages queued, it sits halfway into the gap above the first one, and the box follows them inside the same section, so there is never a second line above the box. Queued messages are dimmed and your draft is not. v1, the four variants side by side, follows below for comparison.</p>
+  </header>
+
+  <h2>1 to 6. The six situations</h2>
+  <p class="lede">The same conversation as in v1, scrolled to the bottom. Every rule above applies in each frame.</p>
+  <div class="row3" id="w1"></div>
+  <div class="row3" id="w2" style="margin-top:14px"></div>
+  <div class="why">
+    <p><b>The mode indicator.</b> Normal mode: the box shows <code>❯</code> and the placeholder at 50%. Insert mode: the box becomes a <code>❯</code> band with the band's fill and the 2.5px blue left edge, at the exact place and size of the band it turns into once sent. One indicator, and the edge is a shape, not only a tint.</p>
+    <p><b>Subagent and shell views.</b> You can't send anything there, so nothing in them is unsent: no box, no section 2, no line. The panel ends with the log. Messages you queued for the main session aren't shown in these views, so they never bring the line back.</p>
+  </div>
+
+  <h2>More states</h2>
+  <p class="lede">Insert mode with an empty box, a three-line draft, a question from Claude, and the box as the "Interrupt?" prompt.</p>
+  <div class="row4" id="w3"></div>
+  <div class="why">
+    <p><b>The question card belongs to section 1, above the line.</b> Claude has already asked it: it is part of the transcript Claude has, in the place where it was asked. The line still means "below here is what you haven't sent", and the box stays under it. The options you pick on the card are not sent until <kbd>Enter</kbd>, but they are answers to Claude's turn, not new messages, so they stay on the card.</p>
+  </div>
+
+  <h2>Scrolled up: where the line and the box go</h2>
+  <p class="lede">You scroll up to read earlier work while two messages wait and you have a draft.</p>
+  <div class="row2" id="w4"></div>
+  <div class="why"><p><b>Recommended: pinned.</b> Section 2 is yours and not on the server yet, so it stays in view: you always see what is waiting and what you are typing, and the line stays the one edge between the two. Only section 1 scrolls. If many messages are queued, section 2 is capped at half the panel and its queue scrolls on its own, with the box always at the bottom. At the content end, section 2 scrolls away with the log, and your draft and queue go off screen while you read.</p></div>
+
+  <h2>Claude takes a queued message</h2>
+  <p class="lede">At its next step Claude takes the first waiting message: the line moves down past it, and the message turns full strength in place. Nothing else moves. The numbers at the right are each band's top, in pixels from the top of the transcript; the blue tick is the line.</p>
+  <div class="row3" id="w5"></div>
+
+  <h2>Sending a draft while Claude is idle</h2>
+  <p class="lede">You press <kbd>Enter</kbd>. Your draft becomes the sent band in place, at the same left inset, size and fill. The line moves below it, and a new empty box opens under the line.</p>
+  <div class="row2" id="w6"></div>
+
+  <h2>Dark mode: default, typed, queued and typed</h2>
+  <p class="lede">Section 2 takes the dark veil's tone, the dark canvas at 50% over the panel; the line is the dark <code>--faint</code> (#9AA5B1).</p>
+  <div class="row3" id="w7"></div>
+
+  <h2>Open questions for v2</h2>
+  <ol class="qs">
+    <li>Should section 2 have the veil's grey tone even when nothing is queued, as drawn, or only the line, with the grey just under queued messages?</li>
+    <li>Scrolled up: pinned, as recommended, or at the content end?</li>
+    <li>With many messages queued, is half the panel the right cap for section 2?</li>
+    <li>When you send, should the band move into place with a short tween, or just change in place, as drawn?</li>
+    <li>Esc, Esc returns the queued messages to the box today. In v2 they are already in section 2: should they join the draft in the box, or stay as bands you can edit one by one?</li>
+    <li>The box starts one line high, the size of a sent band, instead of today's three lines. Is one line enough to click into and to see at a glance?</li>
+    <li>In bash mode (<kbd>!</kbd>), should the box take the pink edge and <code>!</code> of a sent shell command, as its "lands where it will be" look implies?</li>
+    <li>If the files rail shows at the right, does section 2 run under the log only, or across the rail too?</li>
+  </ol>
+  <p class="why"><b>To fix in the app.</b> Today a sent band's 2.5px left edge is clipped to about 0.5px: <code>.prompt</code> has a -18px side margin inside <code>.log</code>'s 16px padding, and the log clips to its padding box. v2 draws the edge whole, with a -16px margin.</p>
+
+  <h2 class="part">v1: four variants, for comparison</h2>
+  <header class="top">
+    <h1 style="font-size:22px">v1: the message box inside the transcript</h1>
+    <p>Today the conversation pane is three rounded panels: the header, the transcript and the message box. Your idea: put the box in the transcript's panel, so that typing feels like writing the next line of the conversation, as in the CLI. The line you type is the <code>❯</code> band it becomes once sent.</p>
+    <p>Each row is one situation, with today's build and the three variants side by side. Every frame is the same conversation, scrolled to the bottom. Today's frame copies app.css.</p>
+  </header>
+
+  <div class="key">
+    <div><b>Today</b>Three panels. Normal mode dims the box to 50%; insert mode rings it in 2px blue.</div>
+    <div class="rec"><b>A. Last row, under a line</b>One panel holds the log and the box. A 1px line sets the box apart. Insert mode moves today's ring onto the box row.</div>
+    <div><b>B. Empty band, pinned</b>No line. The box is an empty <code>❯</code> band at the end of the log, pinned to the bottom. Insert mode gives it the band's fill and blue left edge.</div>
+    <div><b>C. One panel end to end</b>The header joins too, so the whole pane is one panel. The box is A's row. Insert mode works as in B.</div>
+  </div>
+
+  <h2 class="part">Part 1: the six situations</h2>
+
+  <h2>1. Default: idle, empty box, normal mode</h2>
+  <p class="lede">Claude has finished. You are reading, not typing.</p>
+  <div class="row4" id="s1"></div>
+
+  <h2>2. Typed: a draft in the box, insert mode</h2>
+  <p class="lede">You pressed <kbd>i</kbd> and typed two lines. Nothing is sent yet.</p>
+  <div class="row4" id="s2"></div>
+
+  <h2>3. Queued: two messages waiting, empty box</h2>
+  <p class="lede">Claude is running the specs. You sent two messages; they wait under the veil for Claude's next step. The veil starts halfway into the gap above the first waiting message and runs to the bottom of the transcript's viewport, never over the box.</p>
+  <div class="row4" id="s3"></div>
+
+  <h2>4. Queued and typed: two waiting, a third being written</h2>
+  <p class="lede">The test of each variant: you must tell at a glance which text is sent and waiting (under the veil) and which is still your draft (in the box, with the caret).</p>
+  <div class="row4" id="s4"></div>
+
+  <h2>5. Subagent view: no box</h2>
+  <p class="lede">You opened a subagent's transcript. You can't message a subagent, so there is no box, and the panel ends where the log ends, with no empty gap.</p>
+  <div class="row4" id="s5"></div>
+
+  <h2>6. Shell view: no box</h2>
+  <p class="lede">A background shell open in the main pane: its command, its output, and the running line with the moving shell mark. No box, as in a subagent view.</p>
+  <div class="row4" id="s6"></div>
+
+  <div class="why">
+    <p><b>Recommended: A, the box as the last row under a 1px line.</b></p>
+    <p>It gives you the one panel you asked for, and the <code>❯</code> sits exactly where your band's <code>❯</code> lands once sent. The 1px line keeps one firm edge between what is sent and what is not, so in row 4 the draft never looks like a waiting message, even in normal mode. The mode keeps today's indicator, the 2px ring, moved onto the row: nothing to relearn, and it is a shape, not only a tint.</p>
+    <p>B feels most like the CLI, but its insert-mode band is drawn exactly like a posted band. In row 4 the only things that separate your draft from the waiting messages are the veil and the caret. Pinned over a scrolled log, B also needs a line after all (part 2, frame B scrolled up). C's joined header adds little: the header never scrolls, and losing its gap makes the pane one tall box with no landmark at the top.</p>
+  </div>
+
+  <h2 class="part">Part 2: more states</h2>
+
+  <h2>Insert mode, empty box</h2>
+  <p class="lede">Row 1 with <kbd>i</kbd> pressed: the one difference between the frames is the mode indicator.</p>
+  <div class="row4" id="m1"></div>
+
+  <h2>A draft of three lines</h2>
+  <p class="lede">The box grows by a line as you type; the transcript keeps its bottom on the box, so its oldest lines scroll out at the top. In B the band starts one line high, so it grows from one line to three.</p>
+  <div class="row4" id="m2"></div>
+
+  <h2>Claude asks a question</h2>
+  <p class="lede">Today the card sits in the dock, above the box. In A and C it becomes a row of the panel, between the log and the box. In B it is pinned with the band, at the end of the transcript.</p>
+  <div class="row4" id="m3"></div>
+
+  <h2>The box as a prompt: Esc, then "Interrupt?"</h2>
+  <p class="lede">The box turns into a prompt line, in normal mode at full strength, with <code>❯</code> in ink. "Send to background?" and "Close this session?" take the same line. In a subagent or shell view, which has no box, the same row appears for the prompt and goes away after it.</p>
+  <div class="row4" id="m4"></div>
+
+  <h2>B, scrolled up</h2>
+  <p class="lede">The band stays pinned while the transcript scrolls under it. With no line it would cut text in half, so a 1px line shows for as long as text runs under it, and goes once you are back at the bottom.</p>
+  <div class="row2" id="m5"></div>
+
+  <h2>Dark mode: normal, insert, queued</h2>
+  <p class="lede">Rows 1, 2 and 3 on the dark palette. The ring is the dark blue line (#4493F8); the band is #2C3644 on the #333A44 panel.</p>
+  <div class="row4" id="d1"></div>
+  <div class="row4" id="d2" style="margin-top:14px"></div>
+  <div class="row4" id="d3" style="margin-top:14px"></div>
+
+  <h2>Open questions</h2>
+  <ol class="qs">
+    <li>In A, the card sits between the log and the box, as a row of the panel. Should it rather stay at the end of the transcript, as in B, where Claude asked it?</li>
+    <li>When you send, should the draft animate up into place as your new <code>❯</code> band, or just appear there while the box empties? <span>In A and B it already sits at the band's left inset, so only its top moves.</span></li>
+    <li>Should the header join the panel too, as in C, or keep its own panel and gap?</li>
+    <li>Should the box stay three lines high when empty, as today, or start at one line, the height of a sent band, and grow as you type?</li>
+    <li>In normal mode, should the box show its placeholder at 50%, or show just the <code>❯</code>, as an empty CLI prompt does?</li>
+    <li>In a subagent or shell view, the Esc, Esc prompt adds a row that goes away after it. Is that small jump acceptable, or should those views keep one quiet line at the bottom for these prompts?</li>
+    <li>Bash mode (<kbd>!</kbd>) turns the <code>❯</code> into a pink <code>!</code>. In A, should the ring turn pink too, or stay blue, since the ring means insert mode and not what you type?</li>
+    <li>If the files rail shows to the right of the log, does the box row run under the log only, or under both?</li>
+  </ol>
+</div>
+
+<script>
+(() => {
+  const SVG = '<svg viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  const WORK = `<span class="ind" role="img" aria-label="working">${SVG}<circle cx="6" cy="6" r="4.8" stroke="var(--mk-track)" stroke-width="1.8"/><circle cx="6" cy="6" r="4.8" stroke="var(--mk-green)" stroke-width="1.8" pathLength="4" stroke-dasharray="1.6 2.4" class="rot"/><circle cx="6" cy="6" r="1.8" fill="var(--mk-green)"/></svg></span>`;
+  const QWORK = WORK.replace('r="1.8" fill="var(--mk-green)"', 'r="1.8" fill="var(--mk-blue)"');
+  const SHELL = `<span class="ind" role="img" aria-label="running">${SVG}<path d="M1.8 3.2 5 6 1.8 8.8" stroke="var(--mk-shell)" stroke-width="1.8"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="var(--mk-shell-track)" stroke-width="1.9"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="var(--mk-shell)" stroke-width="1.9" class="bounce"/></svg></span>`;
+  const PAUSE = '<span class="ind" role="img" aria-label="needs you"><span class="bars"><i></i><i></i></span></span>';
+  const CARET = '<span class="caret" aria-hidden="true"></span>';
+
+  const band = t => `<div class="prompt"><span class="g">❯</span><div class="md"><p>${t}</p></div></div>`;
+  const ln = (g, body, cls = "") => `<div class="ln ${cls}"><span class="g">${g}</span><div>${body}</div></div>`;
+  const res = t => `<div class="res"><span class="lcorner"></span><span>${t}</span></div>`;
+  const tool = (n, a, r) => ln("●", `<span class="name">${n}</span>(${a})${res(r)}`, "tool");
+  const live = (mark, w, t) => ln(mark, `<b>${w}</b> <span class="dim">${t}</span>`, "liveln");
+
+  const TITLE = "Invoice export: totals row";
+  const BASE = [
+    band("Add a totals row to the CSV export and make the export specs pass."),
+    ln("●", "I'll add the totals row in <code>CsvExport#rows</code>, then run the export specs."),
+    tool("Read", "app/exports/csv_export.rb", "Read 84 lines"),
+    tool("Update", "app/exports/csv_export.rb", "Added 12 lines, removed 2"),
+  ].join("");
+  const IDLE = BASE + tool("Bash", "bin/rspec spec/exports", "18 examples, 0 failures") + ln("●", "The totals row is in, and all 18 export specs pass.");
+  const WORKING = BASE + live(QWORK, "Working", "Bash(bin/rspec spec/exports), 24s");
+  const Q = ["Also check the totals row when the invoice has a credit note.", "Use the en-GB date format in the file name."];
+  const queued = Q.map((t, i) => band(t).replace('class="prompt"', `class="prompt${i ? "" : " q1"}"`)).join("");
+  const ASKED = IDLE.replace(ln("●", "The totals row is in, and all 18 export specs pass."), ln("●", "The totals row is in. One choice before the PDF export."));
+
+  const SUB_LOG = [
+    band("Check the totals row against the credit-note fixture. Report any row whose total differs."),
+    tool("Read", "spec/fixtures/credit_note.json", "Read 41 lines"),
+    tool("Grep", "\"credit\" in app/exports", "3 matches in 2 files"),
+    ln("●", "Two rows subtract the credit twice. Checking the third."),
+    live(WORK, "Working", "Read(app/exports/pdf_export.rb), 6s"),
+  ].join("");
+  const SHELL_LOG = [
+    ln("●", `<span class="name">Bash</span>(Run the export specs on each change)<div class="res"><span class="lcorner"></span><div class="step-out"><div class="cmd">bin/rspec --watch spec/exports</div><div class="out">Watching 4 files.
+18 examples, 0 failures
+Change: app/exports/csv_export.rb
+19 examples, 0 failures
+Change: app/exports/pdf_export.rb
+19 examples, 1 failure</div></div></div>`, "tool"),
+    live(SHELL, "Running", "1m 12s"),
+  ].join("");
+
+  const HEADS = {
+    idle: [TITLE, "Done 3 min ago. All 18 export specs pass.", 'Folder <span class="mono">~/dev/ledger</span>, PRs #212.'],
+    work: [TITLE, "Running the export specs, 2 messages waiting", 'Folder <span class="mono">~/dev/ledger</span>, PRs #212.'],
+    ask: [TITLE, "Needs you: Claude asks a question", 'Folder <span class="mono">~/dev/ledger</span>, PRs #212.'],
+    sub: ["Check credit-note totals", "Working: Read(app/exports/pdf_export.rb)", `Subagent of <span class="link">‹ ${TITLE}</span>. Its report goes back to that session.`],
+    shell: ["Run the export specs on each change", "Running, 1m 12s. Shell, started 14:02.", `Shell in <span class="link">‹ ${TITLE}</span>`],
+  };
+  const head = (k, panel = true) => { const [t, n, m] = HEADS[k];
+    return `<header class="c-head${panel ? " panel" : ""}"><h3 class="c-title">${t}</h3><p class="c-now">${n}</p><p class="c-meta">${m}</p><div class="c-acts"><span class="btn">Opus</span></div></header>`; };
+
+  const CARD = `<div class="qa-card"><div class="nd-head"><b>${PAUSE} Needs you</b><span class="why2">Claude asks a question, for 1 min</span></div>
+    <div class="qbody"><p class="qt">Should the PDF export show the totals row too?</p><div class="opts">
+      <div class="o on"><span class="k">1</span><span class="radio"></span><span class="l">Yes, same format</span><span class="d">Matches the CSV</span></div>
+      <div class="o"><span class="k">2</span><span class="radio"></span><span class="l">No, CSV only</span><span class="d">Leave the PDF as it is</span></div>
+    </div></div>
+    <div class="nd-foot"><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>Space</kbd> pick</span><span><kbd>Enter</kbd> send</span></div></div>`;
+  const ASK = '<span class="ask-l"><b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.</span>';
+
+  const D2 = "Also add the totals row to the PDF export, in the same format.";
+  const D3 = "Also add the totals row to the PDF export, in the same format, and check it against the credit-note fixture.";
+  const D4 = "Then open a draft PR.";
+  const D5 = "Add the same row to the PDF export.";
+  const PH = `Message ${TITLE}, / for commands`, PHQ = "2 waiting for Claude's next step";
+
+  /* the box text: a draft with the caret in insert mode, else the placeholder */
+  const text = s => s.ask ? ASK : s.draft ? s.draft + (s.mode === "insert" ? CARET : "") : (s.mode === "insert" ? CARET : "") + `<span class="ph">${s.queued ? PHQ : PH}</span>`;
+  const logOf = s => `<div class="log${s.panel === false ? "" : " panel"}"><div class="log-inner">${s.log}</div>${s.queued ? '<div class="qveil"></div>' : ""}</div>`;
+  const noBox = s => s.view && !s.ask;
+  const bodyMode = s => (s.card || s.ask) ? "" : s.mode === "insert" ? "ins" : "nm";
+
+  const V = {
+    today: s => head(s.h) + logOf(s) + (noBox(s) ? "" :
+      `<div class="panel dock ${bodyMode(s)}">${s.card ? CARD : ""}<div class="composer${s.ask ? " asking" : ""}"><span class="g">❯</span><div class="ta">${text(s)}</div></div></div>`),
+    A: s => head(s.h) + `<div class="panel one">${logOf({ ...s, panel: false })}${s.card ? CARD : ""}${noBox(s) ? "" :
+      `<div class="brow ${bodyMode(s)}${s.ask ? " asking" : ""}"><span class="g">❯</span><div class="ta">${text(s)}</div></div>`}</div>`,
+    B: s => head(s.h) + `<div class="panel one">${logOf({ ...s, panel: false })}${noBox(s) ? (s.view ? '<div style="height:12.5px;flex:none"></div>' : "") :
+      `<div class="pin${s.under ? " under" : ""}">${s.card ? CARD : ""}<div class="band ${s.mode === "insert" && !s.card && !s.ask ? "ins" : ""}${s.ask ? " asking" : ""}"><span class="g">❯</span><div>${text(s)}</div></div></div>`}</div>`,
+    C: s => `<div class="panel one">${head(s.h, false)}${logOf({ ...s, panel: false })}${s.card ? CARD : ""}${noBox(s) ? "" :
+      `<div class="brow ${bodyMode(s)}${s.ask ? " asking" : ""}"><span class="g">❯</span><div class="ta">${text(s)}</div></div>`}</div>`,
+  };
+  const CLS = { today: "vt", A: "va", B: "vb", C: "vc" };
+  const NAME = { today: "Today", A: "A. Last row, under a line", B: "B. Empty band, pinned", C: "C. One panel end to end" };
+  const crop = (v, s) => `<div class="crop ${CLS[v]}${s.dark ? " dark" : ""}"${s.hgt ? ` style="--h:${s.hgt}px"` : ""}>${V[v](s)}</div>`;
+  const fr = (v, s, cap) => `<div class="fr${v === "A" ? " rec" : ""}"><div class="tag">${NAME[v]}${v === "A" ? '<span class="rec-tag">Recommended</span>' : ""}</div>${crop(v, s)}<p class="cap">${cap}</p></div>`;
+  const row = (id, s, caps) => { document.getElementById(id).innerHTML = ["today", "A", "B", "C"].map((v, i) => fr(v, typeof s === "function" ? s(v) : s, caps[i])).join(""); };
+
+  const idle = { h: "idle", log: IDLE, mode: "normal" };
+  const work = { h: "work", log: WORKING + queued, queued: 2, mode: "normal" };
+
+  row("s1", idle, [
+    "The box is its own panel, at 50% with its placeholder. As in the build, the log clips the bands' 2.5px left edge to 0.5px; the variants show it whole.",
+    "The box is the panel's last row, under a 1px line, its text at 50%.",
+    "The log ends in a bare <code>❯</code> and the placeholder: no fill, no edge.",
+    "One panel from the title down; the box row as in A.",
+  ]);
+  row("s2", { ...idle, mode: "insert", draft: D2 }, [
+    "The 2px ring around the box panel.",
+    "The same 2px ring, drawn inside the row, its bottom corners following the panel's.",
+    "The band gets its fill and blue left edge: it is the band your message becomes.",
+    "As B: the row takes the band's fill and edge.",
+  ]);
+  row("s3", work, [
+    "The veil over both waiting messages, to the bottom of the log panel.",
+    "The veil stops at the 1px line; the row under it is never veiled.",
+    "The veil stops at the pinned band's top; the band is not veiled.",
+    "As A, under the joined header.",
+  ]);
+  row("s4", { ...work, mode: "insert", draft: D4 }, [
+    "Waiting under the veil; the draft in its ringed panel.",
+    "Clear: the veil, then the line, then the ringed row with the caret.",
+    "The weak case: the draft is drawn like the bands under the veil; only the veil's edge and the caret set it apart.",
+    "The line holds the edge, but the draft row still looks like a sent band.",
+  ]);
+  row("s5", { h: "sub", log: SUB_LOG, view: "sub", mode: "normal" }, [
+    "Today the dock is hidden and the log panel fills the column.",
+    "The panel ends after the log: no line, no row.",
+    "The panel ends after the log, with its usual bottom padding.",
+    "One panel: header, then log, then its edge.",
+  ]);
+  row("s6", { h: "shell", log: SHELL_LOG, view: "shell", mode: "normal" }, [
+    "The shell's output in the log panel; no dock.",
+    "As in the subagent view.",
+    "As in the subagent view.",
+    "As in the subagent view.",
+  ]);
+
+  row("m1", { ...idle, mode: "insert" }, [
+    "The ring and the caret.", "The ring moves onto the row.", "The empty band, one line high, with its edge.", "The row as a band, three lines high.",
+  ]);
+  row("m2", { ...idle, mode: "insert", draft: D3 }, [
+    "The box panel grows; the log panel loses a line at its top.",
+    "The row grows upward; the line moves up with it.",
+    "The band grows from one line to three; the log loses three lines.",
+    "As A.",
+  ]);
+  row("m3", { h: "ask", log: ASKED, card: true, mode: "normal", hgt: 470 }, [
+    "The card fills the dock above the box; the box is at full strength.",
+    "The card is a row between the log and the box, each under its 1px line.",
+    "The card and the band are pinned together at the end of the transcript.",
+    "As A.",
+  ]);
+  row("m4", { ...idle, ask: true }, [
+    "The box shows the prompt, at full strength.",
+    "The row shows the prompt; no ring, since you are in normal mode.",
+    "The band's line shows the prompt, with no fill or edge.",
+    "As A.",
+  ]);
+  document.getElementById("m5").innerHTML = [
+    fr("B", { h: "idle", log: IDLE.replace(ln("●", "The totals row is in, and all 18 export specs pass."), ln("●", "I'll add the totals row in <code>CsvExport#rows</code>, then run the export specs.")), mode: "normal", under: true },
+      "Scrolled up: the 1px line appears above the band while text runs under it."),
+    fr("B", idle, "At the bottom: no line."),
+  ].join("");
+
+  row("d1", { ...idle, dark: true, hgt: 370 }, ["Normal.", "Normal.", "Normal.", "Normal."]);
+  row("d2", { ...idle, dark: true, hgt: 370, mode: "insert", draft: D2 }, ["Insert.", "Insert.", "Insert.", "Insert."]);
+  row("d3", { ...work, dark: true, hgt: 370 }, ["Queued.", "Queued.", "Queued.", "Queued."]);
+
+  /* ---------- v2 ---------- */
+  Object.assign(HEADS, {
+    work1: [TITLE, "Running the export specs, 1 message waiting", HEADS.work[2]],
+    work0: [TITLE, "Running the export specs", HEADS.work[2]],
+    sent: [TITLE, "Sent. Waiting for Claude.", HEADS.work[2]],
+  });
+  const qband = t => `<div class="prompt q"><span class="g">❯</span><div class="md"><p>${t}</p></div></div>`;
+  const w = s => {
+    const qs = (s.q || []).map(qband).join("");
+    const st = { ...s, queued: 0 };
+    const box = s.view && !s.ask ? "" : `<div class="box ${s.ask || s.card ? "" : s.mode === "insert" ? "ins" : "nm"}${s.ask ? " asking" : ""}"><span class="g">❯</span><div>${text(st)}</div></div>`;
+    const sec2 = qs || box ? `<div class="s2">${qs}${box}</div>` : "";
+    const log = s.scroll === "end" ? s.log : s.log + (s.card ? `<div class="card2">${CARD}</div>` : "");
+    const shown = s.scroll === "end" ? "" : sec2;
+    return `<div class="crop v2c${s.dark ? " dark" : ""}"${s.hgt ? ` style="--h:${s.hgt}px"` : ""}><div class="panel one">${head(s.h, false)}<div class="log${shown ? " has2" : ""}${s.scroll ? " top" : ""}"><div class="log-inner">${log}</div></div>${shown}</div></div>`;
+  };
+  const wf = (s, tag, cap, ruled) => `<div class="fr"><div class="tag">${tag}</div>${ruled ? `<div class="ruled">${w(s)}<div class="ruler"></div></div>` : w(s)}<p class="cap">${cap}</p></div>`;
+  const put = (id, frames) => { document.getElementById(id).innerHTML = frames.join(""); };
+
+  put("w1", [
+    wf(idle, "1. Default", "Idle, normal mode. The line sits right above the box; the box and placeholder at 50%."),
+    wf({ ...idle, mode: "insert", draft: D2 }, "2. Typed", "Insert mode: the box is the band your message becomes, in the place it will land."),
+    wf({ ...work, log: WORKING, q: Q }, "3. Queued", "The line moves up to halfway into the gap above the first waiting message. The box follows them; no second line."),
+  ]);
+  put("w2", [
+    wf({ ...work, log: WORKING, q: Q, mode: "insert", draft: D4 }, "4. Queued and typed", "One section below the line: the waiting messages dimmed, your draft at full strength with its edge and caret."),
+    wf({ h: "sub", log: SUB_LOG, view: "sub", mode: "normal" }, "5. Subagent view", "Nothing here is unsent: no box, no line. The panel ends with the log."),
+    wf({ h: "shell", log: SHELL_LOG, view: "shell", mode: "normal" }, "6. Shell view", "As the subagent view: the output, the running line with its moving mark, then the panel's edge."),
+  ]);
+  document.getElementById("w3").innerHTML = [
+    wf({ ...idle, mode: "insert" }, "Insert, empty box", "The empty band with its edge and the caret, one line high."),
+    wf({ ...idle, mode: "insert", draft: D3 }, "A draft of three lines", "The box grows downward line by line; the line and the transcript above scroll up with it, so the bottom stays put."),
+    wf({ h: "ask", log: ASKED, card: true, mode: "normal", hgt: 470 }, "A question card", "The card ends the transcript, above the line. The box under the line, at full strength while Claude waits."),
+    wf({ ...idle, ask: true }, "Interrupt?", "The box shows the prompt, at full strength, with <code>❯</code> in ink. The line stays where it is."),
+  ].join("");
+  const EARLY = BASE + tool("Bash", "bin/rspec spec/exports", "18 examples, 0 failures") + ln("●", "The totals row is in. Starting on the en-GB date format.") + tool("Read", "app/exports/file_name.rb", "Read 22 lines");
+  document.getElementById("w4").innerHTML = [
+    wf({ ...work, log: EARLY, q: Q, mode: "insert", draft: D4, scroll: "pin" }, "Pinned <span class=\"rec-tag\">Recommended</span>", "Only the transcript scrolls; the line, the queue and the box stay at the bottom."),
+    wf({ ...work, log: EARLY, q: Q, mode: "insert", draft: D4, scroll: "end" }, "At the content end", "Section 2 scrolled out of view with the log; your queue and draft are off screen."),
+  ].join("");
+  put("w5", [
+    wf({ ...work, log: WORKING, q: Q }, "Two waiting", "The line above the first.", true),
+    wf({ ...work, h: "work1", log: WORKING + band(Q[0]), q: Q.slice(1) }, "Claude takes the first", "The line moves down one message. Every band keeps its y.", true),
+    wf({ ...work, h: "work0", log: WORKING + band(Q[0]) + band(Q[1]), q: [] }, "Claude takes the second", "The line sits above the box again; still nothing moves.", true),
+  ]);
+  put("w6", [
+    wf({ ...idle, mode: "insert", draft: D5 }, "Before Enter", "Your draft in the box.", true),
+    wf({ ...idle, h: "sent", log: IDLE + band(D5), mode: "insert" }, "After Enter", 'The band keeps its shape; the line moves below it, and the view scrolls up by the new empty box, <span id="sendd"></span>.', true),
+  ]);
+  put("w7", [
+    wf({ ...idle, dark: true }, "Default", "Normal mode."),
+    wf({ ...idle, dark: true, mode: "insert", draft: D2 }, "Typed", "Insert mode."),
+    wf({ ...work, dark: true, log: WORKING, q: Q, mode: "insert", draft: D4 }, "Queued and typed", "The waiting messages dimmed, the draft at full strength."),
+  ]);
+  const rulers = () => {
+    document.querySelectorAll(".ruled").forEach(r => {
+      const rt = r.getBoundingClientRect().top, base = r.querySelector(".log").getBoundingClientRect().top;
+      let h = "";
+      r.querySelectorAll(".prompt, .s2 .box").forEach(e => { const y = e.getBoundingClientRect().top; if (y > base - 1) h += `<div class="tick" style="top:${y - rt}px"><span>${Math.round(y - base)}</span></div>`; });
+      const d = r.querySelector(".s2"); if (d) { const y = d.getBoundingClientRect().top; h += `<div class="tick sp" style="top:${y - rt}px"><span>${Math.round(y - base)}</span></div>`; }
+      r.querySelector(".ruler").innerHTML = h;
+    });
+    const [a, b] = document.querySelectorAll("#w6 .ruled");
+    if (a && b) { const y1 = a.querySelector(".s2 .box").getBoundingClientRect().top - a.getBoundingClientRect().top;
+      const y2 = [...b.querySelectorAll(".log .prompt")].pop().getBoundingClientRect().top - b.getBoundingClientRect().top;
+      document.getElementById("sendd").textContent = `${Math.round(y1 - y2)}px`; }
+  };
+
+  /* the veil's top: halfway into the 11px gap above the first waiting message, as transcript.js placeVeil */
+  const place = () => document.querySelectorAll(".qveil").forEach(v => {
+    const first = v.parentElement.querySelector(".prompt.q1"); if (first) v.style.top = (first.offsetTop - 5.5) + "px";
+  });
+  /* ---------- v3 ---------- */
+  const CLOCK = `<span class="ind" role="img" aria-label="queued">${SVG}<circle cx="6" cy="6" r="4.8" stroke="var(--mk-blue)" stroke-width="1.4"/><path d="M6 3.3V6l1.9 1.3" stroke="var(--mk-blue)" stroke-width="1.4"/></svg></span>`;
+  const XV = { A: { q: "clock", line: "a" }, B: { q: "hollow", line: "b" }, C: { q: "clock", line: "b" } };
+  const XN = { A: "A. Clock band, line above the box", B: "B. Hollow band, line above the queue", C: "C. Clock band, line above the queue" };
+  const qb = (v, t, first) => { const o = XV[v], l = first && o.line === "b" ? " l1" : "";
+    return o.q === "clock" ? `<div class="prompt qc${l}"><span class="g">${CLOCK}</span><div class="md"><p>${t}</p></div></div>`
+      : `<div class="prompt qh${l}"><span class="g">❯</span><div class="md"><p>${t}</p></div></div>`; };
+  const x = (v, s) => {
+    const o = XV[v], q = s.q || [], noBoxX = s.view && !s.ask;
+    const qs = q.map((t, i) => qb(v, t, i === 0)).join("");
+    const lined = !q.length || o.line === "a";
+    const box = noBoxX ? "" : `<div class="brow ${bodyMode(s)}${s.ask ? " asking" : ""}${lined ? " lined" : ""}"><span class="g">❯</span><div class="ta">${text({ ...s, queued: 0 })}</div></div>`;
+    const card = s.card ? `<div class="card2">${CARD}</div>` : "";
+    const pinned = s.scroll && q.length;
+    const logIn = s.log + card + (pinned ? "" : qs) + (s.ghost || "");
+    const pin = pinned ? `<div class="pin3 edge">${qs.replace(" l1", "")}</div>` : "";
+    return `<div class="crop vc v3c${s.dark ? " dark" : ""}${s.ghost ? " tw" : ""}"${s.hgt ? ` style="--h:${s.hgt}px"` : ""}><div class="panel one">${head(s.h, false)}<div class="log${s.scroll ? " top" : ""}"><div class="log-inner">${logIn}</div></div>${pin}${box}</div></div>`;
+  };
+  const xf = (v, s, cap, opt = {}) => `<div class="fr${v === "C" && !opt.plain ? " rec" : ""}"><div class="tag">${opt.tag || XN[v]}${v === "C" && !opt.plain ? '<span class="rec-tag">Recommended</span>' : ""}</div>${opt.ruled ? `<div class="ruled r3">${x(v, s)}<div class="ruler"></div></div>` : x(v, s)}<p class="cap">${cap}</p></div>`;
+  const xrow = (id, s, caps) => { document.getElementById(id).innerHTML = ["A", "B", "C"].map((v, i) => xf(v, typeof s === "function" ? s(v) : s, caps[i])).join(""); };
+  const qw = { ...work, log: WORKING, q: Q };
+
+  xrow("x1", idle, ["The line right above the box.", "The same.", "The same."]);
+  xrow("x2", { ...idle, mode: "insert", draft: D2 }, ["The box as the band your message becomes.", "The same.", "The same."]);
+  xrow("x3", qw, [
+    "Clock bands at the end of the transcript; the line stays above the box.",
+    "Hollow bands under the line; the box follows with no second line.",
+    "Clock bands under the line; the box follows with no second line.",
+  ]);
+  xrow("x4", { ...qw, mode: "insert", draft: D4 }, [
+    "Sent has <code>❯</code>, queued has the clock, written has <code>❯</code>, the edge and the caret, under the line.",
+    "Outline and dashed edge for queued; your draft under them with the fill and caret.",
+    "Clock for queued, <code>❯</code> and caret for written, all under one line.",
+  ]);
+  xrow("x5", { h: "sub", log: SUB_LOG, view: "sub", mode: "normal" }, ["The panel ends with the log.", "The same.", "The same."]);
+  xrow("x6", { h: "shell", log: SHELL_LOG, view: "shell", mode: "normal" }, ["The panel ends with the log.", "The same.", "The same."]);
+  xrow("x7", { ...idle, mode: "insert", draft: D3 }, ["The box grows; the line moves up with it.", "The same.", "The same."]);
+  xrow("x8", { h: "ask", log: ASKED, card: true, mode: "normal", hgt: 470 }, ["The card ends the transcript, then the line, then the box.", "The same.", "The same."]);
+  HEADS.intr = [TITLE, "Interrupted. Your 2 queued messages are back in the box.", HEADS.work[2]];
+  const STOPPED = ln("●", '<span class="name">Bash</span>(bin/rspec spec/exports)' + res("Interrupted"), "tool stopped");
+  const BACK = Q.join("\n") + "\n" + D4;
+  document.getElementById("x9").innerHTML = [
+    xf("C", { ...qw, draft: D4, ask: true }, "Esc in normal mode: the box asks. The queue is still there.", { tag: "Esc", plain: true }),
+    xf("C", { ...idle, h: "intr", log: WORKING.replace(live(QWORK, "Working", "Bash(bin/rspec spec/exports), 24s"), STOPPED), draft: BACK, mode: "normal" },
+      "Esc again: Claude stops. The two queued messages are back in the box, above your draft, in the order sent.", { tag: "Esc again", plain: true }),
+    xf("C", { ...idle, h: "intr", log: WORKING.replace(live(QWORK, "Working", "Bash(bin/rspec spec/exports), 24s"), STOPPED), draft: BACK, mode: "insert" },
+      "<kbd>i</kbd> to edit them before you send them again, as one message.", { tag: "Then i", plain: true }),
+  ].join("");
+  const EARLY3 = BASE + tool("Bash", "bin/rspec spec/exports", "18 examples, 0 failures") + ln("●", "The totals row is in. Starting on the en-GB date format.") + tool("Read", "app/exports/file_name.rb", "Read 22 lines");
+  xrow("x10", { ...qw, log: EARLY3, mode: "insert", draft: D4, scroll: true }, [
+    "Pinned, the queue needs its own top line, so two lines show.",
+    "One line, at the top of the pinned part.",
+    "One line, at the top of the pinned part.",
+  ]);
+  document.getElementById("x11").innerHTML = [
+    xf("C", qw, "Two waiting; the line above the first.", { tag: "Two waiting", plain: true, ruled: true }),
+    xf("C", { ...qw, h: "work1", log: WORKING + band(Q[0]), q: Q.slice(1) }, "The first is taken: <code>❯</code> and full ink, the line below it.", { tag: "Claude takes the first", plain: true, ruled: true }),
+    xf("C", { ...qw, h: "work0", log: WORKING + band(Q[0]) + band(Q[1]), q: [] }, "Both taken: the line is back above the box.", { tag: "Claude takes the second", plain: true, ruled: true }),
+  ].join("");
+  document.getElementById("x12").innerHTML = [
+    xf("C", { ...idle, mode: "insert", draft: D5 }, "Start: your draft in the box, you press Enter.", { tag: "1. Enter", plain: true }),
+    xf("C", { ...idle, h: "sent", mode: "insert", ghost: `<div class="prompt ghost" data-ghost><span class="g">❯</span><div class="md"><p>${D5}</p></div></div>` }, "Middle: the box is empty; the band is halfway to its place.", { tag: "2. Moving", plain: true }),
+    xf("C", { ...idle, h: "sent", log: IDLE + band(D5), mode: "insert" }, "End: the band in place, the line below it.", { tag: "3. In place", plain: true }),
+  ].join("");
+  ["A", "B", "C"].forEach((v, i) => {
+    document.getElementById("x1" + (3 + i)).innerHTML = [
+      xf(v, { ...idle, dark: true, hgt: 370 }, "Default.", { tag: XN[v] + ", default" }),
+      xf(v, { ...idle, dark: true, hgt: 370, mode: "insert", draft: D2 }, "Typed.", { tag: "Typed", plain: true }),
+      xf(v, { ...qw, dark: true, hgt: 370, mode: "insert", draft: D4 }, "Queued and typed.", { tag: "Queued and typed", plain: true }),
+    ].join("");
+  });
+  const rulers3 = () => {
+    document.querySelectorAll(".ruled.r3").forEach(r => {
+      const rt = r.getBoundingClientRect().top, base = r.querySelector(".log").getBoundingClientRect().top;
+      let h = "";
+      r.querySelectorAll(".log .prompt, .brow").forEach(e => { const y = e.getBoundingClientRect().top; if (y > base - 1) h += `<div class="tick" style="top:${y - rt}px"><span>${Math.round(y - base)}</span></div>`; });
+      const l1 = r.querySelector(".prompt.l1"), bl = r.querySelector(".brow.lined");
+      const y = l1 ? l1.getBoundingClientRect().top - 5.5 : bl ? bl.getBoundingClientRect().top : null;
+      if (y !== null) h += `<div class="tick sp" style="top:${y - rt}px"><span>${Math.round(y - base)}</span></div>`;
+      r.querySelector(".ruler").innerHTML = h;
+    });
+    /* the tween's middle: the band halfway between the box and its place */
+    const f = document.querySelectorAll("#x12 .crop"); if (f.length === 3) {
+      const from = f[0].querySelector(".brow").getBoundingClientRect().top - f[0].getBoundingClientRect().top;
+      const to = [...f[2].querySelectorAll(".log .prompt")].pop().getBoundingClientRect().top - f[2].getBoundingClientRect().top;
+      const g = f[1].querySelector("[data-ghost]"); g.style.transform = "none";
+      const at = g.getBoundingClientRect().top - f[1].getBoundingClientRect().top;
+      g.style.transform = `translateY(${(from + to) / 2 - at}px)`;
+    }
+  };
+  const all = () => { place(); rulers(); rulers3(); };
+  all(); document.fonts.ready.then(all); addEventListener("resize", all);
+})();
+</script>
+</body>
+</html>

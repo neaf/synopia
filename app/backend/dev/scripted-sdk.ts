@@ -205,6 +205,7 @@ class ScriptedSession implements QueryLike {
   private queued: { uuid: string; text: string }[] = []; // sent during the turn
   private seqs = new Set<Turn>();
   private inited = false; // its system/init went out
+  private held: { uuid: string; text: string }[] = []; // shouldQuery:false messages not yet in the transcript
 
   constructor(env: Scripted, options: Options, prompt: AsyncIterable<SDKUserMessage>) {
     this.env = env;
@@ -266,11 +267,15 @@ class ScriptedSession implements QueryLike {
       const uuid = typeof m.uuid === 'string' ? m.uuid : randomUUID();
       const text = textOf(m.message.content);
       if (m.shouldQuery === false) {
-        this.env.append(this.sid, this.cwd, [{ type: 'user', uuid, message: { role: 'user', content: m.message.content } }]);
+        // as the CLI does: the ones that come together go in one record, joined with a newline
+        // (docs/Claude Code transcripts.md, "Bash mode records")
+        if (!this.held.length) setTimeout(() => this.flushHeld(), 0);
+        this.held.push({ uuid, text });
         // a process that so far took only context still says system/init, with no turn (docs/Agent SDK.md)
         if (!this.inited) { this.inited = true; await this.out.deliver({ uuid: randomUUID(), ...this.init() } as unknown as SDKMessage); }
         continue;
       }
+      this.flushHeld();
       if (this.running) {
         this.queued.push({ uuid, text });
         continue;
@@ -281,6 +286,18 @@ class ScriptedSession implements QueryLike {
       void this.play([{ message: this.init() }, { message: { type: 'system', subtype: 'session_state_changed', state: 'running' } }, ...on], false);
     }
     this.out.close();
+  }
+
+  private flushHeld(): void {
+    const held = this.held.splice(0);
+    if (!held.length || this.out.closed) return;
+    // taken in by a running turn: one queued_command attachment each, as the CLI writes them
+    if (this.running) {
+      this.env.append(this.sid, this.cwd, held.map((h) => ({ type: 'attachment', uuid: h.uuid, attachment: { type: 'queued_command', prompt: h.text, commandMode: 'prompt', source_uuid: h.uuid } })));
+      return;
+    }
+    this.env.append(this.sid, this.cwd, [{ type: 'user', uuid: held[0].uuid, queueTranscriptOnly: true, mergedSendUuids: held.slice(1).map((h) => h.uuid), promptSource: 'sdk',
+      message: { role: 'user', content: held.map((h) => h.text).join('\n') } }]);
   }
 
   // A queued message is in the transcript: the CLI took it in, so an interrupt can't cancel it.

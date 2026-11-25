@@ -94,10 +94,52 @@ const gut = await ev(`(() => { const log = document.querySelector('.log-inner');
   log.insertAdjacentHTML('afterbegin', '<div class="ln claude" id="mt-dot"><span class="g">●</span><span>a</span></div><div class="ln claude" id="mt-mark"><span class="g">' + __synopia.mark('stopped') + '</span><span>a</span></div>');
   const g = document.querySelector('#mt-dot .g'), rg = document.createRange(); rg.selectNodeContents(g);
   const d = rg.getBoundingClientRect(), gd = g.getBoundingClientRect(), m = document.querySelector('#mt-mark .ind').getBoundingClientRect(), gm = document.querySelector('#mt-mark .g').getBoundingClientRect();
-  const lh = parseFloat(getComputedStyle(g).lineHeight);
-  const r = { dx: (m.left + m.width / 2 - gm.left) - (d.left + d.width / 2 - gd.left), dy: (m.top + m.height / 2 - gm.top) - lh / 2 };
+  const r = { dx: (m.left + m.width / 2 - gm.left) - (d.left + d.width / 2 - gd.left) };
   document.getElementById('mt-dot').remove(); document.getElementById('mt-mark').remove(); return r; })()`);
-check('gutter marks centred on the ● column and the first line', Math.abs(gut.dx) < .3 && Math.abs(gut.dy) < .3, JSON.stringify(gut));
+check('gutter marks centred on the ● column', Math.abs(gut.dx) < .3, JSON.stringify(gut)); // the height: below, on real lines
+// every mark on a transcript line sits where a ● would on that line: its drawn centre (an svg's first ring or
+// shape, else the 1em box) against the ● glyph's ink centre over that line's own baseline, within 0.5 px. Lines:
+// Claude's ●, a running Bash step, a running subagent alone and in a wave, a finished report, the done line, the live line
+await ev(`(() => { const s = __synopia.cur(), ts = new Date().toISOString(), ag = (id, d) => ({ id, type: 'general-purpose', fork: false, toolUseId: id + '-t', description: d, finished: false, start: ts });
+  const step = (id, name, obj, extra) => ({ id, k: 'tool', ts, name, verb: 'Ran', obj, state: 'running', toolUseId: id, ...extra });
+  __synopia.inject({ t: 'agents', sid: s.id, upsert: [ag('mt-a1', 'For review: build composer option A'), ag('mt-a2', 'For review: build composer option B'), ag('mt-a3', 'For review: build composer option C')] });
+  __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [step('mt-a1-t', 'Agent', 'A'), { id: 'mt-c1', k: 'claude', ts, text: 'Two more.' },
+    step('mt-a2-t', 'Agent', 'B'), step('mt-a3-t', 'Agent', 'C'), { id: 'mt-c2', k: 'claude', ts, text: 'And a command.' }, step('mt-sh', 'Bash', 'Say hi', { input: 'sleep 9' })], total: s.total + 6 });
+  __synopia.inject({ t: 'session', id: s.id, outbox: [{ id: 'mt-q', text: 'Then say bye.', images: 0, queued: true }] }); })()`);
+await c.until(`!!document.querySelector('#log .ln.agent.one') && !!document.querySelector('#log .wgrid .ind') && !!document.querySelector('#log .ln.tool.running') && !!document.querySelector('#log .qpin .prompt > .g > .ind')`);
+await ev('document.fonts.ready');
+const CENTRES = `(() => { const out = [], cv = document.createElement('canvas').getContext('2d');
+  const firstChar = el => { const w = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, { acceptNode: n => /\\S/.test(n.data) ? 1 : 3 }), t = w.nextNode(); return t && [t, t.data.search(/\\S/)]; };
+  const dotMid = (el, glyph = '●') => { const cs = getComputedStyle(el); cv.font = cs.fontStyle + " " + cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily; const m = cv.measureText(glyph); return (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2; };
+  const baseline = (t, i) => { const p = document.createElement('span'); p.style.cssText = 'display:inline-block;width:0;height:0;vertical-align:baseline';
+    const rest = t.splitText(i); rest.before(p); const y = p.getBoundingClientRect().bottom; p.remove(); t.parentNode.normalize(); return y; };
+  const drawn = m => { const s = m.querySelector('svg > circle, svg > rect, svg > path'); return (s || m).getBoundingClientRect(); };
+  const probe = (name, m, textEl) => { const fc = firstChar(textEl); if (!fc) return; const mid = dotMid(fc[0].parentElement), want = baseline(fc[0], fc[1]) - mid;
+    let r; if (m.classList.contains('ind')) r = drawn(m); else { const t = m.firstChild; const cs = getComputedStyle(m); cv.font = cs.fontStyle + " " + cs.fontWeight + " " + cs.fontSize + " " + cs.fontFamily;
+      const q = cv.measureText('●'), y = baseline(t, 0); r = { top: y - q.actualBoundingBoxAscent, height: q.actualBoundingBoxAscent + q.actualBoundingBoxDescent }; }
+    out.push({ name, dy: +((r.top + r.height / 2) - want).toFixed(2) }); };
+  document.querySelectorAll('#log .ln > .g').forEach(g => { const m = g.querySelector('.ind') || (g.textContent.trim() && g); if (m) probe(g.parentElement.className + ' ' + (m.querySelector?.('svg') ? 'svg' : m.textContent.trim() || m.className), m, g.nextElementSibling); });
+  document.querySelectorAll('#log .wgrid > .ind').forEach(m => probe('wave row', m, m.nextElementSibling));
+  /* the queued clock sits on the ❯ it stands in for: its ink centre over the band text's baseline */
+  document.querySelectorAll('#log .prompt > .g > .ind').forEach(m => { const fc = firstChar(m.parentElement.nextElementSibling); if (!fc) return;
+    const mid = dotMid(fc[0].parentElement, '❯'), want = baseline(fc[0], fc[1]) - mid, r = drawn(m); out.push({ name: 'queued clock', dy: +((r.top + r.height / 2) - want).toFixed(2) }); });
+  return out; })()`;
+const centred = async (label, need) => {
+  const r = await ev(CENTRES), missing = need.filter((re) => !r.some((x) => re.test(x.name)));
+  check(`${label}: every transcript mark sits on its line's ● (within 0.5 px)`, missing.length === 0 && r.every((x) => Math.abs(x.dy) <= .5),
+    JSON.stringify(r.filter((x) => Math.abs(x.dy) > .5).concat(missing.length ? [{ missing: missing.map(String) }, ...r] : [])));
+};
+const NEED = [/queued clock/, /claude ●/, /tool running ●/, /agent one svg/, /wave row/, /liveln svg/, /ln agent ind/];
+await centred('1x', NEED);
+await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 2, mobile: false });
+await sleep(200);
+await centred('2x', NEED);
+await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 1, mobile: false });
+// the still mark of a finished turn, on an idle session
+await ev(`document.querySelector('#groups .row[data-id^="11111111"]').click()`);
+await c.until(`__synopia.current()?.startsWith('11111111') && !!document.querySelector('#log .doneln .ind')`);
+await ev('document.fonts.ready');
+await centred('done line', [/doneln/]);
 await reduce(false);
 console.log('reduced-motion shot: ' + stateDir + '/motion-reduced.png');
 

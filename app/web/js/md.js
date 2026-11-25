@@ -36,8 +36,11 @@ export function md(src) {
       const sep = cs => cs.every(c => /^:?-+:?$/.test(c));
       const body = rows.map(cells).filter(cs => !sep(cs));
       if (!body.length) { out.push(`<p>${lines2(rows)}</p>`); continue; } // only separators: the text as written
-      const [head, ...rest] = body;
-      out.push(`<table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      const [head, ...rest] = body, align = colAlign(rows.map(cells).find(sep) || []), k = colKinds(rest);
+      /* each cell carries its column's kind (table-fit.js and app.css fit the table by them) and the
+         alignment the separator row states; the first column is also c0, the row's name */
+      const cls = j => ` class="${k[j] || "short"}${j === 0 && k[j] !== "c0" ? " c0" : ""}${align[j] ? ` a${align[j]}` : ""}"`;
+      out.push(`<div class="tw"><table><thead><tr>${head.map((c, j) => `<th${cls(j)}>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map((c, j) => `<td${cls(j)}>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }
     const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h4>${inline(h[2])}</h4>`); i++; continue; }
@@ -75,6 +78,24 @@ export function md(src) {
   }
   return out.join("");
 }
+
+/* A table column's kind, from its body cells as written (R5.10): "num" when every non-empty cell is a
+   number with an optional unit (`~44 ms`, `418k + 386k`, `0.02%`, `1.2M`, `n/a`), but not a column of dates
+   only; else "prose" when a cell is over 44 characters; else "short", or "c0" for the first column. Code
+   ticks, bold and link syntax don't count. One cell of text makes the column text. */
+const NUM = /^(n\/a|[~<>]?\d[\d.,]*\s?(k|M|ms|s|%)?(\s?[+]\s?[~]?\d[\d.,]*\s?(k|M|ms|s|%)?)*|\d{4}-\d\d-\d\d)$/;
+const plain = s => s.replace(/`/g, "").replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+export function colKinds(rows) {
+  const n = Math.max(0, ...rows.map(r => r.length));
+  return Array.from({ length: n }, (_, j) => {
+    const cells = rows.map(r => plain(r[j] ?? "")), full = cells.filter(c => c);
+    if (full.length && full.every(c => NUM.test(c)) && !full.every(c => /^\d{4}-/.test(c))) return "num";
+    if (Math.max(0, ...cells.map(c => c.length)) > 44) return "prose";
+    return j === 0 ? "c0" : "short";
+  });
+}
+/* the alignment a separator row states, per column: "l" (`:--`), "c" (`:-:`), "r" (`--:`), "" (`---`: the kind decides) */
+export const colAlign = sepCells => sepCells.map(c => /^:-+:$/.test(c) ? "c" : /-:$/.test(c) ? "r" : /^:-/.test(c) ? "l" : "");
 
 /* AskUserQuestion results read: "question"="answer". Pull the answers out. */
 export function parseAnswers(a) {

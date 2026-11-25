@@ -542,6 +542,19 @@ test('a tool you denied, or a plan you sent back, reads as denied, not failed', 
   assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
 });
 
+test('a step auto mode blocked, or you turned down at a terminal, reads as denied with who said no', () => {
+  const t = new Transcript({ home: HOME });
+  const res = (id: string, content: string, kind?: string) => ({ type: 'user', uuid: `b-${id}`, timestamp: at(2), ...(kind ? { toolDenialKind: kind } : {}), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } });
+  t.pushAll([
+    { type: 'assistant', uuid: 'b-a1', timestamp: at(1), message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_auto', name: 'Bash', input: { command: 'git push' } }] } },
+    res('toolu_auto', 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: invented.', 'automode-blocked'),
+    { type: 'assistant', uuid: 'b-a2', timestamp: at(3), message: { id: 'm2', content: [{ type: 'tool_use', id: 'toolu_you', name: 'Bash', input: { command: 'rm -r out' } }] } },
+    res('toolu_you', "The user doesn't want to proceed with this tool use.", 'user-rejected'),
+    { type: 'user', uuid: 'b-u3', timestamp: at(4), message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ]);
+  assert.deepEqual(['toolu_auto', 'toolu_you'].map((id) => [byId(t, id).state, byId(t, id).denied]), [['denied', 'auto'], ['denied', 'you']]);
+});
+
 test("task ended: the SDK's notification ends a background shell until the JSONL's own lands", () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([

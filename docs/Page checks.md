@@ -52,8 +52,7 @@ A step has one or more of: `message` (an SDK message the query yields; `session_
 Expected differences, all deliberate:
 - no "N open sessions" footer;
 - no "Tab “…”" clause in the header (Synopia knows no terminal tabs);
-- "… N earlier items not shown" and "diff cut at 400 lines" without "in this prototype", so a cut diff is a little narrower;
-- the subagent view's placeholder says "Message <session title>", not "… about this subagent".
+- "… N earlier items not shown" and "diff cut at 400 lines" without "in this prototype", so a cut diff is a little narrower.
 
 ## Focus rule: chrome-headless-shell only
 

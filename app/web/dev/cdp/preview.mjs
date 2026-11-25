@@ -90,8 +90,8 @@ await K.G(); await sleep(50);
 check('G: bottom', await ev(`(() => { const c = document.getElementById('pv-code'); return c.scrollHeight - c.clientHeight - c.scrollTop < 2; })()`));
 check('keys stay in the preview: mode normal, same session', (await ev('document.body.dataset.mode')) === 'normal');
 const before = await ev('__synopia.current()');
-await K.J(); await sleep(100);
-check('J does not switch sessions under it', (await ev('__synopia.current()')) === before && (await shown()));
+await K.ctrlJ(); await sleep(100);
+check('Ctrl+J does not switch sessions under it', (await ev('__synopia.current()')) === before && (await shown()));
 
 await K.g(); await K.slash();
 check('/ opens the find box', await ev(`!document.getElementById('pv-find').hidden && document.activeElement.id === 'pv-q'`));

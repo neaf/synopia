@@ -153,6 +153,17 @@ Code: `transcript.ts` `refreshTool` (`fg`). Source: background live run (CLI 2.1
 
 Code: `session.ts` `onMessage` (`task_notification`). Source: live runs S4 and M1-final.
 
+### Messaging a running subagent
+
+The client has no direct route to a subagent; the main agent's `SendMessage` is the only one that works (R5.12).
+
+- Documented surface: `SDKUserMessage.parent_tool_use_id` is documented only on output ("non-null when the message was produced inside a subagent"). The `priority` docs cover only when main reads a message. No `Query` method or control request addresses a subagent. The CLI docs say "Claude uses the `SendMessage` tool with the agent's ID or name as the `to` field". Typing into a subagent's transcript is an interactive-terminal feature ("With a fork's or subagent's transcript open, follow-up messages … go to that agent"), with no SDK counterpart.
+- `parent_tool_use_id` set to the running Agent call's `tool_use` id, with the default priority, foreground or background: it doesn't work. The message goes to main: it appears in main's JSONL as `queue-operation` plus a `user` record, and main answers it. The subagent's sidechain never holds it, and its report says it heard nothing. There's no error or system message.
+- The same with `priority: 'now'` and `origin: {kind: 'human'}`: on a background subagent, the same as above. On a foreground subagent, it stops the subagent (its `task_notification` comes with `status: 'stopped'`), main's turn ends with `result/success` and no reply, all within 0.1 s, in three runs. In the one run that kept reading, the stream ended there too.
+- `SendMessage` through main: it works on a running background subagent. The user sends main a message asking it to `SendMessage` with `to` = the subagent's id (`task_started.task_id`). The call returns `{success, message, pin}`, the text arrives in the subagent's sidechain as an `attachment` record mid-run, and the subagent repeats it in its report. It costs one main turn, and main sees the text.
+
+Source: live run SM-1 (2026-11-25; haiku; scratch folder `/tmp/synopia-subagent-msg/work`, five routes, shapes only; SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.326). The script is outside the repo. No code depends on this.
+
 ## Sessions: list, resume, fork
 
 - `listSessions()` gives `sessionId`, `cwd` (the realpath), `summary`, `customTitle`, `firstPrompt`, `gitBranch`, `lastModified`, `fileSize`. It honours `CLAUDE_CONFIG_DIR` (page checks rely on it). It took 87 ms over this machine's sessions. Code: `sdk.ts` `realSdk.listSessions`, `sessions.ts` `listRecent`. Source: live run S2-1.

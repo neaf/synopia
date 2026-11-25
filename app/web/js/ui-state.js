@@ -6,11 +6,10 @@
    anchor: an item block's key and the pixels into it, or the bottom (within 40 px of it, pinned there).
    Per session: the scroll and the loaded-earlier range per view, open steps, open diffs and folds, the
    draft (text, cursor, pasted images, stored by the backend as files), the half-answered card per
-   request, and the rail's expansion state. Nothing is shared live between pages: the last one to
+   request. Nothing is shared live between pages: the last one to
    write wins. */
-import { store, current, view, cur, requestsOf, select, mounted, agentById } from "./state.js";
+import { store, current, view, cur, requestsOf, select, mounted, agentById, bgById } from "./state.js";
 import { send, TOKEN } from "./connection.js";
-import { openBg, setOpenBg } from "./rail.js";
 import { pv, previewShown, restorePreview } from "./preview.js";
 import { viewer, showViewer, imageUrl } from "./images.js";
 import { mode, setMode } from "./mode.js";
@@ -23,7 +22,7 @@ const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not 
 const stored = new Set(); // pasted image ids the backend has as files
 let sentTop = {}, sentSess = {}; // what the backend has, as JSON per field
 let uiLoaded = false, timer = null, firstChange = 0, restoring = null, typing = null, afterFirst = null;
-const TOP = ["current", "view", "mode", "openBg", "openList", "folderList", "preview", "viewer", "theme"];
+const TOP = ["current", "view", "mode", "openList", "folderList", "preview", "viewer", "theme"];
 const sess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set() });
 const viewKey = () => view || "";
 /* the steps opened by a click, "<sid>|<view>|<item id>" (transcript.js): a redraw and a reload keep them */
@@ -52,7 +51,6 @@ export function applyHello(u) {
   const has = sid => typeof sid === "string" && store.sessions.has(sid);
   if (!location.hash && has(u.current)) select(u.current, u.view);
   if (u.mode === "insert" || u.mode === "normal") setMode(u.mode, false);
-  if (typeof u.openBg === "string") setOpenBg(u.openBg);
   for (const [sid, x] of Object.entries(u.sessions || {})) {
     if (!has(sid) || !x) continue;
     const s = sess(sid);
@@ -116,6 +114,7 @@ export const held = url => [...drafts.values()].some(d => d.atts.some(a => a.url
    reset with all of it. */
 export function requestView(sid, agent) {
   const f = from(sid, agent);
+  if (agent && bgById(store.sessions.get(sid), agent)) { send({ t: "view", sid, agent: null, bg: agent, ...(f ? { from: f } : {}) }); return; } // a shell's or monitor's output (R7.2)
   send({ t: "view", sid, agent: agent || null, ...(f ? { from: f } : {}) });
 }
 /* the view on screen asked the server for its items: its scroll waits for them, and its log for their reset */
@@ -132,7 +131,7 @@ export const holding = () => !!restoring && restoring.key === mounted && !restor
 export function resetIn(m) { if (m.reset && restoring && restoring.key === mounted) restoring.got = true; }
 
 /* ---------- the log: the anchor, the earlier items, open diffs and folds (main.js, transcript.js) ---------- */
-const NOT_ANCHOR = /^(earlier|day:|live|stream|held:)/;
+const NOT_ANCHOR = /^(earlier|day:|live|stream|held:|queue)/;
 export function anchor(log) {
   if (log.scrollHeight - log.scrollTop - log.clientHeight < 40) return { bottom: true };
   const top = log.getBoundingClientRect().top;
@@ -159,6 +158,20 @@ export function items(m) {
   if (m.reset) restoring.reset = true;
   const want = u.earlier[viewKey()];
   if (want && list.length && !list.some(i => i.id === want) && (t.total || 0) > list.length && restoring.tries++ < 20) { logFns.earlier(); return; }
+  clearTimeout(restoring.timer); restoring = null;
+  scrollTo(u.scroll[viewKey()]);
+}
+/* a shell's or monitor's output for the view on screen: finish a restore, or note the earlier output loaded
+   (where it begins, so a reload asks from there) */
+export function output(m) {
+  const s = cur(); if (!s || !mounted) return;
+  const u = sess(s.id);
+  if (!restoring || restoring.key !== mounted) {
+    if (m.prepend) u.earlier[viewKey()] = String(m.from);
+    else if (m.reset) delete u.earlier[viewKey()];
+    return;
+  }
+  if (!m.reset) return;
   clearTimeout(restoring.timer); restoring = null;
   scrollTo(u.scroll[viewKey()]);
 }
@@ -213,7 +226,7 @@ export function changed() {
 function top() {
   const code = document.getElementById("pv-code"), find = document.getElementById("pv-find");
   return {
-    current, view: view || null, mode, openBg: openBg || null, theme: themePref(),
+    current, view: view || null, mode, theme: themePref(),
     openList: openListShown() ? { filter: openList.filter } : null,
     folderList: folderListShown() && !fl.fixed ? { filter: fl.filter, sid: fl.sid } : null,
     preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,

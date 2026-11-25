@@ -101,7 +101,11 @@ test('scripted: the states fixture plays one session per wired state, on the rea
   const { transcripts, publisher, meta, stop } = await setup('claude-states');
   try {
     await sleep(30); // e5e5's stale timer, armed 16 min in the past, is due at once
-    const all = (publisher.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
+    const every = (publisher.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
+    // a8a8: a terminal session whose ended turn has a step auto mode blocked (R8.2)
+    const blocked = every.find((s) => s.id.startsWith('a8a8'));
+    assert.deepEqual([blocked?.status, blocked?.light, blocked?.word, blocked?.mark, blocked?.needsYou], ['idle', 'red', 'Needs you, blocked', 'pause', 'blocked']);
+    const all = every.filter((s) => s !== blocked);
     assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy', 'busy']);
     assert.equal(all[0].detail.queued, 1, 'the message sent during the turn');
     assert.deepEqual([all[2].detail.retry?.attempt, all[2].detail.retry?.max], [3, 10]);
@@ -171,8 +175,12 @@ test('scripted: a message that starts a turn and bash mode\'s context go to the 
     const before = fs.readFileSync(file, 'utf8').split('\n').length;
     const proc = (sessions as unknown as { live: Map<string, { proc: { pushQuiet(t: string, u: string): void } }> }).live.get(S1)!.proc;
     proc.pushQuiet('<bash-input>ls</bash-input>', '0d0d0d0d-0000-4000-8000-00000000000d');
+    proc.pushQuiet('<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>', '0d0d0d0d-0000-4000-8000-00000000000e');
     await sleep(10);
-    assert.equal(fs.readFileSync(file, 'utf8').split('\n').length, before + 1);
+    assert.equal(fs.readFileSync(file, 'utf8').split('\n').length, before + 1, 'the two go in one record, as the CLI writes them');
+    const joined = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()!);
+    assert.deepEqual([joined.uuid, joined.queueTranscriptOnly, joined.mergedSendUuids, joined.message.content],
+      ['0d0d0d0d-0000-4000-8000-00000000000d', true, ['0d0d0d0d-0000-4000-8000-00000000000e'], '<bash-input>ls</bash-input>\n<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>']);
     assert.equal(meta(S1).status, 'idle');
   } finally { stop(); }
 });

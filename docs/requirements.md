@@ -56,7 +56,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - Typing filters the folders fuzzily (R3.14). Text that starts with `~` or `/` is a path: Tab reads that one folder (the path up to its last `/`) and lists its direct children, which typing then filters with no new read. Tab on a row fills the filter with its path, so the next Tab goes one folder deeper.
   - A typed path that doesn't exist shows one row, "Create folder <path> and start there". Enter makes that one folder (`mkdir -p`) and starts there. It is Synopia's only write to your folders.
   - Enter starts an empty session in the selected folder, with the message box in insert mode. Esc closes the list.
-- R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it.
+- R3.4 Titles and the "Now" line are written by Claude live from the transcript and kept current; they went stale within minutes when written once. Model calls are free on this machine. The CLI slug (tab name) is still shown, small, so the user can recognise it, but only while a terminal (another process) holds the session: a session Synopia runs has no tab (2026-11-25).
 - R3.5 No drift detection. The user keeps one session per topic (see Rejected).
 - R3.6 Close, don't abandon: Synopia's sessions stay open across restarts until the user closes them. x, x in normal mode (R9.6) marks the session closed and hides it; it keeps its place in its group. Reopening it from the "Open session" list puts it back there. Claude's closing note, with what was done and the loose ends to triage, comes later.
 - R3.7 Model per session: the header shows the model; clicking it, or typing `/model`, opens the model picker (list from the SDK). Typing after `/model ` filters it fuzzily (R3.14). Effort levels come from the same list.
@@ -129,23 +129,25 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 5. Session view
 
-### 5.1 Header panel
+The conversation pane is one panel from the title down (2026-11-25, prototype/composer-storyboard.html v3 A): the header, the transcript and the message box are its rows, with no separate rounded rectangles. A 1px line (`--line-2`) sits under the header and just above the message box, in every state. The background work panel stays its own panel beside it (R7.1).
+
+### 5.1 Header
 - R5.1 It shows:
   - the title
   - "Now: …"
   - the folder, the PRs and the tab name
   - a model button (no Close button: x, x closes, R9.6)
-  - the same height and line positions in the main conversation and a subagent view
+  - the same height and line positions in the main conversation, a subagent view and a shell or monitor view (R7.2)
 - R5.2 No "Change group" button: dragging in the sidebar does that.
 
-### 5.2 Transcript panel (reads like the Claude Code CLI)
+### 5.2 Transcript (reads like the Claude Code CLI)
 - R5.3 Monospace JetBrains Mono NL, ligatures off, 12px. Flat text, no cards. A two-character gutter of marks:
   - `●` Claude's text
   - green `●` tools
   - kind marks for subagents
   - `⎿` results
-- R5.4 Your prompts sit on a full-width band starting with `❯`, which is the clear break between turns.
-- R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Bash(…)". There's no status line in the message panel for working. A message you send while the turn runs shows as itself, pending: your prompt's ❯ band, dimmed, with no fill and a quiet "Queued, goes to Claude at its next step" line with the moving queued mark, below the live line, since what is working began before it (where it will land; the CLI shows it under its spinner, but there it would jump up when it lands). Several show in the order sent. When Claude takes it in (its prompt record lands in the transcript) it becomes the normal prompt in the same place, with no duplicate. If an interrupt cancels it, it disappears and its text goes back to the message box (R9.4). A message you send shows at once: sent while idle as your normal prompt, the start of the new turn; sent during a turn as queued below the live line. Either is replaced in place when its record lands.
+- R5.4 Your prompts sit on a full-width band starting with `❯`, which is the clear break between turns. The band's fill runs from the panel's inner left edge, where its 2.5px blue edge shows whole, to its inner right edge at any window width; its text keeps the transcript's 150ch measure. A line that is one long token (a path, a list of tool names) wraps anywhere inside the panel.
+- R5.5 Each turn ends with the still agent mark and "Worked for 5s, done 02:24 PM". While a turn runs, the transcript ends with the moving agent mark and "Working Bash(…)". There's no status line in the message box's place for working. A message you send while the turn runs shows as itself, queued: your posted prompt's band (its fill and blue edge, its text, the thumbnails of its pasted images, which open the viewer) with a still clock in your blue in place of `❯` and its text in the lighter grey (`--ink-3`), below the live line, since what is working began before it (where it will land; the CLI shows it under its spinner, but there it would jump up when it lands). The clock is still: a queued message waits, it doesn't run. Several show in the order sent. There is no veil (2026-11-25). Scrolled up, the queue stays pinned over the message box at the panel's bottom, at most half the transcript, with a 1px line at its top while the transcript runs under it; at the bottom it is the transcript's end. The sidebar says "Working, N messages queued", and the empty message box says "N waiting for Claude's next step". When Claude takes one in (its prompt record lands in the transcript) it becomes the normal prompt in the same place: only the clock turns into `❯` and its text darkens, with no duplicate, under the live line until Claude writes after it, and nothing moves. If an interrupt cancels it, it disappears and its text goes back to the message box (R9.4). A message you send shows at once: sent while idle as your normal prompt, the start of the new turn; sent during a turn as queued below the live line. Either is replaced in place when its record lands. On Enter the box empties at once and the band moves up from the box into its place in a short tween (180 ms, eased out; none with reduced motion), and nothing else moves.
 - R5.6 Tool runs collapse to one line ("3 Bash commands, read 2 files"); click to expand. A step reads as in the Claude Code CLI: the tool's name and its description or target, such as `Bash(Merge master into the M1 backend stack)` or `Read(~/dev/demo/notes.md)`; a single step shows inline. A click on a step, inline or inside an expanded run, expands it to its command (or its input) and its result under the drawn guide, truncated to the first 20 lines with "Show all N lines" for the full result; a second click closes it. For an edit, the diff in Files changed stays the way to see the change. A running step expands too, from its own line or from the live line "Working Bash(…)" that names it: its command or input at once, then a quiet "Running, 42s" with a live timer. The step's line and the live line are one step, so opening either opens both, and it stays open through redraws and restarts. The Agent SDK reports only a running tool's elapsed time, not its output, so in a session Synopia drives it adds "Output shows when it finishes"; a session Synopia doesn't drive reads "Running". When the result lands, the open step turns into the finished view in place.
 - R5.7 Subagents:
   - A single launch is one line: kind mark, name (click opens its transcript) and live time.
@@ -166,7 +168,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - code blocks
   - bare URLs and markdown links are clickable and open in the browser
 - R5.11 Claude's questions and your answers render in the transcript. Answered questions appear as your turn.
-- R5.12 Opening a subagent shows its own transcript in the same pane, with a breadcrumb back to the session. Its message box writes to the main conversation: the user asks the main session to orchestrate its subagents, and it messages them itself. Messaging a subagent directly is rejected (2026-11-23).
+- R5.12 Opening a subagent shows its own transcript in the same pane, with a breadcrumb back to the session. A subagent's view has no message box; to steer a subagent, ask the main session from Main conversation (2026-11-25; the SDK has no route to message a subagent, see docs/Agent SDK.md 'Messaging a running subagent').
 - R5.12a A long transcript shows its last 160 items under a quiet link, "Show 160 earlier (N more)". Clicking it, or `g` at the top, loads the 160 before them without moving what you're reading; subagent transcripts too (2026-11-23).
 - R5.12b Images show as thumbnails, Slack-style: a row below the text that wraps when there are many (2026-11-24).
   - Under your prompt in the `❯` band, the images it sent. Under a tool step whose result holds images (a Read of an image, a screenshot), its images, visible without expanding the step. A collapsed run of steps ("Edited 9 files, read 8 files, …") has one row for all its steps' images, below the run's line (2026-11-24).
@@ -180,9 +182,9 @@ These requirements come from a day of prototyping against the user's real sessio
 - R5.12c A change of the shown title is a quiet line in place, styled like a day separator: “Retitled “…””, plus “by you” for your rename. Its sources are the CLI's title records and Synopia's written titles (by time); none for the first title, before your first prompt, or for a title equal to the one before (case and spaces aside) (2026-11-24).
 
 ### 5.3 Message box
-- R5.13 At least three lines tall, `❯` on the first line, the field growing for long messages; a click anywhere in the box focuses the field. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
+- R5.13 The panel's last row, under its 1px line, drawn as a `❯` band being written: `❯` where a posted band's sits, so the draft sits where it will land. At least three lines tall, `❯` on the first line, the field growing for long messages; a click anywhere in the box focuses the field. There's no Send button and no hint row. Enter sends, Shift+Enter makes a new line, ⌘V pastes images. The placeholder says "/ for commands".
   - Pasted images show as thumbnails below the text (R5.12b sizes), each with a small ✕ on hover that removes it. Enter sends them with the text, as base64 PNG or JPEG of at most 5 MB each and 20 MB together (the socket caps a frame at 32 MB); more is refused with a toast. The thumbnails come from the pasted image itself, never the server (2026-11-24).
-  - As in the Claude Code CLI, a paste puts an `[Image #N]` tag at the caret, with a space between it and any text it touches. N counts up through the session, as the CLI's does: one more than any tag in the session's prompts or the draft, never reused. The ✕ removes the image and its tag; the other tags keep their numbers. Deleting a tag's text leaves its thumbnail in the row, dimmed with a dashed line, and that image isn't sent (typing the tag back brings it back). The message goes as the CLI sends one: a text block with the tags in it, then the images in the order of their tags. Your prompts, sent from Synopia or from the CLI, show the tags in place as plain dim text, with the thumbnails below. A draft keeps its tags and images over a restart (R3.9) (2026-11-24).
+  - As in the Claude Code CLI, a paste puts an `[Image #N]` tag at the caret, with a space between it and any text before it, and a space after it unless one follows already, so typing goes on as a new word. N counts up through the session, as the CLI's does: one more than any tag in the session's prompts or the draft, never reused. The ✕ removes the image and its tag; the other tags keep their numbers. Deleting a tag's text leaves its thumbnail in the row, dimmed with a dashed line, and that image isn't sent (typing the tag back brings it back). The message goes as the CLI sends one: a text block with the tags in it, then the images in the order of their tags. Your prompts, sent from Synopia or from the CLI, show the tags in place as plain dim text, with the thumbnails below. A draft keeps its tags and images over a restart (R3.9) (2026-11-24).
   - Bash mode, as `!` in the Claude Code CLI (2026-11-24): a `!` typed as the first character turns the box's `❯` into a `!` in the CLI's bash pink (Synopia's `--bash`, light and dark), the `!` leaves the text, and the placeholder reads "Run a shell command in <folder>". Backspace on the empty box leaves the mode. There's no slash menu in it. Enter runs the command in the session's folder with your login shell (`$SHELL -c`, the login environment) and its output streams into the transcript, cut at 30,000 characters as the Bash tool's is. One command at a time per session: a second one stays in the box with a toast. Esc, Esc ends a running one (R9.4). The command and its output then go to Claude as context in the CLI's format (`<bash-input>`, `<bash-stdout>`, `<bash-stderr>`), without starting a turn, so Claude sees them with your next message. The transcript shows the command on your prompt's band with `!` for `❯`, its output under the drawn guide, cut at 20 lines with "Show all N lines", stderr apart (red, with a 1px rule at its edge), and a non-zero exit or "Stopped" noted, the same for a command run in the CLI. A session Synopia doesn't drive, or one a terminal holds, has no bash mode: the `!` is text, and the box shows its existing line.
 - R5.14 `/` opens an autocomplete of the session's real commands and skills, with argument hints and descriptions aligned, matched fuzzily on the name with the letters highlighted (R3.14). ↑↓ moves, Tab or Enter fills, Esc closes.
 
@@ -205,29 +207,30 @@ These requirements come from a day of prototyping against the user's real sessio
   - the red tint on the Main conversation row
   - a red header on the card
 - R6.2 The transcript ends with Files changed, then one line: "Waiting for you: 2 questions from Claude, in the message panel" (or "permission to run …", or "your approval of the plan above"). It doesn't repeat the question, and no "Worked for" line follows it.
-- R6.3 The card sits in the message panel above the message box:
+- R6.3 The card sits at the transcript's end, above the message box's line, between its own 1px lines (the storyboard's v3 frames); with the box it stays at the panel's bottom when the transcript scrolls:
   - a red header: "Needs you", the reason, "for 4 min", and "k of N answered"
   - one line per question (accordion): ✓, ● or ○, the header, and the answer or "Not answered"
   - only the current question is open, showing its text and option rows: cursor `›`, radio or checkbox, label, "Recommended" under it in green, description
   - the last row is always "type your own"
   - a footer with generic key hints and Send
 - R6.4 Keys, in normal mode, while a card waits:
-  - j/k move the cursor through every option of every question as one list; moving past the last row opens the next question.
+  - j/k (or ↓/↑) move the cursor through every option of every question as one list; moving past the last row opens the next question.
   - Space selects only: radio for single choice, toggle for multiple choice. It never advances.
   - i types in place, on the row:
     - On an option: it selects it and adds a note. The note goes back as `annotations.notes`.
     - On the last row: it types your own answer instead.
     - Enter saves, Esc cancels.
-  - Enter sends once every question is answered; otherwise it jumps to the first unanswered question.
+  - Enter on an option of a single-choice question selects it first, replacing an earlier pick. On multiple choice it selects nothing. On the last row it opens the in-place field, as i does, and the cursor stays there.
+  - Enter then sends once every question is answered; otherwise it jumps to the first unanswered question.
   - No number keys, no h/l, no Tab.
-  - J/K still switch sessions.
-- R6.5 Permission prompt: sessions keep the user's permission mode (`auto`), so a permission card appears only when `auto` would ask. A session in plan mode stays in plan mode. The card shows the exact command in a code block, the folder, and Claude's reason. Rows: "Allow once", "Always allow" (says exactly what is remembered and for how long) and "Deny" (type a reason in place, optional).
+  - Ctrl+J/K still switch sessions.
+- R6.5 Permission prompt: sessions keep the user's permission mode (`auto`), so a permission card appears only when `auto` would ask. A session in plan mode stays in plan mode. The card shows the exact command in a code block, the folder, and Claude's reason. Rows: "Allow once", "Always allow" (says exactly what is remembered and for how long) and "Deny" (type a reason in place, optional). Enter on "Allow once" or "Always allow" sends it (R6.4); Enter on "Deny" sends a deny, with the reason if one is typed.
   - An "Always allow" rule for this session lasts until the session closes. Closing it (R3.6) clears its rules, so reopening asks again (2026-11-24).
-- R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place).
+- R6.6 Plan approval: the plan sits in the transcript as Claude's reply. The card holds only the decision: "Approve" or "Ask for changes" (typed in place). Enter on "Approve" sends it; Enter on "Ask for changes" opens its field (R6.4).
 - R6.7 Answers appear in the transcript as your turn ("Allow once", "Denied: …", "Changes: …").
 - R6.8 Detection: a session needs you while it has a pending `canUseTool` request: a question, a permission or a plan.
   - It also needs you, with no Synopia process, while its transcript ends a thread (the main conversation or a subagent) on a question or plan (AskUserQuestion or ExitPlanMode) that has no result yet: another Claude Code process asks it, typically a terminal that took the session (R3.2). A message sent then waits ("Waiting for the terminal to finish…"): the take-over doesn't end a CLI that waits on you. This beats working, the Dock badge counts it, its age counts from the question, and it clears when the answer lands.
-  - The message panel then shows the card read-only: the red "Needs you" header with the reason and "for N min", every question open with its options (Recommended, descriptions, checkboxes for a multi-select), or the plan's two decisions under the plan in the transcript. It has no cursor, selection or keys, and its footer is one quiet line: "Asked in another Claude Code process. Answer it there." The transcript line says "Waiting for you: …, asked in another process". Once answered, the card goes and the answer shows as your turn.
+  - The card above the message box then shows read-only: the red "Needs you" header with the reason and "for N min", every question open with its options (Recommended, descriptions, checkboxes for a multi-select), or the plan's two decisions under the plan in the transcript. It has no cursor, selection or keys, and its footer is one quiet line: "Asked in another Claude Code process. Answer it there." The transcript line says "Waiting for you: …, asked in another process". Once answered, the card goes and the answer shows as your turn.
   - A session Synopia drives keeps the interactive card. A question its own process left without a request (after a crash) stays "Not answered (Synopia quit)".
 - R6.9 Rejected:
   - showing all questions at once
@@ -247,8 +250,14 @@ These requirements come from a day of prototyping against the user's real sessio
   - A subagent's own shells and monitors (in its own transcript) hang under its card, one level deeper, with the same guides. They show only here: not under Main conversation, not in the sidebar's count, not in the main transcript. With no notification they run while their subagent runs; after it, they read as stopped, ended with their subagent. In "Past" they name it: "Resize the images in Build image thumbnails".
   - "To review": items waiting for review (section 10).
   - "Past": one dim line per finished item, newest first, fading out at the bottom edge. Each line shows the status mark, the still kind mark, the name and the duration; failed and timed out are named.
-  - The item you're viewing shows it one way, whatever its kind (Main conversation, a subagent or fork card, a Past line): its 1px edge turns ink, and that is its only edge, over any state tint. A Past line gets the edge as a frame on the cards' edges, with its name in ink. Nothing moves or resizes when the selection moves. Hover only shades; keyboard focus is the blue ring.
-- R7.2 Clicking a subagent or fork opens its transcript. Clicking a shell or monitor expands its command and summary. A running card has no Stop row: stopping one background item waits for a key design (section 15, Q11).
+  - The item you're viewing shows it one way, whatever its kind (Main conversation, a subagent, fork, shell or monitor card, a Past line): its 1px edge turns ink, and that is its only edge, over any state tint. A Past line gets the edge as a frame on the cards' edges, with its name in ink. Nothing moves or resizes when the selection moves. Hover only shades; keyboard focus is the blue ring.
+- R7.2 Every row is a link that opens its item in the main pane, with nothing expanding in the panel (2026-11-25). A subagent or fork opens its transcript (R5.12). A shell or monitor opens its output as a terminal run:
+  - The header has its description (or its command), "Running, 42s" or how it ended ("Finished", "Failed", "Stopped", "Timed out") with its time, the kind and its start, and whose it is with a link back to the main conversation (and to its subagent, for a subagent's own); the same height and lines as a subagent's header (R5.1).
+  - The log is monospace: the tool line (`Bash(Serve the demo)` or `Monitor(…)`), the command, then its whole output under the drawn guide, as plain text (escape sequences taken out, a line a carriage return rewrote shown as it ended). A long output shows its last 64 KB in whole lines under "Show earlier output (48 KB more)", which, like `g` at the top, loads the part before without moving what you read (R5.12a). A monitor's output is its events, one per line, 500 at a time.
+  - While it runs, what it prints appends live and the log ends with the moving kind mark and "Running 42s". When it ends, the log ends with the still status mark and "Failed after 3m, 02:03 PM." and its summary.
+  - An output file the system already cleared reads "Its output file is gone"; a shell whose transcript names no output file says so.
+  - Back to the main conversation works as from a subagent: the header's link, Main conversation in the panel, J/K. There is no message box, as in a subagent view (R5.12). The view comes back after a reload or restart (R3.9).
+  A running card has no Stop row: stopping one background item waits for a key design (section 15, Q11).
 - R7.3 Covers forks, subagents (including the `Explore` and `general-purpose` types), background shells (`Bash` with `run_in_background`) and monitors (`Monitor`).
 - R7.4 Rejected:
   - reversed order (running at the bottom)
@@ -267,7 +276,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - rate limited: amber dashes turning backwards, "Rate limited, retrying in 38s", with the attempt in the transcript. Claude Code retries a throttled request on its own.
   - no updates: the working arc frozen and grey, "No updates for 16 min". A turn runs but nothing came for 15 minutes; the session may be gone.
   - signed out: red lock, "Signed out". The sign-in expired (for Bedrock, `aws sso login`); it clears when the next turn starts or a reply gets through.
-  - needs you: two red pause stripes seesawing. It wins over every other status.
+  - needs you: two red pause stripes seesawing. It wins over every other status. Also after a turn that ended with a step auto mode blocked or a permission you denied, which Claude didn't redo: "Needs you, blocked" until you send a message. The step reads "Blocked by auto mode" or "Denied", not "Failed".
   - your turn: still grey square ("stopped, waiting for you"), only when nothing of Claude's runs except shells and monitors. Its age counts from when the last subagent finished.
   - stopped by you: grey square. Only when the latest turn ended on "[Request interrupted by user]" and Claude wrote nothing after it. "… for tool use" is a tool call you turned down, not a stop.
   - done: grey check
@@ -304,8 +313,7 @@ These requirements come from a day of prototyping against the user's real sessio
 
 - R9.1 Vim-like modes:
   - Normal mode is the default:
-    - J/K: next or previous session.
-    - Ctrl+J/Ctrl+K: next or previous conversation inside the session: Main conversation, then the subagents and forks as the background panel shows them, top to bottom; after the last one, back to Main conversation.
+    - J/K: next or previous conversation inside the session: Main conversation, then the background panel's rows top to bottom (subagents, forks, shells and monitors, R7.2); after the last one, back to Main conversation.
     - j/k: scroll the transcript, or move the card cursor while a card waits.
     - g/G: top or bottom of the transcript; g at the top loads earlier items (R5.12a).
     - i/a: insert.
@@ -313,13 +321,14 @@ These requirements come from a day of prototyping against the user's real sessio
     - n: New session (the folder list, R3.3); o: Open session (R3.2). See R9.7.
   - Insert mode: typing goes to the message box, or to a field in the card. Esc returns to normal; the first Esc closes the command menu. A `!` first in the empty box is bash mode (R5.13), inside insert mode: the same keys, Enter runs the command, Backspace on the empty box leaves it, and the box keeps it when Esc goes to normal.
   - Clicking the message box enters insert mode.
-- R9.2 The only mode indicator is the message box: grey in normal mode, blue ring in insert mode.
+  - In both modes, Ctrl+J/Ctrl+K: next or previous session. In a text field they replace the field's own Ctrl+K (delete to the end of the line) (2026-11-25).
+- R9.2 The only mode indicator is the message box (2026-11-25, storyboard v3 A). In normal mode its `❯` and text are at half strength, its 1px line and the panel at full, with no fill or edge. In insert mode it is the band your message becomes: the band's fill and blue left edge (bash mode's pink edge with its `!`), at full strength. A prompt in the box (Interrupt?, Send to background?, Close this session?), the gone-folder line and a take-over's state keep it at full strength in normal mode, and so does a card above it. There is no ring and no whole-box opacity.
 - R9.3 ⌘⇧[ and ⌘⇧] also switch sessions, as in iTerm.
 - R9.4 Interrupt: Esc in normal mode while a turn runs turns the message box into "Interrupt?". A second Esc interrupts. Any other key or click dismisses it. An open in-place field on a card takes Esc first (R6.4).
   - The interrupt stops only the foreground turn. Background subagents, shells and monitors keep running, as in the CLI (R7.2).
   - Messages still queued at the interrupt go back to the message box.
   - A running `!` command (R5.13) is asked about the same way, and goes first: the second Esc sends SIGTERM to its own process group, then SIGKILL after 3 s, and it shows "Stopped". With a turn also running, the next Esc, Esc stops the turn (2026-11-24).
-- R9.5 Send to background, as Ctrl+B in the CLI: b in normal mode, in a session Synopia drives whose turn runs a foreground Bash command or subagent, marks each such step in the transcript (a 1px blue ring on the selection tint) and turns the message box into "Send to background? b again. Any other key to keep it in front." A second b sends them all to the background. Any other key, a click or the turn ending dismisses it.
+- R9.5 Send to background, as Ctrl+B in the CLI: b in normal mode, in a session Synopia drives whose turn runs a foreground Bash command or subagent, marks each such step in the transcript (a 1px blue ring on the selection tint) once: on the live line when the live line names it, else where the step is shown (its line, its group row, or its row in an expanded group), and turns the message box into "Send to background? b again. Any other key to keep it in front." A second b sends them all to the background. Any other key, a click or the turn ending dismisses it.
   - With nothing that can go, or in a session another process runs, b does nothing.
   - One prompt at a time: Esc under this prompt asks "Interrupt?" instead, and b under "Interrupt?" asks this.
   - The steps then show as background work in the right panel (R7) and end there with their notification. A toast says so only when nothing could go.
@@ -339,7 +348,7 @@ These requirements come from a day of prototyping against the user's real sessio
 
 ## 11. Visual system
 
-- Light theme, with visible panels: header, transcript, message box, background work. The canvas is `#EDEFF2` and the panels are white.
+- Light theme, with visible panels: the conversation (header, transcript and message box as one panel, R5) and background work. The canvas is `#EDEFF2` and the panels are white.
 - UI font: Atkinson Hyperlegible Next. Transcript: JetBrains Mono NL.
   - Both fonts ship with the app in `app/web/fonts` (both OFL, license beside each). The page loads no font from the network, so offline and blocked runs keep the transcript grid (2026-11-24).
 - Sizes are 81% of the first draft (two 90% steps); the transcript is 12px.
@@ -355,7 +364,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - By default the page follows the system appearance (macOS Light or Dark, `prefers-color-scheme`), live.
   - The switch is a shaded icon at the left of the sidebar footer, before "Open session" and "New session": a moon in light mode ("Dark mode"), a sun in dark mode ("Light mode"), with no border and no background. A click picks the other theme and keeps it with the UI state (R3.9), whatever the system does after. Alt-click follows the system again.
   - The layout reads the same: the sidebar (`#22272E`) stays the darkest surface, the canvas (`#2A3038`) and the panels (`#333A44`) a step lighter each. Lines stay 1px and visible, text keeps WCAG AA contrast, the marks use the sidebar's bright dark set (R8.4), and red stays for needs you.
-  - Everything has a dark variant, so no light patch is left: diffs and their gutters, code, tables, the needs-you cards, the Open list, the slash menu and model picker, toasts, the image viewer, the background panel's tree and the Main conversation card's tints, and the message box's mode ring. The file preview asks `bat` for its dark theme (Coldark-Dark, as bat has no GitHub Dark).
+  - Everything has a dark variant, so no light patch is left: diffs and their gutters, code, tables, the needs-you cards, the Open list, the slash menu and model picker, toasts, the image viewer, the background panel's tree and the Main conversation card's tints, and the message box's insert band. The file preview asks `bat` for its dark theme (Coldark-Dark, as bat has no GitHub Dark).
   - The switch is instant, with no transition.
 
 ## 12. Data the app relies on
