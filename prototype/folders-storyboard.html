@@ -1,0 +1,658 @@
+<!-- Design proposal for review, not the spec: docs/requirements.md wins until the author accepts a change. All data in it is invented. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: sessions in any folder</title>
+<style>
+  /* The app's bundled fonts, read from the repo beside this file; without them the page falls back to system fonts. Nothing loads from the network. */
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 400; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 500; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 700; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono NL"; font-weight: 400; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf") format("truetype"); }
+  @font-face { font-family: "JetBrains Mono NL"; font-weight: 700; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf") format("truetype"); }
+
+  /* app tokens, from app/web/css/app.css and dark.css */
+  :root {
+    --canvas: #EDEFF2; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+    --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
+    --sel: #DDF4FF; --ring: #54AEFF; --guide: #AFB8C1; --arc-bg: #C6E9D0; --band: #F0F3F6;
+    --toast: #1F2328; --toast-ink: #FFFFFF; --menu: #F2F2F2; --menu-sel: #0A64D2;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --canvas: #2A3038; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+    --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1;
+    --red: #FF7B72; --amber: #E3B341; --green: #56D364; --link: #6CB6FF;
+    --sel: #1F3B5C; --ring: #4493F8; --guide: #606B78; --arc-bg: #1F4D2C; --band: #2E353E;
+    --toast: #E6EDF3; --toast-ink: #1F2328; --menu: #3A414B; --menu-sel: #2F6FD0;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--canvas); color: var(--ink); font: 400 14.5px/1.5 var(--sans); }
+  :focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+  button { font: inherit; color: inherit; }
+  kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 2.5px; padding: 0 3.5px; background: var(--panel); color: var(--ink-2); line-height: 1.4; white-space: nowrap; }
+  code { font-family: var(--mono); font-size: .88em; font-variant-ligatures: none; }
+
+  /* ---------- storyboard page ---------- */
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 0 40px; }
+  .top { padding: 36px 0 8px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; }
+  .top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -.01em; }
+  .top p { margin: 0; color: var(--ink-2); max-width: 78ch; }
+  .theme { background: var(--panel); border: 1px solid var(--line); border-radius: 5.5px; padding: 4.5px 11px; font-size: 12.5px; cursor: pointer; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 14px 0 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .toc a { color: var(--link); }
+  h2 { font-size: 21px; line-height: 1.25; margin: 56px 0 6px; }
+  h3 { font-size: 16px; margin: 30px 0 4px; }
+  .lede { margin: 0 0 16px; color: var(--ink-2); max-width: 80ch; }
+  .lede b { color: var(--ink); }
+
+  /* summary */
+  .sum { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 36px; margin: 22px 0 0; }
+  .sum h3 { margin: 0 0 8px; }
+  .sum ul, .sum ol { margin: 0; padding-left: 1.2em; }
+  .sum li { margin: 0 0 7px; color: var(--ink-2); }
+  .sum li b { color: var(--ink); font-weight: 700; }
+  .sum .id { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; }
+
+  /* options side by side */
+  .opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 10px 0 0; align-items: start; }
+  .opts.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .opt h4 { margin: 10px 0 2px; font-size: 14.5px; }
+  .opt .rec { display: block; font: 500 12px/1.35 var(--sans); color: var(--green); }
+  .opt .no { display: block; font: 500 12px/1.35 var(--sans); color: var(--ink-3); }
+  .opt p { margin: 0; color: var(--ink-2); font-size: 13.5px; }
+  .opt.is-rec .shot { box-shadow: 0 0 0 1px var(--ink); }
+
+  /* recommended flow: a sequence, so numbered */
+  .flow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 26px 28px; margin: 12px 0 0; padding: 0; list-style: none; counter-reset: st; align-items: start; }
+  .flow.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .flow > li { counter-increment: st; }
+  .flow .do { display: flex; gap: 10px; align-items: baseline; margin: 0 0 7px; font-size: 13.5px; }
+  .flow .do::before { content: counter(st); flex: none; width: 21px; height: 21px; border-radius: 50%; background: var(--ink); color: var(--panel); font: 700 12px/21px var(--sans); text-align: center; }
+  .flow .see { margin: 7px 0 0; color: var(--ink-2); font-size: 13.5px; max-width: 70ch; }
+
+  .keys { border-collapse: collapse; margin: 8px 0 0; font-size: 14px; width: 100%; max-width: 1100px; }
+  .keys th { text-align: left; font-weight: 700; padding: 5px 24px 5px 0; font-size: 13px; }
+  .keys td { padding: 6px 24px 6px 0; vertical-align: top; border-top: 1px solid var(--line); }
+  .keys td:nth-child(2) { white-space: nowrap; }
+  .keys td:last-child { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .rej { margin: 0; padding-left: 1.2em; max-width: 90ch; color: var(--ink-2); }
+  .rej li { margin: 0 0 6px; } .rej b { color: var(--ink); }
+  footer { padding: 48px 0 64px; color: var(--ink-3); font-size: 13px; }
+
+  /* ---------- shots: a window cut down to what matters ---------- */
+  .shot { border: 1px solid var(--line); border-radius: 9px; overflow: hidden; background: var(--canvas); display: grid; grid-template-columns: minmax(0, 1fr); font: 400 13px/1.5 var(--sans); }
+  .shot.side { grid-template-columns: 184px minmax(0, 1fr); }
+  .shot.big { grid-template-columns: 270px minmax(0, 1fr); height: 640px; border-radius: 11px; }
+  .main { padding: 9px; display: flex; flex-direction: column; gap: 9px; min-width: 0; min-height: 0; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+
+  /* the dark sidebar (it stays #22272E in both themes) */
+  .sb { background: #22272E; color: #E6EDF3; display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+  .sb-head { padding: 10px 11px 6px; font-size: 13.5px; font-weight: 700; color: #F0F6FC; display: flex; gap: 6px; align-items: center; }
+  .sb-head .dots { display: flex; gap: 5px; margin-right: 6px; } .sb-head .dots i { width: 9px; height: 9px; border-radius: 50%; background: #545D68; }
+  .sb-body { flex: 1; min-height: 0; overflow: hidden; }
+  .sb-g { font-weight: 700; font-size: 11.5px; padding: 8px 11px 3px; color: #F0F6FC; }
+  .sb-g.others { color: #9198A1; }
+  .sb-r { display: grid; grid-template-columns: 15px minmax(0, 1fr); column-gap: 8px; padding: 5px 11px 6px; margin-left: 5px; }
+  .sb-r .bx { width: 15px; height: 15px; border: 1px solid #545D68; border-radius: 4px; display: grid; place-items: center; background: #2D333B; margin-top: 1px; }
+  .sb-r .t { font-weight: 500; font-size: 11.5px; line-height: 1.3; color: #CDD9E5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sb-r .s { font-size: 10.5px; line-height: 1.3; font-weight: 500; color: #9198A1; }
+  .sb-r.red .s { color: #FF7B72; } .sb-r.green .s { color: #56D364; }
+  .sb-r.cur { background: var(--canvas); border-radius: 8px 0 0 8px; }
+  .sb-r.cur .t { color: var(--ink); font-weight: 700; } .sb-r.cur .s { color: var(--ink-3); }
+  .sb-r.cur .bx { background: var(--panel); border-color: #8C959F; }
+  .sb-empty { padding: 10px 11px; font-size: 11px; color: #9198A1; }
+  .sb-foot { border-top: 1px solid #373E47; padding: 7px 8px; display: flex; align-items: center; gap: 2px; font-size: 10.5px; }
+  .sb-foot .tb { width: 18px; height: 18px; display: grid; place-items: center; color: #9198A1; margin-right: auto; }
+  .sb-foot .b { border-radius: 5px; padding: 2px 5px; font-size: 10.5px; border: 1px solid transparent; font-weight: 500; white-space: nowrap; color: #9198A1; }
+  .sb-foot .b.on { background: #2D333B; border: 1px solid #444C56; color: #E6EDF3; }
+  .side .ind, .sb .ind { --red: #FF7B72; --ink-3: #9198A1; --green: #3FB950; --arc-bg: #1F4D2C; }
+  .sb-r.cur .ind { --red: #CF222E; --ink-3: #6E7781; --green: #1A7F37; --arc-bg: #C6E9D0; }
+  :root[data-theme="dark"] .sb-r.cur .ind { --red: #FF7B72; --ink-3: #9198A1; --green: #3FB950; --arc-bg: #1F4D2C; }
+
+  /* the picker panel: drawn like the Open list in app.css (.ol-head, .ol-filter, .ol-list, .ol-keys) */
+  .pk { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+  .pk-head { padding: 10px 13px; border-bottom: 1px solid var(--line-2); }
+  .pk-head h5 { font-size: 16px; font-weight: 700; margin: 0; line-height: 1.25; }
+  .pk-head p { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
+  .pk-filter { display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 8px 13px; border-bottom: 1px solid var(--line-2); font: 12px/1.45 var(--mono); }
+  .pk-filter .g { color: var(--link); }
+  .pk-filter > span:last-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pk-filter .ph { color: var(--faint); }
+  .caret { display: inline-block; width: 1px; height: 1.2em; background: var(--ink); vertical-align: -.25em; margin-left: 1px; }
+  .pk-list { font: 12px/1.4 var(--mono); padding: 3px 0; flex: 1; min-height: 0; overflow: hidden; }
+  .pk-keys { margin: 0; padding: 6px 13px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--ink-3); }
+  .pk-note { margin: 0; padding: 4px 13px 5px; font: 12px/1.4 var(--mono); color: var(--ink-3); }
+  .pk-note.link { color: var(--link); text-decoration: underline; text-underline-offset: 2.5px; }
+  .pk-empty { margin: 0; padding: 5px 13px; font: 12px/1.45 var(--mono); color: var(--ink-3); }
+  /* a folder row: path, sessions, last used */
+  .fr { display: grid; grid-template-columns: minmax(0, 1fr) 12ch 9ch; gap: 1.5ch; padding: 2px 13px; }
+  .fr > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .fr .n, .fr .a { color: var(--ink-3); } .fr .a { text-align: right; }
+  .fr.on { background: var(--sel); } .fr.on .p { color: var(--link); }
+  .fr .p { position: relative; }
+  .fr.kid .p { padding-left: 2.4ch; }
+  .fr.kid .p::before { content: ""; position: absolute; left: .8ch; top: -2px; height: calc(.7em + 2px); width: 7px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+  .fr.kid:not(.last) .p::after { content: ""; position: absolute; left: .8ch; top: .7em; bottom: -2px; border-left: 1px solid var(--guide); }
+  .fr.par:not(.solo) .p::after { content: ""; position: absolute; left: .8ch; top: 1.3em; bottom: -2px; border-left: 1px solid var(--guide); }
+  .fr.gone { color: var(--faint); } .fr.gone .n { color: var(--ink-3); }
+  .fr.mkdir .p { color: var(--ink-2); grid-column: 1 / -1; }
+  .fr.mkdir.on .p { color: var(--link); }
+  .fr .em { font-weight: 700; }
+  /* a session row, as in the Open list: title, folder, age */
+  .sr { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 10ch; gap: 1.5ch; padding: 2px 13px; }
+  .sr > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sr .f, .sr .a { color: var(--ink-3); } .sr .a { text-align: right; }
+  .sr .t { display: flex; gap: 1.5ch; } .sr .t .tt { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .sr .tag { flex: none; color: var(--ink-3); }
+  .sr.on { background: var(--sel); } .sr.on .t { color: var(--link); }
+  .sr .gone { text-decoration: line-through; text-decoration-color: var(--faint); }
+
+  /* a session: header, transcript, message box */
+  .hd { padding: 9px 13px; }
+  .hd h5 { font-size: 15.5px; font-weight: 700; margin: 0; line-height: 1.25; }
+  .hd p { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
+  .hd .mono { font-family: var(--mono); font-size: .92em; color: var(--ink-2); }
+  .hd .chip { font-family: var(--mono); font-size: .92em; color: var(--link); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+  .hd .gone { color: var(--ink-2); }
+  .log { padding: 9px 14px; font: 12px/1.45 var(--mono); flex: 1; min-height: 70px; display: flex; flex-direction: column; justify-content: flex-end; gap: 7px; }
+  .log .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); }
+  .log .ln .g { color: var(--ink-2); }
+  .log .ln.tool .g { color: #2DA44E; }
+  .log .dim { color: var(--ink-3); }
+  .log .pr { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 0 -14px; padding: 2px 14px 2px 11.5px; }
+  .log .pr .g { color: var(--link); }
+  .log .sep { text-align: center; color: var(--ink-3); font: 11px/1.4 var(--sans); display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+  .log .sep::before, .log .sep::after { content: ""; border-top: 1px solid var(--line-2); }
+  .log .hello { color: var(--ink-3); font-family: var(--sans); font-size: 12px; text-align: center; margin: auto 0; }
+  .box { display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 8px 13px; font: 12px/1.45 var(--mono); min-height: 4.4em; border-radius: 7px; }
+  .box .g { color: var(--faint); }
+  .box .ph { color: var(--faint); }
+  .box.normal { background: var(--sub); }
+  .box.insert { box-shadow: 0 0 0 2px var(--ring); } .box.insert .g { color: var(--link); }
+  .box .line { color: var(--ink-3); }
+  .box .line b { color: var(--ink); font-weight: 400; }
+
+  /* other surfaces the options need */
+  .toast { align-self: center; background: var(--toast); color: var(--toast-ink); padding: 5.5px 10px; border-radius: 5.5px; font-weight: 500; font-size: 12px; margin-top: -2px; }
+  .welcome { flex: 1; display: grid; place-items: center; text-align: center; padding: 30px 20px; }
+  .welcome h5 { font-size: 16px; margin: 0 0 4px; } .welcome p { margin: 0 0 12px; color: var(--ink-3); font-size: 12px; }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 5.5px; padding: 4px 10px; font-size: 12px; font-weight: 500; font-family: var(--sans); }
+  .btn.primary { background: #1F883D; border-color: #1A7F37; color: #fff; }
+  .finder { margin: 0 14px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); overflow: hidden; font-size: 11.5px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); }
+  .finder .fb { display: grid; grid-template-columns: 92px minmax(0, 1fr) minmax(0, 1fr); min-height: 120px; }
+  .finder .fl { background: var(--sub); padding: 6px 8px; color: var(--ink-3); border-right: 1px solid var(--line-2); }
+  .finder .fl b { display: block; font-size: 10.5px; margin: 0 0 3px; color: var(--ink-3); font-weight: 500; }
+  .finder .fc { padding: 5px 0; border-right: 1px solid var(--line-2); }
+  .finder .fc div { padding: 1px 9px; } .finder .fc .on { background: var(--menu-sel); color: #fff; }
+  .finder .ff { display: flex; justify-content: flex-end; gap: 6px; padding: 7px 9px; border-top: 1px solid var(--line-2); }
+  .finder .ff .go { background: var(--menu-sel); color: #fff; border-color: var(--menu-sel); }
+  .split { display: grid; grid-template-columns: 0.9fr 1.1fr; min-height: 0; flex: 1; }
+  .split > div + div { border-left: 1px solid var(--line-2); }
+  .menu { width: 240px; margin: 14px; background: var(--menu); border: 1px solid var(--line); border-radius: 7px; padding: 4px; font-size: 12.5px; box-shadow: 0 8px 24px rgba(0, 0, 0, .18); }
+  .menu .mt { font-weight: 700; padding: 2px 9px 4px; color: var(--ink-3); font-size: 11.5px; }
+  .menu .mi { display: flex; padding: 2px 9px; border-radius: 4px; } .menu .mi span { margin-left: auto; color: var(--ink-3); }
+  .menu .mi.on { background: var(--menu-sel); color: #fff; } .menu .mi.on span { color: #fff; }
+  .menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 6px; }
+  .textcard { padding: 14px 16px; font-size: 13px; color: var(--ink-2); }
+  .textcard p { margin: 0 0 8px; } .textcard p:last-child { margin: 0; }
+
+  /* ---------- marks, as in app.html; running marks turn linearly, one cycle per 2 s ---------- */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+  .ind { display: inline-grid; place-items: center; width: 1em; height: 1em; flex: none; vertical-align: middle; line-height: 0; font-size: 10px; }
+  .ind > * { grid-area: 1 / 1; }
+  .ind .arc { width: 1em; height: 1em; border-radius: 50%; border: .17em solid var(--arc-bg); border-top-color: var(--green); border-right-color: var(--green); animation: spin 2s linear infinite; }
+  .ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
+  .ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; animation: see 2s linear infinite; }
+  .ind .bars i + i { animation-delay: -1s; }
+  .ind .sq { width: .66em; height: .66em; border-radius: .1em; background: var(--ink-3); }
+  @media (prefers-reduced-motion: reduce) { .ind * { animation: none !important; } }
+
+  @media (max-width: 1100px) {
+    .sum, .opts, .flow, .flow.three { grid-template-columns: minmax(0, 1fr); }
+    .shot.big { grid-template-columns: 200px minmax(0, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>Starting and opening sessions in any folder</h1>
+      <p>How Synopia gets you into the right folder, on a new machine and after a year of daily use. Each scenario compares the options where the choice is real, then walks the recommended flow. Every folder, title and count here is invented.</p>
+      <ul class="toc">
+        <li><a href="#summary">Summary</a></li>
+        <li><a href="#picture">The design in one picture</a></li>
+        <li><a href="#s1">1. First launch, no history</a></li>
+        <li><a href="#s2">2. First launch, CLI history</a></li>
+        <li><a href="#s3">3. After a year</a></li>
+        <li><a href="#s4">4. Moved and deleted folders</a></li>
+        <li><a href="#s5">5. Keyboard only</a></li>
+        <li><a href="#rejected">Rejected</a></li>
+      </ul>
+    </div>
+    <button class="theme" id="theme" type="button">Dark mode</button>
+  </header>
+
+  <section id="summary">
+    <div class="sum">
+      <div>
+        <h3>Recommended</h3>
+        <ul>
+          <li><b>New session asks where, with the answer ready.</b> It opens a folder list over the main area, drawn like Open session. The folder of the session on screen is selected, so <kbd>⌘N</kbd> <kbd>Enter</kbd> starts there.</li>
+          <li><b>The list is every folder you have used</b>, newest first, with each repo's git worktrees under it, including worktrees with no sessions yet. Typing filters. A path starting with <code>~</code> or <code>/</code> completes from disk with <kbd>Tab</kbd>.</li>
+          <li><b>No open session means this list.</b> First launch shows it in the main area, so there is no welcome screen to learn.</li>
+          <li><b>Open session says it searches everything.</b> It already filters the whole history; it now says “Newest 50 of 812”, matches each typed word on its own, and gives ages in months.</li>
+          <li><b>A gone folder is named, not hidden.</b> Its sessions read “Folder gone” and open read-only. <kbd>Enter</kbd> in the box picks a folder to continue in.</li>
+          <li><b><kbd>⌘N</kbd> and <kbd>⌘O</kbd></b>, in a new File menu, work in normal and insert mode.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Requirement changes</h3>
+        <ul>
+          <li><span class="id">R3.3, FR-SES-02, Q7</span>: New session opens the folder list instead of starting at once. The session is still empty, with no new worktree. <code>settings.newSessionCwd</code> and its default rule go.</li>
+          <li><span class="id">R3.2, FR-SES-03</span>: the Open list header gives the totals, each word matches title or folder, rows whose folder is gone say “Folder gone”, ages over 60 days read in months.</li>
+          <li><span class="id">New R3.11, FR-SES-16</span>: gone folders. A session whose folder no longer exists opens read-only and offers to continue in another folder. This replaces the failed send and its toast.</li>
+          <li><span class="id">New R3.12, FR-SES-17</span>: with no open session, the main area shows the folder list.</li>
+          <li><span class="id">New R9.7, FR-KEY-07</span>: <kbd>⌘N</kbd> New session and <kbd>⌘O</kbd> Open session, in a File menu of the shell.</li>
+        </ul>
+      </div>
+      <div>
+        <h3>Open questions</h3>
+        <ol>
+          <li>Continuing a session in another folder: same id or a fork with a new id? Not checked: one scripted run must show whether the SDK resumes a session by id from another folder. The docs say a fork lands in the current folder's project.</li>
+          <li>Should a typed path that doesn't exist offer “Create folder … and start there”? It is shown here; it is the only write Synopia would make to your disk.</li>
+          <li>Is typing a path enough for a folder never used, or should the list also have one mouse row, “Choose in Finder…” (the macOS folder picker)?</li>
+          <li>A new worktree from this list (<code>git worktree add</code>): later, or never? R3.3 says no new worktree yet.</li>
+          <li>Should Synopia guess where a moved repo went (same git remote)? Proposed: no, you pick it.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="picture">
+    <h2>The design in one picture</h2>
+    <p class="lede">After a year: 12 open sessions, 43 folders, 812 past sessions. You are in “Login form: keep the email after a failed sign-in” in <code>~/dev/demo-app.fix-login</code> and press <kbd>⌘N</kbd>. That worktree is selected. <kbd>Enter</kbd> starts there; typing finds any other folder.</p>
+    <div id="big"></div>
+  </section>
+
+  <section id="s1">
+    <h2>1. First launch, no history</h2>
+    <p class="lede">A new Mac. Synopia has no open sessions, and <code>~/.claude</code> has no past sessions. You want to work in <code>~/dev/demo-app</code>, which you have just cloned.</p>
+    <h3>What the window shows first</h3>
+    <div class="opts" id="o1"></div>
+    <h3>Recommended flow</h3>
+    <ol class="flow" id="f1"></ol>
+  </section>
+
+  <section id="s2">
+    <h2>2. First launch, CLI history</h2>
+    <p class="lede">The same new install, but you have used Claude Code in a terminal: <code>~/.claude</code> holds 37 sessions in 6 folders. The newest is in <code>~/work/api</code>, 3 hours ago. One session is still open in a terminal.</p>
+    <h3>Which folder is selected when no session is on screen</h3>
+    <div class="opts" id="o2"></div>
+    <h3>Recommended flow</h3>
+    <ol class="flow" id="f2"></ol>
+  </section>
+
+  <section id="s3">
+    <h2>3. After a year</h2>
+    <p class="lede">43 folders used, 812 past sessions, 12 open. On screen: “Login form: keep the email after a failed sign-in” in <code>~/dev/demo-app.fix-login</code>.</p>
+    <h3>How New session picks the folder</h3>
+    <div class="opts" id="o3"></div>
+
+    <h3>a. The folder of the session on screen</h3>
+    <ol class="flow" id="f3a"></ol>
+
+    <h3>b. A folder used last week</h3>
+    <ol class="flow" id="f3b"></ol>
+
+    <h3>c. A folder never used</h3>
+    <div class="opts" id="o3c"></div>
+    <ol class="flow" id="f3c" style="margin-top:22px"></ol>
+
+    <h3>d. A git worktree of a repo you use</h3>
+    <p class="lede">You made <code>~/dev/demo-app.search</code> in a terminal with <code>git worktree add</code>. No session has run there yet.</p>
+    <div class="opts" id="o3d"></div>
+    <ol class="flow" id="f3d" style="margin-top:22px"></ol>
+
+    <h3>Open a session from long ago</h3>
+    <p class="lede">The invoice CSV export, done in <code>~/work/web-shop</code> 9 months ago. It is session 640 of 812, far past the newest 50. Today the filter already searches all 812, but nothing on screen says so.</p>
+    <div class="opts" id="o3o"></div>
+    <ol class="flow" id="f3o" style="margin-top:22px"></ol>
+  </section>
+
+  <section id="s4">
+    <h2>4. Moved and deleted folders</h2>
+    <p class="lede">Two changes since those sessions ran. In March you moved <code>~/dev/api</code> to <code>~/work/api</code>. Last week you merged and deleted the worktree <code>~/dev/demo-app.billing-v2</code>; one of its sessions is still open in the sidebar. Today a send in either fails with “Folder … no longer exists”.</p>
+    <h3>What happens to their sessions</h3>
+    <div class="opts" id="o4"></div>
+    <h3>Recommended flow: the deleted worktree</h3>
+    <ol class="flow" id="f4"></ol>
+    <h3>The moved repo</h3>
+    <ol class="flow" id="f4m"></ol>
+  </section>
+
+  <section id="s5">
+    <h2>5. Keyboard only</h2>
+    <p class="lede">Synopia is key-driven, but New session and Open session have no key today: you click the sidebar's footer.</p>
+    <h3>The two keys</h3>
+    <div class="opts" id="o5"></div>
+    <h3>Every flow above, by key</h3>
+    <table class="keys">
+      <tr><th>You want to</th><th>Keys</th><th>Presses, not counting your first message</th></tr>
+      <tr><td>Start on a new Mac in <code>~/dev/demo-app</code></td><td>type <code>~/dev/dem</code> <kbd>Tab</kbd> <kbd>Enter</kbd></td><td>9 characters and 2 keys; the list is already there</td></tr>
+      <tr><td>Start where the screen is</td><td><kbd>⌘N</kbd> <kbd>Enter</kbd></td><td>2</td></tr>
+      <tr><td>Start in a folder from last week</td><td><kbd>⌘N</kbd> type <code>notes</code> <kbd>Enter</kbd></td><td>2 and the name</td></tr>
+      <tr><td>Start in a folder never used</td><td><kbd>⌘N</kbd> type <code>~/dev/si</code> <kbd>Tab</kbd> <kbd>Enter</kbd></td><td>3 and the start of the path</td></tr>
+      <tr><td>Start in a worktree of a repo you use</td><td><kbd>⌘N</kbd> type <code>search</code> <kbd>Enter</kbd></td><td>2 and the name</td></tr>
+      <tr><td>Open a session from 9 months ago</td><td><kbd>⌘O</kbd> type <code>invoice csv</code> <kbd>Enter</kbd></td><td>2 and the words</td></tr>
+      <tr><td>Continue a session whose folder is gone</td><td><kbd>⌘O</kbd> type <code>billing</code> <kbd>Enter</kbd> <kbd>Enter</kbd> <kbd>Enter</kbd></td><td>4 and the words; the folder list opens filtered on the repo name</td></tr>
+    </table>
+    <h3>Keys in the folder list</h3>
+    <table class="keys">
+      <tr><td>Typing</td><td></td><td>Filters by folder name. A path starting with <code>~</code> or <code>/</code> lists that folder's subfolders on disk.</td></tr>
+      <tr><td><kbd>↑</kbd> <kbd>↓</kbd>, <kbd>j</kbd> <kbd>k</kbd> while the filter is empty</td><td></td><td>Move, as in the Open list.</td></tr>
+      <tr><td><kbd>Tab</kbd></td><td></td><td>Completes the selected path into the filter, as a shell does, to go one folder deeper.</td></tr>
+      <tr><td><kbd>Enter</kbd></td><td></td><td>Starts an empty session in the selected folder and puts the message box in insert mode.</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td></td><td>Closes the list and goes back to the session on screen. With no open session the list stays.</td></tr>
+      <tr><td><kbd>⌘O</kbd> in the list, <kbd>⌘N</kbd> in the Open list</td><td></td><td>Switches to the other list, keeping nothing typed.</td></tr>
+    </table>
+  </section>
+
+  <section id="rejected">
+    <h2>Rejected</h2>
+    <ul class="rej">
+      <li><b>Starting at once and changing the folder in the header until the first message.</b> It keeps “no dialog”, but the folder can't change once you send, and a wrong one shows only in small type.</li>
+      <li><b>Two commands, one for “here” and one that asks.</b> Two ways to do one thing; <kbd>⌘N</kbd> <kbd>Enter</kbd> already costs one key.</li>
+      <li><b>A welcome screen with a Finder button.</b> A second way to start that you use once.</li>
+      <li><b>The macOS folder picker as the main way.</b> It knows nothing about the folders you used or their worktrees, and it is slow by key.</li>
+      <li><b>Folder first, then sessions, in Open session.</b> Two steps every time, to fix a case typing already covers.</li>
+      <li><b>Hiding sessions whose folder is gone.</b> The history is still on disk and still worth reading.</li>
+      <li><b>Normal-mode letters for New and Open.</b> They type in insert mode, and <kbd>⌘N</kbd> <kbd>⌘O</kbd> are what every Mac app uses.</li>
+    </ul>
+  </section>
+
+  <footer>Synopia design storyboard: folders for New session and Open session, 2026-11-25. All content is invented.</footer>
+</div>
+
+<script>
+/* ---------- marks ---------- */
+const IND = {
+  work: '<span class="ind" aria-hidden="true"><i class="arc"></i></span>',
+  stop: '<span class="ind" aria-hidden="true"><i class="sq"></i></span>',
+  pause: '<span class="ind" aria-hidden="true"><span class="bars"><i></i><i></i></span></span>'
+};
+const K = (...k) => k.map(x => `<kbd>${x}</kbd>`).join(" ");
+const MOON = '<svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path d="M13.3 10.2A5.7 5.7 0 0 1 5.8 2.7a5.7 5.7 0 1 0 7.5 7.5Z" fill="currentColor" fill-opacity=".3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>';
+
+/* ---------- invented data ---------- */
+const YEAR_SIDE = [
+  ["Demo app"],
+  ["Login form: keep the email after a failed sign-in", "stop", "Your turn, 4 min", "cur"],
+  ["Search: rank exact title matches first", "work", "Working", "green"],
+  ["Release checklist for 2.4", "pause", "Needs you, 2 min", "red"],
+  ["Not in a group", "others"],
+  ["API: rate limit headers", "stop", "Your turn, 1 h"],
+  ["Weekly notes cleanup", "stop", "Your turn, 3 h"],
+  ["Infra: rotate the staging certificates", "work", "Working", "green"],
+  ["Web shop: cart totals with discounts", "stop", "Your turn, 1 d"],
+  ["Blog: draft on keyboard-first tools", "stop", "Your turn, 2 d"],
+  ["Mobile app: offline sync retries", "stop", "Your turn, 2 d"],
+  ["Dotfiles: zsh startup time", "stop", "Your turn, 4 d"],
+  ["Scratch: date parsing check", "stop", "Your turn, 6 d"],
+  ["Notes: reading list import", "stop", "Your turn, 6 d"],
+];
+/* folders after a year, newest first; kids are worktrees, found by git */
+const F_YEAR = [
+  { p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true },
+  { p: "~/dev/demo-app.fix-login", n: "12 sessions", a: "4 min ago", kid: true },
+  { p: "~/dev/demo-app.release-2.4", n: "6 sessions", a: "2 h ago", kid: true },
+  { p: "~/dev/demo-app.search", n: "none yet", a: "", kid: true, last: true },
+  { p: "~/work/api", n: "88 sessions", a: "1 h ago" },
+  { p: "~/dev/notes", n: "31 sessions", a: "6 d ago" },
+  { p: "~/work/infra", n: "47 sessions", a: "1 d ago" },
+  { p: "~/work/web-shop", n: "96 sessions", a: "1 d ago" },
+  { p: "~/dev/blog", n: "19 sessions", a: "2 d ago" },
+  { p: "~/work/mobile-app", n: "63 sessions", a: "2 d ago" },
+  { p: "~/dev/dotfiles", n: "22 sessions", a: "4 d ago" },
+  { p: "~/dev/scratch", n: "40 sessions", a: "6 d ago" },
+];
+
+/* ---------- builders ---------- */
+function sidebar(rows, { empty } = {}) {
+  const body = empty ? `<div class="sb-empty">${empty}</div>` : rows.map(r => r.length === 1 || r[1] === "others"
+    ? `<div class="sb-g${r[1] === "others" ? " others" : ""}">${r[0]}</div>`
+    : `<div class="sb-r ${r[3] || ""}"><span class="bx">${IND[r[1]]}</span><div><div class="t">${r[0]}</div><div class="s">${r[2]}</div></div></div>`).join("");
+  return `<aside class="sb"><div class="sb-head"><span class="dots"><i></i><i></i><i></i></span>Synopia</div><div class="sb-body">${body}</div>
+    <div class="sb-foot"><span class="tb">${MOON}</span><span class="b">Open session</span><span class="b on">New session</span></div></aside>`;
+}
+const filter = (typed, ph) => `<div class="pk-filter"><span class="g">❯</span>${typed ? `<span>${typed}<i class="caret"></i></span>` : `<span><i class="caret"></i><span class="ph">${ph}</span></span>`}</div>`;
+function frow(f) {
+  const cls = ["fr", f.on && "on", f.kid && "kid", f.last && "last", f.par && "par", f.solo && "solo", f.gone && "gone", f.mkdir && "mkdir"].filter(Boolean).join(" ");
+  return `<div class="${cls}"><span class="p">${f.p}</span><span class="n">${f.n || ""}</span><span class="a">${f.a || ""}</span></div>`;
+}
+/* the folder list: New session's panel */
+function folders({ title = "New session", meta = "Claude works in the folder you pick. It can't change after your first message.", typed = "", ph = "Type a folder name, or a path starting with ~ or /", rows = [], note = "", empty = "", keys = true }) {
+  return `<div class="panel pk"><div class="pk-head"><h5>${title}</h5><p>${meta}</p></div>${filter(typed, ph)}
+    <div class="pk-list">${empty ? `<p class="pk-empty">${empty}</p>` : rows.map(frow).join("")}</div>${note ? `<p class="pk-note">${note}</p>` : ""}
+    ${keys ? `<p class="pk-keys">${typeof keys === "string" ? keys : `${K("↑", "↓")} move, ${K("Tab")} completes a path, ${K("Enter")} starts, ${K("Esc")} closes`}</p>` : ""}</div>`;
+}
+function srow(s) {
+  return `<div class="sr${s.on ? " on" : ""}"><span class="t"><span class="tt">${s.t}</span>${s.tag ? `<span class="tag">${s.tag}</span>` : ""}</span><span class="f${s.gone ? " gone" : ""}">${s.f}</span><span class="a">${s.a}</span></div>`;
+}
+/* the Open list */
+function sessions({ meta, typed = "", rows = [], note = "" }) {
+  return `<div class="panel pk"><div class="pk-head"><h5>Open session</h5><p>${meta}</p></div>${filter(typed, "Type to filter by title or folder")}
+    <div class="pk-list">${rows.map(srow).join("")}</div>${note ? `<p class="pk-note${note === "Show 50 more" ? " link" : ""}">${note}</p>` : ""}
+    <p class="pk-keys">${K("↑", "↓")} move, ${K("Enter")} opens, ${K("Esc")} closes</p></div>`;
+}
+/* a session view */
+function session({ title = "New session", meta, log = "", box = "insert", line = "" }) {
+  const boxHTML = line ? `<div class="box normal panel"><span class="g">❯</span><span class="line">${line}</span></div>`
+    : `<div class="box ${box} panel"><span class="g">❯</span><span>${box === "insert" ? '<i class="caret"></i>' : ""}<span class="ph">/ for commands</span></span></div>`;
+  return `<div class="panel hd"><h5>${title}</h5><p>${meta}</p></div><div class="panel log">${log || '<p class="hello">Empty session. Your first message sets the tone, and Claude names it from there.</p>'}</div>${boxHTML}`;
+}
+const shot = (main, { side, sideOpts, h } = {}) => `<div class="shot${side ? " side" : ""}"${h ? ` style="height:${h}px"` : ""}>${side ? sidebar(side, sideOpts) : ""}<div class="main">${main}</div></div>`;
+const opt = (o) => `<div class="opt${o.rec ? " is-rec" : ""}">${o.shot}<h4>${o.name}</h4>${o.rec ? '<span class="rec">Recommended</span>' : '<span class="no">Not recommended</span>'}<p>${o.why}</p></div>`;
+const step = (s) => `<li><div class="do"><span>${s.do}</span></div>${s.shot}<p class="see">${s.see}</p></li>`;
+const put = (id, html) => { document.getElementById(id).innerHTML = html; };
+const sel = (rows, p) => rows.map(r => ({ ...r, on: r.p === p }));
+
+/* ---------- the big picture ---------- */
+document.getElementById("big").innerHTML = `<div class="shot big">${sidebar(YEAR_SIDE)}<div class="main">${folders({ rows: sel(F_YEAR, "~/dev/demo-app.fix-login"), note: "43 folders, newest first. Type a name to find one, or a path to start anywhere." })}</div></div>`;
+
+/* ---------- 1. first launch, no history ---------- */
+put("o1", [
+  { rec: true, name: "The folder list, as New session shows it", why: "The same panel as every later New session, so the first launch teaches the daily path. It is ready to type into.",
+    shot: shot(folders({ empty: "No folders yet. Type the path of a project folder, for example ~/dev/demo-app." }), { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
+  { name: "A welcome screen with a Finder button", why: "A second way to start that you use once, and the Finder picker is a mouse trip in a key-driven app.",
+    shot: shot(`<div class="panel welcome"><div><h5>Start in a project folder</h5><p>Claude works in the folder you choose.</p><span class="btn primary">Choose folder…</span></div></div>`, { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
+  { name: "Start at once in your home folder", why: "Today's rule with nothing open. Claude works in ~, and a session can't move to ~/dev/demo-app afterwards.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~</span>' }), { side: [["Not in a group", "others"], ["New session", "stop", "Your turn", "cur"]], h: 330 }) },
+].map(opt).join(""));
+put("f1", [
+  { do: "Open Synopia for the first time.", see: "The main area shows the folder list, its filter focused. The sidebar says there are no open sessions.",
+    shot: shot(folders({ empty: "No folders yet. Type the path of a project folder, for example ~/dev/demo-app." }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
+  { do: `Type <code>~/dev/dem</code>.`, see: "A path lists that folder's subfolders on disk, matching what you typed. Folders never used say “not used yet”.",
+    shot: shot(folders({ typed: "~/dev/dem", rows: [{ p: "~/dev/demo-app/", n: "not used yet", on: true }, { p: "~/dev/demo-notes/", n: "not used yet" }] }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
+  { do: `${K("Tab")} completes it, ${K("Enter")} starts.`, see: "An empty session in ~/dev/demo-app, with the message box in insert mode. It joins the sidebar under “Not in a group”.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/demo-app</span>, branch main' }), { side: [["Not in a group", "others"], ["New session", "stop", "Your turn", "cur"]], h: 300 }) },
+].map(step).join(""));
+
+/* ---------- 2. first launch, CLI history ---------- */
+const F_CLI = [
+  { p: "~/work/api", n: "14 sessions", a: "3 h ago" },
+  { p: "~/dev/demo-app", n: "9 sessions", a: "1 d ago", par: true },
+  { p: "~/dev/demo-app.fix-login", n: "3 sessions", a: "1 d ago", kid: true, last: true },
+  { p: "~/dev/notes", n: "6 sessions", a: "5 d ago" },
+  { p: "~/dev/dotfiles", n: "3 sessions", a: "12 d ago" },
+  { p: "~/dev/scratch", n: "2 sessions", a: "20 d ago" },
+];
+put("o2", [
+  { rec: true, name: "The folder you used last", why: "Where you were working, in the terminal too. Enter continues the habit; anything else is a few letters away.",
+    shot: shot(folders({ rows: sel(F_CLI, "~/work/api") }), { h: 290 }) },
+  { name: "Your home folder", why: "Today's rule with nothing open. Nobody starts a project session in ~, so Enter is never right.",
+    shot: shot(folders({ rows: [{ p: "~", n: "", a: "", on: true }, ...F_CLI] }), { h: 290 }) },
+  { name: "Nothing selected", why: "Safe, but Enter does nothing until you move, and it differs from every later New session.",
+    shot: shot(folders({ rows: F_CLI }), { h: 290 }) },
+].map(opt).join(""));
+put("f2", [
+  { do: "Open Synopia for the first time.", see: "The folder list shows the 6 folders from your terminal sessions, with ~/work/api, the newest, selected.",
+    shot: shot(folders({ rows: sel(F_CLI, "~/work/api") }), { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
+  { do: `${K("⌘O")} instead, to pick up a terminal session.`, see: "The Open list, as today, with the totals. The session a terminal still runs says so and opens read-only.",
+    shot: shot(sessions({ meta: "37 past sessions in 6 folders, newest first.", rows: [
+      { t: "API: pagination for the orders endpoint", tag: "Open in a terminal", f: "~/work/api", a: "3 h ago" },
+      { t: "API: rate limit headers", f: "~/work/api", a: "5 h ago", on: true },
+      { t: "Login form: keep the email after a failed sign-in", f: "~/dev/demo-app.fix-login", a: "1 d ago" },
+      { t: "Demo app: upgrade the test runner", f: "~/dev/demo-app", a: "1 d ago" },
+      { t: "Weekly notes cleanup", f: "~/dev/notes", a: "5 d ago" },
+      { t: "Dotfiles: zsh startup time", f: "~/dev/dotfiles", a: "12 d ago" }] }), { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
+].map(step).join(""));
+
+/* ---------- 3. after a year ---------- */
+put("o3", [
+  { rec: true, name: "Ask, with the folder on screen selected", why: "One way for every case: ⌘N Enter for here, a few letters for anywhere else. You see the folder before it is fixed.",
+    shot: shot(folders({ rows: sel(F_YEAR, "~/dev/demo-app.fix-login").slice(0, 8) }), { h: 330 }) },
+  { name: "Start at once, change it in the header", why: "Keeps “no dialog” and costs one key for here, but a wrong folder shows only in small type, and it can't change after you send.",
+    shot: shot(session({ meta: 'Folder <span class="chip">~/dev/demo-app.fix-login ▾</span> Change it before your first message' }), { h: 330 }) },
+  { name: "Two commands: here, or ask", why: "⌘N starts here, ⌘⇧N asks. Two ways to do one thing, to save a single Enter.",
+    shot: shot(`<div class="menu" style="margin:14px auto"><div class="mt">File</div><div class="mi on">New Session Here<span>⌘N</span></div><div class="mi">New Session In…<span>⇧⌘N</span></div><hr><div class="mi">Open Session…<span>⌘O</span></div></div>`, { h: 330 }) },
+].map(opt).join(""));
+
+put("f3a", [
+  { do: `${K("⌘N")}`, see: "The worktree of the session on screen is selected, under its repo. Nothing else to do.",
+    shot: shot(folders({ rows: sel(F_YEAR, "~/dev/demo-app.fix-login").slice(0, 7) }), { side: YEAR_SIDE.slice(0, 6), h: 300 }) },
+  { do: `${K("Enter")}`, see: "An empty session in the same worktree, in “Not in a group”, box in insert mode. You type your first message.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/demo-app.fix-login</span>, branch fix-login' }), { side: [...YEAR_SIDE.slice(0, 5), ["New session", "stop", "Your turn", "cur"], YEAR_SIDE[5]].map((r, i) => i === 1 ? [r[0], r[1], r[2]] : r), h: 300 }) },
+].map(step).join(""));
+
+put("f3b", [
+  { do: `${K("⌘N")}, type <code>notes</code>.`, see: "Each folder whose name holds the word, newest first. ~/dev/notes, used 6 days ago, comes first and is selected.",
+    shot: shot(folders({ typed: "notes", rows: [{ p: "~/dev/notes", n: "31 sessions", a: "6 d ago", on: true }, { p: "~/work/release-notes", n: "4 sessions", a: "5 mo ago" }, { p: "~/dev/demo-notes", n: "not used yet", a: "" }] }), { h: 250 }) },
+  { do: `${K("Enter")}`, see: "An empty session in ~/dev/notes.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/notes</span>' }), { h: 250 }) },
+].map(step).join(""));
+
+put("o3c", [
+  { rec: true, name: "Type the path, Tab completes", why: "The same field, no second tool, and fast by key. A path that doesn't exist offers to create it (open question 2).",
+    shot: shot(folders({ typed: "~/dev/si", rows: [{ p: "~/dev/side-project/", n: "not used yet", on: true }, { p: "~/dev/sizes-demo/", n: "not used yet" }, { p: "Create folder ~/dev/si and start there", mkdir: true }] }), { h: 270 }) },
+  { name: "A “Choose in Finder…” row", why: "Familiar with a mouse, but a second way to the same place, and it knows nothing about your folders (open question 3).",
+    shot: shot(`<div style="padding-top:22px"><div class="finder"><div class="fb"><div class="fl"><b>Favourites</b>Home<br>dev<br>work<br>Desktop</div><div class="fc"><div>blog</div><div>demo-app</div><div>notes</div><div class="on">side-project</div><div>sizes-demo</div></div><div class="fc"><div style="color:var(--ink-3)">README.md</div><div style="color:var(--ink-3)">src</div></div></div><div class="ff"><span class="btn">Cancel</span><span class="btn go">Open</span></div></div></div>`, { h: 270 }) },
+  { name: "Only folders you have used", why: "Clean, but the first session in a new project needs some other way in, and there is none.",
+    shot: shot(folders({ typed: "side", empty: "No folder you have used matches “side”." }), { h: 270 }) },
+].map(opt).join(""));
+put("f3c", [
+  { do: `${K("⌘N")}, type <code>~/dev/si</code>.`, see: "Subfolders of ~/dev that start with “si”. None was used before.",
+    shot: shot(folders({ typed: "~/dev/si", rows: [{ p: "~/dev/side-project/", n: "not used yet", on: true }, { p: "~/dev/sizes-demo/", n: "not used yet" }, { p: "Create folder ~/dev/si and start there", mkdir: true }] }), { h: 250 }) },
+  { do: `${K("Tab")} then ${K("Enter")}.`, see: "Tab fills in ~/dev/side-project/ and lists its subfolders; Enter starts in it. From now on it is in the list like any other folder.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/side-project</span>, branch main' }), { h: 250 }) },
+].map(step).join(""));
+
+put("o3d", [
+  { rec: true, name: "Worktrees under their repo, found by git", why: "Git knows every worktree of a repo you use, so one with no sessions yet is listed too. The 1px guides match the sidebar's tree.",
+    shot: shot(folders({ typed: "search", rows: [{ p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true }, { p: "~/dev/demo-app.search", n: "none yet", kid: true, last: true, on: true }] }), { h: 250 }) },
+  { name: "A flat list of folders with sessions", why: "Simpler, but a fresh worktree isn't in it, so you type its full path. Worktrees of one repo scatter by date.",
+    shot: shot(folders({ typed: "search", empty: "No folder you have used matches “search”. Type a path to start anywhere." }), { h: 250 }) },
+  { name: "A “New worktree…” row", why: "Makes the worktree too, but that is a new feature with its own questions: branch, base, naming (open question 4).",
+    shot: shot(folders({ typed: "search", rows: [{ p: "~/dev/demo-app.search", n: "none yet", on: false, solo: true }, { p: "New worktree of demo-app named “search”", mkdir: true, on: true }] }), { h: 250 }) },
+].map(opt).join(""));
+put("f3d", [
+  { do: `${K("⌘N")}, type <code>search</code>.`, see: "The worktree, under its repo so you see which repo it belongs to. “none yet” says no session ran there.",
+    shot: shot(folders({ typed: "search", rows: [{ p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true }, { p: "~/dev/demo-app.search", n: "none yet", kid: true, last: true, on: true }] }), { h: 230 }) },
+  { do: `${K("Enter")}`, see: "An empty session in the worktree, on its own branch.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/demo-app.search</span>, branch search' }), { h: 230 }) },
+].map(step).join(""));
+
+const OPEN_RECENT = [
+  { t: "Search: rank exact title matches first", f: "~/dev/demo-app.search", a: "2 min ago", on: true },
+  { t: "Infra: rotate the staging certificates", f: "~/work/infra", a: "40 min ago" },
+  { t: "API: pagination for the orders endpoint", f: "~/work/api", a: "2 h ago" },
+  { t: "Web shop: product image sizes", f: "~/work/web-shop", a: "1 d ago" },
+  { t: "Demo app: upgrade the test runner", f: "~/dev/demo-app", a: "2 d ago" },
+];
+put("o3o", [
+  { rec: true, name: "Search all, and say so", why: "Typing already reaches all 812; the header and the last line now say it. Each word matches title or folder, so “invoice csv” finds it.",
+    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", rows: OPEN_RECENT.slice(0, 4), note: "Newest 50 of 812. Type to search all of them." }), { h: 290 }) },
+  { name: "Folder first, then its sessions", why: "Good for browsing one folder, but two steps every time, and you have to remember the folder.",
+    shot: shot(`<div class="panel pk"><div class="pk-head"><h5>Open session</h5><p>Pick a folder, then a session.</p></div><div class="split"><div class="pk-list">${["~/dev/demo-app", "~/work/api", "~/work/infra", "~/work/web-shop", "~/dev/notes"].map((p, i) => `<div class="fr${i === 3 ? " on" : ""}" style="grid-template-columns:1fr"><span class="p">${p}</span></div>`).join("")}</div><div class="pk-list">${["Web shop: product image sizes|1 d ago", "Web shop: cart totals with discounts|1 d ago", "Web shop: checkout copy|3 wk ago", "Invoice export: CSV columns|9 mo ago"].map(x => { const [t, a] = x.split("|"); return `<div class="sr" style="grid-template-columns:1fr 8ch"><span class="t">${t}</span><span class="a">${a}</span></div>`; }).join("")}</div></div></div>`, { h: 290 }) },
+  { name: "“Show 50 more” at the end", why: "No typing, but you scroll through hundreds of rows by eye to reach 9 months ago.",
+    shot: shot(sessions({ meta: "Past sessions, newest first.", rows: OPEN_RECENT.slice(0, 4).map(r => ({ ...r, on: false })), note: "Show 50 more" }), { h: 290 }) },
+].map(opt).join(""));
+put("f3o", [
+  { do: `${K("⌘O")}`, see: "The newest past sessions, with the totals in the header and the last line saying typing searches all 812.",
+    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", rows: OPEN_RECENT, note: "Newest 50 of 812. Type to search all of them." }), { h: 280 }) },
+  { do: `Type <code>invoice csv</code>, then ${K("Enter")}.`, see: "Both words match, in the title or the folder. Ages past 60 days read in months. Enter opens it; it resumes on your first message.",
+    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "invoice csv", rows: [
+      { t: "Invoice export: CSV columns", f: "~/work/web-shop", a: "9 mo ago", on: true },
+      { t: "Invoice export: CSV encoding for accents", f: "~/work/web-shop", a: "9 mo ago" },
+      { t: "Import old invoices from CSV", f: "~/work/api", a: "11 mo ago" }], note: "3 sessions match." }), { h: 280 }) },
+].map(step).join(""));
+
+/* ---------- 4. moved and deleted folders ---------- */
+const GONE_META = 'Folder <span class="mono">~/dev/demo-app.billing-v2</span>, <span class="gone">folder gone</span>';
+const GONE_LOG = `<div class="pr"><span class="g">❯</span><span>Split the billing form into steps</span></div><div class="ln"><span class="g">●</span><span>Done. The form is three steps now, and the totals step reuses the cart summary.</span></div><div class="ln"><span class="dim">  </span><span class="dim">Worked for 6m 12s, done 04:18 PM</span></div>`;
+put("o4", [
+  { rec: true, name: "Name it, open read-only, continue elsewhere", why: "You still read the whole history, and one key takes it on in a folder that exists. Nothing fails after you have typed a message.",
+    shot: shot(session({ title: "Billing form: split into steps", meta: GONE_META, log: GONE_LOG, line: "This folder no longer exists. <b>Enter</b> picks a folder to continue in." }), { h: 300 }) },
+  { name: "Hide sessions whose folder is gone", why: "A tidy list, but months of decisions vanish from Synopia while their transcripts are still on disk.",
+    shot: shot(sessions({ meta: "803 past sessions in 41 folders, newest first.", typed: "billing", rows: [{ t: "Billing page: currency rounding", f: "~/work/web-shop", a: "4 mo ago", on: true }], note: "9 sessions from folders that no longer exist are hidden." }), { h: 300 }) },
+  { name: "Today: open, then fail on send", why: "Nothing warns you until your message bounces, and then there is no way forward.",
+    shot: shot(session({ title: "Billing form: split into steps", meta: 'Folder <span class="mono">~/dev/demo-app.billing-v2</span>', log: GONE_LOG, box: "insert" }) + `<div class="toast">Folder ~/dev/demo-app.billing-v2 no longer exists</div>`, { h: 300 }) },
+].map(opt).join(""));
+put("f4", [
+  { do: `${K("⌘O")}, type <code>billing</code>.`, see: "Rows whose folder is gone say “Folder gone”, in words, beside the title, and the folder is struck through. They stay selectable.",
+    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "billing", rows: [
+      { t: "Billing form: split into steps", tag: "Folder gone", f: "~/dev/demo-app.billing-v2", gone: true, a: "8 d ago", on: true },
+      { t: "Billing form: validation messages", tag: "Folder gone", f: "~/dev/demo-app.billing-v2", gone: true, a: "9 d ago" },
+      { t: "Billing page: currency rounding", f: "~/work/web-shop", a: "4 mo ago" }] }), { h: 290 }) },
+  { do: `${K("Enter")}`, see: "The transcript shows as usual. The message box holds one line instead of the field. A session already in the sidebar whose folder goes shows the same line.",
+    shot: shot(session({ title: "Billing form: split into steps", meta: GONE_META, log: GONE_LOG, line: "This folder no longer exists. <b>Enter</b> picks a folder to continue in." }), { h: 290 }) },
+  { do: `${K("Enter")}`, see: "The folder list, titled for this, filtered on the repo's name (the part before the dot of a worktree). Gone folders that match show dimmed and can't be picked.",
+    shot: shot(folders({ title: "Continue in a folder", meta: "“Billing form: split into steps” continues here, with its whole history.", typed: "demo-app", rows: [
+      { p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true, on: true },
+      { p: "~/dev/demo-app.fix-login", n: "12 sessions", a: "4 min ago", kid: true },
+      { p: "~/dev/demo-app.release-2.4", n: "6 sessions", a: "2 h ago", kid: true, last: true },
+      { p: "~/dev/demo-app.billing-v2", n: "Folder gone", a: "8 d ago", gone: true }], keys: `${K("↑", "↓")} move, ${K("Enter")} continues here, ${K("Esc")} closes` }), { h: 290 }) },
+  { do: `${K("Enter")}`, see: "A quiet line, styled like “Retitled”, marks the move. The header shows the new folder and the box is a field again, in insert mode. Same id or a new one: open question 1.",
+    shot: shot(session({ title: "Billing form: split into steps", meta: 'Folder <span class="mono">~/dev/demo-app</span>, branch main', log: GONE_LOG + `<div class="sep">Continued in ~/dev/demo-app</div>` }), { h: 290 }) },
+].map(step).join(""));
+put("f4m", [
+  { do: `${K("⌘N")}, type <code>api</code>.`, see: "New session lists only folders that exist: ~/work/api. The old ~/dev/api shows dimmed as “Folder gone” and points you to its sessions.",
+    shot: shot(folders({ typed: "api", rows: [{ p: "~/work/api", n: "88 sessions", a: "1 h ago", on: true }, { p: "~/dev/api", n: "Folder gone", a: "8 mo ago", gone: true }], note: "~/dev/api is gone. Its 74 sessions are in Open session." }), { h: 250 }) },
+  { do: `${K("⌘O")}, type <code>api</code>.`, see: "Old and new sessions together. An old one continues in ~/work/api as in the steps above; Synopia doesn't guess the new place (open question 5).",
+    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "api", rows: [
+      { t: "API: pagination for the orders endpoint", f: "~/work/api", a: "2 h ago", on: true },
+      { t: "API: rate limit headers", f: "~/work/api", a: "1 d ago" },
+      { t: "API: auth token refresh", tag: "Folder gone", f: "~/dev/api", gone: true, a: "8 mo ago" }] }), { h: 250 }) },
+].map(step).join(""));
+
+/* ---------- 5. keyboard ---------- */
+put("o5", [
+  { rec: true, name: "⌘N and ⌘O in a File menu", why: "What every Mac app uses, they work in normal and insert mode, and the menu shows them to a mouse user.",
+    shot: shot(`<div class="menu" style="margin:22px auto"><div class="mt">File</div><div class="mi on">New Session<span>⌘N</span></div><div class="mi">Open Session…<span>⌘O</span></div></div>`, { h: 190 }) },
+  { name: "n and o in normal mode", why: "Vim-like, but in insert mode they type, so you press Esc first: three keys where two do.",
+    shot: shot(`<div class="textcard"><p>${K("Esc")} ${K("n")} New session</p><p>${K("Esc")} ${K("o")} Open session</p><p>In insert mode n and o type into the box.</p></div>`, { h: 190 }) },
+  { name: "Both", why: "Two ways to do each thing.",
+    shot: shot(`<div class="textcard"><p>${K("⌘N")} or ${K("n")} New session</p><p>${K("⌘O")} or ${K("o")} Open session</p></div>`, { h: 190 }) },
+].map(opt).join(""));
+
+/* ---------- theme: follows the system until the button picks one ---------- */
+const root = document.documentElement, btn = document.getElementById("theme");
+const mq = matchMedia("(prefers-color-scheme: dark)");
+let picked = null;
+const apply = () => { const dark = picked ? picked === "dark" : mq.matches; root.dataset.theme = dark ? "dark" : "light"; btn.textContent = dark ? "Light mode" : "Dark mode"; };
+mq.addEventListener("change", apply);
+btn.onclick = () => { picked = root.dataset.theme === "dark" ? "light" : "dark"; apply(); };
+apply();
+</script>
+</body>
+</html>
