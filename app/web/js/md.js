@@ -73,7 +73,9 @@ export function md(src) {
     }
     if (/^>\s?/.test(l)) { const buf = []; while (i < lines.length && /^>\s?/.test(lines[i])) buf.push(lines[i++].replace(/^>\s?/, "")); out.push(`<blockquote>${lines2(buf)}</blockquote>`); continue; }
     if (!l.trim()) { i++; continue; }
-    const buf = []; while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*([-*]|\d+\.)\s|>|\s*\|)/.test(lines[i])) buf.push(lines[i++]);
+    /* the first line is always taken: a line no block above took ("| a | b", a table row cut mid-stream with
+       no closing pipe) is text, so the loop always moves on */
+    const buf = [lines[i++]]; while (i < lines.length && lines[i].trim() && !/^(```|#{1,4}\s|\s*([-*]|\d+\.)\s|>|\s*\|)/.test(lines[i])) buf.push(lines[i++]);
     out.push(`<p>${lines2(buf)}</p>`);
   }
   return out.join("");

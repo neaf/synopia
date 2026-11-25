@@ -18,6 +18,7 @@ import { mountComposer, modelName, paintBash, unattach, openModelPicker } from "
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
 import { land } from "./send-tween.js";
+import { fitTables, watchTables } from "./table-fit.js";
 
 /* ---------- conversation, rendered like the CLI ---------- */
 
@@ -140,19 +141,20 @@ function splitPath(f) {
 /* the digits of the largest line number in these patches, so the diff's number column fits them */
 function diffDigits(ps) {
   let max = 1;
-  for (const p of ps) for (const h of p.hunks || []) max = Math.max(max, (h.o || 0) + h.lines.length, (h.n || 0) + h.lines.length);
+  for (const p of ps) if (!p.unnumbered) for (const h of p.hunks || []) max = Math.max(max, (h.o || 0) + h.lines.length, (h.n || 0) + h.lines.length);
   return String(max).length;
 }
+/* unnumbered: a diff from the tool's input (a subagent's edit), whose place in the file isn't known: no numbers */
 function diffHTML(p) {
-  const out = [];
+  const out = [], num = k => p.unnumbered ? "" : k;
   p.hunks.forEach((h, hi) => {
     if (hi) out.push(`<div class="dgap">⋯</div>`);
     let o = h.o, n = h.n;
     for (const l of h.lines) {
       const sg = l[0], txt = esc(l.slice(1));
-      if (sg === "+") out.push(`<div class="dl a"><span class="no">${n++}</span><span class="sg">+</span><span>${txt}</span></div>`);
-      else if (sg === "-") out.push(`<div class="dl d"><span class="no">${o++}</span><span class="sg">-</span><span>${txt}</span></div>`);
-      else { out.push(`<div class="dl c"><span class="no">${n}</span><span class="sg"> </span><span>${txt}</span></div>`); o++; n++; }
+      if (sg === "+") out.push(`<div class="dl a"><span class="no">${num(n++)}</span><span class="sg">+</span><span>${txt}</span></div>`);
+      else if (sg === "-") out.push(`<div class="dl d"><span class="no">${num(o++)}</span><span class="sg">-</span><span>${txt}</span></div>`);
+      else { out.push(`<div class="dl c"><span class="no">${num(n)}</span><span class="sg"> </span><span>${txt}</span></div>`); o++; n++; }
     }
   });
   if (p.cut) out.push(`<div class="dgap">⋯ diff cut at 400 lines</div>`);
@@ -396,6 +398,7 @@ export function renderConv() {
     if (view && mode === "insert") setMode("normal", false); // nothing to type in
     resetCard(); // the new dock has no card yet (card.js)
     mountComposer(s);
+    watchTables(document.getElementById("log")); // markdown tables fit their reply (table-fit.js)
     ui.requestView(s.id, view);
     ui.expectReset(); // its stored scroll goes on once the items are in
   }
@@ -465,16 +468,18 @@ export function renderLogKeepingPlace() {
   if (el) log.scrollTop += el.getBoundingClientRect().top - top - off;
   else log.scrollTop = was + log.scrollHeight - height; // the block was regrouped: keep the distance from the end
 }
-/* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it. */
+/* Appends new blocks and replaces changed ones by key; keeps the scroll at the bottom when it was within 40 px of it
+   and you are looking (the window visible): a hidden window doesn't follow, so you come back to what you saw. */
 export function renderLog() {
   const s = cur(); if (!s || !mounted || ui.holding()) return; // a view just mounted waits for its reset (ui-state.js)
   const log = document.getElementById("log");
-  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const follow = ui.atEnd(log) && document.visibilityState === "visible";
   const B = shownBg(); // a shell or monitor shows its output (bg-view.js)
   patchChildren(log.querySelector(".log-inner"), B ? bgLogEntries(s, B, runView) : logEntries(s, view && agentById(s, view)));
   ui.afterLog(); // open diffs and folds stay open (ui-state.js)
-  if (atBottom) log.scrollTop = log.scrollHeight;
-  syncEdge();
+  fitTables(log);
+  if (follow) log.scrollTop = log.scrollHeight;
+  syncEdge(); ui.note(log); // where you are and what you saw (ui-state.js)
   land(conv, landedBlock); // a message you just sent moves from the box into its place (send-tween.js)
   paintBash(s); // the placeholder counts the messages that wait
 }
@@ -486,6 +491,9 @@ function syncEdge() {
   q.classList.toggle("edge", log.scrollHeight - log.scrollTop - log.clientHeight > 1);
 }
 conv.addEventListener("scroll", e => { if (e.target.id === "log") syncEdge(); }, true);
+/* G: the end of the log */
+export function toEnd() { const log = document.getElementById("log"); if (log) log.scrollTop = log.scrollHeight; }
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ui.note(document.getElementById("log")); });
 function patchChildren(parent, entries) {
   const old = new Map([...parent.children].map(el => [el.dataset.key, el]));
   const seen = new Set(); let prev = null;

@@ -86,7 +86,8 @@ Dev and test only (not loaded in production):
 | `js/main.js` | Entry: wires modules and hooks, the message dispatch, the 1 s ticker, start. |
 | `js/test-api.js` | `window.__synopia`: read-only state getters, ready signal, sent-frame spy, message injection. The page checks use only this plus the DOM. |
 | `js/format.js` | Time and duration formatters, the ticking spans, model label, `still`. Pure. |
-| `js/md.js` | Markdown as the CLI renders it. Pure. |
+| `js/md.js` | Markdown as the CLI renders it, and the kind and stated alignment of each table column. Pure. |
+| `js/table-fit.js` | Fits a markdown table in the log to its reply (only the long text wraps, then the first column, then it scrolls in its box), again when the log resizes or a fold opens. |
 | `js/marks.js` | Mark drawing per mark key and the animation phase pin (CON-WK-05). |
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
 | `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
@@ -127,7 +128,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 ### Tooling
 
-`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 23 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
+`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 24 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
 
 ## Data flow
 
@@ -213,7 +214,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
     "openList": {"filter": "…"}, "folderList": {"filter": "…", "sid": "<sid continued>|null"}, "preview": {"path": "…", "scroll": 0, "find": "…"},
     "viewer": {"srcs": ["/api/image?sid=…&ref=…"], "froms": ["…"], "i": 0},
     "sessions": {"<sid>": {
-      "scroll":  {"<view>": {"id": "<block key>", "off": 0}, "<view>": {"bottom": true}},
+      "scroll":  {"<view>": {"id": "<block key>", "off": 0, "seen": "<block key>[@<output end>]"}, "<view>": {"bottom": true, "id": "<last block on screen>", "off": -300}},
       "earlier": {"<view>": "<oldest item id loaded>"},
       "steps": ["<view>|<item id>"], "diffs": ["<view>|<diff id>"], "folds": ["<view>|<block key>#<n>"],
       "draft": {"text": "…", "cursor": [0, 0], "images": [{"id": "…", "mediaType": "image/png", "size": 0, "n": 1}]},
@@ -225,7 +226,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
 
 - Caps: `reviewed` keeps the newest 1000, `answers` 2000, `plans` 100 (`store.ts`), trimmed on write and on load. `written.history` keeps 50 titles. Every map entry is validated on load; a wrong one is dropped.
 - `ui` (R3.9, `ui-state.ts`; page side `ui-state.js`): `<view>` is `""` for the main conversation, else the agent id. The page sends `ui {patch}` with the fields that changed, 300 ms after the last change (2 s at most) and at once on `visibilitychange` (hidden), `pagehide` and a send. A top-level field replaces the stored one; `sessions` merges per session and per field, `null` removing it. Unknown fields and malformed values are dropped. It is never broadcast: the last writer wins. `hello` returns it.
-- The page applies `ui` before its first render. The scroll waits for the view's reset items, re-requests earlier items up to the stored oldest id, then goes to the anchor (the first block whose bottom is below the top of the log, and the pixels into it) or the bottom. A missing anchor block goes to the bottom.
+- The page applies `ui` before its first render. The scroll waits for the view's reset items, re-requests earlier items up to the stored oldest id, then goes to the anchor (the first block whose bottom is below the top of the log, and the pixels into it; at the end, the last block on screen, so what came since is below it), loading up to 5 more pages of earlier items to find it. A missing anchor block goes to the bottom. A view follows its end only while the window is visible. `seen` is the furthest block whose first line was on screen 1 s in a row with the window focused (`run@<offset>` for a line of a shell's or monitor's output, `bg-view.js` `outEnds`), `seenAt` when you last had it on screen, and `newAt` `{id, at}` the block the "New since" line sits above: placed when you come back to the view or the window is shown again, kept over a reload (`watchSeen`, `placeNew`, `drawNew`; 2026-11-25).
 - Draft images: the page sends an image's base64 once, with the first patch that lists it; the backend writes `<state>/drafts/<sid>/<id>.png|jpg` (5 MB each, 20 MB per session; past that a toast and it isn't kept) and keeps only `{id, mediaType, size, n}`. A patch that no longer lists an image removes its file; a send clears the draft. After a restore the page loads them from `GET /api/image?sid&ref=draft:<id>`.
 - A card's state is dropped once its request is gone. `close` prunes the session's data and its drafts folder; the start drops entries of sessions that are not open; an id swap moves both.
 - Layout: the backend owns it (`layout.ts`). New and reopened sessions with no place go last under "Not in a group"; closed ids stay in their group, hidden, so a reopened session keeps its place; an id that changes keeps its place; a group goes only when it has no ids at all, hidden ones included.
@@ -367,7 +368,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-08 | transcript.ts, claude-jsonl.ts, transcript.js, open.ts |
 | FR-VIEW-09 | preview.ts, preview.js |
 | FR-VIEW-10 | open.ts |
-| FR-VIEW-11 | md.js |
+| FR-VIEW-11 | md.js, table-fit.js |
 | FR-VIEW-12 | transcript.ts, cards.ts |
 | FR-VIEW-13 | transcript.js, publisher.ts, state.js |
 | FR-VIEW-14 | publisher.ts, transcripts.ts, transcript.js |

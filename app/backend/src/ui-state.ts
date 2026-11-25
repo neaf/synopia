@@ -14,7 +14,10 @@ const BLOB_MAX = 64 * 1024; // a card's state, as JSON
 const TEXT_MAX = 1024 * 1024; // a draft's text
 const LIST_MAX = 2000;
 
-export type Anchor = { id: string; off: number } | { bottom: true };
+// where a view was: a block and the pixels into it, `bottom` when it was at its end (then the last block on
+// screen); `seen`, the furthest item you saw (its block's key, "run@<offset>" in a shell's output) and `seenAt`
+// when you last had it on screen (ms); `newAt`, the item the "New since" line sits above and the time it shows (R5.12d)
+export type Anchor = { id?: string; off?: number; bottom?: true; seen?: string; seenAt?: number; newAt?: { id: string; at: number } };
 export type DraftImage = { id: string; mediaType: string; size: number; n?: number }; // n: its [Image #n] tag in the text
 export type Draft = { text: string; cursor: [number, number]; images: DraftImage[] };
 export type UiSession = {
@@ -66,9 +69,14 @@ const blob = (v: unknown): unknown => {
 };
 function anchorOf(v: unknown): Anchor | undefined {
   if (!isObj(v)) return undefined;
-  if (v.bottom === true) return { bottom: true };
-  if (str(v.id, 1024) && num(v.off)) return { id: v.id, off: Math.round(v.off) };
-  return undefined;
+  const out: Anchor = {};
+  if (v.bottom === true) out.bottom = true;
+  if (str(v.id, 1024) && num(v.off)) { out.id = v.id; out.off = Math.round(v.off); }
+  if (!out.bottom && out.id === undefined) return undefined;
+  if (str(v.seen, 1024)) out.seen = v.seen;
+  if (num(v.seenAt)) out.seenAt = Math.round(v.seenAt);
+  if (isObj(v.newAt) && str(v.newAt.id, 1024) && num(v.newAt.at)) out.newAt = { id: v.newAt.id, at: Math.round(v.newAt.at) };
+  return out;
 }
 
 // One session's fields, each checked; unknown fields are dropped. The draft's images are taken as

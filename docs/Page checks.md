@@ -7,7 +7,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | Command | Runs |
 |---|---|
 | `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script and the page unit tests (`node --test app/web/test/*.test.js`); one pass or fail line each |
-| `app/check.sh --page` | the above, then `run.sh all` (23 suites); four pass lines |
+| `app/check.sh --page` | the above, then `run.sh all` (25 suites); four pass lines |
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
 | `app/web/dev/cdp/run.sh all` | every suite one after the other, a table of suite and result, failures under it; each suite's full output stays in the folder it prints |
 | `SYNOPIA_CDP_THEME=dark app/web/dev/cdp/run.sh <suite>` | the suite with the system appearance dark |
@@ -17,7 +17,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 - Each `run.sh` run starts its own headless browser (a temp `--user-data-dir`, `--remote-debugging-port=0`, the port read from `DevToolsActivePort`) and its own backend (`--port 0`, the port read from the ready line) on a fresh state folder. A `trap` stops both on exit, Ctrl-C too, and only its own pids. So two runs, other agents' runs and an open app never share anything.
 - A run prints `N/M pass`, the failures and where its shots are. Its exit code is the result: 0 only when every check passed and at least one ran.
 - The backend under the suites runs the real Sessions, status, writer and menu code on the scripted SDK (below), over a copy of `app/backend/test/fixtures/claude/` in the run's state folder with its `sdk-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), an idle session with diffs whose process gives the menu (`#11111111`). `run.sh` passes `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`, and `--dry-run` for `preview`.
-- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard` and `steps` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
+- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps` and `scroll` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
 - Page hooks: `?agent=<id>` opens a subagent, `&open=1` expands the last diff. `rail.mjs` and `restore.mjs` use them.
 
 ## The scripted SDK
@@ -129,7 +129,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `sent(...types)` | frames the page sent since `spy()`, of those types (all with none) |
 | `received(...types)` | frames from the server since `spy()`, before the page applied them |
 | `inject(msg)` | hands `msg` to the page's message handler, as if the server sent it, past the schema check and the version check of `connection.js` |
-| `anchor()` | the log's scroll anchor: `{id, off}` (an item block's key and the pixels into it) or `{bottom: true}` |
+| `anchor()` | the log's scroll anchor: `{id, off}` (an item block's key and the pixels into it); at the end `{bottom: true, id, off}` with the last block on screen; `{bottom: true}` alone with no block |
 | `from(sid, agent)` | the oldest item id that view had loaded (sent with `view`), or null |
 | `attachments()` | the message box's pasted images: `{id, n, mediaType, url, data}`, `data` null until read |
 | `prompt()` | the prompt above the box: `"interrupt"` (Esc), `"background"` (b), `"close"` (x) or null |

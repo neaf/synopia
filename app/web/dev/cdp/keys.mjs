@@ -17,6 +17,10 @@ const go = async (p) => { await ev(`document.querySelector('.row[data-id^="${p}"
 // edge; in insert the box is a ❯ band being written: the band's fill and the blue left edge, all at full strength
 await go(order[0]);
 check('starts in normal mode', (await mode()) === 'normal');
+// a letter that does nothing in normal mode is still taken, else WKWebView hands it to AppKit, which beeps
+await ev(`window.addEventListener('keydown', e => { if (e.key === 'z' || e.key === 'b') (window.__kept ||= {})[e.key] = e.defaultPrevented; })`);
+await key('z', { code: 'KeyZ', vk: 90 }); await K.b();
+check('normal mode: an unbound letter and b with nothing to send are taken (no beep)', await ev('window.__kept?.z === true && window.__kept?.b === true && !document.querySelector(".composer.asking")'));
 const BOX = `(() => { const b = document.querySelector('.dock .composer'), st = getComputedStyle(b), i = document.createElement('i'), cs = getComputedStyle(document.documentElement);
   const col = v => { i.style.color = cs.getPropertyValue(v); document.body.append(i); const r = getComputedStyle(i).color; i.remove(); return r; };
   return { bg: st.backgroundColor, band: col('--band'), edge: st.borderLeftColor, edgeW: st.borderLeftWidth, link: col('--link'), line: st.borderTopWidth, ring: st.boxShadow + getComputedStyle(b.closest('.dock')).boxShadow,

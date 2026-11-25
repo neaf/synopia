@@ -35,7 +35,8 @@ export function imageBlocks(content: unknown): ImageBlock[] {
 
 // A hunk of `structuredPatch` (Edit, Write) or of `bashEditDiff` (a shell command's edits).
 export type RawHunk = { oldStart: number; newStart: number; lines: string[] };
-export type FileEdit = { filePath: string; created: boolean; hunks: RawHunk[] };
+// `unnumbered`: built from the tool's input, whose hunks carry no line numbers (inputEditOf).
+export type FileEdit = { filePath: string; created: boolean; hunks: RawHunk[]; unnumbered?: true };
 // `changedFiles`: files the command changed, absolute (resolved against the record's cwd).
 export type BashEdit = { files: FileEdit[]; changedFiles: string[]; moreFiles: number };
 
@@ -56,6 +57,32 @@ export function fileEditOf(tur: JsonRecord): FileEdit | null {
     hunks = [{ oldStart: 0, newStart: 1, lines: lines.map((l) => '+' + l) }];
   }
   return { filePath, created, hunks };
+}
+
+// An Edit's or Write's change from its tool_use input, for a result with no `toolUseResult`: an
+// SDK-driven CLI writes none in a subagent's records (docs/Claude Code transcripts.md, "Quirk: a
+// subagent's edits have no structuredPatch"). An Edit is one hunk, `old_string` against `new_string`
+// with their common first and last lines as context, and no line numbers: where it sits in the file
+// isn't recorded. A Write is its content as added lines from line 1; whether it made or replaced the
+// file isn't recorded either, so it never reads "new".
+export function inputEditOf(name: string, inp: JsonRecord): FileEdit | null {
+  const filePath = str(inp.file_path);
+  if (!filePath || (name !== 'Edit' && name !== 'Write')) return null;
+  const linesOf = (t: string): string[] => {
+    if (!t) return [];
+    const l = t.split('\n');
+    if (l.length > 1 && l[l.length - 1] === '') l.pop(); // the final newline is not a line
+    return l;
+  };
+  if (name === 'Write') return { filePath, created: false, hunks: [{ oldStart: 0, newStart: 1, lines: linesOf(str(inp.content)).map((l) => '+' + l) }] };
+  const a = linesOf(str(inp.old_string)), b = linesOf(str(inp.new_string));
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const lines = [...a.slice(0, head).map((l) => ' ' + l), ...a.slice(head, a.length - tail).map((l) => '-' + l),
+    ...b.slice(head, b.length - tail).map((l) => '+' + l), ...a.slice(a.length - tail).map((l) => ' ' + l)];
+  return { filePath, created: false, hunks: [{ oldStart: 0, newStart: 0, lines }], unnumbered: true };
 }
 
 // `toolUseResult.bashEditDiff` (docs/Claude Code transcripts.md#shell-edits-basheditdiff). Relative
@@ -83,6 +110,7 @@ export type ToolUse = {
   plan: string; // ExitPlanMode's plan (can be an older revision than the card's)
   questions: Question[]; // AskUserQuestion's
   to: string | null; // SendMessage's recipient
+  edit: FileEdit | null; // an Edit's or Write's change from its input, for a result without one (inputEditOf)
 };
 export type AssistantBlock = { type: 'text'; index: number; text: string } | ToolUse | { type: 'other'; index: number; blockType: string };
 
@@ -100,6 +128,7 @@ function toolUseOf(b: JsonRecord, index: number): ToolUse {
     type: 'tool_use', index, id: str(b.id), name, input: inp, background: Boolean(inp.run_in_background),
     description: str(inp.description), command: str(inp.command), timeout: inp.timeout, timeoutMs: inp.timeout_ms,
     persistent: Boolean(inp.persistent), plan: str(inp.plan), questions, to: typeof inp.to === 'string' ? inp.to : null,
+    edit: inputEditOf(name, inp),
   };
 }
 

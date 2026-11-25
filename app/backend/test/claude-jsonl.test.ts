@@ -2,7 +2,7 @@
 // transcripts.md records (made-up content). Assistant records hold one block each, as the CLI writes them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, agentMetaOf, fileEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords, movedContext } from '../src/claude-jsonl.ts';
+import { classify, agentMetaOf, fileEditOf, inputEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords, movedContext } from '../src/claude-jsonl.ts';
 import type { ClaudeRecord, UserRecord, AssistantRecord, ToolUse } from '../src/claude-jsonl.ts';
 
 const ts = '2026-11-24T10:00:00.000Z';
@@ -171,4 +171,15 @@ test('the moved context line (R3.11): Synopia\'s own, read back as "Continued in
   assert.match(text, /^<synopia-moved to="~\/dev\/a &quot;b&quot;">This session continues in \/Users\/demo\/dev\/a "b"\. Its folder ~\/dev\/gone no longer exists/);
   assert.deepEqual(bodyOf(text), { kind: 'moved', to: '~/dev/a "b"' });
   assert.deepEqual(bodyOf('<synopia-other>x</synopia-other>'), { kind: 'system' });
+});
+
+test('inputEditOf: an Edit or Write from its input, for a subagent result with no toolUseResult', () => {
+  // common first and last lines stay context; the hunk has no line numbers
+  assert.deepEqual(inputEditOf('Edit', { file_path: '/Users/fixture/dev/demo.feature/src/a.ts', old_string: 'one\ntwo\nthree\n', new_string: 'one\n2\n2b\nthree\n', replace_all: false }),
+    { filePath: '/Users/fixture/dev/demo.feature/src/a.ts', created: false, hunks: [{ oldStart: 0, newStart: 0, lines: [' one', '-two', '+2', '+2b', ' three'] }], unnumbered: true });
+  assert.deepEqual(inputEditOf('Edit', { file_path: '/x/a', old_string: 'a', new_string: 'a\nb' })!.hunks[0].lines, [' a', '+b']);
+  assert.deepEqual(inputEditOf('Write', { file_path: '/x/b.md', content: '# B\n\nbody\n' }),
+    { filePath: '/x/b.md', created: false, hunks: [{ oldStart: 0, newStart: 1, lines: ['+# B', '+', '+body'] }] });
+  assert.equal(inputEditOf('Read', { file_path: '/x/a' }), null);
+  assert.equal(inputEditOf('Edit', { old_string: 'a', new_string: 'b' }), null);
 });

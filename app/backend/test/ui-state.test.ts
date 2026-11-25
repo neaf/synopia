@@ -37,6 +37,9 @@ test('ui: a patch merges top-level fields and per-session fields; null removes; 
   patchUi(store, { mode: 'visual', sessions: { [SID]: { scroll: { '': { id: 3 }, a: { bottom: true } } } } });
   assert.equal(ui.mode, 'normal');
   assert.deepEqual(ui.sessions[SID].scroll, { a: { bottom: true } });
+  // at the end: the last block on screen and what you last saw there; a seen that isn't a string is dropped
+  patchUi(store, { sessions: { [SID]: { scroll: { '': { bottom: true, id: 'a9:0', off: -300.4, seen: 'run@120', seenAt: 5.2, newAt: { id: 'a10', at: 9 } }, a: { id: 'b1', off: 4, seen: 7, newAt: { id: 3, at: 1 } } } } } });
+  assert.deepEqual(ui.sessions[SID].scroll, { '': { bottom: true, id: 'a9:0', off: -300, seen: 'run@120', seenAt: 5, newAt: { id: 'a10', at: 9 } }, a: { id: 'b1', off: 4 } });
   // the theme choice: light or dark is kept, null (follow the system) and anything else clears it
   patchUi(store, { theme: 'dark' });
   assert.equal(ui.theme, 'dark');

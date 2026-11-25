@@ -161,6 +161,16 @@ details.step[open] > summary .res.run { display: none; }
 .qpin { position: sticky; bottom: 0; z-index: 2; display: flow-root; background: var(--panel); margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; max-height: 50cqh; overflow-y: auto; overflow-x: hidden; }
 .qpin > .prompt:first-child { margin-top: 0; }
 .qpin.edge { box-shadow: inset 0 1px 0 var(--line-2); }
+/* "New since 2:14 PM" (R5.12d, prototype/unread-storyboard.html C): a 1px line in the gap above the first item you
+   hadn't seen; it takes no space. In a shell's or monitor's output, a zero-height block between two lines. */
+.log-inner > .new-at { position: relative; }
+.new-at::before { content: ""; position: absolute; left: -16px; right: -16px; top: -6px; height: 1px; background: var(--link); z-index: 1; }
+.new-at > .nlab { position: absolute; right: -4px; top: -12.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+.nlab i { font-style: normal; font-weight: 500; color: var(--ink-3); }
+.prompt.new-at > .nlab { right: 12px; } /* the band reaches the log's edges */
+.nl-at { display: block; position: relative; height: 0; }
+.nl-at::before { content: ""; position: absolute; left: -100vw; right: -16px; top: -.5px; height: 1px; background: var(--link); z-index: 1; }
+.nl-at > .nlab { position: absolute; right: -4px; top: -6.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
 /* the send tween (send-tween.js): a copy of your new band moves up from the box; the band waits hidden in its place */
 .send-ghost { position: fixed; z-index: 20; margin: 0; pointer-events: none; --dot-lift: calc(var(--log-font) * .084); }
 .prompt.landing { visibility: hidden; }
@@ -190,9 +200,25 @@ details.step[open] > summary .res.run { display: none; }
 .md pre code { color: var(--ink); }
 .md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
 .md a { color: var(--link); }
-.md table { border-collapse: collapse; margin: 0 0 .85em; }
+/* tables (R5.10): 11px, 1px rules between rows; md.js marks each column (num, short, prose, c0 the first)
+   and table-fit.js fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+.md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+.md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+.md .tw::-webkit-scrollbar { height: 5px; }
+.md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; } /* not the line's break-anywhere */
+.md table code { font-size: 1em; }
 .md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
-.md th, .md td { padding: 1px 3ch 1px 0; vertical-align: top; }
+.md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+.md th { padding-top: 0; }
+.md th:last-child, .md td:last-child { padding-right: 0; }
+.md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+.md .num { text-align: right; font-variant-numeric: tabular-nums; }
+.md .short, .md .num, .md .c0 { white-space: nowrap; }
+.md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+.md .c0 code { white-space: nowrap; }
+.md .prose { min-width: 26ch; overflow-wrap: break-word; }
+.md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; } /* the separator row's colons win */
 
 /* waves of subagents */
 .wave .name { font-weight: 700; }

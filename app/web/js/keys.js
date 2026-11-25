@@ -7,7 +7,7 @@ import { current, cur, view, select, selectView, agentById, bgById } from "./sta
 import { mode, setMode, paintMode } from "./mode.js";
 import { KEYS, renderSide } from "./sidebar.js";
 import { drag, dragKey } from "./dnd.js";
-import { renderConv, loadEarlier } from "./transcript.js";
+import { renderConv, loadEarlier, toEnd } from "./transcript.js";
 import { promptKey, askInterrupt, askBackground, askClose } from "./composer.js";
 import { qaKeys } from "./card.js";
 import { openListShown, openListKey, showOpenList } from "./open-list.js";
@@ -63,12 +63,15 @@ function sessionKey(e) {
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;
     case "k": e.preventDefault(); log?.scrollBy({ top: -60 }); break;
     case "g": e.preventDefault(); if (log) { if (log.scrollTop <= 0) loadEarlier(); else log.scrollTop = 0; } break; // at the top: earlier items
-    case "G": e.preventDefault(); if (log) log.scrollTop = log.scrollHeight; break;
+    case "G": e.preventDefault(); toEnd(); break;
     case "i": case "a": e.preventDefault(); setMode("insert"); break;
     case "/": { // insert with the command menu open; a half-typed message stays as it is
       e.preventDefault(); setMode("insert"); const ta = document.getElementById("msg");
       if (ta && !ta.value && !ta.dataset.bash) { ta.value = "/"; ta.dispatchEvent(new Event("input")); } // no slash menu in bash mode
       break; }
+    // normal mode types nothing: a letter that does nothing now (b with nothing to send, x with no session)
+    // is still taken, since one left to WKWebView makes AppKit beep
+    default: if (e.key.length === 1) e.preventDefault();
   }
 }
 

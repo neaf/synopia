@@ -13,8 +13,9 @@ import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, Denial, FileEd
 export type { Question } from './claude-jsonl.ts';
 export type Hunk = { o: number; n: number; lines: string[] };
 // `bare`: a file a shell command changed with no diff in the record (bashEditDiff.changedFiles).
+// `unnumbered`: a diff from the tool's input, with no line numbers (claude-jsonl.ts inputEditOf).
 export type Patch = {
-  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean;
+  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean; unnumbered?: true;
 };
 // A tool result's preview: its first PREVIEW_LINES lines, PREVIEW_BYTES at most; `lines` counts all
 // of them, `cut` says the preview isn't all (the page asks for the rest with `toolOutput`).
@@ -118,7 +119,8 @@ export function toolLine(name: string, input: JsonRecord, home: string): [string
 
 // An Edit's or Write's change as a patch.
 export function patchOf(edit: FileEdit, home: string): Patch {
-  return patchFrom(edit.hunks, edit.filePath, edit.created, home);
+  const p = patchFrom(edit.hunks, edit.filePath, edit.created, home);
+  return edit.unnumbered ? { ...p, unnumbered: true } : p;
 }
 
 // The files a Bash command edited: one patch per diffed file, built as an Edit's, then each
@@ -294,6 +296,7 @@ class ReadState {
   answers = new Map<string, string>();
   patches = new Map<string, Patch>();
   bashPatches = new Map<string, { patches: Patch[]; more: number }>();
+  inputEdits = new Map<string, FileEdit>(); // tool_use id -> an Edit's or Write's change from its input, until its result
   // A tool's result: only its preview stays in memory, and where its record sits for the rest.
   outs = new Map<string, Output>();
   outSpans = new Map<string, Span>();
@@ -561,6 +564,10 @@ export class Transcript {
         r.results.set(tid, res.isError);
         if (res.outputFile) r.outFiles.set(tid, res.outputFile);
         r.fgBash.delete(tid);
+        // no toolUseResult (a subagent's edit in an SDK-driven session): the change comes from its input
+        const fromInput = r.inputEdits.get(tid);
+        if (fromInput && !res.isError && !r.patches.has(tid)) r.patches.set(tid, patchOf(fromInput, this.home));
+        r.inputEdits.delete(tid);
         if (res.isError) errors.push(tid);
         if (res.cutShort) r.interrupted.add(tid);
         if (res.denial) r.denials.set(tid, res.denial);
@@ -708,6 +715,7 @@ export class Transcript {
     const r = this.r;
     const name = b.name;
     r.bgTool.set(tid, b.background);
+    if (b.edit && !r.results.has(tid)) r.inputEdits.set(tid, b.edit);
     if (name === 'Monitor' || (name === 'Bash' && b.background)) {
       r.bg.set(tid, {
         toolUseId: tid, taskId: r.taskIds.get(tid) ?? null, kind: name === 'Monitor' ? 'monitor' : 'shell', description: b.description,

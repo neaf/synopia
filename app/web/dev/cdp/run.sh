@@ -24,13 +24,16 @@
 #   app/web/dev/cdp/run.sh close  x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
 #   app/web/dev/cdp/run.sh folders  New session and Open session in any folder (R3.3, R3.11-R3.14, R9.7): n and o, the folder list, Tab, the create row, gone folders and continue as a fork, the matcher in four lists, no open session, with shots
 #   app/web/dev/cdp/run.sh viewswitch  back from a subagent the view renders once (R3.9): one view message, one reset, no other range first, on the earlier transcript
+#   app/web/dev/cdp/run.sh scroll  what you last saw stays put, with a "New since" line above what came (R3.9, R5.12d): away on another session, in a subagent and a shell view, the window hidden, a reload; the line between the last seen and the first unseen item, nothing moves, it stays until you leave; it follows the bottom while you look, with shots
+#   app/web/dev/cdp/run.sh tables  markdown tables in a reply 1000px and 640px wide (R5.10): short cells on one line, numbers right, stated alignment, 11px, rules between rows, inside the reply or scrolling in their box, prose still wraps a long token, with shots
+#   app/web/dev/cdp/run.sh stream  a long reply with three tables streamed in small deltas while the view resizes, scrolls and switches: no long task over 200 ms, the page answers within 500 ms, then a reload (R5.10)
 # SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders tables scroll stream)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -75,7 +78,7 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 if [ "$name" = viewswitch ]; then fix="$state/claude"; node "$here/earlier.mjs" make "$fix" || exit 1; fi
-if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ] || [ "$name" = scroll ] || [ "$name" = stream ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-run); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
@@ -99,7 +102,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shots: $state/steps*.png" ;;
-  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders|tables|scroll) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

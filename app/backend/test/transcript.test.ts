@@ -969,3 +969,26 @@ test('a multi-block assistant record reduces like its split form', () => {
   assert.deepEqual(one.items.filter((i) => i.k === 'claude').map((i) => i.text), ['Checking the folder.', 'Both started.']);
   assert.deepEqual([one.background(), one.agents(), one.turnRunning(NOW, QUIET)], [split.background(), split.agents(), split.turnRunning(NOW, QUIET)]);
 });
+
+// docs/Claude Code transcripts.md "Quirk: a subagent's edits have no structuredPatch". Invented records.
+test("a subagent's edit with no toolUseResult takes its patch from the input, outside cwd too, once its result lands", () => {
+  const t = new Transcript({ home: HOME, sidechain: true });
+  const base = { isSidechain: true, agentId: 'a1', sessionId: 's1', cwd: `${HOME}/dev/demo`, entrypoint: 'sdk-ts' };
+  const file = `${HOME}/dev/demo.other-worktree/src/widget.ts`;
+  const use = (id: string, name: string, input: JsonRecord, n: number): JsonRecord => ({ ...base, type: 'assistant', uuid: `as${n}`, timestamp: `2026-11-25T10:00:0${n}.000Z`,
+    message: { id: `m${n}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id: string, n: number, extra: JsonRecord = {}): JsonRecord => ({ ...base, type: 'user', uuid: `us${n}`, timestamp: `2026-11-25T10:00:0${n}.500Z`, permissionDecision: {},
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'The file has been updated.', ...extra }] } });
+  t.push({ ...base, type: 'user', uuid: 'u0', timestamp: '2026-11-25T10:00:00.000Z', message: { role: 'user', content: 'Speed up the widget' } });
+  t.push(use('toolu_e1', 'Edit', { file_path: file, old_string: 'a\nslow()\nb', new_string: 'a\nfast()\nb', replace_all: false }, 1));
+  assert.equal(byId(t, 'toolu_e1').patch, undefined, 'running: no patch yet');
+  t.push(result('toolu_e1', 1));
+  assert.deepEqual(byId(t, 'toolu_e1').patch, { file: '~/dev/demo.other-worktree/src/widget.ts', abs: file, add: 1, del: 1, created: false, cut: false,
+    hunks: [{ o: 0, n: 0, lines: [' a', '-slow()', '+fast()', ' b'] }], unnumbered: true });
+  t.push(use('toolu_w1', 'Write', { file_path: `${HOME}/dev/demo.other-worktree/NOTES.md`, content: 'x\ny\n' }, 2));
+  t.push(result('toolu_w1', 2));
+  assert.deepEqual([byId(t, 'toolu_w1').patch!.add, byId(t, 'toolu_w1').patch!.hunks[0].n, byId(t, 'toolu_w1').patch!.unnumbered], [2, 1, undefined]);
+  t.push(use('toolu_e2', 'Edit', { file_path: file, old_string: 'nope', new_string: 'x' }, 3));
+  t.push(result('toolu_e2', 3, { is_error: true }));
+  assert.equal(byId(t, 'toolu_e2').patch, undefined, 'a failed edit changed nothing');
+});

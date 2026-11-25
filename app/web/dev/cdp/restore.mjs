@@ -154,7 +154,8 @@ check('state.json has the ui field, no image bytes', st.ui && st.ui.current === 
 await goTo(S2); await flush();
 await serverSend(url, { t: 'ui', patch: { sessions: { [S1]: { scroll: { '': { id: 'gone:item', off: 30 } } } } } });
 check('a reload after the anchor changed', await load());
-check('a stale anchor falls back to the bottom', await goTo(S1) && (await anchor()) === '{"bottom":true}', await anchor());
+check('a stale anchor falls back to the bottom', await goTo(S1) && JSON.parse(await anchor()).bottom === true
+  && await ev(`(() => { const l = document.getElementById('log'); return l.scrollHeight - l.scrollTop - l.clientHeight < 1; })()`), await anchor());
 // a reconnect is a second hello (sessions without items) on the view on screen: the log keeps its blocks
 // until the view's reset comes, not one frame blank, and then shows the same blocks
 await goTo(S1);

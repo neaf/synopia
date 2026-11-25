@@ -19,6 +19,30 @@ export const shownBg = () => { const s = cur(); return s && view ? bgById(s, vie
 /* where the output the page has of it begins, for the view request after a reload (ui-state.js) */
 export const outFrom = (sid, bg) => outs.get(`${sid}|${bg}`)?.from ?? null;
 
+/* Where each line of the output the page has ends: the offset after its line feed (bytes for a shell, events for
+   a monitor), for what you saw of it (ui-state.js). The line still being written ends at `to`. */
+export function outEnds(sid, bg) {
+  const o = outs.get(`${sid}|${bg}`); if (!o) return [];
+  if (o.ends && o.endsOf === `${o.from}|${o.text.length}`) return o.ends;
+  const mon = bgById(store.sessions.get(sid), bg)?.kind === "monitor", ends = [];
+  let at = o.from;
+  for (let i = 0; i < o.text.length; i++) {
+    const c = o.text.charCodeAt(i);
+    if (mon) { if (c === 10) ends.push(o.from + ends.length + 1); continue; }
+    at += c < 0x80 ? 1 : c < 0x800 ? 2 : c >= 0xDC00 && c < 0xE000 ? 2 : c >= 0xD800 && c < 0xDC00 ? 2 : 3; // UTF-8: a surrogate pair is 4
+    if (c === 10) ends.push(at);
+  }
+  o.ends = ends; o.endsOf = `${o.from}|${o.text.length}`;
+  return ends;
+}
+/* the line of the output the page has that begins at `at`; -1 when that isn't on the page */
+export function lineAt(sid, bg, at) {
+  const o = outs.get(`${sid}|${bg}`); if (!o || at < o.from || at > o.to) return -1;
+  const ends = outEnds(sid, bg); let n = 0;
+  while (n < ends.length && ends[n] <= at) n++;
+  return n;
+}
+
 /* an `output` frame; returns whether it is the view on screen */
 export function applyOutput(m) {
   const key = `${m.sid}|${m.bg}`, o = outs.get(key);
@@ -86,7 +110,7 @@ export function bgLogEntries(s, b, runView) {
   const tool = b.kind === "monitor" ? "Monitor" : "Bash";
   const run = runView({ input: b.command, out: !o || lost || (running && !text) ? null : text, stopped: false });
   const lostRow = lost ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${esc(lost)}</span></div>` : "";
-  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}"><span class="g">●</span><div><span class="name">${tool}</span>(${esc(b.description || b.command.split("\n")[0])})${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div></div>`]);
+  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}" data-end="${o ? +o.to || 0 : 0}"><span class="g">●</span><div><span class="name">${tool}</span>(${esc(b.description || b.command.split("\n")[0])})${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div></div>`]);
   if (running) out.push(["live", `<div class="ln liveln" data-state="green"><span class="g">${ind(b.kind === "monitor" ? "k_mon" : "k_shell")}</span><div><b>Running</b> <span class="dim">${live(b.start, msOf(b, st))}${b.kind === "monitor" && o ? `, ${+o.total} event${o.total === 1 ? "" : "s"}` : ""}</span></div></div>`]);
   else {
     const [word, mark] = endOf(st), sum = (b.summary || "").trim();

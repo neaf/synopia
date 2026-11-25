@@ -147,9 +147,25 @@
   .md pre code { color: var(--ink); }
   .md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
   .md a { color: var(--link); }
-  .md table { border-collapse: collapse; margin: 0 0 .85em; }
+  /* tables: 11px, 1px rules between rows; the renderer marks each column (num, short, prose, c0 the first)
+     and fitTables fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+  .md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+  .md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+  .md .tw::-webkit-scrollbar { height: 5px; }
+  .md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; }
+  .md table code { font-size: 1em; }
   .md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
-  .md th, .md td { padding: 1px 3ch 1px 0; vertical-align: top; }
+  .md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+  .md th { padding-top: 0; }
+  .md th:last-child, .md td:last-child { padding-right: 0; }
+  .md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+  .md .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .md .short, .md .num, .md .c0 { white-space: nowrap; }
+  .md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+  .md .c0 code { white-space: nowrap; }
+  .md .prose { min-width: 26ch; overflow-wrap: break-word; }
+  .md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; }
 
   /* waves of subagents */
   .wave .name { font-weight: 700; }
@@ -818,6 +834,26 @@ function dur(ms) {
 const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
+/* a table column: numbers (every cell a number with an optional unit), long text (a cell over 44 characters), or short */
+const NUM = /^(n\/a|[~<>]?\d[\d.,]*\s?(k|M|ms|s|%)?(\s?[+]\s?[~]?\d[\d.,]*\s?(k|M|ms|s|%)?)*|\d{4}-\d\d-\d\d)$/;
+function colKinds(rows) {
+  const plain = s => s.replace(/`/g, "").replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  return Array.from({ length: Math.max(0, ...rows.map(r => r.length)) }, (_, j) => {
+    const cells = rows.map(r => plain(r[j] ?? "")), full = cells.filter(c => c);
+    if (full.length && full.every(c => NUM.test(c)) && !full.every(c => /^\d{4}-/.test(c))) return "num";
+    if (Math.max(0, ...cells.map(c => c.length)) > 44) return "prose";
+    return j === 0 ? "c0" : "short";
+  });
+}
+/* the fit: 1. only the long text wraps, 2. the first column may wrap, 3. the table scrolls in its box */
+function fitTables(root) {
+  const over = tw => tw.firstElementChild.getBoundingClientRect().width > tw.clientWidth + .5;
+  root.querySelectorAll(".md .tw").forEach(tw => {
+    const t = tw.firstElementChild; t.classList.remove("wrap1"); tw.classList.remove("scrolls");
+    if (over(tw)) { t.classList.add("wrap1"); if (over(tw)) tw.classList.add("scrolls"); }
+  });
+}
+addEventListener("resize", () => fitTables(document));
 function md(src) {
   const out = []; const lines = (src || "").split("\n"); let i = 0;
   const inline = s => esc(s)
@@ -833,9 +869,12 @@ function md(src) {
     if (/^\s*\|.*\|\s*$/.test(l)) {
       const rows = []; while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
       const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      const body = rows.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(cells);
+      const isSep = r => /^\s*\|?\s*:?-{2,}/.test(r);
+      const body = rows.filter(r => !isSep(r)).map(cells);
       const [head, ...rest] = body;
-      out.push(`<table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      const sepRow = rows.find(isSep), align = sepRow ? cells(sepRow).map(c => /^:-+:$/.test(c) ? "c" : /-:$/.test(c) ? "r" : /^:-/.test(c) ? "l" : "") : [], k = colKinds(rest);
+      const cls = j => ` class="${k[j] || "short"}${j === 0 && k[j] !== "c0" ? " c0" : ""}${align[j] ? ` a${align[j]}` : ""}"`;
+      out.push(`<div class="tw"><table><thead><tr>${head.map((c, j) => `<th${cls(j)}>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map((c, j) => `<td${cls(j)}>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }
     const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h4>${inline(h[2])}</h4>`); i++; continue; }
@@ -1364,7 +1403,7 @@ function renderConv() {
     </div>
     ${railHTML(s, A, B)}`;
   conv.classList.toggle("no-rail", !hasBackground(s));
-  const log = document.getElementById("log"); log.scrollTop = log.scrollHeight;
+  const log = document.getElementById("log"); fitTables(log); log.scrollTop = log.scrollHeight;
   log.querySelectorAll(".frow .fc").forEach(b => b.onclick = () => {
     const d = document.getElementById(b.getAttribute("aria-controls")); d.hidden = !d.hidden; b.setAttribute("aria-expanded", !d.hidden);
   });

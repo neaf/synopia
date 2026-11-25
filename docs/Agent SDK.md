@@ -164,6 +164,57 @@ The client has no direct route to a subagent; the main agent's `SendMessage` is 
 
 Source: live run SM-1 (2026-11-25; haiku; scratch folder `/tmp/synopia-subagent-msg/work`, five routes, shapes only; SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.326). The script is outside the repo. No code depends on this.
 
+## Sending queued messages now
+
+f, f sends every queued message at once, like the CLI's Ctrl+Enter. Nothing in the code uses this yet.
+
+### Documented surface
+
+- CLI, [When Claude Code sends what you queued](https://code.claude.com/docs/en/interactive-mode#when-claude-code-sends-what-you-queued): "Your queued messages go out right away, with your draft queued behind them if you had typed one." What happens to the turn then depends on what Claude is doing:
+  - "Running shell commands, subagents, or other work that can move to the background: that work moves to the background and keeps running, and Claude reads your messages in the same turn"
+  - "Only writing a response, or running something that can't move to the background: Claude Code interrupts the turn and sends your messages next."
+  - "If you queued a `!` shell command ahead of your messages, the key interrupts the turn."
+- SDK, [`SDKUserMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkusermessage), `priority`:
+  - "`'next'`, or no `priority` field: Claude reads the message in the same turn, as soon as the tool calls it is running finish. If the turn ends first, the message starts the next turn."
+  - "`'later'`: Claude Code holds the message until the turn ends and sends it as a new turn."
+  - "`'now'` with `origin: { kind: "human" }`: on Claude Code v2.1.286 or later, work that can continue in the background moves there, and Claude reads the message in the same turn. … When Claude is only writing a response, or the work it is running can't move, Claude Code interrupts the turn instead and Claude reads the message next."
+  - "`'now'` without that origin: Claude Code interrupts the turn and Claude reads the message next."
+- The docs say nothing about messages already queued when a `'now'` message arrives, and no public `Query` method changes the priority of a pushed message or drops one. `cancel_async_message` exists only as a wire request type in sdk.d.ts.
+- `backgroundTasks()` with no id "backgrounds all foreground tasks (Ctrl+B semantics)" (sdk.d.ts `SDKControlBackgroundTasksRequest`).
+
+### Observed, one fresh session per phase
+
+The main agent ran a foreground `sleep 20` (or wrote a long reply, or ran a foreground subagent that runs `sleep 20`). Pushes came 5 s after the Bash `tool_use`, or 1.5 s after the first text delta.
+
+| Phase | What happened |
+|---|---|
+| Default priority | Waited for the sleep. The message folded into the same turn at the tool boundary (`attachment` record, `queue-operation:remove`); its uuid is on that turn's `result`. |
+| `'next'` | The same as the default. |
+| `'later'` | The turn ended with `DONE`, then the message ran as its own turn (`queue-operation:dequeue`, `user` record). |
+| `'now'` + human, Bash | Within 0.1 s: `background_tasks_changed` (1 task), then the Bash `tool_result` with `backgroundTaskId` and `backgroundedToDeliverMessage`. Claude read the message in the same turn (`result/success`, `completed`). When the sleep finished, a `task_notification` started a turn (`result.origin.kind` `task-notification`). |
+| `'now'` without origin, Bash | No faster than the default: the sleep ran to its end. Then the turn ended (`result/success`, `terminal_reason` `aborted_tools`) and the message ran as a new turn. |
+| `'now'` + human, text reply | The reply stopped at once: its partial `assistant` message came, then `result/success` with `aborted_streaming`, then a new turn with the message (`result.origin.kind` `human`). |
+| Two at default, then one `'now'` + human | The sleep moved to the background and the turn ended with `aborted_tools`. The `'now'` message ran first as its own turn, then the two earlier messages ran together as the next turn. The order was 3, 1, 2. A later `'now'` overtakes the queue and does not take the earlier messages with it. |
+| Two at default, then `interrupt({cancelQueued: true})`, then the two texts again as one `'now'` + human message | The receipt was `{still_queued: [], cancelled: [both uuids]}`. The interrupt killed the foreground sleep (`task_notification` `stopped`, an error `tool_result`, `result/error_during_execution`, `aborted_tools`). The re-pushed message then ran as a new turn with both texts in order. The state was sane, but the running work was lost. |
+| Two at default, then `backgroundTasks()` (returned `true`), then a third at default | The Bash `tool_result` came 0.4 s later with `backgroundTaskId` and `backgroundedByUser`. All three folded into the same turn, in order, and the sleep kept running. |
+| Long reply, two at default, then a plain `interrupt()`, then a third | The receipt listed both under `still_queued`. The turn ended `result/error_during_execution`, `aborted_streaming`. The two ran next as one turn, in order, then the third as its own turn. |
+| Foreground subagent, `'now'` + human (`parent_tool_use_id: null`) | Only the subagent moved to the background (`background_tasks_changed` with 1 task). The Agent `tool_result` came with `isAsync, status, agentId, …`, main read the message in the same turn, and the subagent's own sleep ran on. Its report came later as its own turn (`result.origin.kind` `peer`). |
+| Foreground subagent, two at default, then `backgroundTasks()` | The subagent and its own foreground sleep both moved (`background_tasks_changed` with 2 tasks). Both messages folded into main's turn in order. The subagent got its sleep's `tool_result` early and went on to other tool calls, so its work changed course. |
+
+Harm: no message was lost and no stream ended, in any phase. Plain `'now'` with a foreground subagent did not stop it. Only `'now'` together with `parent_tool_use_id` stops one (see "Messaging a running subagent"). The losses were the running sleep after `interrupt({cancelQueued: true})`, and the subagent's sleep that `backgroundTasks()` moved.
+
+### Recommendation for f, f
+
+Leave the queued messages where they are, in the CLI's queue, and change the turn so the queue drains now:
+
+1. Nothing queued: push the draft with `priority: 'now'` and `origin: {kind: 'human'}`. The CLI then applies its own rule: it moves the work to the background or interrupts the reply.
+2. Messages queued and a foreground main-thread tool running (Synopia has its `task_started` with `is_backgrounded: false` and no result yet): call `backgroundTasks(toolUseId)` with that tool's `tool_use` id, so a foreground subagent's own shells stay where they are. Then push the draft at the default priority. Everything folds into the same turn in order. Before `task_started` (the 2 s gap for Bash) the call moves nothing, so wait for `task_started` or the tool's result, as "send to background" does.
+3. Messages queued and Claude only writing, or running a tool that can't move: call the plain `interrupt()`, without `cancelQueued`, then push the draft at the default priority. The queued messages run next as one turn, in order, and the draft runs after them. This turn's end is not a Stop: don't force the status to stopped, and don't give the queued texts back to the message box.
+
+Don't push `'now'` while anything is queued, because it overtakes the queue. Don't cancel and re-push as `'now'` either, because the interrupt kills the running tool. The `'now'` + `parent_tool_use_id` route stays forbidden. Not checked: a pending permission prompt, a queued `!` command (the CLI interrupts then), and WebFetch or WebSearch, which `'now'` detaches with `{detachedToolCall: true}` but `backgroundTasks()` may not move. Phase 2 passes `toolUseId`, which the check didn't run: it called `backgroundTasks()` with no id.
+
+Source: live run PR-1, 2026-11-25 (haiku; scratch folder `/tmp/synopia-priority/work`, eleven phases, shapes and timings only; SDK 0.3.330 with its bundled CLI, `claude --version` 2.1.326). The script is outside the repo, at `/tmp/synopia-priority/check.mjs`.
+
 ## Sessions: list, resume, fork
 
 - `listSessions()` gives `sessionId`, `cwd` (the realpath), `summary`, `customTitle`, `firstPrompt`, `gitBranch`, `lastModified`, `fileSize`. It honours `CLAUDE_CONFIG_DIR` (page checks rely on it). It took 87 ms over this machine's sessions. Code: `sdk.ts` `realSdk.listSessions`, `sessions.ts` `listRecent`. Source: live run S2-1.

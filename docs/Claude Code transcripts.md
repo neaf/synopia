@@ -85,6 +85,13 @@ Source: `.ai-notes/app/README.md` at tag `rearch-base` "Facts (branch facts)" St
 
 Code: `claude-jsonl.ts` `bodyOf`, `userOf`. Test: `claude-jsonl.test.ts`. Source: the old reference parser (removed from the repo), live runs S3 and M1-final.
 
+### Quirk: a subagent's edits have no structuredPatch
+
+- Symptom: in a subagent's transcript, Edit and Write steps had no `+N −M` and no Files changed block, though the files changed.
+- Cause: in an SDK-driven session (`entrypoint: "sdk-ts"`), a subagent's successful Edit or Write result record has no `toolUseResult` at all; it carries `permissionDecision` and `serverClassifierContext` instead. Only an error result has one, a string. The main conversation's records of the same session have the full `{filePath, oldString, newString, originalFile, structuredPatch, userModified, replaceAll, contentNotInModelContext?}` (Edit) and `{type, filePath, content, structuredPatch, originalFile, userModified}` (Write). Same cause as the subagent shells' missing task id below. Seen in two subagents of one live session (2026-11-25, 20 Edits and 2 Writes, keys only).
+- Workaround: a result with no patch takes the change from its `tool_use` input. An Edit is `old_string` against `new_string`, their common first and last lines as context, with no line numbers, because the place in the file isn't in the record. `replace_all` shows the one replacement. A Write is its `content` as added lines from line 1, never marked new, because whether it made or replaced the file isn't recorded. An error result gets no patch.
+- Code: `claude-jsonl.ts` `inputEditOf`, `transcript.ts` `inputEdits`; the page leaves the number column empty for an `unnumbered` patch (`transcript.js` `diffHTML`). Test: `claude-jsonl.test.ts` "inputEditOf", `transcript.test.ts` "a subagent's edit with no toolUseResult", page check `files`.
+
 ### Images and image tags
 
 - Image blocks in tool results are `{type: 'image', source: {type: 'base64', media_type, data}}`. All 725 seen came from Read; no MCP image result appears in any transcript seen, and the code reads one like a Read image.

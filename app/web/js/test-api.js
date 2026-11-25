@@ -50,7 +50,7 @@ export function installTestApi({ inject, render }) {
     received: (...types) => of(spied?.got || [], types), // frames the server sent since spy()
     inject: m => { inject(copy(m)); },
     /* the UI around the transcript */
-    anchor: () => copy(ui.anchor(document.getElementById("log"))), // the log's scroll anchor: {id, off} or {bottom: true}
+    anchor: () => copy(ui.anchor(document.getElementById("log"))), // the log's scroll anchor: {id, off}, at the end {bottom: true, id, off} (the last block on screen)
     from: (sid, agent) => ui.from(sid, agent), // the oldest item id that view had loaded, or null
     attachments: () => attachments.map(a => ({ id: a.id, n: a.n, mediaType: a.mediaType, url: a.url, data: a.data })), // pasted images
     prompt: () => prompt(), // the Esc, b or x prompt shown: "interrupt" | "background" | "close" | null

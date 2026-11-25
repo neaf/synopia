@@ -63,3 +63,19 @@ test("files changed group by repo and align their counts", () => {
   assert.match(html, /3 files, click one to see the diff/);
   assert.match(html, /<span class="add">\+3<\/span> <span class="del">−1<\/span>/);
 });
+
+test("R5.9: edits in a sibling worktree show in Files changed while the turn runs and after it ends; a diff from the input has no line numbers", () => {
+  const patch = { file: "~/dev/demo.other/src/a.ts", abs: "/Users/fixture/dev/demo.other/src/a.ts", add: 1, del: 1, created: false, cut: false, unnumbered: true, hunks: [{ o: 0, n: 0, lines: [" a", "-b", "+c"] }] };
+  const items = [
+    { id: "u1", k: "you", ts: "2026-11-20T14:24:00.000Z", text: "Go" },
+    { id: "t1", k: "tool", ts: "2026-11-20T14:24:02.000Z", name: "Edit", verb: "Edit", obj: "~/dev/demo.other/src/a.ts", state: "done", patch },
+    { id: "t2", k: "tool", ts: "2026-11-20T14:24:03.000Z", name: "Bash", verb: "Ran", obj: "Test it", state: "running" },
+  ];
+  for (const busy of [true, false]) {
+    const out = itemsHTML(items, busy, s);
+    const files = out.find(([k]) => k === "files:t1");
+    assert.ok(files, `busy ${busy}: a Files changed block`);
+    assert.match(files[1], /<div class="root">~\/dev\/demo\.other<\/div>/);
+    assert.equal([...files[1].matchAll(/<span class="no">([^<]*)<\/span>/g)].map(m => m[1]).join(""), "");
+  }
+});
