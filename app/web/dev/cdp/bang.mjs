@@ -7,10 +7,11 @@
 // command in <folder>", the `!` leaves the text, no slash menu; Backspace on the empty box leaves the mode;
 // `echo hi; echo err >&2; exit 3` runs: the command on the band, stdout, stderr apart, "Exit code 3", landed
 // once as the transcript's item; 45 lines cut at 20 with "Show all 45 lines"; one command at a time; Esc, Esc
-// ends a `sleep 30` ("Stopped"); a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
+// ends a `sleep 30` ("Stopped"); a `!` followed by a prompt stays above it, over a reload, two in a row, and one a
+// running turn takes in (two queued_command records) is one row, not a queued message, with nothing left at the end; a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, writeScript, terminal } from './helpers.mjs';
+import { records, writeScript, terminal, outPanel, shot as shotTo } from './helpers.mjs';
 
 const D = 'b4b4b4b4-0000-4000-8000-0000000000d1'; // driven, idle
 const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: a terminal's Claude Code holds it
@@ -24,7 +25,11 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${D}.jsonl`), you(D, 'd-u1', 0, 'Read the demo notes.') + said(D, 'd-a1', 1, 'Read them.')
     + you(D, 'd-b1', 2, '<bash-input>ls demo</bash-input>') + you(D, 'd-b2', 2, '<bash-stdout>notes.md\n</bash-stdout><bash-stderr></bash-stderr>'));
   fs.writeFileSync(path.join(dir, `${N}.jsonl`), you(N, 'n-u1', 0, 'Rename the demo folder.') + said(N, 'n-a1', 1, 'Renamed it.'));
-  writeScript(process.argv[3], 'bang.mjs: made up', { [D]: { start: true, state: { status: 'idle', ago: 58000 } } });
+  // each message D gets starts a short turn: a reply, then the result 1.5 s later (a `!` during it is taken in by the turn)
+  const onSend = [{ append: [{ type: 'assistant', message: { id: 'msg-bang-reply', role: 'assistant', content: [{ type: 'text', text: 'Noted.' }] } }] },
+    { after: 1500, message: { type: 'result', subtype: 'success', is_error: false, result: '', duration_ms: 1500, num_turns: 1 } },
+    { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } }];
+  writeScript(process.argv[3], 'bang.mjs: made up', { [D]: { start: true, state: { status: 'idle', ago: 58000 }, onSend } });
   terminal(process.argv[3], 90002, N, '/tmp/synopia-bang'); // N: a terminal's Claude Code holds it
   fs.mkdirSync('/tmp/synopia-bang', { recursive: true }); // the command really runs in the session's folder
   process.exit(0);
@@ -86,7 +91,9 @@ check('the non-zero exit is noted', r?.failed && /Exit code 3/.test(r?.text ?? '
 check('stderr has its own shape (a 1px rule), not only its colour', await ev(`(() => { const e = [...document.querySelectorAll('#log .bang .step-out .out.err')].pop(); const st = getComputedStyle(e); return st.borderLeftWidth === '1px' && st.borderLeftStyle === 'solid'; })()`));
 check('shown once (the live run gave way to the item)', (await ev(`[...document.querySelectorAll('#log .bang')].filter(x => x.querySelector('.bang-cmd .cmd').textContent === 'echo hi; echo err >&2; exit 3').length`)) === 1);
 check('no ALL CAPS', await ev(`[...document.querySelectorAll('#log .bang *')].every(x => getComputedStyle(x).textTransform === 'none')`));
+{ const p = await outPanel(c, "#log .bang .step-out .out:not(.err)"); check("its output sits in the output panel, stderr beside it with its rule", !!p && p.ok, JSON.stringify(p)); }
 await shot('bang-exit.png');
+if (process.env.SYNOPIA_SHOTS) { fs.mkdirSync(process.env.SYNOPIA_SHOTS, { recursive: true }); await shotTo(c, path.join(process.env.SYNOPIA_SHOTS, `bang-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`)); }
 
 // a long output: 20 lines, then Show all
 const n0 = await bangs();
@@ -99,6 +106,7 @@ const cutText = await ev(`[...document.querySelectorAll('#log .bang')].pop().que
 check('20 lines, then "Show all 45 lines"', cutText === '20|Show all 45 lines', cutText);
 await ev(`document.querySelector('#log [data-full^="bang:"]').click()`);
 check('Show all shows the 45', await c.until(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.step-out .out').textContent.split('\\n').length === 45 && !document.querySelector('#log [data-full^="bang:"]')`));
+check('all 45 in the one output panel', await ev(`(() => { const b = [...document.querySelectorAll('#log .bang')].pop(); return b.querySelectorAll('.step-out .out:not(.err)').length === 1 && getComputedStyle(b.querySelector('.step-out .out')).display === 'block'; })()`));
 
 // Esc, Esc ends a sleep 30; one at a time
 await ev(`document.getElementById('msg').focus()`);
@@ -120,6 +128,51 @@ await esc();
 check('the second Esc ends it: Stopped', await c.until(`__synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'sleep 30' && i.sh) && /Stopped/.test([...document.querySelectorAll('#log .bang')].pop().textContent)`, 6000), await ev(`[...document.querySelectorAll('#log .bang')].pop().textContent`));
 check('it ended at once (SIGTERM), not after 30 s', Date.now() - t0 < 4000);
 await shot('bang-stopped.png');
+
+// in place in time: the CLI writes the command and its output as one record (docs/Claude Code transcripts.md,
+// "Bash mode records"); the row stays where it ran, above the next prompt, and nothing is left at the end
+const runCmd = async (cmd) => {
+  await ev(`(() => { const ta = document.getElementById('msg'); ta.value = ''; ta.dispatchEvent(new Event('input')); ta.focus(); })()`);
+  if ((await box()).bash) await key('Backspace', { code: 'Backspace', vk: 8 }); // the box can still be in bash mode
+  await key('!', { code: 'Digit1', shift: true, vk: 49 });
+  await type(cmd);
+  await enter();
+  return c.until(`__synopia.cur().items.some(i => i.k === 'bang' && i.cmd === ${JSON.stringify(cmd)} && i.sh) && (!__synopia.cur().bang || !!__synopia.cur().bang.landed)`, 8000);
+};
+const sendText = async (t) => {
+  await ev(`(() => { const ta = document.getElementById('msg'); ta.value = ''; ta.dispatchEvent(new Event('input')); ta.focus(); })()`);
+  await type(t);
+  await enter();
+};
+const rowsOf = (cmd) => ev(`[...document.querySelectorAll('#log .bang')].filter(x => x.querySelector('.bang-cmd .cmd').textContent === ${JSON.stringify(cmd)}).length`);
+// the bang row of cmd comes before the prompt band holding text, and the log's last row is no bang
+const order = (cmd, text) => ev(`(() => { const b = [...document.querySelectorAll('#log .bang')].find(x => x.querySelector('.bang-cmd .cmd').textContent === ${JSON.stringify(cmd)});
+  const p = [...document.querySelectorAll('#log .prompt:not(.bang-cmd)')].find(x => x.textContent.includes(${JSON.stringify(text)}));
+  const all = [...document.querySelectorAll('#log .prompt, #log .bang')]; const lastBang = all.length && all[all.length - 1].classList.contains('bang');
+  return { found: !!b && !!p, before: !!b && !!p && !!(b.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING), lastBang }; })()`);
+const idle = () => c.until(`__synopia.cur().state.status !== 'busy'`, 8000);
+await idle();
+check('a ! with stdout, run while idle, lands', await runCmd('echo before'), await ev(`JSON.stringify({ bang: __synopia.cur().bang, last: __synopia.cur().items.slice(-3).map(i => [i.k, i.cmd || i.text, !!i.sh]), box: document.getElementById('msg').value, toast: document.getElementById('toast').textContent })`));
+check('two ! in a row land, each once', (await runCmd('echo second')) && (await rowsOf('echo before')) === 1 && (await rowsOf('echo second')) === 1);
+await c.load(`${url}#${D.slice(0, 8)}`, `__synopia.current() === '${D}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'echo second')`);
+check('after a reload before the next prompt: each row once, no live run', (await rowsOf('echo before')) === 1 && (await rowsOf('echo second')) === 1 && !(await ev(`__synopia.cur().bang && !__synopia.cur().bang.landed`)));
+await sendText('After the commands.');
+check('the next prompt lands and its turn ends', await c.until(`__synopia.cur().items.some(i => i.k === 'you' && i.text === 'After the commands.') && __synopia.cur().state.status !== 'busy'`, 8000));
+await sleep(300);
+let o = await order('echo second', 'After the commands.');
+check('the ! rows stay above the prompt that followed, nothing left at the end of the log', o.before && !o.lastBang && (await rowsOf('echo second')) === 1, JSON.stringify(o));
+await shot('bang-order.png');
+// during a turn: the CLI takes it in as two queued_command records
+await sendText('Keep going.');
+await c.until(`__synopia.cur().state.status === 'busy'`, 3000);
+check('a ! during a turn lands as one row', await runCmd('echo mid'), await ev(`JSON.stringify(__synopia.cur().items.slice(-4).map(i => [i.k, i.cmd || i.text]))`));
+check('not a queued message: no prompt of its tags, none waiting', await ev(`!__synopia.cur().items.some(i => i.k === 'you' && /^<bash-/.test(i.text || '')) && !(__synopia.cur().outbox || []).length`));
+await idle();
+await sendText('And after that.');
+check('the turn after it lands', await c.until(`__synopia.cur().items.some(i => i.k === 'you' && i.text === 'And after that.') && __synopia.cur().state.status !== 'busy'`, 8000));
+await sleep(300);
+o = await order('echo mid', 'And after that.');
+check('the mid-turn ! stays in place, once, nothing left at the end', o.before && !o.lastBang && (await rowsOf('echo mid')) === 1, JSON.stringify(o));
 
 // a session Synopia doesn't drive: no bash mode
 await ev(`document.querySelector('.row[data-id="${N}"]').click()`);

@@ -1,7 +1,7 @@
 /* Card: the needs-you card for questions, permissions and plans, and its keys (split from prototype/app.html).
    It renders the oldest pending request of the session (`pending` from the server), turned into the ask shape
    the card reads, above the message box. Questions one at a time; j/k and Space, i types in place. */
-import { view, cur, mounted, agentById, requestsOf } from "./state.js";
+import { view, cur, mounted, agentById, bgById, requestsOf } from "./state.js";
 import { act } from "./connection.js";
 import { esc, age, still } from "./format.js";
 import { md } from "./md.js";
@@ -14,14 +14,22 @@ import * as ui from "./ui-state.js";
 export const qstate = {};
 ui.useCards(qstate);
 /* ---------- pending requests to asks: {id, kind, toolName, toolUseId, agentId, since, input, cwd, description, title,
-   decisionReason, defaultToNo, always (the "Always allow" text, null when hidden), suggestions} ---------- */
+   decisionReason, defaultToNo, always (the "Always allow" text, null when hidden), suggestions, own} ----------
+   own: a call of one of Synopia's own tools (R3.15), worded by the backend (agent-tools.ts): {header, wants, text, once} */
 const FILE_TOOLS = ["Edit", "Write", "NotebookEdit", "Read"];
 /* who asks: Claude, or the subagent the request came from */
 const askerOf = (s, r) => { const A = r.agentId && s && agentById(s, r.agentId); return A ? `Subagent “${esc(A.description)}”` : r.agentId ? "A subagent" : "Claude"; };
-const wantsTo = r => r.toolName === "Bash" ? "run a command" : r.toolName === "Read" ? "read a file" : FILE_TOOLS.includes(r.toolName) ? "change a file" : `use ${esc(r.toolName)}`;
+const wantsTo = r => r.own ? esc(r.own.wants) : r.toolName === "Bash" ? "run a command" : r.toolName === "Read" ? "read a file" : FILE_TOOLS.includes(r.toolName) ? "change a file" : `use ${esc(r.toolName)}`;
 export function askOf(r) {
   const base = { id: r.id, k: "ask", ts: new Date(r.since).toISOString(), state: "pending", kind: r.kind === "question" ? undefined : r.kind, request: r };
   const inp = r.input || {};
+  if (r.kind === "permission" && r.own) {
+    const o = r.own;
+    return { ...base, cmd: o.text, startOi: 0, qs: [{ header: o.header, multi: false,
+      pre: `<p class="why2 own">${esc(o.text)}</p>`,
+      opts: [["Allow once", o.once], ...(r.always ? [["Always allow", r.always]] : [])],
+      otherLabel: "Deny", otherHint: "Press i to tell Claude why or what to do instead (optional)", otherPrefix: "Denied", otherEmptyOk: true, otherPlaceholder: "Why, or what to do instead (optional), Enter denies, Esc cancels" }] };
+  }
   if (r.kind === "permission") {
     const bash = r.toolName === "Bash", cmd = inp.command || inp.file_path || inp.notebook_path || inp.url || inp.pattern || r.toolName;
     /* Claude's reason (input.description), else the CLI's (a Read's options.description is only the path) */
@@ -161,8 +169,8 @@ export function qaKeys(e) {
   const a = pendingAsk(s); if (!a) return false;
   const st = qs(s, a);
   const k = e.key;
-  if (k === "j") qaMove(s, a, "down");
-  else if (k === "k") qaMove(s, a, "up");
+  if (k === "j" || k === "ArrowDown") qaMove(s, a, "down"); // the arrows too, as everyone expects
+  else if (k === "k" || k === "ArrowUp") qaMove(s, a, "up");
   else if (k === " ") qaPick(s, a);
   else if (k === "i" && st.qi < a.qs.length) {
     const q = a.qs[st.qi];
@@ -170,7 +178,16 @@ export function qaKeys(e) {
     else { const l = q.opts[st.oi][0]; if (!q.multi) { st.picks[st.qi] = [l]; delete st.own[st.qi]; } else if (!(st.picks[st.qi] || []).includes(l)) st.picks[st.qi] = [...(st.picks[st.qi] || []), l]; st.target = st.qi; st.noteRow = st.oi; }
     setMode("insert", false);
   }
-  else if (k === "Enter") { if (allAnswered(st, a)) { answerAsk(s, a); return true; } qaMove(s, a, "nextOpen"); }
+  else if (k === "Enter") {
+    e.preventDefault(); // before the returns below: an Enter left to WKWebView makes AppKit beep
+    const q = a.qs[st.qi];
+    if (q && st.oi >= q.opts.length) { // the last row: Deny sends (its reason is optional), else it opens the field as i does
+      if (!q.otherEmptyOk) { st.target = st.qi; st.noteRow = null; setMode("insert", false); }
+      else { if (!st.own[st.qi]) st.own[st.qi] = q.otherPrefix || q.otherLabel; delete st.picks[st.qi]; if (allAnswered(st, a)) { answerAsk(s, a); return true; } }
+    } else {
+      if (q && !q.multi) qaPick(s, a); // single choice: Enter picks the row under the cursor
+      if (allAnswered(st, a)) { answerAsk(s, a); return true; } qaMove(s, a, "nextOpen");
+    } }
   else return false;
   e.preventDefault(); renderCard(); paintMode(); document.getElementById("qa-own")?.focus();
   return true;
@@ -179,7 +196,7 @@ export function qaKeys(e) {
    here. Working and your turn have no status line (R5.5). */
 function statusLine(s) {
   if (s.state.status === "signedout" && s.state.light !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message</span></div>`;
-  const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[s.state.needsYou] || "Claude is waiting for a permission";
+  const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something", blocked: "A step was blocked or denied and Claude needs you to continue" }[s.state.needsYou] || "Claude is waiting for a permission";
   return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
 }
 /* The dock above the composer: the card for the oldest pending request, or the status line when Claude
@@ -189,7 +206,7 @@ let lastCard = null;
 export function resetCard() { lastCard = null; }
 export function renderCard() {
   const s = cur(); if (!s || !mounted) return;
-  const A = view && agentById(s, view);
+  const A = view && (agentById(s, view) || bgById(s, view)); // a subagent, shell or monitor view shows no card
   const pa = !A && pendingAsk(s), ea = !A && !pa && extAsk(s);
   const html = pa ? qaHTML(s, pa) : ea ? extHTML(s, ea) : !A && (s.state.light === "red" || s.state.status === "signedout") ? statusLine(s) : "";
   if (still(html) === lastCard) return;

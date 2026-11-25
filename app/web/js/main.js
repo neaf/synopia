@@ -4,13 +4,14 @@
    on `window` except the test API (test-api.js). */
 import * as state from "./state.js";
 import { store, isCurrent, isViewed } from "./state.js";
-import { connect, hooks } from "./connection.js";
+import { connect, hooks, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import * as format from "./format.js";
 import * as rail from "./rail.js";
 import * as sidebar from "./sidebar.js";
 import * as preview from "./preview.js";
 import * as transcript from "./transcript.js";
+import { applyOutput } from "./bg-view.js";
 import { renderCard, qstate } from "./card.js";
 import { syncPrompt, syncTakeover, syncGone, restoreTexts } from "./composer.js";
 import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-list.js";
@@ -61,6 +62,10 @@ function onMessage(m) {
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
       break;
     }
+    case "started": { // a session started another (R3.15): shown only when you are looking at the one that started it
+      if (state.current === m.from && store.sessions.has(m.sid)) { state.select(m.sid); renderAll(); }
+      break;
+    }
     case "removed": {
       if (state.applyRemoved(m)) renderAll(); else render("side");
       break;
@@ -76,6 +81,15 @@ function onMessage(m) {
       runHooks(m);
       break;
     }
+    case "output": { // a shown shell's or monitor's output (R7.2)
+      if (!applyOutput(m)) break;
+      ui.resetIn(m);
+      const log = document.getElementById("log"), h = log ? log.scrollHeight : 0, top = log ? log.scrollTop : 0;
+      render("log");
+      if (m.prepend && log) log.scrollTop = top + log.scrollHeight - h; // earlier output: what you read stays in place
+      ui.output(m);
+      break;
+    }
     case "agents": {
       if (!state.applyAgents(m)) break;
       render("side", ...(isCurrent(m.sid) ? ["header", "log", "rail"] : []));
@@ -83,7 +97,8 @@ function onMessage(m) {
     }
     case "background": {
       if (!state.applyBackground(m)) break;
-      render("side", ...(isCurrent(m.sid) ? ["rail", "card"] : []));
+      const shown = isCurrent(m.sid) && m.upsert.some(b => b.toolUseId === state.view); // the shell or monitor on screen changed
+      render("side", ...(isCurrent(m.sid) ? ["rail", "card", ...(shown ? ["header", "log"] : [])] : []));
       break;
     }
     case "pending": {
@@ -146,6 +161,11 @@ function runHooks(m) {
 
 ui.useLog(transcript.renderLog, transcript.loadEarlier);
 sidebar.onPick(renderAll); // a row's click shows its session
+/* a start_session step's link (R3.15): the session it started, or, once closed, opened again from the Open list's route */
+transcript.onSession(sid => {
+  if (store.sessions.has(sid)) { state.select(sid); renderAll(); return; }
+  if (act({ t: "openSession", sid }, { done: ok => { if (!ok && want.open === sid) want.open = null; } })) want.open = sid;
+});
 onThemeChange(preview.previewRetheme); // bat's colours come from the backend
 onGraceEnd(() => render("side", "rail")); // a finished line's grace is over: it leaves
 installTestApi({ inject: onMessage, render });

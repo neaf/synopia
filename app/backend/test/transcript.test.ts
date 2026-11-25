@@ -542,6 +542,19 @@ test('a tool you denied, or a plan you sent back, reads as denied, not failed', 
   assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
 });
 
+test('a step auto mode blocked, or you turned down at a terminal, reads as denied with who said no', () => {
+  const t = new Transcript({ home: HOME });
+  const res = (id: string, content: string, kind?: string) => ({ type: 'user', uuid: `b-${id}`, timestamp: at(2), ...(kind ? { toolDenialKind: kind } : {}), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } });
+  t.pushAll([
+    { type: 'assistant', uuid: 'b-a1', timestamp: at(1), message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_auto', name: 'Bash', input: { command: 'git push' } }] } },
+    res('toolu_auto', 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: invented.', 'automode-blocked'),
+    { type: 'assistant', uuid: 'b-a2', timestamp: at(3), message: { id: 'm2', content: [{ type: 'tool_use', id: 'toolu_you', name: 'Bash', input: { command: 'rm -r out' } }] } },
+    res('toolu_you', "The user doesn't want to proceed with this tool use.", 'user-rejected'),
+    { type: 'user', uuid: 'b-u3', timestamp: at(4), message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ]);
+  assert.deepEqual(['toolu_auto', 'toolu_you'].map((id) => [byId(t, id).state, byId(t, id).denied]), [['denied', 'auto'], ['denied', 'you']]);
+});
+
 test("task ended: the SDK's notification ends a background shell until the JSONL's own lands", () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
@@ -955,4 +968,27 @@ test('a multi-block assistant record reduces like its split form', () => {
   assert.deepEqual(shape(one), shape(split));
   assert.deepEqual(one.items.filter((i) => i.k === 'claude').map((i) => i.text), ['Checking the folder.', 'Both started.']);
   assert.deepEqual([one.background(), one.agents(), one.turnRunning(NOW, QUIET)], [split.background(), split.agents(), split.turnRunning(NOW, QUIET)]);
+});
+
+// docs/Claude Code transcripts.md "Quirk: a subagent's edits have no structuredPatch". Invented records.
+test("a subagent's edit with no toolUseResult takes its patch from the input, outside cwd too, once its result lands", () => {
+  const t = new Transcript({ home: HOME, sidechain: true });
+  const base = { isSidechain: true, agentId: 'a1', sessionId: 's1', cwd: `${HOME}/dev/demo`, entrypoint: 'sdk-ts' };
+  const file = `${HOME}/dev/demo.other-worktree/src/widget.ts`;
+  const use = (id: string, name: string, input: JsonRecord, n: number): JsonRecord => ({ ...base, type: 'assistant', uuid: `as${n}`, timestamp: `2026-11-25T10:00:0${n}.000Z`,
+    message: { id: `m${n}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id: string, n: number, extra: JsonRecord = {}): JsonRecord => ({ ...base, type: 'user', uuid: `us${n}`, timestamp: `2026-11-25T10:00:0${n}.500Z`, permissionDecision: {},
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'The file has been updated.', ...extra }] } });
+  t.push({ ...base, type: 'user', uuid: 'u0', timestamp: '2026-11-25T10:00:00.000Z', message: { role: 'user', content: 'Speed up the widget' } });
+  t.push(use('toolu_e1', 'Edit', { file_path: file, old_string: 'a\nslow()\nb', new_string: 'a\nfast()\nb', replace_all: false }, 1));
+  assert.equal(byId(t, 'toolu_e1').patch, undefined, 'running: no patch yet');
+  t.push(result('toolu_e1', 1));
+  assert.deepEqual(byId(t, 'toolu_e1').patch, { file: '~/dev/demo.other-worktree/src/widget.ts', abs: file, add: 1, del: 1, created: false, cut: false,
+    hunks: [{ o: 0, n: 0, lines: [' a', '-slow()', '+fast()', ' b'] }], unnumbered: true });
+  t.push(use('toolu_w1', 'Write', { file_path: `${HOME}/dev/demo.other-worktree/NOTES.md`, content: 'x\ny\n' }, 2));
+  t.push(result('toolu_w1', 2));
+  assert.deepEqual([byId(t, 'toolu_w1').patch!.add, byId(t, 'toolu_w1').patch!.hunks[0].n, byId(t, 'toolu_w1').patch!.unnumbered], [2, 1, undefined]);
+  t.push(use('toolu_e2', 'Edit', { file_path: file, old_string: 'nope', new_string: 'x' }, 3));
+  t.push(result('toolu_e2', 3, { is_error: true }));
+  assert.equal(byId(t, 'toolu_e2').patch, undefined, 'a failed edit changed nothing');
 });

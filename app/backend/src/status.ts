@@ -42,7 +42,7 @@
 // `at` is the backend's clock when the status last changed (for stale: when the last message
 // came); the caller stores it.
 import type { SDKAssistantMessageError, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
-import type { PendingAsk } from './transcript.ts';
+import type { Item, PendingAsk } from './transcript.ts';
 
 export type Status = 'busy' | 'idle' | 'waiting' | 'stopped' | 'failed' | 'signedout' | 'stale' | 'retrying' | 'compacting';
 type Outcome = 'idle' | 'stopped' | 'failed';
@@ -347,18 +347,19 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //   tone     the state word's colour: red for needs you and signed out, amber for rate limited,
 //            grey for no updates, else the light.
 //   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
-//            ("Signed out", "No updates", "Rate limited", "Compacting").
+//            ("Signed out", "No updates", "Rate limited", "Compacting"). "Needs you, blocked": your
+//            turn after a main turn with a step denied and not retried (blockedLast).
 //   mark     the session mark's key (marks.js).
 //   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
 //            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
 //            `Interrupt`; a turned-down tool is not one).
 //   needsYou what the session waits on: the oldest request's kind, or the question or plan
-//            another process asks; null when it waits on nothing.
+//            another process asks, or `blocked`; null when it waits on nothing.
 //   review   finished "For review: …" subagents not marked reviewed (R10.1).
 //   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
 //            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
 export type Light = 'red' | 'amber' | 'green';
-export type Needs = 'question' | 'permission' | 'plan';
+export type Needs = 'question' | 'permission' | 'plan' | 'blocked';
 export type SessionState = {
   status: Status; since: number; detail: StatusDetail;
   light: Light; tone: Light | 'grey'; word: string; mark: string;
@@ -368,6 +369,7 @@ export type StateFacts = {
   pending: Needs[]; // the session's requests' kinds, oldest first
   ask: { kind: 'question' | 'plan' } | null; // a card another process waits on
   interrupted: boolean; // the latest item (titles aside) is a `stop` interrupt marker
+  blocked: boolean; // the latest main turn has a denied step it didn't retry (blockedLast)
   review: number;
   driven: boolean;
 };
@@ -385,17 +387,34 @@ const PHASE: Partial<Record<Status, { word: string; mark: string }>> = {
 
 export function sessionState(e: { status: Status; at: number; detail?: StatusDetail }, f: StateFacts): SessionState {
   const status = e.status, detail = e.detail ?? {};
-  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : null);
+  // your turn after a turn whose step was blocked or denied: Claude can't go on without you
+  const blocked = status === 'idle' && f.blocked && !f.interrupted;
+  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : blocked ? 'blocked' : null);
   const light: Light = needsYou ? 'red' : LIGHT[status];
   const phase = light === 'red' ? undefined : PHASE[status];
   const stopped = light === 'amber' && !phase && status !== 'failed' && (status === 'stopped' || f.interrupted);
-  const word = phase ? phase.word : light === 'red' ? 'Needs you' : light === 'green' ? 'Working'
+  const word = phase ? phase.word : light === 'red' ? (needsYou === 'blocked' ? 'Needs you, blocked' : 'Needs you') : light === 'green' ? 'Working'
     : status === 'failed' ? 'Failed' : stopped ? 'Stopped' : 'Your turn';
   const tone: Light | 'grey' = light === 'red' || status === 'signedout' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' ? 'grey' : light;
   // your turn shows the grey square, whether or not background work runs
   const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (detail.queued ? 'queued' : 'work')
     : status === 'failed' ? 'failed' : 'stopped';
   return { status, since: e.at, detail, light, tone, word, mark, stopped, needsYou, review: f.review, driven: f.driven };
+}
+
+// Blocked (R8.2, FR-STAT-02): the latest main turn (from your last message, a `!` command or a message a
+// turn took in) has a step auto mode blocked or a permission denied (tool state `denied`), with no later
+// step of the same tool and input that ran. Read once the turn is over: sessionState applies it to your
+// turn only, so it shows for sessions Synopia runs and terminal ones alike, and a new message clears it.
+export function blockedLast(items: Item[]): boolean {
+  let from = items.length;
+  while (from > 0) {
+    const it = items[from - 1];
+    if ((it.k === 'you' && !it.turnedDown && !it.interrupted) || it.k === 'bang') break;
+    from--;
+  }
+  const steps = items.slice(from).filter((it) => it.k === 'tool');
+  return steps.some((d, i) => d.state === 'denied' && !steps.slice(i + 1).some((it) => it.state === 'done' && it.name === d.name && it.input === d.input));
 }
 
 // What a session adds to the Dock badge (R2.6): 1 while it needs you, plus its deliverables to review.

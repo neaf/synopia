@@ -70,7 +70,15 @@ await paste(); // its [Image #1] tag at the caret (R5.13)
 await ev(`document.getElementById('msg').setSelectionRange(2, 7)`);
 check('the pasted image is read', await wait(`__synopia.attachments().length === 1 && !!__synopia.attachments()[0].data`));
 check('session 2 shows its card', await goTo(S2) && await wait(`!!document.querySelector('.qa-card')`));
-for (const k of ['j', ' ', 'Enter', 'j', ' ']) await key(k);
+// single choice: Enter picks the row under the cursor, replacing Space's pick, then jumps to the open question
+for (const k of [' ', 'j', 'Enter']) await key(k);
+const cardE = await card();
+check('Enter on a single-choice row picks it and moves on', /"picks":\{"0":\["No"\]\}/.test(cardE) && /"qi":1,"oi":0/.test(cardE), cardE);
+// multiple choice: Enter doesn't toggle
+for (const k of ['j', 'Enter']) await key(k);
+const cardM = await card();
+check('Enter on a multiple-choice row leaves it', /"picks":\{"0":\["No"\]\}/.test(cardM) && /"qi":1/.test(cardM), cardM);
+for (const k of ['j', ' ']) await key(k);
 const card0 = await card();
 check('the card is half answered', /"picks":\{"0":\["No"\],"1":\["Docs"\]\}/.test(card0) && /"qi":1/.test(card0), card0);
 check('session 4 shows', await goTo(S4));
@@ -91,7 +99,7 @@ async function checkSession1(tag, firstLoad) {
   if (!firstLoad) check(`${tag}: session 1 shows`, await goTo(S1));
   else check(`${tag}: session 1 is the one shown`, await wait(`__synopia.current() === '${S1}' && __synopia.mounted() === '${S1}|' && !__synopia.restoring()`));
   check(`${tag}: the scroll lands on the same item within 2 px`, near(await anchor(), mid), `${await anchor()} vs ${mid}`);
-  check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep [Image #1]' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
+  check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep [Image #1] ' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
   check(`${tag}: the pasted image is back`, await wait(`__synopia.attachments().length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
   check(`${tag}: its bytes are back for sending`, await wait(`/^data:image\\/png;base64,/.test(__synopia.attachments()[0].data || '')`));
   check(`${tag}: the step is open`, await stepOpen('List the demo folder'));
@@ -146,7 +154,8 @@ check('state.json has the ui field, no image bytes', st.ui && st.ui.current === 
 await goTo(S2); await flush();
 await serverSend(url, { t: 'ui', patch: { sessions: { [S1]: { scroll: { '': { id: 'gone:item', off: 30 } } } } } });
 check('a reload after the anchor changed', await load());
-check('a stale anchor falls back to the bottom', await goTo(S1) && (await anchor()) === '{"bottom":true}', await anchor());
+check('a stale anchor falls back to the bottom', await goTo(S1) && JSON.parse(await anchor()).bottom === true
+  && await ev(`(() => { const l = document.getElementById('log'); return l.scrollHeight - l.scrollTop - l.clientHeight < 1; })()`), await anchor());
 // a reconnect is a second hello (sessions without items) on the view on screen: the log keeps its blocks
 // until the view's reset comes, not one frame blank, and then shows the same blocks
 await goTo(S1);

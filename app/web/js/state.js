@@ -2,8 +2,8 @@
    {id, title, now, cwd, prs, state, model, effort, items, total, agents, background, stream}; `items` hold
    only the viewed conversation. `state` is the backend's (status.ts sessionState): status, since, detail,
    light, tone, word, mark, stopped, needsYou, review, driven. The page decides no status itself.
-   This module is the only writer of `current` (the session shown) and `view` (the subagent shown in it,
-   null for the main conversation): everything else calls select() or selectView(). `mounted` is the
+   This module is the only writer of `current` (the session shown) and `view` (the subagent, or the background
+   shell or monitor by its tool use id, shown in it; null for the main conversation): everything else calls select() or selectView(). `mounted` is the
    view on screen, which transcript.js renderConv sets once it has built that view's frame. */
 /* `layout`: the sidebar's groups, the backend's (layout.ts), replaced whole by `hello`, `layout` and a `session` with `replaces` */
 export const store = { sessions: new Map(), layout: { groups: [], others: [] }, menu: {}, pending: new Map(), ui: { connected: false } };
@@ -23,6 +23,10 @@ const syncData = () => { data = [...store.sessions.values()]; };
 /* a session's subagents and forks */
 export const agentsOf = s => s?.agents || [];
 export const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
+/* a session's background shell or monitor, by its tool use id */
+export const bgById = (s, id) => (s?.background || []).find(b => b.toolUseId === id);
+/* what a view id names in the session: a subagent or a shell or monitor */
+const viewable = (s, id) => !!id && !!(agentById(s, id) || bgById(s, id));
 /* how long a subagent ran, or runs (to the ticker's time) */
 export const agentMs = a => a.start ? (a.finished ? new Date(a.end) : nowish) - new Date(a.start) : 0;
 
@@ -31,14 +35,18 @@ export const isCurrent = sid => sid === current;
 export const isViewed = (sid, agent) => sid === current && (agent || null) === (view || null);
 /* The pending requests (question, permission or plan) for the session, oldest first: its cards. */
 export const requestsOf = s => store.pending.get(s.id) || [];
+/* The messages you sent that the transcript doesn't hold yet (the outbox, R5.5), oldest first; the
+   queued ones were sent while a turn runs and wait for Claude's next step. */
+export const waitingOf = s => (s.outbox || []).filter(q => !(q.landed && s.items.some(i => i.id === q.landed)));
+export const queuedOf = s => waitingOf(s).filter(q => q.queued !== false);
 
-/* Show a session, at its main conversation or at one of its subagents (dropped if the session has no such one). */
-export function select(sid, agent = null) {
+/* Show a session, at its main conversation or at one of its subagents, shells or monitors (dropped if the session has no such one). */
+export function select(sid, id = null) {
   current = sid || null;
-  view = agent && agentById(store.sessions.get(current), agent) ? agent : null;
+  view = viewable(store.sessions.get(current), id) ? id : null;
 }
-/* Show a subagent of the current session, or its main conversation (null). */
-export function selectView(agent) { view = agent && agentById(cur(), agent) ? agent : null; }
+/* Show a subagent, shell or monitor of the current session, or its main conversation (null). */
+export function selectView(id) { view = viewable(cur(), id) ? id : null; }
 
 /* The session to show: the one in the hash (an id prefix), else the current one, else the first that needs you or waits. */
 export function pickCurrent() {
@@ -109,7 +117,7 @@ export function applyAgents(m) {
   const s = store.sessions.get(m.sid); if (!s) return null;
   upsertById(s.agents, m.upsert, true);
   s.agents.forEach(a => { a.items ||= []; });
-  if (m.sid === current && view && !agentById(s, view)) view = null;
+  if (m.sid === current && view && !viewable(s, view)) view = null;
   return s;
 }
 export function applyBackground(m) { const s = store.sessions.get(m.sid); if (s) upsertById(s.background, m.upsert); return s; }

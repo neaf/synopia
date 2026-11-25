@@ -1,0 +1,166 @@
+// Synopia's tools for agents (R3.15, FR-SES-20): the one module that owns them. Every session Synopia
+// runs gets a fresh in-process MCP server named `synopia` for its process (sdk.ts `toolServer`, through
+// session.ts startOptions); the writer's call and the menu probe get none. The model and the
+// transcript see a tool as `mcp__synopia__<name>` (docs/Agent SDK.md, "Synopia's tools for agents").
+// A tool is one entry of TOOLS:
+//   name, description, input  what the model reads (input is a zod shape)
+//   card(input, folder)       how the permission card words a call (each call asks, cards.ts)
+//   step(input)               the step's object in the transcript, after `verb`
+//   run(input, caller, host)  what it does, for the session that called it
+// To add a tool: write its Tool here, add it to TOOLS, and give `Host` what it needs from Sessions.
+// The wording and the result text live here too, so the transcript (transcript.ts) and the card
+// (cards.ts) read them from one place.
+import { z } from 'zod';
+import { toolServer as sdkToolServer } from './sdk.ts';
+import type { ToolDef, ToolResult } from './sdk.ts';
+import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+
+export const SERVER = 'synopia';
+const VERSION = '1';
+export const fullName = (tool: string): string => `mcp__${SERVER}__${tool}`;
+
+export type Started = { ok: true; sid: string } | { ok: false; error: string };
+// What the tools need from the open sessions (sessions.ts gives it).
+export type Host = {
+  // The session Synopia runs with this id (through its aliases), or null: closed, or none of Synopia's.
+  caller(id: string): { id: string; cwd: string; title: string; gone(): boolean } | null;
+  // A new session in `cwd` with `prompt` as its first message, as New session and a send do (R3.3).
+  newSession(cwd: string, prompt: string, title: string): Started;
+  // `sid` right under `caller` in the caller's group, or in a new group of the two named `group`
+  // when the caller is in none (layout.ts is the owner).
+  placeUnder(sid: string, caller: string, group: string): { ok: true } | { ok: false; error: string };
+  // The pages hear that `caller` started `sid`: one viewing the caller switches to it (publisher.ts `started`).
+  started(sid: string, caller: string): void;
+  // The new session's real id once its system/init comes, else the id it has after `ms`.
+  idOf(sid: string, ms: number): Promise<string>;
+  tilde(p: string): string;
+};
+
+// How the card asks: its header, what Claude wants to do, the line it shows, the "Allow once" hint,
+// and the "Always allow" text (kept as a session rule, cards.ts; until the session closes, Q6).
+export type CardText = { header: string; wants: string; text: string; once: string; always: string };
+
+type Input = Record<string, unknown>;
+type Tool = {
+  name: string;
+  description: string;
+  input: z.ZodRawShape;
+  verb: string;
+  card(input: Input, folder: string): CardText;
+  step(input: Input): string;
+  run(input: Input, caller: string, host: Host): Promise<ToolResult>;
+};
+
+const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+const text = (t: string): ToolResult => ({ content: [{ type: 'text', text: t }] });
+const refuse = (t: string): ToolResult => ({ content: [{ type: 'text', text: t }], isError: true });
+export const firstLine = (s: string): string => s.trim().split('\n')[0].trim();
+// A short title from a prompt: its first line, at most 8 words and 60 characters.
+export function firstWords(s: string): string {
+  const words = firstLine(s).split(/\s+/).filter(Boolean);
+  const t = words.slice(0, 8).join(' ');
+  if (t.length > 60) return t.slice(0, 59).trimEnd() + '…';
+  return words.length > 8 ? t + '…' : t;
+}
+const titleOf = (input: Input): string => str(input.title).trim().slice(0, 120) || firstWords(str(input.prompt));
+
+// ---------- start_session ----------
+
+// How long the tool waits for the new session's id (its system/init) before it answers without one.
+export const ID_WAIT_MS = 30_000;
+// The result's text names the new session; the transcript reads its id back (startedFrom).
+const STARTED = /^Started session ([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}) “/;
+export const startedText = (sid: string, title: string): string => `Started session ${sid} “${title}”. It runs on its own; this session goes on.`;
+export function startedFrom(result: string): string | null {
+  return STARTED.exec(result)?.[1] ?? null;
+}
+
+const startSession: Tool = {
+  name: 'start_session',
+  description: 'Start a new Claude Code session in this session\'s folder, with `prompt` as its first message. '
+    + 'Synopia shows it right under this session in the sidebar; this session goes on. The user approves each call. '
+    + 'Use it to hand work over to a fresh session (for example after writing a handoff file the prompt names).',
+  input: {
+    prompt: z.string().describe('The new session\'s first message'),
+    title: z.string().optional().describe('A short title for the new session'),
+  },
+  verb: 'Start session',
+  card: (input, folder) => ({
+    header: 'Start session',
+    wants: 'start a new session',
+    text: `Start a new session in ${folder} with: ${firstLine(str(input.prompt))}`,
+    once: 'Starts this session now. Claude asks again next time.',
+    always: 'Starts new sessions from this session without asking, until you close it.',
+  }),
+  step: (input) => titleOf(input),
+  async run(input, callerId, host) {
+    const prompt = str(input.prompt);
+    if (!prompt.trim()) return refuse('The prompt is empty: give the new session its first message.');
+    const caller = host.caller(callerId);
+    if (!caller) return refuse('This session isn\'t one Synopia runs, so it can\'t start a session.');
+    if (caller.gone()) return refuse(`The folder ${host.tilde(caller.cwd)} no longer exists.`);
+    const title = titleOf(input);
+    const r = host.newSession(caller.cwd, prompt, str(input.title).trim().slice(0, 120));
+    if (!r.ok) return refuse(r.error);
+    const placed = host.placeUnder(r.sid, caller.id, caller.title);
+    if (!placed.ok) return refuse(placed.error);
+    host.started(r.sid, caller.id);
+    const sid = await host.idOf(r.sid, ID_WAIT_MS);
+    return text(startedText(sid, title));
+  },
+};
+
+const TOOLS: Tool[] = [startSession];
+const byName = new Map(TOOLS.map((t) => [fullName(t.name), t]));
+
+// ---------- for the rest of the backend ----------
+
+// The server for one process of the session `caller` gives (its id now: it changes at init and on a reset).
+export function toolServer(host: Host, caller: () => string): Record<string, McpSdkServerConfigWithInstance> {
+  const d = defs(host, caller);
+  const server = sdkToolServer(SERVER, VERSION, d);
+  served.set(server, d);
+  return { [SERVER]: server };
+}
+
+// Test-only (the scripted SDK, app/backend/dev/scripted-sdk.ts): runs a tool of a server toolServer
+// made, as the CLI calls it once canUseTool allowed it. Null when the servers hold no such tool.
+const served = new WeakMap<object, ToolDef[]>();
+export function callServed(servers: Record<string, unknown> | undefined, toolName: string, input: Input): Promise<ToolResult> | null {
+  const [, server, name] = /^mcp__(.+?)__(.+)$/.exec(toolName) ?? [];
+  const cfg = server ? servers?.[server] : undefined;
+  const def = cfg && typeof cfg === 'object' ? served.get(cfg)?.find((t) => t.name === name) : undefined;
+  return def ? def.run(input) : null;
+}
+
+// The definitions a server holds (the scripted SDK calls them as the CLI would, through `call`).
+export function defs(host: Host, caller: () => string): ToolDef[] {
+  return TOOLS.map((t) => ({
+    name: t.name, description: t.description, input: t.input,
+    run: async (args) => {
+      try {
+        return await t.run(args, caller(), host);
+      } catch (e) {
+        return refuse(`Synopia couldn't do it: ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+      }
+    },
+  }));
+}
+
+export const isOurs = (toolName: string): boolean => byName.has(toolName);
+
+// The card's words for a call of one of ours, or null for another tool.
+export function cardOf(toolName: string, input: Input, folder: string): CardText | null {
+  return byName.get(toolName)?.card(input, folder) ?? null;
+}
+
+// The step's verb and object in the transcript, or null for another tool.
+export function stepOf(toolName: string, input: Input): [string, string] | null {
+  const t = byName.get(toolName);
+  return t ? [t.verb, t.step(input)] : null;
+}
+
+// The session a finished start_session step started, from its result text (null for anything else).
+export function sessionOf(toolName: string, result: string): string | null {
+  return toolName === fullName(startSession.name) ? startedFrom(result) : null;
+}

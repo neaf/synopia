@@ -16,6 +16,7 @@
   --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
   --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
   --bash: #BF3989; /* bash mode's mark: the CLI's bash pink, on this palette */
+  --band: #F0F3F6; /* your message's band, and the box in insert mode */
   --dot-amber: #D4A72C; --dot-green: #2DA44E;
   --add-bg: #DAFBE1; --del-bg: #FFEBE9;
   --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
@@ -70,11 +71,14 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .r-agent b { color: var(--kc, var(--green)); font-weight: 500; }
 .r-side { width: 12.5px; height: 16px; display: flex; align-items: center; justify-content: center; }
 
-/* ---------- main area: four panels on the canvas ---------- */
-.conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
+/* ---------- main area: the conversation as one panel, the background panel beside it, on the canvas ---------- */
+.conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: minmax(0, 1fr); gap: 9px; padding: 9px; min-height: 0; }
 .conv.no-rail { grid-template-columns: minmax(0, 1fr); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
-.c-head { grid-column: 1 / -1; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
+/* one panel end to end (R5): the header, the log, the queue, and the message box as its last row */
+.thread { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.thread > .c-head { flex: none; border-bottom: 1px solid var(--line-2); }
+.c-head { padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
 .c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
 .c-now { color: var(--ink-2); margin: 0; }
 .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
@@ -90,8 +94,14 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .c-acts { grid-row: 1 / 6; grid-column: 2; display: flex; gap: 7px; align-items: center; }
 .missing { padding: 27px; max-width: 60ch; }
 
-.log { overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; }
-.log-inner { max-width: 150ch; }
+.log { position: relative; overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; flex: 1 1 0; }
+/* the text keeps a 150ch measure; a band's fill (your prompt, a queued one, a `!` command) runs edge to edge
+   across the panel at any width, its text in the same measure */
+.log-inner > :not(.prompt, .qpin, .bang), .bang > :not(.prompt) { max-width: 150ch; }
+.prompt > :not(.g) { max-width: 148ch; }
+/* a line that is one long token (a path, a list of tool names) wraps anywhere rather than run past the panel,
+   as commands, paths and diffs already do */
+.log .ln { overflow-wrap: anywhere; }
 .earlier { color: var(--ink-3); margin: 0 0 11px; }
 /* "Show 160 earlier": a quiet link in the line's own grey, darker on hover */
 .earlier button { all: unset; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2.5px; }
@@ -99,7 +109,7 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 .earlier button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
 
 /* transcript: mono, gutter glyphs like the CLI */
-.log, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+.log, .send-ghost, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
 .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
 .ln > .g { user-select: none; }
 .ln.claude > .g { color: var(--ink); }
@@ -123,8 +133,12 @@ details.step > summary { cursor: pointer; list-style: none; }
 details.step > summary::-webkit-details-marker { display: none; }
 .step-out { margin: 2px 0 5.5px; }
 .body .step-out { margin-left: 3ch; }
-.step-out .cmd { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .cmd { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* the output in its own subtle panel under its command, as a code block in Claude's text (.md pre): one look for all
+   shell output, a step's result, a `!` command's, a shell's or monitor's view (prototype/working-shell-storyboard.html C,
+   2026-11-25); stderr keeps its red rule beside it */
+.step-out .out:not(.err) { display: block; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
 .step-out .earlier.more { margin: 0 0 0 3ch; }
 /* runView: a quiet description over the command, stderr in red, the running row's note fainter; an open
    running step shows "Running, 42s" in its body, so its line's own "Running" row steps aside */
@@ -132,12 +146,37 @@ details.step > summary::-webkit-details-marker { display: none; }
 .step-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; } /* shape as well as colour: a 1px rule at its edge */
 .step-out .res.note { color: var(--faint); }
 details.step[open] > summary .res.run { display: none; }
-.prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+/* the band runs from the panel's inner edge (-16px, the log's padding), so its 2.5px edge shows whole */
+.prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
 .prompt .img, .prompt .dim { color: var(--ink-3); }
-/* a message you sent while the turn runs (R5.5): the same band, open and dashed at the edge until
-   Claude takes it in, the text dimmed, a quiet label with the moving queued mark */
-.prompt.queued { background: none; border-left-style: dashed; }
+/* messages you sent while the turn runs (R5.5): the same band, a still clock in place of `❯` and lighter
+   text. When Claude takes one, only the mark and the ink change; nothing changes size */
+.prompt.qc > .md { color: var(--ink-3); }
+.prompt.qc { opacity: .5; } /* not taken yet: the whole band, its fill, edge and clock, at half strength (2026-11-25) */
+/* the queued clock sits where the ❯ would: centred on its cell and on its ink, --dot-lift above the line's middle (below) */
+.prompt > .g { position: relative; }
+.prompt > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+/* the queue, one block at the log's end (transcript.js queuedHTML): the transcript's end, scrolling with it like
+   any message (2026-11-25: not pinned). The negative top margin keeps the 11px gap above the first band; the
+   log's bottom padding moves into the block */
+.log { container-type: size; }
+.log:has(> .log-inner > .qpin), .thread:has(.dock-inner > :not(.composer)) > .log { padding-bottom: 0; }
+.qpin { display: flow-root; margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; }
+.qpin > .prompt:first-child { margin-top: 0; }
+/* "New since 2:14 PM" (R5.12d, prototype/unread-storyboard.html C): a 1px line in the gap above the first item you
+   hadn't seen; it takes no space. In a shell's or monitor's output, a zero-height block between two lines. */
+.log-inner > .new-at { position: relative; }
+.new-at::before { content: ""; position: absolute; left: -16px; right: -16px; top: -6px; height: 1px; background: var(--link); z-index: 1; }
+.new-at > .nlab { position: absolute; right: -4px; top: -12.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+.nlab i { font-style: normal; font-weight: 500; color: var(--ink-3); }
+.prompt.new-at > .nlab { right: 12px; } /* the band reaches the log's edges */
+.nl-at { display: block; position: relative; height: 0; }
+.nl-at::before { content: ""; position: absolute; left: -100vw; right: -16px; top: -.5px; height: 1px; background: var(--link); z-index: 1; }
+.nl-at > .nlab { position: absolute; right: -4px; top: -6.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+/* the send tween (send-tween.js): a copy of your new band moves up from the box; the band waits hidden in its place */
+.send-ghost { position: fixed; z-index: 20; margin: 0; pointer-events: none; --dot-lift: calc(var(--log-font) * .084); }
+.prompt.landing { visibility: hidden; }
 /* bash mode (R5.13): the command on the prompt band, `!` and its edge in the bash pink; the output under the
    guide through runView, as a step's result */
 .bang { margin: 0 0 11px; }
@@ -146,8 +185,6 @@ details.step[open] > summary .res.run { display: none; }
 .prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .bang-res { padding-left: 2ch; color: var(--ink-3); }
 .bang-res > .step-out { margin: 0; }
-.prompt.queued > .g, .prompt.queued .md { color: var(--ink-3); }
-.prompt.queued .qlabel { display: flex; align-items: center; gap: .6ch; margin: -.5em 0 0; color: var(--ink-3); }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
 .retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
 .opt-line { color: var(--ink-3); }
@@ -166,9 +203,25 @@ details.step[open] > summary .res.run { display: none; }
 .md pre code { color: var(--ink); }
 .md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
 .md a { color: var(--link); }
-.md table { border-collapse: collapse; margin: 0 0 .85em; }
+/* tables (R5.10): 11px, 1px rules between rows; md.js marks each column (num, short, prose, c0 the first)
+   and table-fit.js fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+.md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+.md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+.md .tw::-webkit-scrollbar { height: 5px; }
+.md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; } /* not the line's break-anywhere */
+.md table code { font-size: 1em; }
 .md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
-.md th, .md td { padding: 1px 3ch 1px 0; vertical-align: top; }
+.md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+.md th { padding-top: 0; }
+.md th:last-child, .md td:last-child { padding-right: 0; }
+.md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+.md .num { text-align: right; font-variant-numeric: tabular-nums; }
+.md .short, .md .num, .md .c0 { white-space: nowrap; }
+.md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+.md .c0 code { white-space: nowrap; }
+.md .prose { min-width: 26ch; overflow-wrap: break-word; }
+.md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; } /* the separator row's colons win */
 
 /* waves of subagents */
 .wave .name { font-weight: 700; }
@@ -207,18 +260,22 @@ details.step[open] > summary .res.run { display: none; }
 .dl.c { color: var(--ink-2); }
 .dgap { color: var(--faint); padding-left: calc(var(--dn, 4ch) + 3ch); background: var(--sub); }
 
-/* message panel: status bar on top, input below */
-.dock { padding: 0; overflow: visible; }
+/* the message box, the panel's last row: a card or status line above it, at the transcript's end */
+.dock { flex: none; padding: 0; overflow: visible; }
 .dock-inner { max-width: none; }
-.status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); border-radius: 7px 7px 0 0; }
+.dock-inner > :not(.composer) { border-top: 1px solid var(--line-2); margin-bottom: 23.5px; } /* then the gap the log's end has, then the box's line */
+/* a subagent, shell or monitor view has no message box (R5.12): the panel ends with the log; the row shows only while a key's prompt asks */
+.dock.nobox:not(:has(.composer.asking)) { display: none; }
+.status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); }
 .status b { font-weight: 700; }
 .status[data-state="red"] b { color: var(--red); }
 .status span { color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); align-items: center; padding: 9px 14px; cursor: text; } /* the whole box focuses the field */
+/* styled as a `❯` band being written: ❯ 16px in, where a posted band's sits, under a 1px line (R5) */
+.composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); align-items: center; padding: 9px 16px 9px 13.5px; border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent; cursor: text; } /* the whole box focuses the field */
 .composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
 .composer.bash > .g { color: var(--bash); font-weight: 700; } /* bash mode (R5.13): `!` in place of `❯` */
 .composer .attach { grid-column: 2; }
-.composer textarea { width: 100%; background: none; border: 0; resize: none; outline: none; min-height: 3lh; height: auto; max-height: 198px; padding: 0; display: block; } /* three transcript lines at least, growing as you type */
+.composer textarea { width: 100%; max-width: 148ch; background: none; border: 0; resize: none; outline: none; min-height: 3lh; height: auto; max-height: 198px; padding: 0; display: block; } /* three transcript lines at least, growing as you type */
 .composer .attach { grid-row: 2; } /* the pasted images sit below the text */
 .composer .attach:not(:empty) { margin: 5.5px 0 2px; }
 
@@ -297,6 +354,11 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
    selection tint, drawn outside the line (box-shadow) so nothing moves; their own running marks stay as they are */
 .log.bg-asking [data-fg] { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
 .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px #DDF4FF, 0 0 0 3px #54AEFF; }
+/* a block a jump landed on (the "To review" card goes to its report, R7.1): the same mark, held, then faded out
+   (transcript.js markJump); a highlight, not a running mark */
+.log .jump-mark { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; transition: background-color .6s linear, box-shadow .6s linear; }
+@media (prefers-reduced-motion: reduce) { .log .jump-mark.fading { transition: none; } }
 /* the Open list: past sessions over the main area, rows drawn like the command menu's */
 .app > .side { grid-column: 1; grid-row: 1; }
 .app > .conv { grid-column: 2; grid-row: 1; }
@@ -344,7 +406,7 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 
 /* background work panel, like a play queue turned upside down:
    past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */
-.rail { grid-column: 2; grid-row: 2 / 4; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.rail { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .past { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 0 36px; display: flex; flex-direction: column;
   -webkit-mask-image: linear-gradient(to top, transparent 0, #000 57.5px); mask-image: linear-gradient(to top, transparent 0, #000 57.5px); }
 .rail h3 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; display: flex; align-items: baseline; gap: 7px; }
@@ -376,8 +438,6 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .card > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
 .card .m .kind { margin-right: 4px; }
 .card .d { color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: 11px; grid-row: 1 / 3; grid-column: 3; } /* quiet like "Working" and the Past times */
-.bw-detail { margin: 0 12.5px 7px; font-size: 11px; color: var(--ink-2); }
-.bw-detail code { display: block; font-family: var(--mono); font-size: 10.5px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 3.5px; padding: 3.5px 5.5px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3.5px; }
 /* the main conversation is a card like the running ones; what runs in the background hangs under it as a tree,
    drawn like the sidebar's groups (R4.3): a 1px guide down from the main card's mark, a tick into each child, a corner on the last */
 .main-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
@@ -391,7 +451,6 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .kid > .card { margin: 0 7px 0 33px; width: calc(100% - 40px); }
 /* a nameless item keeps the card's two lines, so every mark sits at the tick's height */
 .kid > .card .n { min-height: 1.3em; }
-.kid > .bw-detail { margin: 5.5px 12.5px 1.5px 38.5px; }
 /* the guide runs at the main card's mark (7 + 1 + 9 + 5.5 px in); the tick meets a child card's border at its mark's height */
 .kid > .tg { display: block; position: absolute; left: 22px; top: 0; bottom: 0; width: 11px; pointer-events: none; }
 .kid > .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
@@ -399,10 +458,6 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 /* a subagent's own shells and monitors, one level deeper: the guide drops from the subagent card's mark (33 + 1 + 9 + 5.5 px in) */
 .kid .kid > .tg { left: 48px; }
 .kid .kid > .card { margin-left: 59px; width: calc(100% - 66px); }
-.kid .kid > .bw-detail { margin-left: 64.5px; }
-/* a parent's detail line moves in beside its children's guide, which runs past it */
-.kid.parent > .bw-detail { position: relative; margin-left: 64.5px; }
-.kid.parent > .bw-detail::before { content: ""; position: absolute; left: -16.5px; top: -5.5px; bottom: -1.5px; border-left: 1px solid var(--guide); }
 /* a child coming or going (rail.js railTw) clips to its tweened height; its guide is inside, so it follows */
 .kid.tw { box-sizing: border-box; overflow: hidden; }
 .kid.gone { pointer-events: none; }
@@ -499,6 +554,9 @@ body:not(.is-dragging) .g-empty { display: none; }
 .rv-open .m { font-size: 10px; color: var(--ink-2); }
 .rv-open .m .kind { margin-right: 4px; }
 .rv-done { font-size: 10.5px; margin-right: 4px; }
+/* the whole card goes to its report (transcript.js toReport): it shades on hover like the panel's other rows */
+.rv { cursor: pointer; }
+.rv:hover:not(:has(.rv-done:hover)) { background: #DDF4FF; }
 
 /* the kinds' colours (their words and tags; the marks use the --mk-* set) */
 :root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
@@ -547,13 +605,28 @@ body:not(.is-dragging) .g-empty { display: none; }
 .liveln b { color: var(--green); }
 .liveln[data-state="amber"] b { color: var(--amber); }
 .liveln[data-state="grey"] b { color: var(--ink-3); }
+/* the Working line (R5.5, prototype/working-shell-storyboard.html A, 2026-11-25): a 1px rule edge to edge across
+   the log through the line's middle, the moving mark and the words sitting on it and breaking it; a pseudo-element,
+   so it takes no space. The breaks are the panel's colour (--rule-bg; the "Send to background?" tint while b, b asks).
+   The right padding keeps the words in the 150ch measure at any width. */
+.log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 max(16px, calc(100% + 16px - 150ch)) 0 16px; max-width: none; --rule-bg: var(--panel); }
+.log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--log-font) * var(--log-lh) / 2 - .5px); height: 1px; background: var(--line); }
+.log-inner > .liveln.rule > .g { background: var(--rule-bg); box-shadow: -5px 0 0 var(--rule-bg); }
+.log-inner > .liveln.rule > :not(.g) { position: relative; }
+.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div { display: inline; background: var(--rule-bg); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.log-inner > .liveln.rule > details { display: inline; }
+.log.bg-asking .liveln.rule[data-fg] { --rule-bg: #DDF4FF; }
 
 .log { overflow-x: hidden; }
 
-/* marks in the transcript gutter sit where the ● glyph sits: centred on the first character cell and the first line */
+/* marks in the transcript gutter sit where the ● glyph sits: centred on the first character cell and on the ●'s ink,
+   which in the mono face is --dot-lift above the line's middle (measured: .084em; motion.mjs pins it within 0.5px) */
+.log { --dot-lift: calc(var(--log-font) * .084); }
 .ln > .g { position: relative; }
-/* em and ch here are the mark's own 10px: the ● centre is .5ch and .725em of the 12px line, so .6ch and .87em of 10px */
-.ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(.87em - .5em); }
+/* em and ch here are the mark's own 10px: the ● centre is .5ch of the 12px line, so .6ch of 10px */
+.ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+/* a wave's rows centre their mark on the row: lifted the same, onto the ● height of the row's text */
+.wgrid > .ind { position: relative; top: calc(-1 * var(--dot-lift)); }
 
 .doneln { color: var(--ink-3); margin-bottom: 16px; }
 .doneln > .g > .ind { opacity: .55; }
@@ -655,15 +728,18 @@ body:not(.is-dragging) .g-empty { display: none; }
 .composer > textarea { grid-column: 2; grid-row: 1; }
 .composer > .g { grid-column: 1; grid-row: 1; align-self: start; } /* on the first line, as in the CLI */
 .composer > .slash { grid-column: 1 / -1; }
-body[data-mode="normal"] .dock .composer { background: var(--sub); }
-body[data-mode="normal"] .composer textarea::placeholder { color: var(--faint); }
-body[data-mode="normal"] .composer > .g { color: var(--faint); }
-body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px #54AEFF; }
+/* the mode (R9.2), one indicator: in normal mode the box's text and ❯ at half strength, its line at full; a card
+   above it, or a line you must read (Interrupt?, Send to background?, Close this session?, a gone folder, a
+   take-over's state), keeps it at full strength. In insert mode the box is the band your message becomes: the
+   band's fill and blue left edge (bash mode's pink), in the place it will land */
+body[data-mode="normal"] .dock:not(:has(.dock-inner > :not(.composer), .composer.asking, .composer.gone, .composer.taking)) .composer > :not(.slash) { opacity: .5; }
+body[data-mode="insert"] .dock .composer { background: var(--band); border-left-color: var(--link); }
+body[data-mode="insert"] .dock .composer.bash { border-left-color: var(--bash); }
 
 /* ---------- Claude's questions card ---------- */
 :root { --sel: #DDF4FF; }
 .qa-card { border-bottom: 1px solid var(--line-2); }
-.nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; border-radius: 7px 7px 0 0; font-size: 12px; }
+.nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; font-size: 12px; }
 .nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
 .nd-head .why { color: var(--ink-2); }
 .nd-head .prog { margin-left: auto; color: var(--ink-2); font-size: 11.5px; }
@@ -719,6 +795,7 @@ button.acc:hover { background: var(--sub); }
 .qbody .cmd .ps { color: var(--ink-3); user-select: none; }
 .qbody .why2 { color: var(--ink-2); margin: 0 0 7px; max-width: 104ch; }
 .qbody .why2 .who { color: var(--ink-3); }
+.qbody .why2.own { color: var(--ink); } /* a call of Synopia's own tool: the line says what it does (R3.15) */
 
 .qnote { display: block; color: var(--ink); font-style: italic; margin-top: 1px; }
 .qa-note { display: block; margin-top: 3px; }

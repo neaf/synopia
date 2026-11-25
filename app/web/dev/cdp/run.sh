@@ -12,25 +12,29 @@
 #   app/web/dev/cdp/run.sh preview the file preview (R5.9) on a generated session pointing at a repo file, a binary and HTML, with --dry-run
 #   app/web/dev/cdp/run.sh tween   sidebar sub-lines: height then fade, fade then height, no jump, guides aligned, instant with reduced motion (R8.1, R4.3)
 #   app/web/dev/cdp/run.sh images  image thumbnails, the viewer and pasted images (R5.13), on made-up images generated into the temp state, with shots
-#   app/web/dev/cdp/run.sh rail    the background panel's tree on the rail fixture: a subagent's own shells and monitors under it, guides, no Stop row (R7.1), with shots
+#   app/web/dev/cdp/run.sh rail    the background panel's tree on the rail fixture: a subagent's own shells and monitors under it, guides, no Stop row (R7.1), a shell or monitor opened in the pane with its output (R7.2), a To review card jumping to its report (R7.1), with shots
 #   app/web/dev/cdp/run.sh motion  running marks always move (R8.1), the sub-line tween, reduced motion (R8.5), square marks, marks on the box and gutter (R8.6)
 #   app/web/dev/cdp/run.sh extcard a question and a plan asked in another process: needs you, the read-only card, then answered (R6.8), with shots
 #   app/web/dev/cdp/run.sh restore the exact UI state after a page reload and two backend restarts on the same state folder (R3.9)
 #   app/web/dev/cdp/run.sh background  b, b sends foreground steps to the background (R9): the highlight, the prompt, cancel, send, not driven, with a shot
 #   app/web/dev/cdp/run.sh dark    dark mode (section 11): follows the system live, the switch stored and kept over a reload, no light background left, with shots
 #   app/web/dev/cdp/run.sh titles  title changes in the transcript (R5.12c): two Retitled lines in place, kept over a reload and a backend restart, with a shot
-#   app/web/dev/cdp/run.sh queued  messages sent during a turn show pending (R5.5): in order above the live line, one lands in place, an interrupt puts the other back in the box, with shots
+#   app/web/dev/cdp/run.sh queued  the pane as one panel and messages sent during a turn (R5, R5.5): the box as the last row under its line, the band edge whole and edge to edge, clock bands below the live line, pinned when scrolled up, the box counts them, they land with nothing moving, the send tween, an interrupt puts one back in the box, long tokens wrap, with shots
 #   app/web/dev/cdp/run.sh bang    bash mode (R5.13): ! enters it, Backspace leaves it, a command's output, stderr and exit, Show all, one at a time, Esc, Esc ends a sleep, with shots
 #   app/web/dev/cdp/run.sh close  x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
 #   app/web/dev/cdp/run.sh folders  New session and Open session in any folder (R3.3, R3.11-R3.14, R9.7): n and o, the folder list, Tab, the create row, gone folders and continue as a fork, the matcher in four lists, no open session, with shots
 #   app/web/dev/cdp/run.sh viewswitch  back from a subagent the view renders once (R3.9): one view message, one reset, no other range first, on the earlier transcript
+#   app/web/dev/cdp/run.sh scroll  what you last saw stays put, with a "New since" line above what came (R3.9, R5.12d): away on another session, in a subagent and a shell view, the window hidden, a reload; the line between the last seen and the first unseen item, nothing moves, it stays until you leave; it follows the bottom while you look, with shots
+#   app/web/dev/cdp/run.sh tables  markdown tables in a reply 1000px and 640px wide (R5.10): short cells on one line, numbers right, stated alignment, 11px, rules between rows, inside the reply or scrolling in their box, prose still wraps a long token, with shots
+#   app/web/dev/cdp/run.sh stream  a long reply with three tables streamed in small deltas while the view resizes, scrolls and switches: no long task over 200 ms, the page answers within 500 ms, then a reload (R5.10)
+#   app/web/dev/cdp/run.sh agenttools  Synopia's tools for agents (R3.15): a scripted session calls start_session, the permission card, the new session under the caller in its group or a new group, shown only when you look at the caller, Always allow, the step's link, with shots (also in /tmp/synopia-start-session/)
 # SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders tables scroll stream agenttools)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -75,12 +79,14 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 if [ "$name" = viewswitch ]; then fix="$state/claude"; node "$here/earlier.mjs" make "$fix" || exit 1; fi
-if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ] || [ "$name" = scroll ] || [ "$name" = stream ] || [ "$name" = agenttools ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-run); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
 # the scripted SDK writes to the transcripts as a CLI would: never to a tracked fixture tree
 if [ "$fix" != "$state/claude" ]; then cp -R "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
+# the rail check's shells write their output under this run's state folder (made up, R7.2)
+if [ "$name" = rail ]; then node "$here/rail.mjs" make "$fix" "$state/tasks" || exit 1; fi
 
 # the made-up sessions' sandbox folders under /tmp exist, as a real session's folder does (a missing one reads
 # "Folder gone", R3.11); the folders check keeps its gone one gone
@@ -97,7 +103,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shots: $state/steps*.png" ;;
-  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders|tables|scroll|agenttools) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

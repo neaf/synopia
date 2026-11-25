@@ -11,6 +11,8 @@ export const MARKS = {
   work: ['', WORK],
   /* working with your message queued: the same turning arc, its centre in your blue */
   queued: ['', WORK.replace('<circle cx="6" cy="6" r="1.8" fill="var(--mk-1A7F37)"/>', '<circle cx="6" cy="6" r="1.8" fill="var(--mk-0550AE)"/>')],
+  /* a message of yours that waits in the queue (R5.5): a still clock in your blue, in place of `❯`; it waits, it doesn't run */
+  waiting: ['', SVG + '<circle cx="6" cy="6" r="4.8" stroke="var(--mk-0550AE)" stroke-width="1.4"/><path d="M6 3.3V6l1.9 1.3" stroke="var(--mk-0550AE)" stroke-width="1.4"/></svg>'],
   compact: ['', '<i class="cr"></i><i class="cr"></i><i class="cr"></i>'],
   pause: ['v-seesaw', '<span class="bars"><i></i><i></i></span>'],
   creds: ['', '<i class="lock"><i class="sh"></i><i class="bd"></i></i>'],

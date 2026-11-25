@@ -81,11 +81,13 @@
   .row[data-state="amber"] .dot, .dot.amber { background: var(--dot-amber); }
   .row[data-state="green"] .dot, .dot.green { background: var(--dot-green); }
 
-  /* ---------- main area: four panels on the canvas ---------- */
-  .conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
+  /* ---------- main area: the conversation as one panel (header, log, the box as its last row), the background panel beside it ---------- */
+  .conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: minmax(0, 1fr); gap: 9px; padding: 9px; min-height: 0; }
+  .thread { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .thread > .c-head { flex: none; border-bottom: 1px solid var(--line-2); }
   .conv.no-rail { grid-template-columns: minmax(0, 1fr); }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
-  .c-head { grid-column: 1 / -1; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
+  .c-head { padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
   .c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
   .c-now { color: var(--ink-2); margin: 0; }
   .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
@@ -95,8 +97,11 @@
   .c-acts { grid-row: 1 / 6; grid-column: 2; display: flex; gap: 7px; align-items: center; }
   .missing { padding: 27px; max-width: 60ch; }
 
-  .log { overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; }
-  .log-inner { max-width: 150ch; }
+  .log { overflow-y: auto; overflow-x: hidden; padding: 11px 16px 12.5px; min-height: 0; flex: 1 1 0; }
+  /* the text keeps a 150ch measure; a band's fill runs edge to edge across the panel */
+  .log-inner > :not(.prompt, .qpin) { max-width: 150ch; }
+  .prompt > :not(.g) { max-width: 148ch; }
+  .log .ln { overflow-wrap: anywhere; }
   .earlier { color: var(--ink-3); margin: 0 0 11px; }
 
   /* transcript: mono, gutter glyphs like the CLI */
@@ -116,7 +121,13 @@
   details.fold > summary .hint { color: var(--faint); }
   details.fold[open] > summary .hint { display: none; }
   details.fold .body { margin-top: 5.5px; }
-  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+  /* from the panel's inner edge (-16px, the log's padding), so the 2.5px edge shows whole */
+  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+  /* a queued message: the same band, a still clock in place of ❯, lighter text; one sticky block at the log's end */
+  .prompt.qc > .md { color: var(--ink-3); }
+  .qpin { position: sticky; bottom: 0; z-index: 2; display: flow-root; background: var(--panel); margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; }
+  .qpin > .prompt:first-child { margin-top: 0; }
+  .qpin.edge { box-shadow: inset 0 1px 0 var(--line-2); }
   .prompt > .g { color: var(--link); }
   .prompt .img { color: var(--ink-3); }
   .done { color: var(--ink-3); margin: 0 0 14.5px; }
@@ -136,9 +147,25 @@
   .md pre code { color: var(--ink); }
   .md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
   .md a { color: var(--link); }
-  .md table { border-collapse: collapse; margin: 0 0 .85em; }
+  /* tables: 11px, 1px rules between rows; the renderer marks each column (num, short, prose, c0 the first)
+     and fitTables fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+  .md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+  .md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+  .md .tw::-webkit-scrollbar { height: 5px; }
+  .md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; }
+  .md table code { font-size: 1em; }
   .md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
-  .md th, .md td { padding: 1px 3ch 1px 0; vertical-align: top; }
+  .md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+  .md th { padding-top: 0; }
+  .md th:last-child, .md td:last-child { padding-right: 0; }
+  .md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+  .md .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .md .short, .md .num, .md .c0 { white-space: nowrap; }
+  .md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+  .md .c0 code { white-space: nowrap; }
+  .md .prose { min-width: 26ch; overflow-wrap: break-word; }
+  .md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; }
 
   /* waves of subagents */
   .wave .name { font-weight: 700; }
@@ -180,16 +207,19 @@
   .dl.c { color: var(--ink-2); }
   .dgap { color: var(--faint); padding-left: 7ch; background: var(--sub); }
 
-  /* message panel: status bar on top, input below */
-  .dock { padding: 0; overflow: visible; }
+  /* the message box, the panel's last row: a card or status line above it, between 1px lines */
+  .dock { flex: none; padding: 0; overflow: visible; }
   .dock-inner { max-width: none; }
-  .status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); border-radius: 7px 7px 0 0; }
+  .dock-inner > :not(.composer) { border-top: 1px solid var(--line-2); margin-bottom: 23.5px; }
+  .thread:has(.dock-inner > :not(.composer)) > .log { padding-bottom: 0; }
+  .status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); }
   .status b { font-weight: 700; }
   .status[data-state="red"] b { color: var(--red); }
   .status[data-state="amber"] b { color: var(--amber); }
   .status[data-state="green"] b { color: var(--green); }
   .status span { color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 12.5px 7px; }
+  /* a ❯ band being written, under a 1px line: ❯ where a posted band's sits */
+  .composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 16px 9px 13.5px; border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent; }
   .composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
   .composer .attach, .composer .c-row { grid-column: 2; }
   .composer textarea { width: 100%; background: none; border: 0; resize: none; outline: none; min-height: 36px; max-height: 198px; padding: 0; }
@@ -213,7 +243,7 @@
 
   /* background work panel, like a play queue turned upside down:
      past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */
-  .rail { grid-column: 2; grid-row: 2 / 4; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .rail { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   .past { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 0 36px; display: flex; flex-direction: column;
     -webkit-mask-image: linear-gradient(to top, transparent 0, #000 57.5px); mask-image: linear-gradient(to top, transparent 0, #000 57.5px); }
   .rail h3 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; display: flex; align-items: baseline; gap: 7px; }
@@ -238,8 +268,6 @@
   .card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .d { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 2; }
   .now .none { color: var(--ink-3); font-size: 11px; padding: 0 12.5px 3.5px; }
-  .bw-detail { margin: 0 12.5px 7px; font-size: 11px; color: var(--ink-2); }
-  .bw-detail code { display: block; font-family: var(--mono); font-size: 10.5px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 3.5px; padding: 3.5px 5.5px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3.5px; }
   .main-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--line); border-radius: 7px 7px 0 0; padding: 8px 12.5px; cursor: pointer; font-size: 11.5px; flex: none; }
   .main-row:hover { background: var(--sub); }
   .main-row[aria-current="true"] { background: #DDF4FF; box-shadow: inset 2.5px 0 0 var(--link); }
@@ -498,6 +526,13 @@
 
 
   .liveln b { color: var(--green); }
+  /* the Working line on a 1px rule edge to edge through its middle; the mark and words break it; it takes no space (R5.5, 2026-11-25) */
+  .log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 16px; max-width: none; }
+  .log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(12px * 1.45 / 2 - .5px); height: 1px; background: var(--line); }
+  .log-inner > .liveln.rule > .g { background: var(--panel); box-shadow: -5px 0 0 var(--panel); }
+  .log-inner > .liveln.rule > :not(.g) { position: relative; display: inline; background: var(--panel); padding-right: 1ch; }
+  /* shell output in its own subtle panel under its command (R5.6, R7.2, 2026-11-25) */
+  .res > .out { display: block; color: var(--ink-2); white-space: pre-wrap; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
 
   .log { overflow-x: hidden; }
 
@@ -586,9 +621,8 @@
   .r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
   .r-agent .ind { margin: 0; }
 
-  .composer { padding: 9px 14px; }
   .composer { align-items: center; }
-  .composer textarea { min-height: 0; height: 1.45em; display: block; }
+  .composer textarea { min-height: 3lh; max-width: 148ch; display: block; }
   .composer > .g { align-self: start; }
   .model-btn { font-size: 12px; color: var(--ink-2); }
 
@@ -605,19 +639,19 @@
   /* modes */
   .composer { grid-template-columns: 2ch minmax(0, 1fr); }
   .composer > textarea { grid-column: 2; grid-row: 1; }
-  .composer > .g { grid-column: 1; grid-row: 1; align-self: center; }
+  .composer > .g { grid-column: 1; grid-row: 1; align-self: start; }
   .composer > .slash { grid-column: 1 / -1; }
   .mode { grid-column: 3; grid-row: 1; font-family: var(--sans); font-size: 11px; color: var(--ink-3); white-space: nowrap; padding-left: 12px; align-self: center; }
-  body[data-mode="normal"] .dock .composer { background: var(--sub); }
-  body[data-mode="normal"] .composer textarea::placeholder { color: var(--faint); }
-  body[data-mode="normal"] .composer > .g { color: var(--faint); }
-  body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px #54AEFF; }
+  /* the mode, one indicator: normal, the box's ❯ and text at half strength (its line at full); insert, the band
+     your message becomes, the band's fill and blue left edge */
+  body[data-mode="normal"] .dock:not(:has(.dock-inner > :not(.composer))) .composer > :not(.slash) { opacity: .5; }
+  body[data-mode="insert"] .dock .composer { background: #F0F3F6; border-left-color: var(--link); }
   body[data-mode="insert"] .mode { color: var(--link); }
 
   /* ---------- Claude's questions card ---------- */
   :root { --sel: #DDF4FF; }
   .qa-card { border-bottom: 1px solid var(--line-2); }
-  .nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; border-radius: 7px 7px 0 0; font-size: 12px; }
+  .nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; font-size: 12px; }
   .nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
   .nd-head .why { color: var(--ink-2); }
   .nd-head .prog { margin-left: auto; color: var(--ink-2); font-size: 11.5px; }
@@ -807,6 +841,26 @@ function dur(ms) {
 const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
+/* a table column: numbers (every cell a number with an optional unit), long text (a cell over 44 characters), or short */
+const NUM = /^(n\/a|[~<>]?\d[\d.,]*\s?(k|M|ms|s|%)?(\s?[+]\s?[~]?\d[\d.,]*\s?(k|M|ms|s|%)?)*|\d{4}-\d\d-\d\d)$/;
+function colKinds(rows) {
+  const plain = s => s.replace(/`/g, "").replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  return Array.from({ length: Math.max(0, ...rows.map(r => r.length)) }, (_, j) => {
+    const cells = rows.map(r => plain(r[j] ?? "")), full = cells.filter(c => c);
+    if (full.length && full.every(c => NUM.test(c)) && !full.every(c => /^\d{4}-/.test(c))) return "num";
+    if (Math.max(0, ...cells.map(c => c.length)) > 44) return "prose";
+    return j === 0 ? "c0" : "short";
+  });
+}
+/* the fit: 1. only the long text wraps, 2. the first column may wrap, 3. the table scrolls in its box */
+function fitTables(root) {
+  const over = tw => tw.firstElementChild.getBoundingClientRect().width > tw.clientWidth + .5;
+  root.querySelectorAll(".md .tw").forEach(tw => {
+    const t = tw.firstElementChild; t.classList.remove("wrap1"); tw.classList.remove("scrolls");
+    if (over(tw)) { t.classList.add("wrap1"); if (over(tw)) tw.classList.add("scrolls"); }
+  });
+}
+addEventListener("resize", () => fitTables(document));
 function md(src) {
   const out = []; const lines = (src || "").split("\n"); let i = 0;
   const inline = s => esc(s)
@@ -822,9 +876,12 @@ function md(src) {
     if (/^\s*\|.*\|\s*$/.test(l)) {
       const rows = []; while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
       const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      const body = rows.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(cells);
+      const isSep = r => /^\s*\|?\s*:?-{2,}/.test(r);
+      const body = rows.filter(r => !isSep(r)).map(cells);
       const [head, ...rest] = body;
-      out.push(`<table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      const sepRow = rows.find(isSep), align = sepRow ? cells(sepRow).map(c => /^:-+:$/.test(c) ? "c" : /-:$/.test(c) ? "r" : /^:-/.test(c) ? "l" : "") : [], k = colKinds(rest);
+      const cls = j => ` class="${k[j] || "short"}${j === 0 && k[j] !== "c0" ? " c0" : ""}${align[j] ? ` a${align[j]}` : ""}"`;
+      out.push(`<div class="tw"><table><thead><tr>${head.map((c, j) => `<th${cls(j)}>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map((c, j) => `<td${cls(j)}>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }
     const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h4>${inline(h[2])}</h4>`); i++; continue; }
@@ -1218,8 +1275,9 @@ function bgState(b) {
   return "running";
 }
 const bgMs = b => (b.end ? new Date(b.end) : (bgState(b) === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : NOWISH)) - new Date(b.start);
-let openBg = null;
-function railHTML(s, A) {
+/* a shell or monitor opens in the pane like a subagent (R7.2): view holds its tool use id */
+const bgById = (s, id) => bgOf(s).find(b => b.toolUseId === id);
+function railHTML(s, A, B) {
   if (!hasBackground(s)) return "";
   const kindOf = x => x.kind ? x.kind : agentType(x);
   const all = [
@@ -1230,11 +1288,11 @@ function railHTML(s, A) {
   const past = all.filter(x => !x.running).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
   const now = all.filter(x => x.running).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  const attrs = x => x.agent ? `data-agent="${x.agent.id}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${x.key}" aria-expanded="${openBg === x.key}"`;
-  const detail = x => x.bg && openBg === x.key ? `<div class="bw-detail">${x.bg.summary ? esc(x.bg.summary) : x.running ? "No report yet." : esc(x.st)}<code>${esc(x.bg.command)}</code></div>` : "";
+  const attrs = x => x.agent ? `data-agent="${x.agent.id}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${x.key}" aria-current="${!!(B && B.toolUseId === x.key)}"`;
+  const detail = () => "";
   const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
   return `<aside class="rail panel" aria-label="Background work">
-    <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${esc(WORD[stateOf(s)])}</span></button>
+    <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${esc(WORD[stateOf(s)])}</span></button>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
         <button class="btn quiet rv-done" data-reviewed="${x.agent.id}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
@@ -1294,7 +1352,7 @@ function itemsHTML(items, sessionBusy, s) {
 }
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
-  const line = (mark, t) => `<div class="ln liveln"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
+  const line = (mark, t) => `<div class="ln liveln rule"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", A.items.filter(x => x.k === "tool").pop());
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
@@ -1314,12 +1372,17 @@ function statusLine(s) {
 function renderConv() {
   const s = data.find(x => x.id === current); const conv = document.getElementById("conv");
   if (!s) { conv.innerHTML = `<div class="missing"><p>No transcripts loaded. Run <code>app/web/dev/compare.sh</code>, then open <code>/tmp/synopia-compare/proto/prototype/app.html</code>: that copy has the invented test fixtures as data.</p></div>`; return; }
-  const A = view && agentById(s, view);
-  if (view && !A) view = null;
-  const hidden = A ? A.total - A.items.length : s.total - s.items.length;
+  const A = view && agentById(s, view), B = view && !A ? bgById(s, view) : null;
+  if (view && !A && !B) view = null;
+  const hidden = A ? A.total - A.items.length : B ? 0 : s.total - s.items.length;
+  const bst = B && bgState(B);
   conv.innerHTML = `
-    <header class="c-head panel">
-      ${A ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
+    <div class="thread panel">
+    <header class="c-head">
+      ${B ? `<h2 class="c-title">${esc(B.description || B.command)}</h2>
+        <p class="c-now">${bst === "running" ? "Running" : bst === "failed" ? "Failed" : bst === "timed out" ? "Timed out" : "Finished"}, ${took(bgMs(B))}. ${B.kind === "monitor" ? "Monitor" : "Background shell"}.</p>
+        <p class="c-meta">${B.kind === "monitor" ? "Claude hears each event. Monitor" : "Claude hears when it ends. Shell"} in <button class="link" data-back>‹ ${esc(s.title)}</button></p>`
+      : A ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
         <h2 class="c-title">${esc(A.description)}</h2>
         <p class="c-now">${A.finished ? "Finished" : "Running"}, ${took(agentMs(A))}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
         <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>`
@@ -1329,22 +1392,25 @@ function renderConv() {
         ${s.drift ? `<p class="c-drift">${esc(s.drift)}. <button class="link" data-split>Split into a new session</button></p>` : ""}`}
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)"></button>${A ? "" : `<button class="btn" data-close>Close session</button>`}</div>
     </header>
-    <div class="log panel" id="log"><div class="log-inner">
+    <div class="log" id="log"><div class="log-inner">
       ${hidden > 0 ? `<p class="earlier">… ${hidden} earlier items not shown in this prototype</p>` : ""}
-      ${view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
-      ${liveLine(s, A)}
+      ${B ? `<div class="ln tool"><span class="g">●</span><div><span class="name">${B.kind === "monitor" ? "Monitor" : "Bash"}</span>(${esc(B.description || B.command)})<div class="mono" style="white-space:pre-wrap;color:var(--ink)">${esc(B.command)}</div><div class="res"><span class="lcorner" aria-hidden="true"></span><span class="mono out">its output, whole, as the terminal printed it (the app reads it)</span></div></div></div>
+        <div class="ln ${bst === "running" ? "liveln" : "doneln"}"><span class="g">${ind(bst === "running" ? (B.kind === "monitor" ? "k_mon" : "k_shell") : bst === "failed" ? "failed" : "done")}</span><div>${bst === "running" ? "<b>Running</b>" : `${bst === "failed" ? "Failed" : "Finished"} after ${took(bgMs(B))}. ${esc(B.summary || "")}`}</div></div>`
+      : view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
+      ${B ? "" : liveLine(s, A)}
     </div></div>
-    <div class="dock panel"><div class="dock-inner">
-      ${!A && stateOf(s) === "red" && !pendingAsk(s) ? statusLine(s) : ""}
-      ${!A && pendingAsk(s) ? qaHTML(s, pendingAsk(s)) : ""}
+    ${view ? "" : `<div class="dock"><div class="dock-inner">
+      ${stateOf(s) === "red" && !pendingAsk(s) ? statusLine(s) : ""}
+      ${pendingAsk(s) ? qaHTML(s, pendingAsk(s)) : ""}
       <div class="composer"><div class="slash" id="slash" role="listbox" hidden></div>
         <div class="attach" style="grid-column:2">${attachments.map((src, i) => `<figure><img src="${src}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("")}</div>
-        <span class="g">❯</span><textarea id="msg" rows="1" placeholder="${A ? `Message ${esc(s.title)} about this subagent` : `Message ${esc(s.title)}`}, / for commands" aria-label="Message"></textarea>
+        <span class="g">❯</span><textarea id="msg" rows="1" placeholder="Message ${esc(s.title)}, / for commands" aria-label="Message"></textarea>
       </div>
-    </div></div>
-    ${railHTML(s, A)}`;
+    </div></div>`}
+    </div>
+    ${railHTML(s, A, B)}`;
   conv.classList.toggle("no-rail", !hasBackground(s));
-  const log = document.getElementById("log"); log.scrollTop = log.scrollHeight;
+  const log = document.getElementById("log"); fitTables(log); log.scrollTop = log.scrollHeight;
   log.querySelectorAll(".frow .fc").forEach(b => b.onclick = () => {
     const d = document.getElementById(b.getAttribute("aria-controls")); d.hidden = !d.hidden; b.setAttribute("aria-expanded", !d.hidden);
   });
@@ -1354,11 +1420,11 @@ function renderConv() {
   conv.querySelector("[data-back]")?.addEventListener("click", () => { view = null; renderConv(); });
   conv.querySelector("[data-back-main]")?.addEventListener("click", () => { view = null; renderConv(); });
   conv.querySelectorAll("[data-reviewed]").forEach(b => b.onclick = e => { e.stopPropagation(); reviewed.add(b.dataset.reviewed); localStorage.setItem(REVIEWED_KEY, JSON.stringify([...reviewed])); renderAll(); });
-  conv.querySelectorAll("[data-bg]").forEach(b => b.onclick = () => { openBg = openBg === b.dataset.bg ? null : b.dataset.bg; renderConv(); });
+  conv.querySelectorAll("[data-bg]").forEach(b => b.onclick = () => { view = b.dataset.bg; renderConv(); });
   conv.querySelector("[data-close]") && (conv.querySelector("[data-close]").onclick = proto("Next step: the close flow from the earlier prototype, fed by this transcript."));
   conv.querySelector("[data-split]")?.addEventListener("click", proto("Prototype: starts a new session with Claude's summary of the drifted part, and points this one back at its job."));
   conv.querySelectorAll("[data-unattach]").forEach(b => b.onclick = () => { attachments.splice(+b.dataset.unattach, 1); renderConv(); });
-  const ta = document.getElementById("msg");
+  const ta = document.getElementById("msg") || document.createElement("textarea"); // a subagent, shell or monitor view has no box: the panel ends with the log
   const pa = !A && pendingAsk(s);
   if (pa) {
     const st = qs(s, pa);

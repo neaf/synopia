@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary } from '../src/status.ts';
+import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary, blockedLast } from '../src/status.ts';
 import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
 import type { Client } from '../src/server.ts';
+import type { Item } from '../src/transcript.ts';
 
 function tracker(init: StatusEntry | null = null) {
   let t = 1000;
@@ -340,7 +341,7 @@ test('status: a question another process asks is needs you over working, aged fr
 });
 
 // ---------- sessionState: what the page shows ----------
-const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, review: 0, driven: true, ...f });
+const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, blocked: false, review: 0, driven: true, ...f });
 const show = (status: Status, f: Partial<StateFacts> = {}, detail: StatusDetail = {}) => {
   const st = sessionState({ status, at: 7, detail }, facts(f));
   return [st.light, st.tone, st.word, st.mark];
@@ -379,6 +380,30 @@ test('state: stopped by you is the stop marker on your turn, not a turned-down t
   assert.deepEqual(show('failed', { interrupted: true }), ['amber', 'amber', 'Failed', 'failed'], 'a failed turn says so');
   assert.deepEqual(show('busy', { interrupted: true }), ['green', 'green', 'Working', 'work'], 'a new turn runs');
   assert.deepEqual(show('signedout', { interrupted: true }), ['amber', 'red', 'Signed out', 'creds']);
+});
+
+test('state: your turn after a blocked step is needs you, blocked (R8.2)', () => {
+  assert.deepEqual(show('idle', { blocked: true }), ['red', 'red', 'Needs you, blocked', 'pause']);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, facts({ blocked: true })).needsYou, 'blocked');
+  assert.equal(badgeOf(sessionState({ status: 'idle', at: 0 }, facts({ blocked: true }))), 1);
+  assert.deepEqual(show('busy', { blocked: true }), ['green', 'green', 'Working', 'work'], 'while the turn runs');
+  assert.deepEqual(show('failed', { blocked: true }), ['amber', 'amber', 'Failed', 'failed']);
+  assert.deepEqual(show('idle', { blocked: true, interrupted: true }), ['amber', 'amber', 'Stopped', 'stopped'], 'you stopped it');
+  assert.deepEqual(show('waiting', { blocked: true, pending: ['question'] }), ['red', 'red', 'Needs you', 'pause'], 'a card says what it waits on');
+});
+
+test('blockedLast: a denied step in the latest turn, not retried, blocks it; your next message clears it', () => {
+  let n = 0;
+  const you = (extra: Partial<Item> = {}): Item => ({ id: `y${n++}`, k: 'you', ts: null, text: 'go', ...extra });
+  const step = (state: string, input = 'git push', name = 'Bash'): Item => ({ id: `s${n++}`, k: 'tool', ts: null, name, input, state });
+  const claude: Item = { id: 'c', k: 'claude', ts: null, text: 'I need you to run it.' };
+  assert.equal(blockedLast([you(), step('done', 'ls'), step('denied'), claude]), true);
+  assert.equal(blockedLast([you(), step('denied'), step('done'), claude]), false, 'retried and ran');
+  assert.equal(blockedLast([you(), step('denied'), step('done', 'git status'), claude]), true, 'another command ran');
+  assert.equal(blockedLast([you(), step('denied'), claude, you()]), false, 'you wrote since');
+  assert.equal(blockedLast([you(), step('denied'), claude, { id: 'b', k: 'bang', ts: null, cmd: 'git push' }]), false, 'you ran a command');
+  assert.equal(blockedLast([you(), step('denied'), you({ turnedDown: true }), claude]), true, 'a turned-down marker is not your message');
+  assert.equal(blockedLast([you(), step('failed'), claude]), false);
 });
 
 test('state: the badge share is needs you plus the deliverables to review (R2.6)', () => {

@@ -7,29 +7,9 @@
 // the composer: a synthetic paste, the ✕ on hover, remove, send. Writes images-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { shot as shotTo, writeScript } from './helpers.mjs';
-import { deflateSync, crc32 } from 'node:zlib';
+import { shot as shotTo, writeScript, png } from './helpers.mjs';
 
 const SID = 'c0c0c0c0-0000-4000-8000-0000000000c0';
-// A made-up w x h RGB PNG: a hue ramp left to right, darker in a band at the centre (so a crop shows).
-function png(w, h) {
-  const chunk = (type, data) => {
-    const t = Buffer.concat([Buffer.from(type, 'latin1'), data]);
-    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
-    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(t));
-    return Buffer.concat([len, t, crc]);
-  };
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
-  const rows = Buffer.alloc((3 * w + 1) * h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const f = x / Math.max(1, w - 1), mid = Math.abs(x - w / 2) < w / 10 ? 0.55 : 1, o = y * (3 * w + 1) + 1 + 3 * x;
-      rows[o] = (90 + 140 * f) * mid; rows[o + 1] = (170 - 60 * f + 40 * (y / h)) * mid; rows[o + 2] = (230 - 150 * f) * mid;
-    }
-  }
-  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
-}
 const img = (mediaType, buf) => ({ type: 'image', source: { type: 'base64', media_type: mediaType, data: buf.toString('base64') } });
 const line = (o) => JSON.stringify(o) + '\n';
 const ts = (s) => `2026-11-20T10:00:${String(s).padStart(2, '0')}.000Z`;
@@ -167,7 +147,7 @@ await key('ArrowRight', { code: 'ArrowRight', vk: 39 });
 check('→ stops at the last', (await ev(VN)) === '3 of 3');
 await key('ArrowLeft', { code: 'ArrowLeft', vk: 37 });
 check('← moves back', (await ev(VN)) === '2 of 3');
-await key('J', { shift: true, vk: 74 });
+await key('j', { ctrl: true, code: 'KeyJ', vk: 74 });
 await key('i', { vk: 73 });
 check('keys stay in the viewer: no session switch, no mode change', (await ev(`__synopia.current()`)) === sessionBefore && (await ev(`document.body.dataset.mode`)) === modeBefore && (await ev(`!!document.querySelector('.viewer')`)));
 await key('Escape', { code: 'Escape', vk: 27 });
@@ -259,7 +239,8 @@ await paste(B64.a, 'a.png');
 check('a paste puts [Image #3] at the caret (#1 and #2 are in the session\'s prompts), a space between it and the text', (await ev(MSG)) === 'left [Image #3] right', await ev(MSG));
 await caret(-1);
 await paste(B64.b, 'b.png');
-check('the next paste at the end is [Image #4], one more than any tag in the session', (await ev(MSG)) === 'left [Image #3] right [Image #4]', await ev(MSG));
+check('the next paste at the end is [Image #4], one more than any tag in the session, a space after it so typing goes on as a new word', (await ev(MSG)) === 'left [Image #3] right [Image #4] ', await ev(MSG));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = t.value.trimEnd(); t.dispatchEvent(new Event('input')); })()`); // the rest reads the text without it
 check('pasted images show as thumbnails below the text', await until(`document.querySelectorAll('.composer .attach.thumbs .thumb img').length === 2 && [...document.querySelectorAll('.composer .attach img')].every(i => i.complete && i.naturalWidth)`) && await ev(`document.querySelector('.composer .attach').getBoundingClientRect().top >= document.getElementById('msg').getBoundingClientRect().bottom - 1`));
 check('they are object URLs, not the server', await ev(`[...document.querySelectorAll('.composer .attach img')].every(i => i.src.startsWith('blob:'))`));
 const comp = await ev(`[...document.querySelectorAll('.composer .attach img')].map(i => parseFloat(getComputedStyle(i).width) + 'x' + parseFloat(getComputedStyle(i).height)).join()`);
@@ -284,8 +265,8 @@ await caret(0);
 await paste(B64.c, 'c.png');
 await caret(-1);
 await paste(B64.d, 'd.png');
-check('numbers count up and are not reused: #5 at the start, #6 at the end', (await ev(MSG)) === '[Image #5] left right [Image #4] [Image #6]', await ev(MSG));
-await ev(`(() => { const t = document.getElementById('msg'); t.value = t.value.replace(' [Image #6]', ''); t.dispatchEvent(new Event('input')); })()`);
+check('numbers count up and are not reused: #5 at the start, #6 at the end', (await ev(MSG)) === '[Image #5] left right [Image #4] [Image #6] ', await ev(MSG));
+await ev(`(() => { const t = document.getElementById('msg'); t.value = t.value.replace(' [Image #6] ', ''); t.dispatchEvent(new Event('input')); })()`);
 const untagged = `[...document.querySelectorAll('.composer .attach .thumb-wrap')].map(f => f.dataset.n + (f.classList.contains('untagged') ? '-' : '+')).join()`;
 check('deleting a tag\'s text dims its thumbnail, with a dashed line; it stays in the row', (await ev(untagged)) === '4+,5+,6-' && await ev(`getComputedStyle(document.querySelector('.composer .thumb-wrap.untagged .thumb img')).borderTopStyle === 'dashed'`), await ev(untagged));
 await shot('composer-tags', dock);

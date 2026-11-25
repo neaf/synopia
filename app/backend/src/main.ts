@@ -190,7 +190,9 @@ try {
     onStop: () => void daemon.stop('stopAll'),
     // "Restart Backend Now…": a handover at once, whatever runs (the shell asked first). Not under dev.sh.
     onRestart: flags['no-parent'] ? undefined : () => void daemon.handOver('restart'),
-    image: (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions.resolve(sid), ref) : transcripts.image(sessions.resolve(sid), agent, ref),
+    image: async (sid, agent, ref) => ref.startsWith('draft:') ? draftImage(store, sessions.resolve(sid), ref)
+      : ref.startsWith('queued:') ? (sessions.get(sid)?.queuedImage(ref) ?? { status: 404 })
+      : transcripts.image(sessions.resolve(sid), agent, ref),
     onMessage: (client, msg) => router.handle(client, msg),
   });
 } catch (e) {

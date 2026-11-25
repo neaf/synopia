@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, BANG_CAP } from '../src/bang.ts';
+import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, splitBash, BANG_CAP } from '../src/bang.ts';
 import type { BangRun, BangOptions } from '../src/bang.ts';
 import { Transcript } from '../src/transcript.ts';
 import { Transcripts } from '../src/transcripts.ts';
@@ -154,6 +154,61 @@ test('transcript: the CLI records of bash mode make one bang item, no prompt and
   assert.equal(t.turnRunning(Date.parse(ts) + 1000, 60_000), false, 'bash mode starts no turn');
 });
 
+// The CLI joins the shouldQuery:false messages it holds into one record (docs/Claude Code transcripts.md,
+// "Bash mode records"): the shape seen live, on invented text.
+const ts0 = '2026-11-24T10:00:00.000Z', ts1 = '2026-11-24T10:01:00.000Z', ts2 = '2026-11-24T10:02:00.000Z';
+const joined = (uuid: string, ts: string, content: string, merged: string[] = ['m-2']) =>
+  ({ type: 'user', uuid, timestamp: ts, queueTranscriptOnly: true, mergedSendUuids: merged, promptSource: 'sdk', permissionMode: 'default', message: { role: 'user', content } });
+const shape = (t: Transcript) => t.items.map((i) => [i.id, i.k, i.k === 'bang' ? i.cmd : i.text]);
+
+test('splitBash: one record holds a command and its output, several commands, or the prompt after them', () => {
+  assert.deepEqual(splitBash('<bash-input>open demo.html</bash-input>\n<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
+    { runs: [{ cmd: 'open demo.html', out: { out: '', err: '', cut: false, exit: null } }], rest: '' });
+  assert.deepEqual(splitBash('<bash-input>a</bash-input>\n<bash-stdout>1\n</bash-stdout><bash-stderr>Exit code 1</bash-stderr>\n<bash-input>b</bash-input>\n<bash-stdout>2</bash-stdout><bash-stderr></bash-stderr>\nWhat now?'),
+    { runs: [{ cmd: 'a', out: { out: '1\n', err: '', cut: false, exit: 1 } }, { cmd: 'b', out: { out: '2', err: '', cut: false, exit: null } }], rest: 'What now?' });
+  assert.deepEqual(splitBash('<bash-input>ls</bash-input>'), { runs: [{ cmd: 'ls', out: null }], rest: '' });
+  assert.deepEqual(splitBash('<bash-input>cat x</bash-input>\n<bash-stdout>a</bash-stdout>b</bash-stdout><bash-stderr></bash-stderr>'),
+    { runs: [{ cmd: 'cat x', out: { out: 'a</bash-stdout>b', err: '', cut: false, exit: null } }], rest: '' }, 'an output holding the tag text is read whole');
+  assert.equal(splitBash('Tidy the notes.'), null);
+});
+
+test('transcript: a command and its output in one record land as one bang item, in place', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  t.pushAll([
+    { type: 'user', uuid: 'p-1', timestamp: ts0, message: { role: 'user', content: 'Draft the notes.' } },
+    { type: 'assistant', uuid: 'a-1', timestamp: ts0, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: 'Drafted.' }] } },
+    joined('b-1', ts1, '<bash-input>open demo.html</bash-input>\n<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
+    { type: 'user', uuid: 'p-2', timestamp: ts2, message: { role: 'user', content: 'Now the summary.' } },
+  ]);
+  assert.deepEqual(shape(t), [['p-1', 'you', 'Draft the notes.'], ['a-1:0', 'claude', 'Drafted.'], ['b-1', 'bang', 'open demo.html'], ['p-2', 'you', 'Now the summary.']]);
+  assert.deepEqual(t.get('b-1')?.sh, { out: '', err: '', cut: false, exit: null });
+});
+
+test('transcript: two commands in a row, one with stdout, and the next prompt in the same record', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  t.pushAll([joined('r-1', ts1, '<bash-input>echo one</bash-input>\n<bash-stdout>one\n</bash-stdout><bash-stderr></bash-stderr>\n<bash-input>false</bash-input>\n<bash-stdout></bash-stdout><bash-stderr>Exit code 1</bash-stderr>\nWhat did they print?', ['m-2', 'm-3', 'm-4'])]);
+  assert.deepEqual(shape(t), [['r-1:bang0', 'bang', 'echo one'], ['r-1:bang1', 'bang', 'false'], ['r-1', 'you', 'What did they print?']]);
+  assert.equal(t.get('r-1:bang0')?.sh?.out, 'one\n');
+  assert.equal(t.get('r-1:bang1')?.sh?.exit, 1);
+});
+
+test('transcript: a command a running turn takes in comes as two queued_command attachments: one bang item, no queued prompt', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  const queued = (uuid: string, prompt: string) => ({ type: 'attachment', uuid, timestamp: ts1, attachment: { type: 'queued_command', prompt, source_uuid: uuid, delivery_id: 'd-' + uuid, commandMode: 'prompt', timestamp: ts1 } });
+  t.pushAll([
+    { type: 'user', uuid: 'p-1', timestamp: ts0, message: { role: 'user', content: 'Draft the notes.' } },
+    { type: 'assistant', uuid: 'a-1', timestamp: ts0, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: { file_path: '/tmp/x' } }] } },
+    { type: 'user', uuid: 'r-1', timestamp: ts1, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: 'x' }] } },
+    queued('q-1', '<bash-input>open demo.png</bash-input>'),
+    queued('q-2', '<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
+    { type: 'assistant', uuid: 'a-2', timestamp: ts2, message: { id: 'msg-2', role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'you' || i.k === 'bang').map((i) => [i.id, i.k, i.queued]), [['p-1', 'you', undefined], ['q-1', 'bang', undefined]]);
+  assert.deepEqual(t.get('q-1')?.sh, { out: '', err: '', cut: false, exit: null });
+  const ids = t.items.map((i) => i.id);
+  assert.ok(ids.indexOf('q-1') < ids.indexOf('a-2:0'), 'in place, before the reply after it');
+});
+
 // ---------- the delivery: two shouldQuery:false user messages in the CLI's format ----------
 function setup() {
   const root = tmp();
@@ -173,7 +228,7 @@ function setup() {
   const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root });
   sessions.start();
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string }; bang: (BangRun & { landed?: string }) | null } | undefined;
-  return { sessions, SID, cwd, inputs, q, got, last };
+  return { sessions, SID, cwd, inputs, q, got, last, transcripts, claudeDir };
 }
 const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 
@@ -199,6 +254,24 @@ test('delivery: the command and its output go as shouldQuery:false user messages
   assert.equal(inputs[2].shouldQuery, undefined);
   assert.equal(last()?.state.status, 'busy');
   sessions.stop();
+});
+
+test('delivery: the shown run lands as the item of the one record the CLI joins it into, and leaves the end of the log', async () => {
+  const { sessions, SID, cwd, inputs, last, transcripts, claudeDir } = setup();
+  assert.equal(sessions.get(SID)!.runBang('echo hi', ID).ok, true);
+  await until(() => inputs.length === 2 && last()?.bang?.running === false);
+  const dir = path.join(claudeDir, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  const at = new Date().toISOString();
+  fs.writeFileSync(path.join(dir, `${SID}.jsonl`), [
+    { ...joined(ID, at, `${inputs[0].message.content}\n${inputs[1].message.content}`, [String(inputs[1].uuid)]), sessionId: SID, cwd },
+    { type: 'user', uuid: 'p-next', timestamp: at, sessionId: SID, cwd, message: { role: 'user', content: 'What did it print?' } },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  transcripts.poll();
+  try { await until(() => last()?.bang?.landed === ID); } finally { sessions.stop(); }
+  const items = transcripts.get(SID)!.items;
+  assert.deepEqual(items.map((i) => [i.id, i.k]), [[ID, 'bang'], ['p-next', 'you']], 'in place, before the next prompt');
+  assert.equal(items[0].sh?.out, 'hi\n');
 });
 
 test('delivery: one command at a time, Esc, Esc ends it, not in a session a terminal holds', async () => {

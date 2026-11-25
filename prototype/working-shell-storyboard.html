@@ -1,0 +1,1246 @@
+<!-- Design history, not the spec: where this storyboard differs from docs/requirements.md (R5.5 the live line and queued messages, R7.2 the shell and monitor view), the requirements win. All data in it is invented. The app's CSS below is app/web/css/app.css and dark.css as of this page, copied in whole: only its font paths, the body[data-mode] scope and the dark-mode scope are rewritten so each frame can carry its own mode and theme. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: the Working line and the shell view, storyboard</title>
+<style>
+/* ===== app/web/css/app.css, as in the app ===== */
+/* Light theme with visible panels. Sizes are 81% of the first draft (two 90% steps). */
+/* The fonts are bundled (decision Q8), both under the SIL Open Font License (OFL.txt beside them), so
+   the page looks the same offline. Atkinson Hyperlegible Next: googlefonts/atkinson-hyperlegible-next at
+   7925f50, fonts/webfonts. JetBrains Mono NL (no ligatures): JetBrains/JetBrainsMono release v2.304,
+   fonts/ttf (the release has no NL web font). Local files load before the first paint, so `block`
+   shows no fallback text that rewraps later. */
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 400; font-display: block; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 500; font-display: block; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 700; font-display: block; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Bold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono NL"; font-weight: 400; font-display: block; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf") format("truetype"); }
+@font-face { font-family: "JetBrains Mono NL"; font-weight: 700; font-display: block; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf") format("truetype"); }
+:root {
+  /* one speed for every moving mark (R8.1); a monitor only watches, so its sweep is slower */
+  --mark-period: 2s; --mark-watch: 3s;
+  --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+  --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+  --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
+  --bash: #BF3989; /* bash mode's mark: the CLI's bash pink, on this palette */
+  --band: #F0F3F6; /* your message's band, and the box in insert mode */
+  --dot-amber: #D4A72C; --dot-green: #2DA44E;
+  --add-bg: #DAFBE1; --del-bg: #FFEBE9;
+  --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --log-font: 12px; --log-lh: 1.45; /* the transcript's text; thumbnails are 3 of its lines high */
+  --thumb-h: calc(3 * var(--log-font) * var(--log-lh));
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--canvas); color: var(--ink); font: 400 13px/1.5 var(--sans); }
+button, textarea, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+::selection { background: #B6E3FF; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+.link { background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; text-underline-offset: 2.5px; font-size: 11.5px; }
+.btn { background: var(--panel); border: 1px solid var(--line); border-radius: 5.5px; padding: 4.5px 11px; font-size: 12px; font-weight: 500; }
+.btn:hover { background: var(--sub); }
+.btn.primary { background: #1F883D; border-color: #1A7F37; color: #fff; }
+.btn.primary:hover { background: #1A7F37; }
+.btn.quiet { border-color: transparent; background: none; color: var(--ink-2); }
+.btn.quiet:hover { background: var(--line-2); }
+kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 2.5px; padding: 0 3.5px; background: var(--panel); }
+
+.app { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: 100vh; }
+
+/* ---------- sidebar: iTerm-like tabs; the open one takes the canvas colour and runs into it ---------- */
+.side { background: var(--side); display: flex; flex-direction: column; min-height: 0; }
+.side-head { display: flex; align-items: center; gap: 9px; padding: 12.5px 12.5px 9px; border-right: 1px solid var(--line); }
+.side-head h1 { font-size: 15.5px; margin: 0; }
+.conn { font-size: 11px; color: var(--ink-3); margin-left: auto; } /* the backend went away: quiet, no motion */
+.side-scroll { overflow-y: auto; overflow-x: hidden; flex: 1; padding: 0 0 11px; background: linear-gradient(to left, var(--line) 1px, transparent 1px); }
+.side-foot { border-right: 1px solid var(--line); border-top: 1px solid var(--line); padding: 9px 12.5px; display: flex; align-items: center; font-size: 11px; color: var(--ink-3); }
+.side-foot .btn { margin-left: auto; }
+.group { margin-top: 11px; }
+.g-name { font-weight: 700; font-size: 12px; display: flex; gap: 7px; align-items: baseline; }
+.row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; align-items: start;
+  width: 100%; padding: 7px 12.5px 8px; cursor: pointer; border-top: 1px solid transparent; border-bottom: 1px solid transparent; }
+.row:hover { background: linear-gradient(to left, var(--line) 1px, #D8DCE1 1px); }
+.row:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+.row[aria-current="true"] { background: var(--canvas); border-color: var(--line); }
+.r-main { min-width: 0; display: grid; gap: 1px; }
+.r-title { font-weight: 500; font-size: 12px; line-height: 1.3; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row[aria-current="true"] .r-title { color: var(--ink); font-weight: 700; }
+.r-state { font-size: 11px; line-height: 1.3; font-weight: 500; }
+.row[data-state="red"] .r-state { color: var(--red); }
+.row[data-state="amber"] .r-state { color: var(--amber); }
+.row[data-state="green"] .r-state { color: var(--green); }
+.row[data-state="grey"] .r-state { color: var(--ink-3); }
+.r-now { font-size: 11px; color: var(--ink-3); line-height: 1.35; }
+.r-agent { font-size: 10.5px; color: var(--ink-3); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-agent b { color: var(--kc, var(--green)); font-weight: 500; }
+.r-side { width: 12.5px; height: 16px; display: flex; align-items: center; justify-content: center; }
+
+/* ---------- main area: the conversation as one panel, the background panel beside it, on the canvas ---------- */
+.conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: minmax(0, 1fr); gap: 9px; padding: 9px; min-height: 0; }
+.conv.no-rail { grid-template-columns: minmax(0, 1fr); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+/* one panel end to end (R5): the header, the log, the queue, and the message box as its last row */
+.thread { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.thread > .c-head { flex: none; border-bottom: 1px solid var(--line-2); }
+.c-head { padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
+.c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
+.c-now { color: var(--ink-2); margin: 0; }
+.c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
+.c-meta .mono { color: var(--ink-2); }
+/* the folder's mono span and the subagent view's back link sit inside the line's own height, so the meta
+   line is 16.5px in every view (a button's or a second font's line box would add a fraction) */
+.c-meta { line-height: 16.5px; height: 16.5px; }
+.c-meta .mono, .c-meta .link { line-height: 1; }
+.c-meta .link { font-size: inherit; }
+/* the header keeps one shape in every view (title, Now or status, meta; one line each), so switching
+   between the session and a subagent never moves the panels below it */
+.c-head > .c-title, .c-head > .c-now, .c-head > .c-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.c-acts { grid-row: 1 / 6; grid-column: 2; display: flex; gap: 7px; align-items: center; }
+.missing { padding: 27px; max-width: 60ch; }
+
+.log { position: relative; overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; flex: 1 1 0; }
+/* the text keeps a 150ch measure; a band's fill (your prompt, a queued one, a `!` command) runs edge to edge
+   across the panel at any width, its text in the same measure */
+.log-inner > :not(.prompt, .qpin, .bang), .bang > :not(.prompt) { max-width: 150ch; }
+.prompt > :not(.g) { max-width: 148ch; }
+/* a line that is one long token (a path, a list of tool names) wraps anywhere rather than run past the panel,
+   as commands, paths and diffs already do */
+.log .ln { overflow-wrap: anywhere; }
+.earlier { color: var(--ink-3); margin: 0 0 11px; }
+/* "Show 160 earlier": a quiet link in the line's own grey, darker on hover */
+.earlier button { all: unset; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2.5px; }
+.earlier button:hover { color: var(--ink-2); text-decoration-color: currentColor; }
+.earlier button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+/* transcript: mono, gutter glyphs like the CLI */
+.log, .send-ghost, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+.ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
+.ln > .g { user-select: none; }
+.ln.claude > .g { color: var(--ink); }
+.ln.tool > .g, .ln.agent > .g { color: var(--dot-green); }
+.ln.tool.failed > .g { color: var(--red); }
+.ln.tool.stopped > .g, .ln.tool.denied > .g { color: var(--ink-3); }
+.ln.ask > .g { color: var(--dot-amber); }
+.ln .name { font-weight: 700; color: var(--ink); }
+.ln .dim, .res { color: var(--ink-3); }
+.res { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
+/* the guide into a result or a run's step: the drawn corner, as in the sidebar and the files list */
+.res > .lcorner { align-self: start; margin: 2px 0 0 3px; }
+.res.failed { color: var(--red); }
+details.fold > summary { cursor: pointer; list-style: none; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary .hint { color: var(--faint); }
+details.fold[open] > summary .hint { display: none; }
+details.fold .body { margin-top: 5.5px; }
+/* a step, expanded (R5.6): the command or input in ink, the result under ⎿, "Show all" as the earlier link */
+details.step > summary { cursor: pointer; list-style: none; }
+details.step > summary::-webkit-details-marker { display: none; }
+.step-out { margin: 2px 0 5.5px; }
+.body .step-out { margin-left: 3ch; }
+.step-out .cmd { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .earlier.more { margin: 0 0 0 3ch; }
+/* runView: a quiet description over the command, stderr in red, the running row's note fainter; an open
+   running step shows "Running, 42s" in its body, so its line's own "Running" row steps aside */
+.step-out .desc { color: var(--ink-3); }
+.step-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; } /* shape as well as colour: a 1px rule at its edge */
+.step-out .res.note { color: var(--faint); }
+details.step[open] > summary .res.run { display: none; }
+/* the band runs from the panel's inner edge (-16px, the log's padding), so its 2.5px edge shows whole */
+.prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+.prompt > .g { color: var(--link); }
+.prompt .img, .prompt .dim { color: var(--ink-3); }
+/* messages you sent while the turn runs (R5.5): the same band, a still clock in place of `❯` and lighter
+   text. When Claude takes one, only the mark and the ink change; nothing changes size */
+.prompt.qc > .md { color: var(--ink-3); }
+.prompt.qc { opacity: .5; } /* not taken yet: the whole band, its fill, edge and clock, at half strength (2026-11-25) */
+/* the queued clock sits where the ❯ would: centred on its cell and on its ink, --dot-lift above the line's middle (below) */
+.prompt > .g { position: relative; }
+.prompt > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+/* the queue, one block at the log's end (transcript.js queuedHTML): the transcript's end, scrolling with it like
+   any message (2026-11-25: not pinned). The negative top margin keeps the 11px gap above the first band; the
+   log's bottom padding moves into the block */
+.log { container-type: size; }
+.log:has(> .log-inner > .qpin), .thread:has(.dock-inner > :not(.composer)) > .log { padding-bottom: 0; }
+.qpin { display: flow-root; margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; }
+.qpin > .prompt:first-child { margin-top: 0; }
+/* "New since 2:14 PM" (R5.12d, prototype/unread-storyboard.html C): a 1px line in the gap above the first item you
+   hadn't seen; it takes no space. In a shell's or monitor's output, a zero-height block between two lines. */
+.log-inner > .new-at { position: relative; }
+.new-at::before { content: ""; position: absolute; left: -16px; right: -16px; top: -6px; height: 1px; background: var(--link); z-index: 1; }
+.new-at > .nlab { position: absolute; right: -4px; top: -12.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+.nlab i { font-style: normal; font-weight: 500; color: var(--ink-3); }
+.prompt.new-at > .nlab { right: 12px; } /* the band reaches the log's edges */
+.nl-at { display: block; position: relative; height: 0; }
+.nl-at::before { content: ""; position: absolute; left: -100vw; right: -16px; top: -.5px; height: 1px; background: var(--link); z-index: 1; }
+.nl-at > .nlab { position: absolute; right: -4px; top: -6.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+/* the send tween (send-tween.js): a copy of your new band moves up from the box; the band waits hidden in its place */
+.send-ghost { position: fixed; z-index: 20; margin: 0; pointer-events: none; --dot-lift: calc(var(--log-font) * .084); }
+.prompt.landing { visibility: hidden; }
+/* bash mode (R5.13): the command on the prompt band, `!` and its edge in the bash pink; the output under the
+   guide through runView, as a step's result */
+.bang { margin: 0 0 11px; }
+.prompt.bang-cmd { border-left-color: var(--bash); margin-bottom: 2px; }
+.prompt.bang-cmd > .g { color: var(--bash); font-weight: 700; }
+.prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.bang-res { padding-left: 2ch; color: var(--ink-3); }
+.bang-res > .step-out { margin: 0; }
+.done { color: var(--ink-3); margin: 0 0 14.5px; }
+.retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
+.opt-line { color: var(--ink-3); }
+.opt-line.picked { color: var(--ink); font-weight: 700; }
+.md p { margin: 0 0 .85em; }
+.md > :last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 0 0 .85em; padding-left: 2ch; }
+.md ul { list-style: none; }
+.md ul > li::before { content: "- "; margin-left: -2ch; }
+.md ol { padding-left: 3ch; }
+.md li { margin: 0; }
+.md h4 { font-size: 1em; margin: 0 0 .4em; font-weight: 700; }
+.md b { font-weight: 700; }
+.md code { color: var(--link); }
+.md pre { margin: 0 0 .85em; padding: 5.5px 9px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; white-space: pre-wrap; }
+.md pre code { color: var(--ink); }
+.md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
+.md a { color: var(--link); }
+/* tables (R5.10): 11px, 1px rules between rows; md.js marks each column (num, short, prose, c0 the first)
+   and table-fit.js fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+.md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+.md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+.md .tw::-webkit-scrollbar { height: 5px; }
+.md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; } /* not the line's break-anywhere */
+.md table code { font-size: 1em; }
+.md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
+.md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+.md th { padding-top: 0; }
+.md th:last-child, .md td:last-child { padding-right: 0; }
+.md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+.md .num { text-align: right; font-variant-numeric: tabular-nums; }
+.md .short, .md .num, .md .c0 { white-space: nowrap; }
+.md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+.md .c0 code { white-space: nowrap; }
+.md .prose { min-width: 26ch; overflow-wrap: break-word; }
+.md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; } /* the separator row's colons win */
+
+/* waves of subagents */
+.wave .name { font-weight: 700; }
+.wgrid { display: grid; grid-template-columns: 2ch minmax(0, max-content) max-content; column-gap: 2ch; align-items: center; margin-top: 2px; }
+.ln.one .adur { margin-left: 2ch; }
+.wgrid > .ind { font-size: 10px; }
+.wgrid > * { line-height: 1.4; }
+.alink { all: unset; cursor: pointer; color: var(--link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch; }
+.wgrid .alink { display: block; }
+.alink:hover { text-decoration: underline; text-underline-offset: 2.5px; }
+.alink:focus-visible { outline: 2px solid var(--link); }
+.adur { color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* files changed and diffs */
+.files .root { color: var(--ink-3); margin-top: 2px; }
+.flist { display: grid; grid-template-columns: 2ch minmax(0, max-content) max-content minmax(0, 1fr); column-gap: 1ch; } /* the last track takes an open diff's width, so the path and counts columns never move */
+.frow { display: contents; }
+.frow > :first-child { grid-column: 1; } /* each file row starts a grid row: the 4th track is only for an open diff */
+/* the guide into each file: the sidebar's sub-line corner (R4.4), two equal 7px legs, 1px */
+.lcorner { display: inline-block; width: 7px; height: 7px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+.frow > .lcorner { align-self: start; margin: 2px 0 0 3px; }
+.frow .fp { color: var(--link); overflow-wrap: anywhere; }
+.frow .fp { text-decoration: none; }
+.frow .fp:hover { text-decoration: underline; text-underline-offset: 2.5px; }
+.frow .fc { all: unset; justify-self: start; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 3px; padding: 0 3px; margin-left: calc(1ch - 3px); } /* 2ch after the path: the grid gap is 1ch for the guide */
+.frow .fc:hover { background: var(--sub); box-shadow: inset 0 0 0 1px var(--line); }
+.frow .fc:focus-visible { outline: 2px solid var(--link); }
+.frow .fc[aria-expanded="true"] { background: #DDF4FF; box-shadow: inset 0 0 0 1px #54AEFF; }
+.add { color: var(--green); } .del { color: var(--red); } .new { color: var(--ink-3); }
+.diff { grid-column: 1 / -1; min-width: 0; margin: 3.5px 0 9px 3ch; border: 1px solid var(--line); border-radius: 5.5px; overflow: hidden; }
+.diff[hidden] { display: none; }
+.dl { display: grid; grid-template-columns: calc(var(--dn, 4ch) + 2ch) 2ch minmax(0, 1fr); /* the digits plus 1ch each side */ white-space: pre-wrap; overflow-wrap: anywhere; }
+.dl .no { color: var(--faint); text-align: right; padding: 0 1ch; user-select: none; background: var(--sub); }
+.dl.a { background: var(--add-bg); } .dl.a .no { background: #CCFFD8; } .dl.a .sg { color: var(--green); }
+.dl.d { background: var(--del-bg); } .dl.d .no { background: #FFD7D5; } .dl.d .sg { color: var(--red); }
+.dl.c { color: var(--ink-2); }
+.dgap { color: var(--faint); padding-left: calc(var(--dn, 4ch) + 3ch); background: var(--sub); }
+
+/* the message box, the panel's last row: a card or status line above it, at the transcript's end */
+.dock { flex: none; padding: 0; overflow: visible; }
+.dock-inner { max-width: none; }
+.dock-inner > :not(.composer) { border-top: 1px solid var(--line-2); margin-bottom: 23.5px; } /* then the gap the log's end has, then the box's line */
+/* a subagent, shell or monitor view has no message box (R5.12): the panel ends with the log; the row shows only while a key's prompt asks */
+.dock.nobox:not(:has(.composer.asking)) { display: none; }
+.status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); }
+.status b { font-weight: 700; }
+.status[data-state="red"] b { color: var(--red); }
+.status span { color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* styled as a `❯` band being written: ❯ 16px in, where a posted band's sits, under a 1px line (R5) */
+.composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); align-items: center; padding: 9px 16px 9px 13.5px; border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent; cursor: text; } /* the whole box focuses the field */
+.composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
+.composer.bash > .g { color: var(--bash); font-weight: 700; } /* bash mode (R5.13): `!` in place of `❯` */
+.composer .attach { grid-column: 2; }
+.composer textarea { width: 100%; max-width: 148ch; background: none; border: 0; resize: none; outline: none; min-height: 3lh; height: auto; max-height: 198px; padding: 0; display: block; } /* three transcript lines at least, growing as you type */
+.composer .attach { grid-row: 2; } /* the pasted images sit below the text */
+.composer .attach:not(:empty) { margin: 5.5px 0 2px; }
+
+/* images (R5.12b, R5.13): a wrapping row of thumbnails under a prompt, a tool step, a collapsed run or the
+   message box, the same size everywhere: at most 3 transcript lines high, never scaled up, 320px wide at
+   most, cropped to the centre. --iw/--ih (.sized): the image's size, from the backend or from the image's
+   header once the browser has read it. Until then it is 3 lines high and takes its own aspect ratio. */
+.thumbs { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 5.5px; margin: 3.5px 0 2px; }
+.ln > .thumbs { grid-column: 2; }
+.thumb.sized { --th: min(calc(var(--ih) * 1px), var(--thumb-h)); --tw: min(320px, calc(var(--th) * var(--iw) / var(--ih))); }
+button.thumb { all: unset; display: block; cursor: zoom-in; border-radius: 5.5px; }
+.thumb img, .thumb.gone { display: block; box-sizing: content-box; width: var(--tw, auto); max-width: 320px; height: var(--th, var(--thumb-h)); border: 1px solid var(--line); border-radius: 5.5px; background: var(--sub); }
+.thumb img { object-fit: cover; object-position: center; }
+button.thumb:hover img { border-color: var(--faint); }
+button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.thumb.gone { border-color: var(--line-2); color: var(--faint); font: 400 10.5px/1.2 var(--sans); display: grid; place-items: center; text-align: center; overflow: hidden; min-width: 7ch; }
+.thumb-wrap { margin: 0; position: relative; }
+.thumb-wrap .unattach { position: absolute; top: -5.5px; right: -5.5px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--panel); background: var(--ink-2); color: #fff; font-size: 9px; line-height: 14px; padding: 0; text-align: center; opacity: 0; cursor: pointer; }
+.thumb-wrap:hover .unattach, .thumb-wrap .unattach:focus-visible { opacity: 1; }
+.thumb-wrap .unattach:hover { background: var(--ink); }
+/* a pasted image whose [Image #N] tag was deleted from the text: kept in the row, dimmed with a dashed line, not sent (R5.13) */
+.thumb-wrap.untagged .thumb { opacity: .45; }
+.thumb-wrap.untagged .thumb img { border: 1px dashed var(--ink-3); }
+.img-tag { color: var(--ink-3); }
+
+/* the viewer: one image on the canvas colour, clear of the title bar; the stage scrolls at 100%, the
+   footer has the count, the source and the keys (as .nd-foot). Fit: never larger than its real size. */
+.viewer { position: fixed; inset: var(--titlebar, 0px) 0 0 0; z-index: 30; background: rgba(237, 239, 242, .94); cursor: zoom-out; outline: none; }
+.viewer .v-stage { position: absolute; inset: 0 0 34px 0; display: flex; padding: 25px 25px 8px; overflow: hidden; overscroll-behavior: contain; }
+.viewer.full .v-stage { overflow: auto; }
+.viewer .v-stage img { display: block; margin: auto; flex: none; box-sizing: border-box; max-width: 100%; max-height: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 7px 21.5px rgba(140, 149, 159, .25); cursor: default; user-select: none; -webkit-user-drag: none; }
+.viewer.zoomable .v-stage img { cursor: zoom-in; }
+.viewer.full .v-stage img { max-width: none; max-height: none; cursor: grab; }
+.viewer.full .v-stage { cursor: grab; }
+.viewer.panning .v-stage, .viewer.panning .v-stage img { cursor: grabbing; }
+.viewer .v-foot { position: absolute; left: 0; right: 0; bottom: 0; height: 34px; display: flex; align-items: center; justify-content: center; gap: 18px; padding: 0 25px; font-size: 11px; color: var(--ink-3); cursor: default; }
+.viewer .v-where { display: flex; gap: 10px; min-width: 0; align-items: baseline; }
+.viewer .v-n { flex: none; }
+.viewer .v-from { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+.viewer .v-foot .hint { display: flex; gap: 12px; align-items: center; flex: none; }
+.viewer .v-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+.slash { position: absolute; left: 9px; right: 9px; bottom: calc(100% + 5.5px); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 7px 21.5px rgba(140,149,159,.25);
+  font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 3.5px 0; max-height: 297px; overflow-y: auto; z-index: 5; }
+.slash[hidden] { display: none; }
+.slash .it { display: grid; grid-template-columns: minmax(0, 46ch) minmax(0, 1fr); gap: 0 2ch; padding: 2px 10px; cursor: pointer; }
+.slash .it .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slash .it .n .h { color: var(--ink-3); }
+.slash .it .d { color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slash .it[aria-selected="true"] { background: #DDF4FF; }
+.slash .it[aria-selected="true"] .n { color: var(--link); }
+.slash .head { color: var(--ink-3); padding: 2px 10px 3.5px; }
+/* the model picker's effort row: the levels of the selected model, under its description; the chosen one boxed */
+.slash .eff { grid-column: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 1ch; padding: 1px 0 3px; color: var(--ink-3); }
+.slash .eff-l { margin-right: 1ch; }
+.slash .eff-o { padding: 0 .6ch; border: 1px solid transparent; border-radius: 4px; color: var(--ink-2); }
+.slash .eff-o[aria-checked="true"] { border-color: var(--link); color: var(--link); }
+/* "Interrupt?": the message box asks before Esc, Esc stops the turn; what you typed stays underneath */
+.int-ask { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+/* in ink, not red: red is kept for needs you (and the failed square), and interrupting is neither */
+.int-ask b { color: var(--ink); font-weight: 700; }
+.composer.asking .int-ask { display: block; align-self: start; } /* on the first line beside ❯, not centred in the three-line box */
+.composer.asking textarea, .composer.asking .attach { visibility: hidden; }
+[data-mode] .composer.asking > .g { color: var(--ink); }
+/* a terminal holds the session (R3.2): one quiet line where your message would go, gone once you type; under a
+   message that takes it back, the take-over's state */
+.term-line, .term-wait { display: none; margin: 0; grid-column: 2; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-3); }
+.term-line { grid-row: 1; align-self: start; pointer-events: none; } /* on the first line, over the empty field */
+.term-wait { grid-row: 3; margin-top: 3.5px; }
+.composer.held:has(textarea:placeholder-shown):not(.asking) .term-line { display: block; }
+.composer.held textarea::placeholder, [data-mode] .composer.held textarea::placeholder { color: transparent; }
+.composer.taking:not(.asking) .term-wait { display: block; }
+.ol-it .n { display: flex; gap: 2ch; }
+.ol-it .n .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ol-it .n .term { flex: none; color: var(--ink-3); }
+/* "Send to background?": the steps b, b would send are marked like a selected row, a 1px blue ring on the
+   selection tint, drawn outside the line (box-shadow) so nothing moves; their own running marks stay as they are */
+.log.bg-asking [data-fg] { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px #DDF4FF, 0 0 0 3px #54AEFF; }
+/* a block a jump landed on (the "To review" card goes to its report, R7.1): the same mark, held, then faded out
+   (transcript.js markJump); a highlight, not a running mark */
+.log .jump-mark { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; transition: background-color .6s linear, box-shadow .6s linear; }
+@media (prefers-reduced-motion: reduce) { .log .jump-mark.fading { transition: none; } }
+/* the Open list: past sessions over the main area, rows drawn like the command menu's */
+.app > .side { grid-column: 1; grid-row: 1; }
+.app > .conv { grid-column: 2; grid-row: 1; }
+.open-list { grid-column: 2; grid-row: 1; z-index: 6; background: var(--canvas); padding: 9px; min-height: 0; display: flex; }
+.open-list[hidden] { display: none; }
+.ol-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ol-head { padding: 11px 14.5px; border-bottom: 1px solid var(--line-2); }
+.ol-filter { border-bottom: 1px solid var(--line-2); }
+.ol-filter input { font-family: var(--mono); font-size: 12px; line-height: 1.45; width: 100%; background: none; border: 0; outline: none; padding: 0; color: var(--ink); }
+.ol-list { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 3.5px 0; }
+.ol-it { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 40ch) 10ch; gap: 2ch; padding: 2px 14.5px; cursor: pointer; }
+.ol-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ol-it .f, .ol-it .a { color: var(--ink-3); }
+.ol-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+.ol-it:hover { background: var(--sub); }
+.ol-it[aria-selected="true"] { background: #DDF4FF; }
+.ol-it[aria-selected="true"] .n { color: var(--link); }
+.ol-empty { color: var(--ink-3); margin: 0; padding: 5.5px 14.5px; }
+.ol-keys { margin: 0; padding: 6.5px 14.5px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--ink-3); }
+.ol-note { margin: 0; padding: 4px 14.5px 5px; font-family: var(--mono); font-size: 12px; line-height: 1.4; color: var(--ink-3); }
+.ol-note[hidden] { display: none; }
+.ol-it .f.gone { text-decoration: line-through; text-decoration-color: var(--faint); }
+/* the folder list (R3.3): a folder, its sessions, when last used; drawn like the Open list */
+.fl-it { display: grid; grid-template-columns: minmax(0, 1fr) 12ch 9ch; gap: 1.5ch; padding: 2px 14.5px; cursor: pointer; }
+.fl-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-it .c, .fl-it .a { color: var(--ink-3); }
+.fl-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+.fl-it:hover { background: var(--sub); }
+.fl-it[aria-selected="true"] { background: #DDF4FF; }
+.fl-it[aria-selected="true"] .p { color: var(--link); }
+.fl-it.gone { color: var(--faint); cursor: default; }
+.fl-it.gone:hover { background: none; }
+.fl-it.mk .p { grid-column: 1 / -1; color: var(--ink-2); }
+.fl-it.mk[aria-selected="true"] .p { color: var(--link); }
+/* fuzzy matches (R3.14), as nota draws them: bold in the link blue; on the selected row also underlined */
+.ol-list b.m, .slash b.m { font-weight: 700; color: var(--link); }
+.ol-list [aria-selected="true"] b.m, .slash [aria-selected="true"] b.m { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+.fl-it.gone b.m { color: inherit; }
+/* its folder is gone (R3.11): one line instead of the field */
+.gone-line { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-3); cursor: pointer; }
+.gone-line b { color: var(--ink); font-weight: 400; }
+.composer.gone .gone-line { display: block; }
+.composer.gone textarea, .composer.gone .attach { display: none; }
+.c-meta .gone { color: var(--ink-2); }
+
+/* background work panel, like a play queue turned upside down:
+   past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */
+.rail { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.past { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 0 36px; display: flex; flex-direction: column;
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 57.5px); mask-image: linear-gradient(to top, transparent 0, #000 57.5px); }
+.rail h3 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; display: flex; align-items: baseline; gap: 7px; }
+.rail h3 .cnt { margin-left: auto; font-weight: 400; color: var(--ink-3); font-size: 11px; }
+.past h3 { color: var(--faint); }
+.past > * { flex: none; }
+.pr { all: unset; box-sizing: border-box; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; width: 100%; padding: 2.5px 12.5px; cursor: pointer; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
+.pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.pr .in { color: var(--faint); } /* the subagent a shell or monitor ran in */
+.pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
+.pr.failed .d, .pr.failed .k { color: var(--red); }
+/* hover and the open item draw in a frame on the cards' edges (7 px in), behind the text, so a Past row lines up with the cards above */
+.pr { position: relative; isolation: isolate; }
+.pr::before { content: ""; position: absolute; inset: 0 7px; z-index: -1; border: 1px solid transparent; border-radius: 5.5px; pointer-events: none; }
+.pr:hover::before { background: var(--sub); }
+.pr:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+/* the item you're viewing, of any kind: its one 1px edge turns ink, nothing else around it */
+.pr[aria-current="true"]::before { border-color: var(--ink); }
+.pr[aria-current="true"] .n { color: var(--ink); }
+.now { border-bottom: 1px solid var(--line-2); padding: 7px 0 7px; flex: none; max-height: 55%; overflow-y: auto; }
+/* a running item's card: neutral, no coloured edge (the mark carries the kind) */
+.card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  margin: 0 7px 5.5px; width: calc(100% - 14.5px); padding: 7px 9px; border-radius: 5.5px; background: var(--panel); border: 1px solid var(--line); cursor: pointer; }
+.card:hover { background: var(--sub); }
+.card:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.card[aria-current="true"] { border-color: var(--ink); }
+.card .n { font-weight: 700; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
+.card .m .kind { margin-right: 4px; }
+.card .d { color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: 11px; grid-row: 1 / 3; grid-column: 3; } /* quiet like "Working" and the Past times */
+/* the main conversation is a card like the running ones; what runs in the background hangs under it as a tree,
+   drawn like the sidebar's groups (R4.3): a 1px guide down from the main card's mark, a tick into each child, a corner on the last */
+.main-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  margin: 0 7px; width: calc(100% - 14px); padding: 7px 9px; border-radius: 5.5px; border: 1px solid var(--line); cursor: pointer; }
+.main-row:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.main-row > .ind { grid-row: 1 / 3; align-self: center; }
+.main-row b { font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.main-row .m { grid-column: 2; font-size: 11px; line-height: 1.3; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.main-row .w { grid-row: 1 / 3; grid-column: 3; font-size: 11px; color: var(--ink-3); }
+.kid { position: relative; padding-top: 5.5px; }
+.kid > .card { margin: 0 7px 0 33px; width: calc(100% - 40px); }
+/* a nameless item keeps the card's two lines, so every mark sits at the tick's height */
+.kid > .card .n { min-height: 1.3em; }
+/* the guide runs at the main card's mark (7 + 1 + 9 + 5.5 px in); the tick meets a child card's border at its mark's height */
+.kid > .tg { display: block; position: absolute; left: 22px; top: 0; bottom: 0; width: 11px; pointer-events: none; }
+.kid > .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
+.kid:last-child > .tg::before { bottom: auto; height: 29px; border-bottom: 1px solid var(--guide); width: 11px; }
+/* a subagent's own shells and monitors, one level deeper: the guide drops from the subagent card's mark (33 + 1 + 9 + 5.5 px in) */
+.kid .kid > .tg { left: 48px; }
+.kid .kid > .card { margin-left: 59px; width: calc(100% - 66px); }
+/* a child coming or going (rail.js railTw) clips to its tweened height; its guide is inside, so it follows */
+.kid.tw { box-sizing: border-box; overflow: hidden; }
+.kid.gone { pointer-events: none; }
+/* just finished, for its grace: the status mark with the still kind mark, as in Past, and the final duration */
+.card.ended { grid-template-columns: auto minmax(0, 1fr) auto; }
+.card.ended > .pm { grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+.card.ended .d { color: var(--ink-3); }
+.kid:not(:last-child) > .tg::after { content: ""; position: absolute; left: 0; top: 28px; width: 11px; border-top: 1px solid var(--guide); }
+
+/* motion only on things that are running (the marks, below); still with reduced motion */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status[data-state="red"] { background: #FFEBE9; border-bottom-color: #FFCECB; }
+
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* drag and drop in the sidebar */
+.row { position: relative; }
+.row.dragging { opacity: .35; }
+.ghost { position: fixed; z-index: 50; pointer-events: none; background: var(--panel) !important; border: 1px solid var(--line) !important; border-radius: 5.5px; box-shadow: 0 3px 10px rgba(31, 35, 40, .12); opacity: .5; }
+body.is-dragging, body.is-dragging * { user-select: none; cursor: grabbing !important; }
+#groups .row { touch-action: none; }
+.row.drop-before::before, .row.drop-after::after { content: ""; position: absolute; left: 9px; right: 9px; height: 2px; background: var(--link); border-radius: 1px; z-index: 3; pointer-events: none; }
+.row.drop-before::before { top: -1px; } .row.drop-after::after { bottom: -1px; }
+.row.drop-before::after, .row.drop-after::before { content: ""; position: absolute; left: 5.5px; width: 7px; height: 7px; border: 2px solid var(--link); border-radius: 50%; background: var(--panel); z-index: 3; pointer-events: none; box-sizing: border-box; }
+.row.drop-before::after { top: -4px; } .row.drop-after::before { bottom: -4px; }
+.merge-hint { display: none; position: absolute; right: 30.5px; top: 7px; font-size: 10.5px; font-weight: 700; color: var(--link); background: #DDF4FF; border: 1px solid #54AEFF; border-radius: 3.5px; padding: 0 5.5px; pointer-events: none; }
+.row.drop-merge { background: #DDF4FF; box-shadow: inset 0 0 0 2px #54AEFF; border-radius: 5.5px; }
+.row.drop-merge .merge-hint { display: block; }
+.drop-into { background: #DDF4FF; box-shadow: inset 0 0 0 2px #54AEFF; border-radius: 5.5px; }
+.g-name { cursor: default; }
+.g-input { font: inherit; font-weight: 700; font-size: 12px; width: 100%; border: 1px solid var(--link); border-radius: 3.5px; padding: 1px 4.5px; background: var(--panel); }
+.g-empty { margin: 0 12.5px; padding: 7px 9px; border: 1px dashed var(--line); border-radius: 5.5px; font-size: 11px; color: var(--faint); }
+body:not(.is-dragging) .g-empty { display: none; }
+
+/* ---------- marks (marks.js): a 1em box, every part in em so the 64px view is the 12px mark enlarged ---------- */
+@keyframes spinback { to { transform: rotate(-360deg); } }
+@keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+@keyframes shrink { from { transform: scale(1); } to { transform: scale(.06); } }
+
+.ind { display: inline-grid; place-items: center; width: 1em; height: 1em; position: relative; flex: none; vertical-align: middle; line-height: 0; }
+.ind > * { grid-area: 1 / 1; }
+.ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
+
+/* no updates: a frozen arc; compacting: rings shrinking; rate limited: dashes turning back */
+.ind .arc.frozen { width: 1em; height: 1em; border-radius: 50%; border: .17em solid var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); transform: rotate(-20deg); }
+.ind .cr { width: 1em; height: 1em; border-radius: 50%; border: .13em solid var(--green); animation: shrink var(--mark-period) linear infinite; }
+.ind .cr:nth-child(2) { animation-delay: -.6s; } .ind .cr:nth-child(3) { animation-delay: -1.2s; }
+.ind .rl { animation: spinback var(--mark-period) linear infinite; }
+.ind .rl circle { stroke: var(--amber); }
+
+/* two stripes: needs you */
+.ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
+.ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; }
+.ind .v-seesaw .bars i { animation: see var(--mark-period) linear infinite; }
+.ind .v-seesaw .bars i + i { animation-delay: -.55s; }
+
+/* still shapes: done, to review, signed out */
+.ind .chk { width: .32em; height: .6em; border: solid var(--ink-3); border-width: 0 .16em .16em 0; transform: translateY(-.07em) rotate(45deg); }
+.ind .badge { width: .9em; height: .9em; border-radius: 50%; background: var(--link); }
+.ind .badge-chk { width: .22em; height: .42em; border: solid #fff; border-width: 0 .13em .13em 0; transform: translateY(-.06em) rotate(45deg); }
+.ind .lock { position: relative; width: .74em; height: .92em; }
+.ind .lock .sh { position: absolute; left: .14em; top: 0; width: .46em; height: .52em; border: .13em solid var(--red); border-bottom: 0; border-radius: .24em .24em 0 0; }
+.ind .lock .bd { position: absolute; left: 0; bottom: 0; width: .74em; height: .5em; background: var(--red); border-radius: .08em; }
+
+/* reduced motion: every mark keeps its shape and stops */
+@media (prefers-reduced-motion: reduce) { .ind *, .ind *::before { animation: none !important; } }
+.ind { font-size: 11px; }
+.kind { --kc: #57606A; --kb: #EAEEF2; display: inline-flex; align-items: center; gap: 3px; font: 500 10px/14px var(--sans); padding: 0 5px 0 3px; border-radius: 4px;
+  color: var(--kc); background: var(--kb); white-space: nowrap; vertical-align: 1px; flex: none; }
+.kind svg { width: 11px; height: 11px; flex: none; display: block; }
+.kind.g { padding: 0 2px; }
+.kd-sub { --kc: #1A7F37; --kb: #DAFBE1; } .kd-fork { --kc: #8250DF; --kb: #F3EEFE; } .kd-shell { --kc: #0B7A82; --kb: #DCF1F2; } .kd-mon { --kc: #0E6BA8; --kb: #DDEEF8; }
+.kind .ind { font-size: 10px; }
+
+/* placing the marks */
+.r-side .ind { font-size: 11px; }
+.r-agent .ind { font-size: 9px; vertical-align: -1px; }
+.r-agent .kind.g { vertical-align: -2px; }
+.r-review { color: var(--link); }
+.status .ind { font-size: 11px; margin-right: .3ch; vertical-align: -1px; }
+.main-row .ind { font-size: 11px; }
+.pr .pm { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
+.pr .pm .ind { font-size: 9px; }
+.pr .k { color: var(--ink-3); }
+.pr.failed .k { color: var(--red); }
+.wgrid .ind { font-size: 9px; vertical-align: -1px; }
+.review { border-bottom: 1px solid var(--line-2); padding: 8px 0; }
+.review h3 { color: var(--link); }
+.rv { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; margin: 0 7px 5px; border: 1px solid #B6E3FF; background: #F1F8FF; border-radius: 5px; }
+.rv-open { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 13px minmax(0, 1fr); column-gap: 7px; padding: 6px 8px; cursor: pointer; min-width: 0; }
+.rv-open > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
+.rv-open .n { font-weight: 700; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-open .m { font-size: 10px; color: var(--ink-2); }
+.rv-open .m .kind { margin-right: 4px; }
+.rv-done { font-size: 10.5px; margin-right: 4px; }
+/* the whole card goes to its report (transcript.js toReport): it shades on hover like the panel's other rows */
+.rv { cursor: pointer; }
+.rv:hover:not(:has(.rv-done:hover)) { background: #DDF4FF; }
+
+/* the kinds' colours (their words and tags; the marks use the --mk-* set) */
+:root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
+.kw { font-weight: 700; color: var(--kc); }
+.kc-sub { --kc: var(--k-sub); } .kc-fork { --kc: var(--k-fork); } .kc-shell { --kc: var(--k-shell); } .kc-mon { --kc: var(--k-mon); }
+
+/* SVG kind marks */
+.ind svg.k { width: 1em; height: 1em; display: block; overflow: visible; }
+.ind .rot { transform-box: view-box; transform-origin: 50% 50%; animation: spin var(--d, 1s) linear infinite; }
+.ind .rev { animation-direction: reverse; }
+/* shell: the underscore stretches right, shrinks from the left, stretches back left; linear, so it never stops */
+@keyframes bounce {
+  0%   { transform: translateX(0) scaleX(.42); }
+  25%  { transform: translateX(0) scaleX(1); }
+  50%  { transform: translateX(2.44px) scaleX(.42); }
+  75%  { transform: translateX(0) scaleX(1); }
+  100% { transform: translateX(0) scaleX(.42); }
+}
+.ind .bounce { transform-box: fill-box; transform-origin: 0 50%; animation: bounce var(--mark-period) linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ind .rot, .ind .bounce { animation: none; } }
+
+/* groups as a tree: a heading, sessions indented under it with thin guides; a hairline between every two sessions */
+:root { --guide: #B1BAC4; }
+.tree { margin-top: 12px; }
+.tree .th { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 12px; }
+.tree .g-name { font-weight: 700; font-size: 12.5px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree .g-input { flex: 1; }
+.tg { display: none; }
+.tree .row { padding-left: 28px; }
+.row { grid-template-columns: 20px minmax(0, 1fr); column-gap: 8px; }
+/* the mark sits in a small rounded box drawn like the guides, so the tick runs into it */
+.row .r-side { order: -1; align-self: start; width: 20px; height: 20px; box-sizing: border-box; margin-top: -2px;
+  border: 1px solid var(--guide); border-radius: 6px; background: var(--sub); display: flex; align-items: center; justify-content: center; }
+.row[aria-current="true"] .r-side { background: var(--panel); }
+.row .r-side .ind { display: grid; place-items: center; width: 11px; height: 11px; font-size: 11px; line-height: 0; margin: 0; }
+.tree .row .tg { display: block; position: absolute; left: 17px; top: -1px; bottom: -1px; width: 11px; pointer-events: none; }
+.tree .row .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
+.tree .row:last-child .tg::before { bottom: auto; height: 18.5px; border-bottom: 1px solid var(--guide); width: 11px; }
+.tree .row:not(:last-child) .tg::after { content: ""; position: absolute; left: 0; top: 17.5px; width: 11px; border-top: 1px solid var(--guide); }
+/* where one session ends and the next starts */
+.side-scroll .row { padding-top: 9px; padding-bottom: 10px; }
+.tree.others .g-name { color: var(--ink-3); }
+.tree.others .g-empty { margin-left: 28px; }
+
+
+.liveln b { color: var(--green); }
+.liveln[data-state="amber"] b { color: var(--amber); }
+.liveln[data-state="grey"] b { color: var(--ink-3); }
+
+.log { overflow-x: hidden; }
+
+/* marks in the transcript gutter sit where the ● glyph sits: centred on the first character cell and on the ●'s ink,
+   which in the mono face is --dot-lift above the line's middle (measured: .084em; motion.mjs pins it within 0.5px) */
+.log { --dot-lift: calc(var(--log-font) * .084); }
+.ln > .g { position: relative; }
+/* em and ch here are the mark's own 10px: the ● centre is .5ch of the 12px line, so .6ch of 10px */
+.ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+/* a wave's rows centre their mark on the row: lifted the same, onto the ● height of the row's text */
+.wgrid > .ind { position: relative; top: calc(-1 * var(--dot-lift)); }
+
+.doneln { color: var(--ink-3); margin-bottom: 16px; }
+.doneln > .g > .ind { opacity: .55; }
+
+/* ---------- dark sidebar; the open session is a light cut-out that runs into the canvas ---------- */
+.side { background: #22272E; color: #E6EDF3;
+  --guide: #545D68; --k-sub: #3FB950; --k-shell: #39C5CF; --k-mon: #58A6FF; --k-fork: #BC8CFF; }
+.side-head, .side-foot { border-right-color: #22272E; }
+.side-foot { border-top-color: #373E47; color: #9198A1; }
+.side-foot .btn { background: #2D333B; border-color: #444C56; color: #E6EDF3; }
+.side-foot .btn:hover { background: #373E47; }
+/* "Open session", quiet, then "New session", on one row at the right */
+.side-foot .btn + .btn { margin-left: 5.5px; }
+.side-foot .btn.quiet { background: none; border-color: transparent; color: #9198A1; }
+.side-foot .btn.quiet:hover { background: #2D333B; color: #E6EDF3; }
+/* "Update ready: restarts when idle": the footer's quiet text (the prototype's #exported), on its own row above the buttons */
+.side-foot { flex-wrap: wrap; row-gap: 7px; }
+.side-foot .upd { flex: 1 0 100%; }
+.side-head h1 { color: #F0F6FC; }
+.side-scroll { background: none; }
+.side .tree .g-name { color: #F0F6FC; }
+.side .tree.others .g-name { color: #9198A1; }
+.side .row:hover { background: #2D333B; }
+.side .row .r-title { color: #CDD9E5; }
+.side .row .r-now { color: #9198A1; }
+.side .row[data-state="red"] .r-state { color: #FF7B72; }
+.side .row[data-state="amber"] .r-state { color: #E3B341; }
+.side .row[data-state="green"] .r-state { color: #56D364; }
+.side .row[data-state="grey"] .r-state { color: #8C959F; }
+.side .row .r-agent { color: #9198A1; }
+.side .r-review { color: #58A6FF !important; }
+.side .row .r-side { border-color: var(--guide); background: #F6F8FA; }
+/* the open session: light like the canvas, normal light-theme text, kind colours back to the light set */
+.side .row[aria-current="true"] { background: var(--canvas); border-color: var(--canvas);
+  --k-sub: #1A7F37; --k-shell: #0B7A82; --k-mon: #0E6BA8; --k-fork: #8250DF; }
+.side .row[aria-current="true"] .r-title { color: var(--ink); }
+.side .row[aria-current="true"] .r-now { color: var(--ink-2); }
+.side .row[aria-current="true"][data-state="red"] .r-state { color: var(--red); }
+.side .row[aria-current="true"][data-state="amber"] .r-state { color: var(--amber); }
+.side .row[aria-current="true"][data-state="green"] .r-state { color: var(--green); }
+.side .row[aria-current="true"][data-state="grey"] .r-state { color: var(--ink-3); }
+.side .row[aria-current="true"] .r-agent { color: var(--ink-3); }
+.side .row[aria-current="true"] .r-review { color: var(--link) !important; }
+.side .row[aria-current="true"] .r-side { background: var(--panel); }
+/* the guide keeps running through the light row */
+.side .tree .row[aria-current="true"] .tg::before, .side .tree .row[aria-current="true"] .tg::after { border-color: #8C959F; }
+/* drag and drop on dark */
+.side .row.drop-before::before, .side .row.drop-after::after { background: #58A6FF; }
+.side .row.drop-before::after, .side .row.drop-after::before { border-color: #58A6FF; background: #22272E; }
+.side .row.drop-merge { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
+.side .merge-hint { background: #1C2D41; color: #58A6FF; border-color: #58A6FF; }
+.side .g-empty { border-color: #545D68; color: #9198A1; }
+.side .g-input { color: var(--ink); }
+
+/* the open row as a tab: rounded on the left, curving into the canvas on the right */
+.side .row { width: calc(100% - 6px); margin-left: 6px; }
+.side .row[aria-current="true"] { border-radius: 9px 0 0 9px; }
+.cap { display: none; position: absolute; right: 0; width: 9px; height: 9px; pointer-events: none; }
+.side .row[aria-current="true"] .cap { display: block; }
+.cap.ct { top: -10px; background: radial-gradient(circle at 0 0, transparent 8.5px, var(--canvas) 9px); }
+.cap.cb { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 8.5px, var(--canvas) 9px); }
+
+/* marks take their colours from variables, so the dark sidebar gets a dark set and the open row keeps the light one */
+:root { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
+.side { --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
+.side .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+.side .row[aria-current="true"] { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
+.side .row[aria-current="true"] .ind { --red: #CF222E; --ink-3: #6E7781; --link: #0550AE; --dot-amber: #D4A72C; --amber: #9A6700; --green: #1A7F37; --line-2: #E4E8EC; }
+.side .row .r-side { background: #2D333B; border-color: #545D68; border-width: 1px; }
+.side .row[aria-current="true"] .r-side { background: var(--panel); border-color: #8C959F; }
+
+.tree.others .row .tg { display: none; }
+
+/* sub-line corner drawn like the tree guides: two equal 7px legs */
+.r-agent { display: flex; align-items: center; gap: 5px; }
+.r-agent .el { flex: none; width: 7px; height: 7px; margin: -6px 1px 0 2px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+.r-agent b, .r-agent .ind { flex: none; }
+.r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.r-agent .ind { margin: 0; }
+/* a sub-line opening or closing (sidebar.js tweenLines) clips to its tweened height */
+.r-main > .tw { overflow: hidden; }
+.r-main > .r-gone { pointer-events: none; }
+
+.composer button, .composer .attach img, .composer .slash { cursor: default; }
+.composer > .g { align-self: start; }
+.model-btn { font-size: 12px; color: var(--ink-2); }
+
+/* main conversation row: tinted by the session's state (green = the agent is running); the edge marks that you're viewing it */
+.main-row { box-shadow: none; }
+.main-row[data-state="green"] { background: #E6F6EA; border-color: #B4E2C0; }
+.main-row[data-state="red"] { background: #FFEBE9; border-color: #FFCECB; }
+.main-row[data-state="amber"] { background: var(--sub); }
+/* selected: its border turns ink, as on a selected card or Past row, over any state tint */
+.main-row[aria-current="true"] { border-color: var(--ink); }
+.main-row:hover { filter: brightness(.98); }
+
+/* modes */
+.composer { grid-template-columns: 2ch minmax(0, 1fr); }
+.composer > textarea { grid-column: 2; grid-row: 1; }
+.composer > .g { grid-column: 1; grid-row: 1; align-self: start; } /* on the first line, as in the CLI */
+.composer > .slash { grid-column: 1 / -1; }
+/* the mode (R9.2), one indicator: in normal mode the box's text and ❯ at half strength, its line at full; a card
+   above it, or a line you must read (Interrupt?, Send to background?, Close this session?, a gone folder, a
+   take-over's state), keeps it at full strength. In insert mode the box is the band your message becomes: the
+   band's fill and blue left edge (bash mode's pink), in the place it will land */
+[data-mode="normal"] .dock:not(:has(.dock-inner > :not(.composer), .composer.asking, .composer.gone, .composer.taking)) .composer > :not(.slash) { opacity: .5; }
+[data-mode="insert"] .dock .composer { background: var(--band); border-left-color: var(--link); }
+[data-mode="insert"] .dock .composer.bash { border-left-color: var(--bash); }
+
+/* ---------- Claude's questions card ---------- */
+:root { --sel: #DDF4FF; }
+.qa-card { border-bottom: 1px solid var(--line-2); }
+.nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; font-size: 12px; }
+.nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.nd-head .why { color: var(--ink-2); }
+.nd-head .prog { margin-left: auto; color: var(--ink-2); font-size: 11.5px; }
+.qbody { padding: 9px 12.5px 9px; font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; }
+.qbody .qt { margin: 0 0 7px; max-width: 110ch; }
+.opts { display: grid; grid-template-columns: 1.4ch 11px max-content minmax(0, 1fr); column-gap: 1.2ch; row-gap: 1px; margin: 0 0 0 -.6ch; }
+.o { all: unset; box-sizing: border-box; display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline; padding: 2px .6ch; border-radius: 4px; cursor: pointer; }
+.o:hover { background: var(--sub); }
+.o > .k { color: var(--link); font-weight: 700; text-align: right; }
+.o > .l { font-weight: 700; white-space: nowrap; padding-right: 1.4ch; }
+.o > .l .rc-t { display: block; font: 500 10.5px/1.35 var(--sans); color: var(--green); }
+.o > .d { color: var(--ink-3); font-size: 11.5px; max-width: 90ch; }
+.o.on { background: var(--sel); }
+.o.on > .l { color: var(--link); }
+.o.on > .d { color: var(--ink-2); }
+.o.other > .l { font-weight: 400; color: var(--ink-3); }
+.o.other.on > .l { font-weight: 700; color: var(--link); }
+.o.focus { box-shadow: inset 0 0 0 1px #54AEFF; }
+.radio { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; box-sizing: border-box; }
+.o.on > .radio { border-color: var(--link); }
+.o.on > .radio::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--link); }
+.box { width: 11px; height: 11px; border-radius: 2.5px; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; box-sizing: border-box; }
+.o.on > .box { border-color: var(--link); background: var(--link); }
+.o.on > .box::after { content: ""; position: absolute; left: 2.5px; top: 0; width: 3px; height: 6px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.pen { width: 11px; height: 11px; border-radius: 50%; border: 1.5px dashed var(--faint); display: inline-block; vertical-align: -1px; box-sizing: border-box; }
+.o.on > .pen { border-style: solid; border-color: var(--link); background: radial-gradient(circle, var(--link) 0 2px, transparent 2.5px); }
+.nd-foot { display: flex; align-items: center; gap: 14px; padding: 6px 12.5px 7px; font-size: 11px; color: var(--ink-3); }
+.nd-foot .btn { margin-left: auto; }
+.nd-foot .hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.nd-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+/* the read-only card of another process's question (R6.8): rows that don't answer to the pointer */
+.qa-card.ro .o { cursor: default; }
+.qa-card.ro .o:hover { background: none; }
+.waitln b { color: var(--red); }
+
+/* accordion: one line per question, the current one open */
+.acc { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 1.6ch 16ch minmax(0, 1fr); column-gap: 1.2ch; align-items: baseline; width: 100%; padding: 2px .6ch; border-radius: 4px; cursor: pointer; }
+button.acc:hover { background: var(--sub); }
+.acc .hd { font-weight: 700; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acc .ans { color: var(--link); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acc .miss { color: var(--ink-3); }
+.am { text-align: center; color: var(--faint); }
+.am.ok { color: var(--green); } .am.cur { color: var(--link); }
+.acc.open { display: block; cursor: default; margin: 3px 0; padding: 0; }
+.acc-h { display: grid; grid-template-columns: 1.6ch minmax(0, 1fr); column-gap: 1.2ch; padding: 2px .6ch; }
+.acc.open .acc-h .hd { color: var(--link); font-weight: 700; }
+.acc-b { margin-left: calc(2.8ch); padding: 3px 0 6px; }
+.qa-card .qbody > :only-child .acc-b { margin-left: 0; }
+
+.qa-own { font: inherit; font-size: 12px; width: 100%; max-width: 90ch; box-sizing: border-box; border: 1px solid #54AEFF; border-radius: 4px; padding: 1px 6px; background: var(--panel); color: var(--ink); outline: none; box-shadow: 0 0 0 2px #DDF4FF; }
+
+.qbody .cmd { display: block; margin: 0 0 5px; padding: 4px 9px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5px; color: var(--ink); white-space: pre-wrap; max-width: 104ch; font-family: var(--mono); }
+.qbody .cmd .ps { color: var(--ink-3); user-select: none; }
+.qbody .why2 { color: var(--ink-2); margin: 0 0 7px; max-width: 104ch; }
+.qbody .why2 .who { color: var(--ink-3); }
+.qbody .why2.own { color: var(--ink); } /* a call of Synopia's own tool: the line says what it does (R3.15) */
+
+.qnote { display: block; color: var(--ink); font-style: italic; margin-top: 1px; }
+.qa-note { display: block; margin-top: 3px; }
+
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6.5px 11.5px; border-radius: 5.5px; font-weight: 500; display: none; z-index: 10; }
+.toast.show { display: block; }
+
+/* ---------- the integrated title bar (Synopia.app only) ----------
+   The shell sets html.in-app on every load and html.fullscreen in fullscreen.
+   The traffic lights sit in the sidebar's top --titlebar, and the shell's
+   native drag strip covers just that: the sidebar column's top (270px, kept in
+   sync with sidebarWidth in TitleBar.swift). So only the sidebar starts below
+   it; the main area keeps its 9px canvas gap from the window top, as in Slack
+   and Linear, and every click there goes to the page. The shell also sets
+   --titlebar inline to the title bar's measured height (32px on macOS 26). In
+   a browser and in fullscreen it is 0. */
+:root { --titlebar: 0px; }
+html.in-app:not(.fullscreen) { --titlebar: 28px; }
+.app > .side { padding-top: var(--titlebar); }
+/* right under the traffic lights the heading needs less air above it */
+html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
+
+@media (max-width: 990px) {
+  .conv { grid-template-columns: minmax(0, 1fr); }
+  .rail { grid-column: 1; grid-row: auto; max-height: 234px; }
+}
+@media (max-width: 684px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+  .side { max-height: 44vh; }
+  /* the placements set for the Open list would keep two columns: stack the sidebar over the main area */
+  .app > .conv, .open-list { grid-column: 1; grid-row: 2; }
+  .conv { min-height: 90vh; }
+  .c-head { grid-template-columns: 1fr; }
+  .c-acts { grid-row: auto; grid-column: 1; }
+}
+
+</style>
+<style>
+/* ===== app/web/css/dark.css, as in the app; :root[data-theme="dark"] scoped to a frame ===== */
+/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js and theme-switch.js set <html data-theme>:
+   the system's appearance until the switch in the sidebar footer picks one. The layout reads as in the light
+   theme: the sidebar (#22272E, unchanged) stays the darkest surface, the canvas a step lighter, the panels a
+   step lighter again; lines stay 1px; text keeps 4.5:1 or more; the marks take the bright set the dark
+   sidebar already uses (R8.4); red stays for needs you. Every rule is prefixed with .sb-dark.sb-dark,
+   which outranks the light rule it replaces. No transition: the switch is instant. */
+
+/* ---------- the switch: a shaded moon in light mode, a sun in dark mode; no border, no fill, a faint hover tint ---------- */
+.theme-btn { all: unset; box-sizing: border-box; flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: -5px;
+  border-radius: 5.5px; color: #9198A1; cursor: pointer; }
+.theme-btn:hover { background: #2D333B; color: #E6EDF3; }
+.theme-btn:focus-visible { outline: 2px solid #58A6FF; outline-offset: 1px; }
+.theme-btn svg { width: 14px; height: 14px; display: block; overflow: visible; }
+.theme-btn .sun, .sb-dark.sb-dark .theme-btn .moon { display: none; }
+.sb-dark.sb-dark .theme-btn .sun { display: block; }
+
+/* ---------- the palette ---------- */
+.sb-dark.sb-dark {
+  color-scheme: dark;
+  --canvas: #2A3038; --side: #22272E; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+  --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1;
+  --red: #FF7B72; --amber: #E3B341; --green: #56D364; --link: #6CB6FF;
+  --bash: #F778BA; --band: #2C3644;
+  --dot-amber: #E3B341; --dot-green: #3FB950;
+  --add-bg: #2A4234; --del-bg: #482D31; --sel: #1F3B5C; --guide: #606B78;
+  --k-sub: #3FB950; --k-fork: #BC8CFF; --k-shell: #39C5CF; --k-mon: #58A6FF;
+  /* the marks' dark set, as in the sidebar */
+  --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
+  --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66;
+  /* tints used below */
+  --blue-bg: #1F3B5C; --blue-line: #4493F8; --red-bg: #4A2A2D; --red-line: #7A3B3E; --green-bg: #243F2E; --green-line: #2F6B3F;
+  --shadow: 0 7px 21.5px rgba(0, 0, 0, .45);
+}
+/* the marks' own colours everywhere, as .side .ind sets them */
+.sb-dark.sb-dark .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+
+.sb-dark.sb-dark ::selection { background: #264F78; }
+.sb-dark.sb-dark .btn.primary { background: #238636; border-color: #2EA043; color: #FFFFFF; }
+.sb-dark.sb-dark .btn.primary:hover { background: #2EA043; }
+
+/* ---------- sidebar: the open row runs into the dark canvas, so it keeps the dark set too ---------- */
+.sb-dark.sb-dark .side .row[aria-current="true"] { --k-sub: #3FB950; --k-shell: #39C5CF; --k-mon: #58A6FF; --k-fork: #BC8CFF;
+  --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
+  --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
+.sb-dark.sb-dark .side .row[aria-current="true"] .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+.sb-dark.sb-dark .side .row[aria-current="true"] .r-side { border-color: #6E7781; }
+.sb-dark.sb-dark .side .tree .row[aria-current="true"] .tg::before, .sb-dark.sb-dark .side .tree .row[aria-current="true"] .tg::after { border-color: #6E7781; }
+.sb-dark.sb-dark .drop-into { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
+
+/* ---------- transcript ---------- */
+/* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
+.sb-dark.sb-dark .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+.sb-dark.sb-dark .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px var(--blue-bg), 0 0 0 3px var(--blue-line); }
+.sb-dark.sb-dark .log .jump-mark { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+.sb-dark.sb-dark .log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; }
+.sb-dark.sb-dark .md pre { background: var(--sub); }
+
+/* files changed and diffs: tinted rows, a stronger tint in the number gutter */
+.sb-dark.sb-dark .frow .fc[aria-expanded="true"] { background: var(--blue-bg); box-shadow: inset 0 0 0 1px var(--blue-line); }
+.sb-dark.sb-dark .dl.a .no { background: #335240; color: var(--ink-3); }
+.sb-dark.sb-dark .dl.d .no { background: #5A363B; color: var(--ink-3); }
+.sb-dark.sb-dark .dl.d .sg { color: #FF7B72; }
+
+/* ---------- the message panel ---------- */
+.sb-dark.sb-dark .status[data-state="red"] { background: var(--red-bg); border-bottom-color: var(--red-line); }
+.sb-dark.sb-dark .slash { box-shadow: var(--shadow); }
+.sb-dark.sb-dark .slash .it[aria-selected="true"], .sb-dark.sb-dark .ol-it[aria-selected="true"], .sb-dark.sb-dark .fl-it[aria-selected="true"] { background: var(--blue-bg); }
+.sb-dark.sb-dark .thumb-wrap .unattach { color: var(--panel); }
+
+/* needs you: the question card, its options, the own-answer field */
+.sb-dark.sb-dark .nd-head { background: var(--red-bg); border-bottom-color: var(--red-line); }
+.sb-dark.sb-dark .o.focus { box-shadow: inset 0 0 0 1px var(--blue-line); }
+.sb-dark.sb-dark .o.on > .box::after { border-color: var(--panel); }
+.sb-dark.sb-dark .qa-own { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }
+
+/* ---------- the image viewer and the toast ---------- */
+.sb-dark.sb-dark .viewer { background: rgba(42, 48, 56, .94); }
+.sb-dark.sb-dark .viewer img { box-shadow: var(--shadow); }
+.sb-dark.sb-dark .toast { background: #444C58; color: var(--ink); box-shadow: inset 0 0 0 1px #5B6573; }
+.sb-dark.sb-dark .ghost { box-shadow: 0 3px 10px rgba(0, 0, 0, .4); }
+
+/* ---------- the background panel ---------- */
+.sb-dark.sb-dark .main-row[data-state="green"] { background: var(--green-bg); border-color: var(--green-line); }
+.sb-dark.sb-dark .main-row[data-state="red"] { background: var(--red-bg); border-color: var(--red-line); }
+/* the item you're viewing keeps its one 1px ink edge (light ink here) over the state tints */
+.sb-dark.sb-dark .main-row[aria-current="true"] { border-color: var(--ink); }
+.sb-dark.sb-dark .main-row:hover { filter: brightness(1.12); }
+.sb-dark.sb-dark .rv { border-color: #2F5A88; background: #22344A; }
+.sb-dark.sb-dark .rv:hover:not(:has(.rv-done:hover)) { background: #29405A; }
+
+/* ---------- marks and kind tags: the dark tracks under the turning parts ---------- */
+.sb-dark.sb-dark .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
+.sb-dark.sb-dark .kind { --kc: #ADBAC7; --kb: #3A424D; }
+.sb-dark.sb-dark .kd-sub { --kc: #56D364; --kb: #1F3A28; }
+.sb-dark.sb-dark .kd-fork { --kc: #D2A8FF; --kb: #382B54; }
+.sb-dark.sb-dark .kd-shell { --kc: #56D4DD; --kb: #183B3F; }
+.sb-dark.sb-dark .kd-mon { --kc: #79C0FF; --kb: #1C3352; }
+
+/* ---------- the file preview: bat's dark theme comes from the backend; the find marks and change bars here ---------- */
+.sb-dark.sb-dark ::highlight(pv-find) { background-color: #5C4A16; }
+.sb-dark.sb-dark ::highlight(pv-cur) { background-color: #E3B341; color: #1F2328; }
+.sb-dark.sb-dark .pl.chg .no { box-shadow: inset 2px 0 0 #3FB950; }
+.sb-dark.sb-dark .pl.cut .no { background-image: linear-gradient(#FF7B72, #FF7B72); }
+
+</style>
+<style>
+  /* ===== the storyboard page; every class here starts with sb- so none meets an app class ===== */
+  html, body { height: auto; }
+  body { background: #F6F7F9; color: #1F2328; font: 400 14.5px/1.5 var(--sans); }
+  .sb-page { max-width: 1880px; margin: 0 auto; padding: 28px 32px 80px; }
+  .sb-page > header h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -.01em; }
+  .sb-page p.sb-p { margin: 0 0 8px; color: #4B535C; max-width: 92ch; }
+  .sb-part { font-size: 25px; line-height: 1.2; margin: 64px 0 6px; padding-top: 18px; border-top: 1px solid #D0D7DE; }
+  .sb-h { font-size: 19px; line-height: 1.25; margin: 40px 0 4px; }
+  .sb-lede { margin: 0 0 14px; color: #4B535C; max-width: 104ch; }
+  .sb-key { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 20px 0 0; }
+  .sb-key > div { background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; padding: 10px 13px; font-size: 13.5px; color: #4B535C; }
+  .sb-key b { display: block; color: #1F2328; font-size: 15px; margin-bottom: 2px; }
+  .sb-key > div.sb-rec { box-shadow: 0 0 0 2px #0550AE; border-color: transparent; }
+  .sb-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; align-items: start; }
+  .sb-fr { margin: 0; min-width: 0; }
+  .sb-tag { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; font-size: 13.5px; font-weight: 700; }
+  .sb-rtag { font-size: 11.5px; font-weight: 700; color: #fff; background: #0550AE; border-radius: 4px; padding: 0 6px; line-height: 18px; }
+  .sb-fr.sb-rec .sb-crop { box-shadow: 0 0 0 2px #0550AE; }
+  .sb-note { margin: 8px 2px 0; font-size: 13px; color: #4B535C; }
+  .sb-note .sb-y { display: block; font-variant-numeric: tabular-nums; color: #1F2328; }
+  .sb-why { margin: 18px 0 0; padding: 12px 16px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; font-size: 14px; color: #4B535C; max-width: 116ch; }
+  .sb-why b { color: #1F2328; }
+  .sb-why p { margin: 0 0 8px; } .sb-why p:last-child { margin: 0; }
+  ol.sb-qs { margin: 0; padding: 14px 20px 14px 40px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; display: grid; gap: 8px; max-width: 116ch; font-size: 14px; }
+  ol.sb-qs li span { color: #6E7781; }
+  .sb-page code { font-size: .88em; }
+
+  /* the frame: the main area's canvas (9px, as .conv) around the one panel; no sidebar, no background panel */
+  .sb-crop { background: var(--canvas); color: var(--ink); border: 1px solid #D0D7DE; border-radius: 9px; padding: 9px; height: var(--h, 360px);
+    display: flex; flex-direction: column; font: 400 13px/1.5 var(--sans); }
+  .sb-crop.sb-dark { border-color: #22272E; }
+  .sb-crop > .thread { flex: 1 1 0; }
+  /* WKWebView draws overlay scrollbars that take no width; headless Chrome would draw classic ones */
+  .sb-crop .log { scrollbar-width: none; }
+  .sb-crop .log::-webkit-scrollbar { display: none; }
+
+  /* ===== topic 1 variants (the element under review: the live line, .liveln) ===== */
+  /* A. The rule through the line: a 1px rule edge to edge at the text's middle; the mark and the label sit on it */
+  .w-a .log-inner > .liveln { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 16px; }
+  .w-a .log-inner > .liveln::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--log-font) * var(--log-lh) / 2 - .5px); height: 1px; background: var(--line); }
+  .w-a .log-inner > .liveln > .g { background: var(--panel); box-shadow: -5px 0 0 var(--panel); }
+  .w-a .log-inner > .liveln > :not(.g) { position: relative; }
+  .w-a .log-inner > .liveln summary, .w-a .log-inner > .liveln > div { display: inline; background: var(--panel); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+  .w-a .log-inner > .liveln > details { display: inline; }
+  /* B. A rule under the line: 1px, edge to edge, halfway into the 11px gap below it; it takes no space */
+  .w-b .log-inner > .liveln { position: relative; }
+  .w-b .log-inner > .liveln::after { content: ""; position: absolute; left: -16px; right: -16px; bottom: -6px; height: 1px; background: var(--line); }
+  /* C. The line in a quiet band: the --sub tone edge to edge, 1px lines above and below, the band's 3.5px padding */
+  .w-c .log-inner > .liveln { margin-left: -16px; margin-right: -16px; padding: 3.5px 16px; background: var(--sub); box-shadow: inset 0 1px 0 var(--line-2), inset 0 -1px 0 var(--line-2); }
+
+  /* ===== topic 2 variants (the element under review: the command and its output, .step-out) ===== */
+  /* A. The command on the ! band, as a bash-mode command; the output plain under the guide, in --ink-3 as .bang-res */
+  .s-a .ln.tool .step-out .cmd { position: relative; background: var(--band); border-left: 2.5px solid var(--bash); color: var(--ink);
+    margin: 3.5px -16px 2px calc(-16px - 2ch); padding: 3.5px 16px 3.5px calc(13.5px + 2ch); }
+  .s-a .ln.tool .step-out .cmd::before { content: "!"; position: absolute; left: 13.5px; top: 3.5px; color: var(--bash); font-weight: 700; }
+  .s-a .step-out .out:not(.err) { color: var(--ink-3); }
+  /* B. $ and ink for the command, as the permission card's .cmd .ps; the output in --ink-3 with the drawn guide run down its whole height */
+  .s-b .step-out .cmd { color: var(--ink); padding-left: 2ch; text-indent: -2ch; }
+  .s-b .step-out .cmd::before { content: "$ "; color: var(--ink-3); }
+  .s-b .step-out .out:not(.err) { color: var(--ink-3); }
+  .s-b .step-out .res:has(> .out:not(.err)) > .lcorner { align-self: stretch; height: auto; min-height: 7px; margin: 2px 0 8px 3px; }
+  /* C. The output in its own subtle panel, as a markdown code block (.md pre); the command in ink */
+  .s-c .step-out .cmd { color: var(--ink); }
+  .s-c .step-out .out:not(.err) { display: block; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
+
+  @media (max-width: 1300px) { .sb-row, .sb-key { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 760px) { .sb-row, .sb-key { grid-template-columns: minmax(0, 1fr); } .sb-page { padding: 18px 14px 60px; } }
+</style>
+</head>
+<body>
+<div class="sb-page">
+  <header>
+    <h1>The Working line as a divider, and commands apart from their output</h1>
+    <p class="sb-p">Two questions, each drawn as today and as three variants. In every frame only the element under review changes: the Working line in part 1, a command and its output in part 2. The header, the transcript, the bands, the message box and the marks are the app's own CSS and markup. The marks that run keep moving.</p>
+  </header>
+
+  <!-- ==================================================================== -->
+  <h2 class="sb-part">1. The Working line as the divide between Claude's work and yours</h2>
+  <p class="sb-p">While a turn runs, the transcript ends with the moving agent mark and "Working Bash(…)". Under it wait your queued messages, each a <code>❯</code> band with a still clock, at half opacity. Then the message box, under its 1px line. The idea: let the Working line read as the line between what Claude is doing and what waits for it.</p>
+  <div class="sb-key">
+    <div><b>Today</b>The live line is a transcript line like the others. The queued bands and the box sit under it with no divide of their own.</div>
+    <div class="sb-rec"><b>A. Rule through the line</b>A 1px rule runs edge to edge through the middle of the live line. The mark and "Working Bash(…)" sit on it and break it. It takes no extra space.</div>
+    <div><b>B. Rule under the line</b>Today's live line, with a 1px rule edge to edge halfway into the gap below it. It takes no extra space.</div>
+    <div><b>C. Quiet band</b>The live line on a band of the quiet <code>--sub</code> tone, edge to edge, with 1px lines above and below. It is 7px taller than today's line.</div>
+  </div>
+
+  <h3 class="sb-h">Idle</h3>
+  <p class="sb-lede">The turn has ended with "Worked for". There is no live line, so no divider: the four frames are the same.</p>
+  <div class="sb-row" id="t1-idle"></div>
+
+  <h3 class="sb-h">Running, nothing queued</h3>
+  <p class="sb-lede">Claude is running the upload specs. The divider has nothing under it but the box.</p>
+  <div class="sb-row" id="t1-run"></div>
+
+  <h3 class="sb-h">Running, two queued and a draft</h3>
+  <p class="sb-lede">You sent two messages while the specs run, and are typing a third in insert mode.</p>
+  <div class="sb-row" id="t1-queue"></div>
+
+  <h3 class="sb-h">Scrolled up</h3>
+  <p class="sb-lede">The same moment, scrolled up 70px, so the queue goes under the box. The live line and the queue are the transcript's end and scroll with it, as today; nothing is pinned.</p>
+  <div class="sb-row" id="t1-up"></div>
+
+  <h3 class="sb-h">Claude takes a queued message</h3>
+  <p class="sb-lede">At its next step Claude takes your first queued message. The top row is just before, the bottom row just after. Under each frame: each line's top, in pixels above the box's line.</p>
+  <div class="sb-row" id="t1-before"></div>
+  <div class="sb-row" id="t1-after" style="margin-top:14px"></div>
+  <div class="sb-why">
+    <p><b>Where the taken message lands.</b> Today it stays where it waited, under the live line, at full strength (R5.5): only the clock turns into <code>❯</code>, and nothing moves.</p>
+    <p>With a divider, a message under the line would still read as waiting. So in A, B and C the taken band goes above the line, where Claude's work is. The band and the line swap places: the band moves up by the line's height plus the gap, and the line moves down by the band's height plus the gap. Their total height is the same, so the lines above and the queued band below stay put. The swap could run as a layout tween at the send tween's 180 ms.</p>
+  </div>
+
+  <h3 class="sb-h">Dark mode, A</h3>
+  <p class="sb-lede">The rule takes the dark <code>--line</code>; the label's break in it is the dark panel.</p>
+  <div class="sb-row" id="t1-dark"></div>
+
+  <div class="sb-why">
+    <p><b>Recommended: A, the rule through the line.</b> It is the only variant where the live line itself is the divider: the moving mark and "Working Bash(…)" label the line, so the divide says what is on Claude's side. It takes no space and moves nothing. Today's line, the mark and the label stay where they are, and the mark keeps its place in the gutter, where every <code>●</code> sits.</p>
+    <p>B puts a second element under the line, so the divider and its label are two things, and with nothing queued its full-width rule sits 12px above the box's line, like a doubled line. C reads as a band, and bands mean messages: on light it sits next to your <code>❯</code> bands in nearly the same grey, and it adds 7px when a turn starts.</p>
+  </div>
+  <h3 class="sb-h">Open questions for part 1</h3>
+  <ol class="sb-qs">
+    <li>Should the taken band hop above the line, as drawn, or stay under it, as today, with the line moving only when Claude writes after it? <span>Staying is stiller; hopping keeps everything under the line "not yet Claude's".</span></li>
+    <li>With nothing queued, should A's rule show at all, or only the mark and label as today? <span>Showing it always keeps one look for the live line; hiding it avoids two lines close together above the box.</span></li>
+    <li>Should A's rule also carry the other live words, such as Compacting, Rate limited and No updates, and a subagent's live line in its own view?</li>
+  </ol>
+
+  <!-- ==================================================================== -->
+  <h2 class="sb-part">2. Shell view: the command apart from its output</h2>
+  <p class="sb-p">A background shell or monitor opened in the main pane shows its header, then the log: the <code>Bash(…)</code> or <code>Monitor(…)</code> line, the command, its whole output under the drawn guide, then "Running" with the moving mark or how it ended. Today the command and the output are the same grey (<code>--ink-2</code>), so a long command runs into its output. Each variant applies to every place a command shows: the shell view, Claude's Bash step opened in the main transcript, and its output under a <code>!</code> command.</p>
+  <div class="sb-key">
+    <div><b>Today</b>The command, then the output under the drawn corner, both in <code>--ink-2</code>.</div>
+    <div><b>A. The ! band</b>The command on bash mode's band: the band's fill, the pink edge and <code>!</code>. The output in <code>--ink-3</code>, as under a <code>!</code> command.</div>
+    <div class="sb-rec"><b>B. $ prompt and a guide</b>The command after a grey <code>$</code>, as on the permission card, in ink. The output in <code>--ink-3</code>; the drawn corner runs down its whole height.</div>
+    <div><b>C. Output panel</b>The command in ink. The output in its own subtle panel, as a code block in Claude's text.</div>
+  </div>
+
+  <h3 class="sb-h">A short command, running</h3>
+  <p class="sb-lede">The demo server, started four minutes ago.</p>
+  <div class="sb-row" id="t2-short"></div>
+
+  <h3 class="sb-h">A three-line command, finished with exit code 0</h3>
+  <div class="sb-row" id="t2-multi"></div>
+
+  <h3 class="sb-h">Long output, at the top: "Show earlier output"</h3>
+  <p class="sb-lede">The full suite has printed more than 64 KB. Scrolled to the top, the link to the earlier part is first.</p>
+  <div class="sb-row" id="t2-long"></div>
+
+  <h3 class="sb-h">Finished with exit code 1</h3>
+  <div class="sb-row" id="t2-fail"></div>
+
+  <h3 class="sb-h">A monitor</h3>
+  <p class="sb-lede">Its output is events, one per line, each one Claude hears.</p>
+  <div class="sb-row" id="t2-mon"></div>
+
+  <h3 class="sb-h">The same rule in the main transcript</h3>
+  <p class="sb-lede">Your <code>!</code> command, then Claude's Bash step opened. The variant changes both outputs and Claude's command; your <code>!</code> band stays as it is.</p>
+  <div class="sb-row" id="t2-main"></div>
+
+  <h3 class="sb-h">Dark mode, B</h3>
+  <div class="sb-row" id="t2-dark"></div>
+
+  <div class="sb-why">
+    <p><b>Recommended: B, the <code>$</code> prompt and the guide.</b> It uses signs the app already has. <code>$</code> is how the permission card shows a command Claude wants to run, and the <code>!</code> band stays the sign for a command you ran. Output in <code>--ink-3</code> is how output under a <code>!</code> already reads. The corner that runs down the output's whole height is the drawn guide the transcript uses everywhere, so the output hangs from its command by shape, not only by colour. The result is one way to show a shell command: <code>$</code> for Claude's, <code>!</code> for yours, the output under the same guide.</p>
+    <p>A puts Claude's command on your band, so a command Claude ran would read as one you typed. C adds a new surface, and a 1px box around every output is heavy in a long log; Claude's code blocks would then look like command output.</p>
+  </div>
+  <h3 class="sb-h">Open questions for part 2</h3>
+  <ol class="sb-qs">
+    <li>Should a monitor's events get their own sign, such as each line's time of arrival, since they are what Claude hears and not a command's stdout? <span>The view has no arrival times today; this would need the backend to keep them.</span></li>
+    <li>Should B's command be bold, for a stronger split, or stay regular, as drawn, so the tool line's bold name stays the one bold thing?</li>
+    <li>Should stderr keep its red text and 1px red rule under B's guide, as today, now that the output itself has a rule at its left?</li>
+  </ol>
+</div>
+
+<script>
+/* the marks, as js/marks.js MARKS (copied by the build) */
+const M = {"work":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-C6E9D0)\" stroke-width=\"1.8\"/><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-1A7F37)\" stroke-width=\"1.8\" pathLength=\"4\" stroke-dasharray=\"1.6 2.4\" class=\"rot\" style=\"--d:var(--mark-period)\"/><circle cx=\"6\" cy=\"6\" r=\"1.8\" fill=\"var(--mk-1A7F37)\"/></svg>"],"queued":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-C6E9D0)\" stroke-width=\"1.8\"/><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-1A7F37)\" stroke-width=\"1.8\" pathLength=\"4\" stroke-dasharray=\"1.6 2.4\" class=\"rot\" style=\"--d:var(--mark-period)\"/><circle cx=\"6\" cy=\"6\" r=\"1.8\" fill=\"var(--mk-0550AE)\"/></svg>"],"waiting":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-0550AE)\" stroke-width=\"1.4\"/><path d=\"M6 3.3V6l1.9 1.3\" stroke=\"var(--mk-0550AE)\" stroke-width=\"1.4\"/></svg>"],"s_agent":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-1A7F37)\" stroke-width=\"1.8\"/><circle cx=\"6\" cy=\"6\" r=\"1.8\" fill=\"var(--mk-1A7F37)\"/></svg>"],"k_shell":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M1.8 3.2 5 6 1.8 8.8\" stroke=\"var(--mk-0B7A82)\" stroke-width=\"1.8\"/><line x1=\"6.4\" y1=\"9.5\" x2=\"10.6\" y2=\"9.5\" stroke=\"var(--mk-B6E0E3)\" stroke-width=\"1.9\"/><line x1=\"6.4\" y1=\"9.5\" x2=\"10.6\" y2=\"9.5\" stroke=\"var(--mk-0B7A82)\" stroke-width=\"1.9\" class=\"bounce\"/></svg>"],"k_mon":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-0E6BA8)\" stroke-width=\"1.4\"/><g class=\"rot\" style=\"--d:var(--mark-watch)\"><path d=\"M6 6H1.9A4.1 4.1 0 0 1 6 1.9Z\" fill=\"var(--mk-0E6BA8)\" fill-opacity=\".28\" stroke=\"none\"/><line x1=\"6\" y1=\"6\" x2=\"6\" y2=\"2.6\" stroke=\"var(--mk-0E6BA8)\" stroke-width=\"1.6\"/></g></svg>"],"done":["","<i class=\"chk\"></i>"],"failed":["","<svg class=\"k\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><rect x=\"2.3\" y=\"2.3\" width=\"7.4\" height=\"7.4\" rx=\"1.1\" fill=\"var(--red)\"/></svg>"]};
+const ind = k => `<span class="ind ${M[k][0]}" role="img" aria-hidden="true">${M[k][1]}</span>`;
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+/* ---------- markup, as transcript.js and bg-view.js write it ---------- */
+const band = body => `<div class="prompt"><span class="g">❯</span><div class="md">${body}</div></div>`;
+const qpin = list => list.length ? `<div class="qpin">${list.map(b => `<div class="prompt qc"><span class="g">${ind("waiting")}</span><div class="md">${b}</div></div>`).join("")}</div>` : "";
+const claude = md => `<div class="ln claude"><span class="g">●</span><div class="md">${md}</div></div>`;
+const tool = (name, obj, state = "done") => `<div class="ln tool ${state}"><span class="g">●</span><details class="step"><summary><span class="name">${name}</span>(${esc(obj)})${state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running</span></div>` : ""}</summary></details></div>`;
+const plainTool = (name, obj) => `<div class="ln tool done"><span class="g">●</span><div><span class="name">${name}</span>(${esc(obj)})</div></div>`;
+const liveLn = (mark, what) => `<div class="ln liveln" data-state="green"><span class="g">${ind(mark)}</span><details class="step live"><summary><b>Working</b> <span class="dim">${esc(what)}</span></summary></details></div>`;
+const doneLn = txt => `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>${txt}</div></div>`;
+const res = (html, cls = "", first = false) => `<div class="res${cls ? " " + cls : ""}">${first ? `<span class="lcorner" aria-hidden="true"></span>` : "<span></span>"}${html}</div>`;
+/* runView: the command on top, then the output rows under the corner */
+const runView = ({ input = "", out = null, err = "", running = false, exit = null }) => {
+  const rows = [];
+  if (out) rows.push([`<span class="out">${esc(out)}</span>`, ""]);
+  if (err) rows.push([`<span class="out err">${esc(err)}</span>`, ""]);
+  const after = [];
+  if (running) after.push([`<span class="run">Running</span>`, "running"]);
+  else if (exit !== null && +exit !== 0) after.push([`<span>Exit code ${esc(exit)}</span>`, "failed"]);
+  const all = [...rows, ...after];
+  return `<div class="step-out${running ? " running" : ""}">${input ? `<div class="cmd">${esc(input)}</div>` : ""}${all.map(([h, c], i) => res(h, c, i === 0)).join("")}</div>`;
+};
+const bang = (cmd, out) => `<div class="bang"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(cmd)}</div></div><div class="bang-res">${runView({ out })}</div></div>`;
+const openStep = (name, obj, input, out) => `<div class="ln tool done"><span class="g">●</span><details class="step" open><summary><span class="name">${name}</span>(${esc(obj)})</summary>${runView({ input, out })}</details></div>`;
+/* bg-view.js bgLogEntries: earlier, the run, then the live line or the end line */
+const bgRun = ({ tool = "Bash", desc, cmd, out, running, earlier = "", live = "", end = "", endMark = "done", failed = false }) =>
+  (earlier ? `<p class="earlier"><button data-earlier>Show earlier output</button> (${earlier})</p>` : "")
+  + `<div class="ln tool bg-run ${running ? "running" : "done"}"><span class="g">●</span><div><span class="name">${tool}</span>(${esc(desc)})${runView({ input: cmd, out })}</div></div>`
+  + (running ? `<div class="ln liveln" data-state="green"><span class="g">${ind(tool === "Monitor" ? "k_mon" : "k_shell")}</span><div><b>Running</b> <span class="dim">${live}</span></div></div>`
+    : `<div class="ln doneln bg-end${failed ? " failed" : ""}"><span class="g">${ind(endMark)}</span><div>${end}</div></div>`);
+
+/* ---------- the header, as renderHeader and bgHeaderHTML write it ---------- */
+const TITLE = "Fix the flaky upload test";
+const acts = `<div class="c-acts"><button class="btn quiet model-btn" title="Change the model (same as /model)">Opus</button></div>`;
+const mainHead = now => `<h2 class="c-title" title="${TITLE}">${TITLE}</h2><p class="c-now">${now ? `Now: ${now}` : "&nbsp;"}</p><p class="c-meta">Folder <span class="mono">~/dev/harbor</span>, PRs #212.</p>${acts}`;
+const bgHead = (title, now, mon) => `<h2 class="c-title" title="${title}">${title}</h2><p class="c-now">${now}</p><p class="c-meta">${mon ? "Claude hears each event. Monitor" : "Claude hears when it ends. Shell"} in <button class="link" data-back title="Back to the main conversation">‹ ${TITLE}</button></p>${acts}`;
+
+const dock = ph => `<div class="dock"><div class="dock-inner"><div class="composer"><div class="slash" hidden></div><div class="attach" style="grid-column:2"></div><span class="g">❯</span><textarea rows="1" aria-label="Message" readonly placeholder="${esc(ph)}"></textarea></div></div></div>`;
+const noDock = `<div class="dock nobox"><div class="dock-inner"><div class="composer noinput"><span class="g">❯</span></div></div></div>`;
+
+const frame = ({ v = "", mode = "normal", head, log, dk, h = 360, scroll = "end", draft = "", dark = false }) =>
+  `<div class="sb-crop ${v}${dark ? " sb-dark" : ""}" data-mode="${mode}" style="--h:${h}px"><div class="thread panel"><header class="c-head">${head}</header><div class="log" data-scroll="${scroll}"><div class="log-inner">${log}</div></div>${dk}</div></div>`
+  .replace("</textarea>", `${esc(draft)}</textarea>`);
+const fig = (tag, html, note = "", rec = false, measure = false) =>
+  `<figure class="sb-fr${rec ? " sb-rec" : ""}"${measure ? " data-measure" : ""}><figcaption class="sb-tag">${tag}${rec ? ` <span class="sb-rtag">Recommended</span>` : ""}</figcaption>${html}${note || measure ? `<p class="sb-note">${note}</p>` : ""}</figure>`;
+const put = (id, html) => { document.getElementById(id).innerHTML = html; };
+
+/* ---------- topic 1: the conversation (invented) ---------- */
+const P1 = "<p>The upload spec fails about one run in five on CI. Find out why and fix it.</p>";
+const C1 = "<p>The retry in <code>uploadChunk</code> doesn't wait for the previous attempt's socket to close, so two attempts can write the same part.</p>";
+const C2 = "<p>I'll wait for the close before each retry, then run the upload specs.</p>";
+const Q1 = "<p>Also check the resume path, it uses the same retry.</p>";
+const Q2 = "<p>Keep the 30s timeout as it is.</p>";
+const DRAFT = "When it's green, open a draft PR against main";
+const START = band(P1) + claude(C1) + plainTool("Read", "src/upload/retry.ts") + claude(C2) + plainTool("Edit", "src/upload/retry.ts");
+const RUN = START + tool("Bash", "npx vitest run test/upload", "running");
+const IDLE = START + plainTool("Bash", "npx vitest run test/upload") + claude("<p>The specs pass 40 runs in a row. The fix waits for the socket's <code>close</code> event before a retry.</p>") + doneLn("Worked for 3m, done 2:14 PM");
+const PH = `Message ${TITLE}, / for commands`, PHQ = n => `${n} waiting for Claude's next step`;
+const LIVE = (m = "work") => liveLn(m, "Bash(npx vitest run test/upload)");
+const V1 = [["", "Today"], ["w-a", "A. Rule through the line"], ["w-b", "B. Rule under the line"], ["w-c", "C. Quiet band"]];
+const H1 = mainHead("Running the upload specs");
+const row1 = (id, mk, notes = []) => put(id, V1.map(([v, t], i) => fig(t, frame({ v, ...mk(v) }), notes[i] || "", v === "w-a", id === "t1-before" || id === "t1-after")).join(""));
+
+row1("t1-idle", () => ({ head: mainHead(""), log: IDLE, dk: dock(PH) }));
+row1("t1-run", () => ({ head: H1, log: RUN + LIVE(), dk: dock(PH) }),
+  ["", "The rule ends the transcript; the box's own line is 21px below it.", "With nothing queued, the rule sits 12px over the box's line.", ""]);
+row1("t1-queue", () => ({ head: H1, mode: "insert", log: RUN + LIVE("queued") + qpin([Q1, Q2]), dk: dock(PHQ(2)), draft: DRAFT }),
+  ["The mark's centre turns blue while a message waits.", "Over the rule: Claude's. Under it: the queue and your draft.", "", ""]);
+row1("t1-up", () => ({ head: H1, mode: "insert", log: RUN + LIVE("queued") + qpin([Q1, Q2]), dk: dock(PHQ(2)), draft: DRAFT, scroll: "up:70" }));
+row1("t1-before", () => ({ head: H1, log: RUN + LIVE("queued") + qpin([Q1, Q2]), dk: dock(PHQ(2)) }));
+row1("t1-after", v => ({ head: H1, log: RUN + (v ? band(Q1) + LIVE("queued") : LIVE("queued") + band(Q1)) + qpin([Q2]), dk: dock(PHQ(1)) }));
+put("t1-dark", [
+  fig("Running, nothing queued", frame({ v: "w-a", dark: true, head: H1, log: RUN + LIVE(), dk: dock(PH) }), "", true),
+  fig("Two queued and a draft", frame({ v: "w-a", dark: true, mode: "insert", head: H1, log: RUN + LIVE("queued") + qpin([Q1, Q2]), dk: dock(PHQ(2)), draft: DRAFT })),
+  fig("A message taken", frame({ v: "w-a", dark: true, head: H1, log: RUN + band(Q1) + LIVE("queued") + qpin([Q2]), dk: dock(PHQ(1)) })),
+  fig("Idle", frame({ v: "w-a", dark: true, head: mainHead(""), log: IDLE, dk: dock(PH) })),
+].join(""));
+
+/* ---------- topic 2: background shells and a monitor (invented) ---------- */
+const V2 = [["", "Today"], ["s-a", "A. The ! band"], ["s-b", "B. $ prompt and a guide"], ["s-c", "C. Output panel"]];
+const row2 = (id, mk, h = 360) => put(id, V2.map(([v, t]) => fig(t, frame({ v, h, ...mk(v) }), "", v === "s-b")).join(""));
+const DEV_OUT = "> harbor@0.9.2 dev\n> vite --port 5173\n\n  VITE v6.2.0  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n  ➜  Network: use --host to expose\n  12:04:51 PM [vite] page reload src/upload/retry.ts";
+const short = { head: bgHead("Serve the demo", `Running, 4m 07s. Background shell, started 2:01 PM.`), dk: noDock,
+  log: bgRun({ desc: "Serve the demo", cmd: "npm run dev", out: DEV_OUT, running: true, live: "4m 07s" }) };
+const MULTI = "npm run build \\\n  && du -sh dist \\\n  && ls dist/assets | wc -l";
+const multi = { head: bgHead("Build and size the bundle", `Finished, 1m. Background shell, started 2:08 PM.`), dk: noDock,
+  log: bgRun({ desc: "Build and size the bundle", cmd: MULTI, out: "> harbor@0.9.2 build\n> vite build\n\n✓ 412 modules transformed.\ndist/index.html                0.46 kB\ndist/assets/index-4f2a.css    18.20 kB\ndist/assets/index-9c1e.js    241.73 kB\n✓ built in 3.91s\n2.4M\tdist\n       7", running: false, end: `Finished after 1m, 2:09 PM. Background command "Build and size the bundle" completed (exit code 0)` }) };
+const SUITE = ["auth/login", "auth/session", "auth/tokens", "billing/invoice", "billing/refund", "files/preview", "files/rename", "search/index", "search/query", "upload/chunk", "upload/resume", "upload/retry", "workspace/invite"].map((f, i) => ` ✓ test/${f}.test.ts (${(i * 7) % 11 + 3} tests) ${120 + i * 37}ms`).join("\n");
+const long = { head: bgHead("Run the full test suite", `Running, 6m 40s. Background shell, started 2:05 PM.`), dk: noDock, scroll: "top",
+  log: bgRun({ desc: "Run the full test suite", cmd: "npx vitest run --reporter=verbose", earlier: "48 KB more", out: SUITE, running: true, live: "6m 40s" }) };
+const FAIL_OUT = " RUN  v3.0.5 ~/dev/harbor\n\n ❯ test/upload/retry.test.ts (6 tests | 1 failed) 1204ms\n   × retries a dropped chunk once 1002ms\n     → expected 2 parts, got 3\n\n Test Files  1 failed (1)\n      Tests  1 failed | 5 passed (6)";
+const fail = { head: bgHead("Run the upload specs", `Failed, 41s. Background shell, started 2:11 PM.`), dk: noDock,
+  log: bgRun({ desc: "Run the upload specs", cmd: "npx vitest run test/upload", out: FAIL_OUT, running: false, failed: true, endMark: "failed", end: `Failed after 41s, 2:12 PM. Background command "Run the upload specs" failed with exit code 1` }) };
+const EVENTS = "[14:01:12] web-1 ready in 8.2s\n[14:03:40] web-2 ready in 7.9s\n[14:05:02] ERROR web-3 health check timed out after 30s\n[14:05:33] web-3 ready in 31.4s\n[14:07:18] web-4 ready in 8.0s\n[14:09:51] ERROR web-5 image pull failed: harbor:0.9.2 not found\n[14:10:20] web-5 ready in 9.6s";
+const mon = { head: bgHead("Watch the deploy log", `Running, 12m 30s. Monitor, started 1:58 PM.`, true), dk: noDock,
+  log: bgRun({ tool: "Monitor", desc: "Watch the deploy log", cmd: `tail -f /var/log/harbor/deploy.log | grep --line-buffered -E "ERROR|ready"`, out: EVENTS, running: true, live: "12m 30s, 7 events" }) };
+const MAIN2 = band("<p>Check what changed, then run the retry specs.</p>") + bang("git status --short", " M src/upload/retry.ts\n M test/upload/retry.test.ts\n?? notes.md")
+  + claude("<p>Two files changed. Running the retry specs.</p>")
+  + openStep("Bash", "npx vitest run test/upload/retry.test.ts", "npx vitest run test/upload/retry.test.ts", " ✓ test/upload/retry.test.ts (6 tests) 1180ms\n\n Test Files  1 passed (1)\n      Tests  6 passed (6)")
+  + doneLn("Worked for 52s, done 2:20 PM");
+const main2 = { head: mainHead(""), log: MAIN2, dk: dock(PH), scroll: "top" };
+row2("t2-short", () => short, 440);
+row2("t2-multi", () => multi, 500);
+row2("t2-long", () => long);
+row2("t2-fail", () => fail, 460);
+row2("t2-mon", () => mon, 440);
+row2("t2-main", () => main2, 440);
+put("t2-dark", [
+  fig("A short command, running", frame({ v: "s-b", dark: true, h: 440, ...short }), "", true),
+  fig("Exit code 1", frame({ v: "s-b", dark: true, h: 460, ...fail })),
+  fig("A monitor", frame({ v: "s-b", dark: true, h: 440, ...mon })),
+  fig("The main transcript", frame({ v: "s-b", dark: true, h: 440, ...main2 })),
+].join(""));
+
+/* ---------- scroll each log as its frame says, then measure the "taken" frames ---------- */
+function settle() {
+  document.querySelectorAll(".sb-crop .log").forEach(l => {
+    const s = l.dataset.scroll, end = l.scrollHeight - l.clientHeight;
+    l.scrollTop = s === "top" ? 0 : s.startsWith("up:") ? end - +s.slice(3) : end;
+  });
+  document.querySelectorAll("[data-measure]").forEach(f => {
+    const log = f.querySelector(".log"), base = log.getBoundingClientRect().bottom;
+    const y = el => Math.round(base - el.getBoundingClientRect().top);
+    const items = [[f.querySelector(".ln.tool.running"), "Bash line"], ...[...f.querySelectorAll(".log-inner > .liveln, .log-inner > .prompt, .qpin > .prompt")].filter(e => e.getBoundingClientRect().top >= log.getBoundingClientRect().top).map(e =>
+      [e, e.classList.contains("liveln") ? "Working line" : e.classList.contains("qc") ? "queued band" : "your taken band"])];
+    f.querySelector(".sb-note").innerHTML = items.map(([e, n]) => `<span class="sb-y">${n}: ${y(e)} px</span>`).join("");
+  });
+}
+document.fonts.ready.then(settle);
+</script>
+</body>
+</html>

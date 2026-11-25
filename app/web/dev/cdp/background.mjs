@@ -4,10 +4,11 @@
 // Checks: the first b marks the steps that can go (a foreground Bash, a foreground Agent; not a background
 // one) and turns the message box into the prompt; another key, a click or the turn ending cancels it; the
 // second b sends `background {sid}`; Esc and b replace each other's prompt; nothing in a session Synopia
-// doesn't drive; b types in insert mode. Writes background-asking.png.
+// doesn't drive; b types in insert mode; a step the live line names is marked there only, not on its group
+// row, also expanded and when the live line re-renders. Writes background-asking.png and background-live.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, fresh, keyTable, spySent, writeScript, running } from './helpers.mjs';
+import { records, fresh, keyTable, spySent, writeScript, running, shot } from './helpers.mjs';
 
 const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: Synopia's process runs its turn
 const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its turn runs in another process (the transcript)
@@ -83,6 +84,36 @@ await K.j();
 check('j cancels it, nothing sent', (await asking()) === null && (await sent()).length === 1);
 await K.esc(); await K.l();
 check('Esc then l:the interrupt prompt alone, still nothing sent', (await asking()) === null && (await sent()).length === 1);
+
+// the live line names a foreground Bash (the newest step, in a group with a finished Read): the mark is on
+// the live line only, not on the group row holding it; the earlier Bash and the subagent the live line
+// doesn't name keep theirs where they are shown
+const step = (o) => `(s => { const b = s.items.find(i => i.id === 'toolu_bsleep'); return { ...b, ...${JSON.stringify(o)} }; })(__synopia.cur())`;
+const addLive = (o = {}) => ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total + ['toolu_bread', 'toolu_blive'].filter(id => !s.items.some(i => i.id === id)).length, upsert: [${step({ id: 'toolu_bread', name: 'Read', verb: 'Read', obj: 'README.md', state: 'done', fg: false })}, ${step({ id: 'toolu_blive', obj: 'npm run build', ...o })}] }))(__synopia.cur())`);
+await addLive();
+await c.until(`!!document.querySelector('#log .liveln') && /Bash\\(npm run build\\)/.test(document.querySelector('#log .liveln').textContent)`);
+const where = () => ev(`(() => { const g = document.querySelector('#log [data-key="run:toolu_bread"]'), sum = g?.querySelector('details.fold > summary'); return {
+  live: document.querySelector('#log .liveln')?.hasAttribute('data-fg'), group: !!g && (sum.hasAttribute('data-fg') || !!g.querySelector('[data-fg]')),
+  sleep: !!document.querySelector('#log .ln.tool[data-fg]:not(.liveln)') && /sleep 40/.test(document.querySelector('#log .ln.tool[data-fg]:not(.liveln)').textContent), agent: !!document.querySelector('#log .wgrid [data-fg]'),
+  n: document.querySelectorAll('#log [data-fg]').length }; })()`);
+const w0 = await where();
+check('live line names the foreground Bash: the mark is on the live line, not its group row', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 3, JSON.stringify(w0));
+await K.b();
+check('first b: the prompt, the live line ringed', (await asking()) === PROMPT && (await ev(`(cs => /0px 0px 0px 4px/.test(cs.boxShadow))(getComputedStyle(document.querySelector('#log .liveln')))`)) === true);
+const m2 = await marked();
+check('first b: three steps marked once each, the live line one of them', m2.length === 3 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Working/.test(m2[2]), JSON.stringify(m2));
+await ev(`document.querySelector('#log [data-key="run:toolu_bread"] details.fold').open = true`);
+const w1 = await where();
+check('the group expanded: its row of that step is not marked, the live line still is', w1.live === true && w1.group === false && (await ev(`!!document.querySelector('#log [data-key="run:toolu_bread"] details.fold[open]')`)), JSON.stringify(w1));
+await addLive({ obj: 'npm run build:all' }); // the live line re-renders under the prompt
+await c.until(`/build:all/.test(document.querySelector('#log .liveln')?.textContent || '')`);
+const w2 = await where();
+check('the live line re-rendered under the prompt: it keeps the mark, the prompt stays', w2.live === true && w2.group === false && (await asking()) === PROMPT && (await marked()).length === 3, JSON.stringify(w2));
+await shot(c, path.join(stateDir, 'background-live.png'));
+await K.l();
+check('another key: the live line loses its ring too', (await asking()) === null && (await marked()).length === 0 && (await ev(`getComputedStyle(document.querySelector('#log .liveln')).boxShadow`)) === 'none');
+await addLive({ state: 'done', fg: false }); // the step ends: the live line names nothing
+check('the step done: the live line carries no mark', await c.until(`!document.querySelector('#log .liveln')?.hasAttribute('data-fg')`));
 
 // the turn ending, or the steps going to the background some other way, cancels it
 await K.b();

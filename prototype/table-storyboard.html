@@ -1,0 +1,288 @@
+<!-- Design history, not the spec: where this storyboard differs from docs/requirements.md (R5.10 markdown), the requirements win. All data in it is invented. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: tables in Claude's replies, storyboard</title>
+<style>
+  /* the app's own fonts, as app.css loads them */
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 400; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 700; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono NL"; font-weight: 400; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf") format("truetype"); }
+  @font-face { font-family: "JetBrains Mono NL"; font-weight: 700; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf") format("truetype"); }
+  /* the palette, as app.css :root */
+  :root {
+    --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F; --link: #0550AE;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --log-font: 12px; --log-lh: 1.45;
+  }
+  /* dark mode, as css/dark.css */
+  .dark {
+    --canvas: #2A3038; --side: #22272E; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+    --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1; --link: #6CB6FF;
+    color: var(--ink);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F6F7F9; color: #1F2328; font: 400 14.5px/1.5 var(--sans); }
+  :focus-visible { outline: 2px solid #0550AE; outline-offset: 2px; }
+
+  .page { max-width: 1840px; margin: 0 auto; padding: 28px 32px 80px; }
+  header.top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 6px; letter-spacing: -.01em; }
+  header.top p { margin: 0 0 6px; color: #4B535C; max-width: 92ch; }
+  h2 { font-size: 21px; margin: 52px 0 4px; line-height: 1.25; display: flex; align-items: center; gap: 10px; }
+  h2 + .lede { margin: 0 0 14px; color: #4B535C; max-width: 104ch; }
+  .lede code, .why code, ol.qs code, .key code { font-family: var(--mono); font-size: .86em; }
+
+  .key { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 14px; margin: 22px 0 0; }
+  .key div { background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; padding: 10px 13px; font-size: 13.5px; color: #4B535C; }
+  .key b { display: block; color: #1F2328; font-size: 15px; margin-bottom: 2px; }
+  .key div.rec { box-shadow: 0 0 0 2px #0550AE; border-color: transparent; }
+  .rec-tag { font-size: 11.5px; font-weight: 700; color: #fff; background: #0550AE; border-radius: 4px; padding: 0 6px; line-height: 18px; }
+
+  /* each variant: the 1000px frames on the left, the 640px frames on the right, the same table on each row */
+  .grid { display: grid; grid-template-columns: 1050px 690px; gap: 18px 14px; align-items: start; }
+  .colhead { font-size: 13px; color: #6E7781; margin: 0 2px -10px; }
+  .fr { min-width: 0; }
+  .fr > .cap { margin: 6px 2px 0; font-size: 13px; color: #4B535C; }
+  .fr > .cap .m { font-family: var(--mono); font-size: 12px; color: #1F2328; }
+  .fr.rec .crop { box-shadow: 0 0 0 2px #0550AE; }
+  .why { margin: 18px 0 0; padding: 12px 16px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; font-size: 14px; color: #4B535C; max-width: 120ch; }
+  .why b { color: #1F2328; }
+  .why p { margin: 0 0 8px; } .why p:last-child { margin: 0; }
+  ol.qs { margin: 0; padding: 14px 20px 14px 40px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; display: grid; gap: 8px; max-width: 120ch; font-size: 14px; }
+  ol.qs li span { color: #6E7781; }
+
+  /* ---------- the conversation pane crop: canvas, one panel, the transcript ---------- */
+  .crop { background: var(--canvas); color: var(--ink); border-radius: 9px; padding: 9px; border: 1px solid #D0D7DE; }
+  .dark.crop { border-color: #22272E; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+  /* the transcript, as app.css .log; --w is the width of the reply's text */
+  .log { position: relative; overflow-x: hidden; padding: 11px 16px 12.5px; font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh);
+    font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+  .log-inner { width: calc(var(--w) + 2ch); max-width: 100%; }
+  .log-inner > * { max-width: 150ch; }
+  .log .ln { overflow-wrap: anywhere; }
+  .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
+  .ln:last-child { margin-bottom: 0; }
+  .ln.claude > .g { color: var(--ink); }
+  .md code { font-family: var(--mono); font-size: .9em; }
+
+  /* ---------- today, copied from app.css (the .md rules) ---------- */
+  .md p { margin: 0 0 .85em; }
+  .md > :last-child { margin-bottom: 0; }
+  .md code { color: var(--link); }
+  .md a { color: var(--link); }
+  .md table { border-collapse: collapse; margin: 0 0 .85em; }
+  .md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
+  .md th, .md td { padding: 1px 3ch 1px 0; vertical-align: top; }
+
+  /* ---------- A: the same size, fixes only ---------- */
+  /* the table sits in a wrapper that scrolls sideways when even the fitted table is wider than the reply */
+  .fx .md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+  .fx .md .tw > table { margin: 0; overflow-wrap: normal; }
+  .fx .md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+  .fx .md .tw::-webkit-scrollbar { height: 5px; }
+  .fx .md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .fx .md th:last-child, .fx .md td:last-child { padding-right: 0; }
+  .fx .md .num { text-align: right; font-variant-numeric: tabular-nums; }     /* numbers right, units line up */
+  .fx .md .short, .fx .md .num, .fx .md .c0 { white-space: nowrap; }        /* short cells never break */
+  .fx .md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }       /* step 2 of the fit: the first column may wrap */
+  .fx .md .c0 code { white-space: nowrap; }                                /* but never inside its code */
+  .fx .md .prose { min-width: 26ch; overflow-wrap: break-word; }            /* the long text takes the slack */
+
+  /* ---------- B: A, a smaller table, 1px rules between rows ---------- */
+  .fb .md .tw > table { font-size: 11px; line-height: 1.45; }
+  .fb .md .tw > table code { font-size: 1em; }
+  .fb .md th, .fb .md td { padding: 1px 2.5ch 1px 0; }
+  .fb .md th { padding-top: 0; }
+  .fb .md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+
+  /* ---------- C: B, a quiet header and a light fill on every second row (no row rules) ---------- */
+  .fc .md tbody tr:not(:last-child) > td { border-bottom: 0; }
+  .fc .md th { font-weight: 400; color: var(--ink-2); }
+  .fc .md th, .fc .md td { padding: 1.5px 1.25ch; }
+  .fc .md th:last-child, .fc .md td:last-child { padding-right: 1.25ch; }
+  .fc .md th { padding-top: 0; }
+  .fc .md tbody tr:nth-child(even) > td { background: var(--sub); }
+  .fc .md .tw { margin-left: -1.25ch; }
+  .dark .fc .md tbody tr:nth-child(even) > td, .dark.fc .md tbody tr:nth-child(even) > td { background: #2E353E; }
+
+  /* ---------- D: B, the units a step lighter, and a table that doesn't fit stacks into records ---------- */
+  .fd .md .num .u { color: var(--ink-3); }
+  .fd .md table.stack, .fd .md table.stack tbody, .fd .md table.stack tr, .fd .md table.stack td { display: block; }
+  .fd .md table.stack { width: 100%; }
+  .fd .md table.stack thead { display: none; }
+  .fd .md table.stack tr { padding: 4px 0; border-bottom: 1px solid var(--line-2); }
+  .fd .md table.stack tr:first-child { border-top: 1px solid var(--line); }
+  .fd .md table.stack tr:last-child { border-bottom: 1px solid var(--line); }
+  .fd .md table.stack td { padding: 0; border: 0 !important; white-space: normal; text-align: left; min-width: 0; }
+  .fd .md table.stack td.c0 { font-weight: 700; }
+  .fd .md table.stack td:not(.c0) { display: grid; grid-template-columns: var(--kw) minmax(0, 1fr); column-gap: 1ch; }
+  .fd .md table.stack td:not(.c0)::before { content: attr(data-k); color: var(--ink-3); }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h1>Tables in Claude's replies</h1>
+    <p>Claude often answers with a markdown table. Today short cells such as <code>~44 ms</code> break onto two lines, so the rows are uneven and twice as tall as they need to be, numbers sit on the left, and nothing separates one row from the next. This page tries four fixes on the same table, in the transcript's real mono text, at two widths: a reply about 1000px wide and a narrow one of 640px.</p>
+    <p>Each variant has three rows of frames: the endpoint table, a wide table with 10 columns, and a table with a long text column. Under each frame are the table's height and how many number and short cells broke onto two lines.</p>
+  </header>
+
+  <div class="key">
+    <div><b>Today</b>The app's CSS as it is: 12px, 1px padding, a rule under the header.</div>
+    <div><b>A: fixes only</b>The same 12px. Short cells keep to one line, numbers align right, the long text column takes the slack.</div>
+    <div class="rec"><b>B: A, smaller, ruled <span class="rec-tag">Recommended</span></b>The table at 11px, today's 1px row padding, a 1px rule between rows.</div>
+    <div><b>C: B, quiet header, fill</b>The header in regular grey, every second row on a light fill in place of the rules.</div>
+    <div><b>D: B, lighter units, stacks</b>Units a step lighter than their numbers. A table that doesn't fit becomes one record per row.</div>
+  </div>
+
+  <div class="why">
+    <p><b>How A to D fit a table.</b> The renderer marks each column once, from its cells: <i>numbers</i> (every cell a number with an optional unit, such as <code>~44 ms</code> or <code>418k + 386k</code>), <i>long text</i> (a cell over 44 characters), or <i>short</i>. Then it fits the table in up to three steps and stops at the first that fits: 1. only the long text wraps; 2. the first column may wrap too, but never inside its code; 3. the table scrolls sideways inside its own box (D stacks it instead). It runs again when the panel is resized.</p>
+  </div>
+
+  <div id="sections"></div>
+
+  <h2>B in dark mode</h2>
+  <p class="lede">The row rules are the dark <code>--line-2</code> (#434B57) on the panel (#333A44): visible, but quieter than the header rule.</p>
+  <div class="grid" id="dark"></div>
+
+  <h2>Why B</h2>
+  <div class="why">
+    <p><b>B fixes what made the table hard to read, and changes little else.</b> Most of the height today comes from short cells breaking, and A already fixes that: every row is one line high at 1000px. The step from 12px to 11px gives about 8% more room, which in the narrow reply keeps the first column on one line longer. The 1px rules let your eye follow a row across a wide gap between the first column and the verdict.</p>
+    <p><b>Why not C or D.</b> C's fill is the only shaded block in the transcript besides your own message bands and code blocks, so a table starts to look like one of those. D's stacked records are a second way to show the same table, which breaks "one way to do each thing", and you lose the column you compare by; horizontal scroll keeps the table a table. D's lighter units are worth a second look on their own (question 4).</p>
+  </div>
+
+  <h2>Open questions</h2>
+  <ol class="qs">
+    <li>Should code blocks and inline code shrink to 11px too, or does only the table change? <span>Drawn: only the table, with its inline code at the table's own size.</span></li>
+    <li>When a markdown table states its alignment (<code>|---:|</code>), should that win over the detected one? <span>Today the renderer ignores the colons. Drawn: detection only.</span></li>
+    <li>How should a column of mixed numbers and text align, such as <code>65 ms</code>, <code>n/a</code> and <code>timed out</code>? <span>Drawn: one cell that isn't a number makes the whole column text, aligned left.</span></li>
+    <li>Should units be a step lighter than their numbers, as in D, in B as well?</li>
+    <li>When the table scrolls sideways, should the first column stay in place, so you always see which row you are reading?</li>
+  </ol>
+</div>
+
+<script>
+(() => {
+  /* ---------- the invented tables ---------- */
+  const L = n => `https://example.com/acme/web/pull/${n}`;
+  const MAIN = {
+    before: "Here are last week's numbers for the eight busiest endpoints, from the trace sample:",
+    after: "Two need work soon: `reports/export` and `files/preview`. The rest can stay as they are.",
+    rows: [
+      ["Endpoint", "Calls", "p50", "p95", "Verdict"],
+      ["`sidebar/projects` (recent list + search)", "418k + 386k", "~44 ms", "210 ms", `Fine for now; the search half is the slow one and already has its own ticket, see [#271828](${L(271828)})`],
+      ["Cart summary and cart list (per shop)", "341k", "65 ms", "340 ms", "Cache it per shop for 30 seconds; nobody needs these counts fresher than that"],
+      ["`inbox/unread`", "298k", "~12 ms", "41 ms", "Fine"],
+      ["`reports/export` (CSV, all rows)", "8k", "1.9 s", "14 s", "Move it to a background job and email a link; it times out for the biggest teams"],
+      ["`search/orders`", "137k", "75 ms", "260 ms", `Fine since the index change in [#314159](${L(314159)}); p95 went down by half`],
+      ["`files/preview` (thumbnails)", "96k", "120 ms", "880 ms", "Resize images once on upload instead of on every read"],
+      ["`auth/refresh`", "1.2M", "~6 ms", "19 ms", "Fine"],
+      ["`billing/usage` (admin page only)", "3k", "410 ms", "2.4 s", "Slow, but only admins open it, a few times a day; leave it as it is"],
+    ],
+  };
+  const WIDE = {
+    before: "The same endpoints split by region, with the error rate and the cache:",
+    rows: [
+      ["Region", "Endpoint", "Calls", "p50", "p95", "p99", "Errors", "Cache hit", "Owner", "Last deploy"],
+      ["eu-west", "`sidebar/projects`", "522k", "~44 ms", "210 ms", "610 ms", "0.02%", "91%", "shop-backend", "2026-11-18"],
+      ["us-east", "`sidebar/projects`", "479k", "~47 ms", "230 ms", "700 ms", "0.03%", "89%", "shop-backend", "2026-11-18"],
+      ["eu-west", "`carts/summary`", "341k", "65 ms", "340 ms", "1.1 s", "0.10%", "12%", "carts", "2026-11-20"],
+      ["us-east", "`reports/export`", "8k", "1.9 s", "14 s", "29 s", "4.80%", "0%", "reporting", "2026-10-02"],
+      ["ap-south", "`files/preview`", "96k", "120 ms", "880 ms", "2.0 s", "0.40%", "35%", "files", "2026-11-12"],
+      ["eu-west", "`auth/refresh`", "1.2M", "~6 ms", "19 ms", "44 ms", "0.00%", "n/a", "identity", "2026-11-21"],
+    ],
+  };
+  const LONG = {
+    before: "Three ways to fix the export:",
+    rows: [
+      ["Option", "Effort", "Risk", "What it changes"],
+      ["Background job", "3 days", "Low", "The button starts a job and the page says the file is on its way. When it is ready we email a link that works for 24 hours. Nothing times out, and the request itself returns in under 100 ms."],
+      ["Stream the CSV", "1 day", "Medium", "Rows are written to the response as the query reads them, so the first bytes arrive at once. A slow client still holds a database connection for the whole download."],
+      ["Cap at 50k rows", "2 hours", "High", "Exports stop at 50,000 rows with a note saying so. It is the quickest change, but the teams that need the export most are the ones with more rows than that."],
+    ],
+  };
+
+  /* ---------- a tiny markdown inline: code spans and links, as md.js renders them ---------- */
+  const esc = s => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const inline = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  const plain = s => s.replace(/`/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  /* D: the unit after a number, a step lighter */
+  const units = s => esc(s).replace(/(\d)(\s?)(ms|s|k|M|%)(?![\w])/g, '$1$2<span class="u">$3</span>');
+
+  /* the column kinds: numbers, long text, short; the first column is the row's name */
+  const NUM = /^(n\/a|[~<>]?\d[\d.,]*\s?(k|M|ms|s|%)?(\s?[+]\s?[~]?\d[\d.,]*\s?(k|M|ms|s|%)?)*|\d{4}-\d\d-\d\d)$/;
+  const kinds = rows => rows[0].map((_, j) => {
+    const cells = rows.slice(1).map(r => plain(r[j]));
+    if (cells.every(c => NUM.test(c)) && !cells.every(c => /^\d{4}-/.test(c))) return "num";
+    if (Math.max(...cells.map(c => c.length)) > 44) return "prose";
+    return j === 0 ? "c0" : "short";
+  });
+
+  const tableHTML = (t, fixed, d) => {
+    const k = kinds(t.rows), kw = Math.max(...t.rows[0].map(h => h.length)) + "ch";
+    const cls = j => fixed ? ` class="${k[j]}${j === 0 && k[j] !== "c0" ? " c0" : ""}"` : ` data-kind="${k[j]}"`;
+    /* D wraps each value in one span, so a stacked cell is two grid items: its label and its value */
+    const cell = (c, j) => d ? `<span>${k[j] === "num" ? units(c) : inline(c)}</span>` : inline(c);
+    const tbl = `<table style="--kw:${kw}"><thead><tr>${t.rows[0].map((h, j) => `<th${cls(j)}>${inline(h)}</th>`).join("")}</tr></thead><tbody>${
+      t.rows.slice(1).map(r => `<tr>${r.map((c, j) => `<td${cls(j)} data-k="${esc(plain(t.rows[0][j]))}">${cell(c, j)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+    return fixed ? `<div class="tw">${tbl}</div>` : tbl;
+  };
+  const reply = (t, fixed, d) => `<div class="ln claude"><span class="g">●</span><div class="md"><p>${inline(t.before)}</p>${tableHTML(t, fixed, d)}${t.after ? `<p>${inline(t.after)}</p>` : ""}</div></div>`;
+
+  const VAR = { today: "", A: "fx", B: "fx fb", C: "fx fb fc", D: "fx fb fd" };
+  const frame = (v, t, w, o = {}) => `<div class="fr${o.rec ? " rec" : ""}"><div class="crop ${VAR[v]}${o.dark ? " dark" : ""}" style="--w:${w}px"><div class="panel"><div class="log"><div class="log-inner">${reply(t, v !== "today", v === "D")}</div></div></div></div><p class="cap"></p></div>`;
+
+  const SECTIONS = [
+    ["today", "Today", "Exactly the app's CSS. Every line of the transcript may break anywhere (<code>.log .ln { overflow-wrap: anywhere }</code>), a table cell too, so the table shrinks its short columns first: <code>~44 ms</code>, <code>418k + 386k</code> and the endpoint names break, while the verdict column keeps its width."],
+    ["A", "A: the same size, fixes only", "12px as today. Numbers and units stay together and align right, so <code>p50</code> and <code>p95</code> read as columns of figures. The verdict takes what's left. In the 640px reply the first column wraps after its code; the wide table scrolls sideways in its own box."],
+    ["B", "B: A, an 11px table, 1px rules between rows", "The table drops to 11px against the 12px text around it, rows keep today's 1px padding, and a 1px <code>--line-2</code> rule separates the rows. Inline code in the table takes the table's size."],
+    ["C", "C: B, a quiet header and a light fill on every second row", "The header is regular weight in <code>--ink-2</code>, still with its 1px rule. Every second row takes the <code>--sub</code> fill in place of B's rules; the cells get 1.25ch on each side so the fill has an edge."],
+    ["D", "D: B, lighter units, and records when the table doesn't fit", "Units such as <code>ms</code> and <code>k</code> are in <code>--ink-3</code>, so the digits stand out. When even the fitted table is too wide, it becomes one record per row: the row's name in bold, then each column as a label and its value."],
+  ];
+  const set = (v, rec) => [
+    `<p class="colhead">A reply about 1000px wide</p><p class="colhead">A reply 640px wide</p>`,
+    ...[MAIN, WIDE, LONG].map(t => frame(v, t, 1000, { rec }) + frame(v, t, 640, { rec })),
+  ].join("");
+  document.getElementById("sections").innerHTML = SECTIONS.map(([v, title, lede]) =>
+    `<h2>${title}${v === "B" ? ' <span class="rec-tag">Recommended</span>' : ""}</h2><p class="lede">${lede}</p><div class="grid">${set(v, v === "B")}</div>`).join("");
+  document.getElementById("dark").innerHTML = `<p class="colhead">A reply about 1000px wide</p><p class="colhead">A reply 640px wide</p>` +
+    [MAIN, WIDE].map(t => frame("B", t, 1000, { dark: true }) + frame("B", t, 640, { dark: true })).join("");
+
+  /* ---------- the fit: 1. only the long text wraps, 2. the first column may wrap, 3. scroll (D: stack) ---------- */
+  const over = (tw) => tw.firstElementChild.getBoundingClientRect().width > tw.clientWidth + .5;
+  const fit = () => {
+    document.querySelectorAll(".tw").forEach(tw => {
+      const t = tw.firstElementChild, d = !!tw.closest(".fd");
+      t.classList.remove("wrap1", "stack"); tw.classList.remove("scrolls");
+      if (!over(tw)) return;
+      t.classList.add("wrap1"); if (!over(tw)) return;
+      if (d) t.classList.add("stack"); else tw.classList.add("scrolls");
+    });
+    /* the measures under each frame */
+    document.querySelectorAll(".fr").forEach(fr => {
+      const t = fr.querySelector("table"), tw = fr.querySelector(".tw");
+      const lh = parseFloat(getComputedStyle(t).lineHeight) || 17.4;
+      let n = 0, all = 0;
+      t.querySelectorAll("tbody td").forEach(td => {
+        const kind = td.dataset.kind || ["num", "short", "c0", "prose"].find(c => td.classList.contains(c));
+        if ((kind !== "num" && kind !== "short") || t.classList.contains("stack")) return;
+        all++;
+        const r = document.createRange(); r.selectNodeContents(td);
+        if (r.getBoundingClientRect().height > lh * 1.5) n++;
+      });
+      const h = Math.round(t.getBoundingClientRect().height);
+      const how = !tw ? "" : t.classList.contains("stack") ? " Stacked into records." : tw.classList.contains("scrolls") ? ` Scrolls sideways, ${Math.round(t.getBoundingClientRect().width - tw.clientWidth)}px out of view.` : t.classList.contains("wrap1") ? " First column wraps." : "";
+      const count = all ? ` Number and short cells on two lines: <span class="m">${n} of ${all}</span>.` : "";
+      fr.querySelector(".cap").innerHTML = `Table <span class="m">${h}px</span> high.${count}${how}`;
+    });
+  };
+  fit(); document.fonts.ready.then(fit); addEventListener("resize", fit);
+})();
+</script>
+</body>
+</html>

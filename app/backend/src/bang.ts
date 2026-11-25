@@ -139,6 +139,32 @@ export function bashOutput(run: Pick<BangRun, 'out' | 'err' | 'cut' | 'exit'> & 
   return `<bash-stdout>${run.out}</bash-stdout><bash-stderr>${err}</bash-stderr>`;
 }
 
+// One user record's `!` commands, as the CLI writes them (docs/Claude Code transcripts.md, "Bash mode
+// records"): the CLI joins the `shouldQuery: false` messages it holds into one record with "\n", so a
+// record can hold a command and its output, several commands, and the next prompt after them. `runs`:
+// the commands in order, each with its output when the record holds it; `rest`: the text after them
+// (a prompt, or ''). Null when the text doesn't start with a command.
+export type BashRun = { cmd: string; out: BashOutput | null };
+const RUN = /^<bash-input>([\s\S]*?)<\/bash-input>\s*(?:<bash-stdout>([\s\S]*?)<\/bash-stdout>\s*<bash-stderr>([\s\S]*?)<\/bash-stderr>\s*)?/;
+export function splitBash(text: string): { runs: BashRun[]; rest: string } | null {
+  const runs: BashRun[] = [];
+  let rest = text;
+  for (let m = RUN.exec(rest); m; m = RUN.exec(rest)) {
+    runs.push({ cmd: m[1], out: m[2] === undefined ? null : parseBashOutput(`<bash-stdout>${m[2]}</bash-stdout><bash-stderr>${m[3]}</bash-stderr>`) });
+    rest = rest.slice(m[0].length);
+  }
+  if (!runs.length) return null;
+  // An output that holds the tags' own text: then the record is one command and its output, read whole.
+  if (/<\/bash-(?:stdout|stderr|input)>/.test(rest)) {
+    const one = /^<bash-input>([\s\S]*?)<\/bash-input>\s*(<bash-stdout>[\s\S]*)$/.exec(text);
+    const out = one ? parseBashOutput(one[2]) : null;
+    if (one && out) return { runs: [{ cmd: one[1], out }], rest: '' };
+    const cmd = parseBashInput(text);
+    if (cmd !== null) return { runs: [{ cmd, out: null }], rest: '' };
+  }
+  return { runs, rest };
+}
+
 export function parseBashInput(text: string): string | null {
   const m = /^<bash-input>([\s\S]*)<\/bash-input>\s*$/.exec(text);
   return m ? m[1] : null;

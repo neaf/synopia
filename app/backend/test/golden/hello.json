@@ -6,7 +6,7 @@
     {
       "id": "11111111-0000-4000-8000-000000000001",
       "title": "Demo notes cleanup",
-      "name": "A later generated title",
+      "name": "",
       "now": "",
       "cwd": "~/dev/demo",
       "prs": [
@@ -212,7 +212,7 @@
           "stopped": false,
           "start": "2026-11-20T13:00:08.000Z",
           "end": "2026-11-20T13:09:50.000Z",
-          "total": 2
+          "total": 4
         },
         {
           "id": "aaaa0004",

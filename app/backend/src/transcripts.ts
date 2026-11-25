@@ -10,6 +10,7 @@ import path from 'node:path';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord, Span } from './tail.ts';
 import { Transcript, sessionDirOf, SERVED_IMAGE_TYPES } from './transcript.ts';
+import type { BgOutput } from './transcript.ts';
 import { landedBlocks, cwdOfRecords, resultTextIn, imageIn } from './claude-jsonl.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -266,6 +267,11 @@ export class Transcripts {
       out.push(`${a.fork ? 'fork' : 'subagent'} “${a.description.slice(0, 80)}”: ${a.running ? 'running' : a.stopped ? 'stopped' : 'finished'}`);
     }
     return out;
+  }
+
+  // Where a background shell's or monitor's output is (task-output.ts reads it).
+  outputOf(sid: string, toolUseId: string): BgOutput | undefined {
+    return this.get(sid)?.outputOf(toolUseId);
   }
 
   // The full result of one tool, read again from its record's line (only its preview is kept in

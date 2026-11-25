@@ -75,7 +75,7 @@ Source: `.ai-notes/app/README.md` at tag `rearch-base` "Facts (branch facts)" St
 | `[Request interrupted by user for tool use]` | you turned a tool down; Claude carries on |
 | `[Tool call interrupted` | a tool result the CLI writes on resume for a question a quit left open |
 | `[Image: source: <tmp path>]` (isMeta) | the CLI's own note after a pasted image; skipped |
-| `<bash-input>`, `<bash-stdout>`, `<bash-stderr>` | a `!` command and its output (tag names `unverified` on a real CLI record) |
+| `<bash-input>`, `<bash-stdout>`, `<bash-stderr>` | a `!` command and its output; one record can hold several, and text after them (see Bash mode records) |
 | any other `<` | system reminders, local command output, hooks; skipped unless it holds an image |
 
 - `isMeta` records are skipped except the report form above.
@@ -84,6 +84,13 @@ Source: `.ai-notes/app/README.md` at tag `rearch-base` "Facts (branch facts)" St
 - Tool results: Edit and Write carry `toolUseResult.structuredPatch` (hunks with `oldStart`, `oldLines`, `newStart`, `newLines`, `lines`); a Write that creates a file has `type: "create"` and `content` instead.
 
 Code: `claude-jsonl.ts` `bodyOf`, `userOf`. Test: `claude-jsonl.test.ts`. Source: the old reference parser (removed from the repo), live runs S3 and M1-final.
+
+### Quirk: a subagent's edits have no structuredPatch
+
+- Symptom: in a subagent's transcript, Edit and Write steps had no `+N −M` and no Files changed block, though the files changed.
+- Cause: in an SDK-driven session (`entrypoint: "sdk-ts"`), a subagent's successful Edit or Write result record has no `toolUseResult` at all; it carries `permissionDecision` and `serverClassifierContext` instead. Only an error result has one, a string. The main conversation's records of the same session have the full `{filePath, oldString, newString, originalFile, structuredPatch, userModified, replaceAll, contentNotInModelContext?}` (Edit) and `{type, filePath, content, structuredPatch, originalFile, userModified}` (Write). Same cause as the subagent shells' missing task id below. Seen in two subagents of one live session (2026-11-25, 20 Edits and 2 Writes, keys only).
+- Workaround: a result with no patch takes the change from its `tool_use` input. An Edit is `old_string` against `new_string`, their common first and last lines as context, with no line numbers, because the place in the file isn't in the record. `replace_all` shows the one replacement. A Write is its `content` as added lines from line 1, never marked new, because whether it made or replaced the file isn't recorded. An error result gets no patch.
+- Code: `claude-jsonl.ts` `inputEditOf`, `transcript.ts` `inputEdits`; the page leaves the number column empty for an `unnumbered` patch (`transcript.js` `diffHTML`). Test: `claude-jsonl.test.ts` "inputEditOf", `transcript.test.ts` "a subagent's edit with no toolUseResult", page check `files`.
 
 ### Images and image tags
 
@@ -105,9 +112,24 @@ Code: `claude-jsonl.ts` `bodyOf`, `userOf`. Test: `claude-jsonl.test.ts`. Source
 - `prompt` is a string, or an array of text and image blocks (a message with a pasted image). Test: `images.test.ts` 122-137.
 - Task notifications and subagent hand-backs queued during a turn use the same record with another `commandMode`.
 - Other fields seen: `delivery_id`, `humanTurn`, `imagePasteIds`, `isMeta`, `origin`, `runId`, `source_uuid`, `usage`, `toolsUsedDelta`.
-- A `shouldQuery: false` message (bash mode) is written as a `queue-operation` record, then a plain `user` record with string content and `queueTranscriptOnly`, `promptId`, `promptSource`, `turnAttributionKey`, `permissionMode`.
+- A `shouldQuery: false` message (bash mode) is written as a `queue-operation` record, then a plain `user` record with string content and `queueTranscriptOnly`, `promptId`, `promptSource`, `turnAttributionKey`, `permissionMode`; the ones held together go in one record (see Bash mode records).
 
 Code: `claude-jsonl.ts` `classify` (attachment), `session.ts` `settleOutbox`. Source: live runs S3 and `bang`.
+
+## Bash mode records
+
+Synopia shares a `!` command as two `shouldQuery: false` messages (`bang.ts`): `<bash-input>CMD</bash-input>`, then `<bash-stdout>OUT</bash-stdout><bash-stderr>ERR</bash-stderr>`. The CLI does not write them as two records.
+
+- Idle: one `user` record with string content, the two texts joined with one `\n`: `<bash-input>CMD</bash-input>\n<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`. Fields: `queueTranscriptOnly: true`, `mergedSendUuids` (one uuid for the two sends; not the record's own), `promptSource: 'sdk'`, `promptId`, `permissionMode`, `turnAttributionKey`. Before it: `queue-operation` enqueue, then one dequeue per send. It is written when the command is shared, at its own time, not with the next prompt (2 of 2, a live SDK-driven session, 2026-11-25).
+- During a turn: two `attachment` records, `attachment.type: queued_command`, `commandMode: 'prompt'`, string `prompt` (the input, then the output), with `source_uuid`, `delivery_id`, `timestamp` (the enqueue time), and `rendered`, `renderedRole` on the record. They are written when the turn takes them in, after the tool result that was running; `queue-operation` `remove` records (`commandUuid`, `deliveryId`, `reason`) sit between them (2 of 2, same session).
+- Whether the record's `uuid` is the first send's uuid is `unverified`; Synopia also matches by command and time. Whether the CLI ever joins held context into the next prompt's record is `unverified` (not seen); Synopia reads that shape too.
+
+### Quirk: a `!` row stuck at the end of the log
+
+- Symptom: after a `!` command, its row stays below later messages, just above the live line.
+- Cause: the parser took a `<bash-input>` record only when it held nothing else, so the joined record made no item. The run Synopia showed was never matched and stayed as the pending row at the end. During a turn, the two `queued_command` records starting with `<` were skipped the same way.
+- Workaround: `bang.ts` `splitBash` reads every leading command with its output and keeps the text after them. `transcript.ts` makes one bang item per command, in place: the record's uuid goes to its only command, or to the prompt after them (the commands get `<uuid>:bang<n>`), and that prompt keeps only its own text. `claude-jsonl.ts` `classify` keeps `queued_command` records whose prompt starts with `<bash-input>` or `<bash-stdout>`; they make one bang item and no queued prompt. The scripted SDK writes both shapes.
+- Code: `bang.ts` `splitBash`, `claude-jsonl.ts` `bodyOf` and `classify`, `transcript.ts` `user`, `session.ts` `settleBang`, `dev/scripted-sdk.ts` `flushHeld`. Test: `bang.test.ts` "splitBash", "in one record", "two commands in a row", "two queued_command attachments", "the one record the CLI joins it into"; `scripted-sdk.test.ts`; page check `bang.mjs`.
 
 ## Turn ends
 
@@ -143,6 +165,21 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - Synopia reads the first marker as a stop (item `interrupted`) and the second as a turned-down tool (item `turnedDown`). Either closes the turn until Claude writes again; the error results just before the marker read as stopped. A turned-down marker isn't a prompt: the turn's time still counts from yours.
 - Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "a turned-down tool is not a stop …", `transcripts.test.ts` "turns".
 
+## Denied tool calls
+
+A tool call a permission check said no to never runs. The CLI writes its `tool_result` with `is_error: true` and a string `content`, in a `user` record that also carries `toolDenialKind` and, for most, `permissionDecision`. `toolUseResult` is the string `"Error: "` plus the content.
+
+| `toolDenialKind` | Who said no | `content` starts with |
+|---|---|---|
+| `automode-blocked` | auto mode's classifier; `permissionDecision` is `{decision: "reject", source: "config", reasonType: "classifier", reasonCode: "classifier:auto-mode", classifierCategory}` | `Permission for this action was denied by the Claude Code auto mode classifier` |
+| `user-rejected` | you, at the terminal's permission prompt; a `[Request interrupted by user for tool use]` record follows | `The user doesn't want to proceed with this tool use` |
+| `permission-rule` | a PreToolUse hook or a rule | `<tool_use_error>PreToolUse` |
+
+- Allowed calls carry `permissionDecision` with `decision: "accept"` and no `toolDenialKind`.
+- Synopia reads `automode-blocked` (or the content prefix alone) and `user-rejected` as the tool state `denied`, with `denied: "auto"` or `"you"`. The row reads "Blocked by auto mode" or "Denied", not "Failed". A hook or rule block stays failed: Claude reads its reason and carries on.
+- After the turn ends, a denied step that no later step of the same tool and input redid makes the session "Needs you, blocked" (R8.2).
+- Code: `claude-jsonl.ts` `Denial`, `toolResultOf`; `transcript.ts` `refreshTool`; `status.ts` `blockedLast`. Test: `claude-jsonl.test.ts` "a call auto mode blocked …", `transcript.test.ts` "a step auto mode blocked …", `status.test.ts` "blockedLast …". Source: shape scan of local transcripts 2026-11-25 (13 auto-mode blocks, 10 terminal denials, 52 hook or rule blocks).
+
 ## Background work
 
 | Kind | Where its task id comes from |
@@ -161,6 +198,21 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - The CLI writes a stop notification to the JSONL only when a turn runs; see [Agent SDK](Agent%20SDK.md#task-notifications).
 
 Code: `claude-jsonl.ts` `userOf` (`toolUseResult`), `taskNotes`; `transcript.ts` `note`. Source: live run S4, shape scan 2026-11-24.
+
+### Background output
+
+A shell's or monitor's view (R7.2) shows what it printed. Where that is:
+
+| Kind | Source | Shape |
+|---|---|---|
+| shell (any of the three Bash kinds above) | its output file, named in its `tool_result` text: `… Output is being written to: <path> …` (the sentence before it differs: "Command running in background with ID: …", "Command was moved to the background (ID: …) …", "Command was manually backgrounded by user …", "Command did not complete within its 600s timeout …") and again as `<output-file>` in its end notification | `<tmpdir>/claude-<uid>/<project slug>/<session id>/tasks/<task id>.output`, plain bytes the command wrote, escape sequences included. Synopia never builds the path: it takes the one named. |
+| monitor | its event notifications: `<task-notification>` with `<task-id>`, `<summary>Monitor event: "<description>"</summary>` and `<event>` (one or more output lines), no `<tool-use-id>`; the end notification can carry a last `<event>` | a user record whose content is that text; a subagent's monitor can be notified in its own file or the main one |
+
+- The files sit in the system's temporary folder, which macOS clears: in a shape scan (2026-11-25) 52 of 79 named shell files were gone. A gone file reads "Its output file is gone".
+- A monitor's `Monitor started (task …)` result names no file.
+- The SDK typings also declare a `get_task_output` control request (the last 8 KiB only), but `Query` has no method for it, so Synopia doesn't use it; `task_notification.output_file` was empty for a shell in live runs.
+
+Code: `claude-jsonl.ts` `OUTPUT_FILE`, `taskNotes` (`event`, `outputFile`); `transcript.ts` `outputOf`; `task-output.ts` (the byte windows). Test: `claude-jsonl.test.ts` "background output", `task-output.test.ts`, `publisher.test.ts` "a shell's and a monitor's view". Source: shape scan 2026-11-25 (key and tag names only).
 
 ### Quirk: subagent shells have no task id in SDK sessions
 

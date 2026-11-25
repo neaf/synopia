@@ -24,7 +24,7 @@ let spied = null; // { sent, got } since spy()
    mounted, no UI restore in flight (the harness adds the socket counts, visibility and focus) */
 const readiness = () => ({
   connected: state.store.ui.connected, uiLoaded: ui.loaded(), restoring: ui.isRestoring(),
-  rows: document.querySelectorAll("#groups .row").length, box: !!document.getElementById("msg"),
+  rows: document.querySelectorAll("#groups .row").length, box: !!document.querySelector(".dock .composer"), // a subagent, shell or monitor view has only the prompt line (R5.12)
   current: state.current, mounted: state.mounted,
 });
 
@@ -50,7 +50,7 @@ export function installTestApi({ inject, render }) {
     received: (...types) => of(spied?.got || [], types), // frames the server sent since spy()
     inject: m => { inject(copy(m)); },
     /* the UI around the transcript */
-    anchor: () => copy(ui.anchor(document.getElementById("log"))), // the log's scroll anchor: {id, off} or {bottom: true}
+    anchor: () => copy(ui.anchor(document.getElementById("log"))), // the log's scroll anchor: {id, off}, at the end {bottom: true, id, off} (the last block on screen)
     from: (sid, agent) => ui.from(sid, agent), // the oldest item id that view had loaded, or null
     attachments: () => attachments.map(a => ({ id: a.id, n: a.n, mediaType: a.mediaType, url: a.url, data: a.data })), // pasted images
     prompt: () => prompt(), // the Esc, b or x prompt shown: "interrupt" | "background" | "close" | null
