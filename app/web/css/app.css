@@ -149,18 +149,17 @@ details.step[open] > summary .res.run { display: none; }
 /* messages you sent while the turn runs (R5.5): the same band, a still clock in place of `❯` and lighter
    text. When Claude takes one, only the mark and the ink change; nothing changes size */
 .prompt.qc > .md { color: var(--ink-3); }
+.prompt.qc { opacity: .5; } /* not taken yet: the whole band, its fill, edge and clock, at half strength (2026-11-25) */
 /* the queued clock sits where the ❯ would: centred on its cell and on its ink, --dot-lift above the line's middle (below) */
 .prompt > .g { position: relative; }
 .prompt > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
-/* the queue, one block at the log's end (transcript.js queuedHTML), sticky to its bottom: at the bottom it is the
-   transcript's end; scrolled up it stays pinned over the box, on the panel's white, with a 1px line at its top
-   7.5px above the first band (syncEdge), at most half the log. The negative top margin keeps the 11px gap
-   above the first band; the log's bottom padding moves into the block */
+/* the queue, one block at the log's end (transcript.js queuedHTML): the transcript's end, scrolling with it like
+   any message (2026-11-25: not pinned). The negative top margin keeps the 11px gap above the first band; the
+   log's bottom padding moves into the block */
 .log { container-type: size; }
 .log:has(> .log-inner > .qpin), .thread:has(.dock-inner > :not(.composer)) > .log { padding-bottom: 0; }
-.qpin { position: sticky; bottom: 0; z-index: 2; display: flow-root; background: var(--panel); margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; max-height: 50cqh; overflow-y: auto; overflow-x: hidden; }
+.qpin { display: flow-root; margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; }
 .qpin > .prompt:first-child { margin-top: 0; }
-.qpin.edge { box-shadow: inset 0 1px 0 var(--line-2); }
 /* "New since 2:14 PM" (R5.12d, prototype/unread-storyboard.html C): a 1px line in the gap above the first item you
    hadn't seen; it takes no space. In a shell's or monitor's output, a zero-height block between two lines. */
 .log-inner > .new-at { position: relative; }

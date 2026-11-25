@@ -100,7 +100,7 @@ const look = (sel) => `(() => { const e = document.querySelector('${sel}'), st =
   return { cls: e.className, bg: st.backgroundColor, edge: [st.borderLeftStyle, st.borderLeftColor, st.borderLeftWidth].join(' '), pad: [st.paddingTop, st.paddingBottom, st.paddingLeft].join(' '), ink: md.color, op: st.opacity,
     g: e.querySelector(':scope > .g').textContent.trim(), clock: !!e.querySelector(':scope > .g .ind svg circle') && !!e.querySelector(':scope > .g .ind svg path'), moving: e.getAnimations({ subtree: true }).length, h: e.getBoundingClientRect().height }; })()`;
 const ql = await ev(look(Q)), pl = await ev(look('#log .log-inner > [data-key="you:q-u1"]'));
-check('a waiting band keeps the posted band\'s fill, edge and padding', ql.bg === pl.bg && ql.edge === pl.edge && ql.pad === pl.pad && ql.op === '1', JSON.stringify([ql, pl]));
+check('a waiting band keeps the posted band\'s fill, edge and padding, at half opacity as a whole', ql.bg === pl.bg && ql.edge === pl.edge && ql.pad === pl.pad && ql.op === '0.5' && pl.op === '1', JSON.stringify([ql, pl]));
 check('a still clock in place of ❯: no ❯, a clock mark, nothing moving', ql.g === '' && ql.clock && ql.moving === 0 && pl.g === '❯' && !/\bqc\b/.test(pl.cls), JSON.stringify(ql));
 check('its text is the lighter grey, the posted band\'s is not', ql.ink === await ev(varColor('--ink-3')) && pl.ink !== ql.ink, `${ql.ink} vs ${pl.ink}`);
 check('no veil', await ev(`!document.querySelector('.qveil')`));
@@ -113,7 +113,7 @@ await shot('queued-two.png');
 check('a draft goes in the box, insert mode', (await typeDraft(DRAFT)) === 'insert');
 await keep('queued-typed');
 
-// scrolled up: the queue and the box stay pinned to the panel's bottom, at most half of it; a 1px line at the queue's top
+// scrolled up: the box stays; the queue is the transcript's end and scrolls away with it, not pinned
 const pinAt = () => ev(`(() => { const q = document.querySelector('#log .qpin'), d = document.querySelector('.dock'), t = document.querySelector('.thread'), log = document.getElementById('log');
   const qr = q.getBoundingClientRect(), first = q.firstElementChild.getBoundingClientRect(), prev = q.previousElementSibling.getBoundingClientRect();
   return { qTop: qr.top, qBot: qr.bottom, dTop: d.getBoundingClientRect().top, box: d.querySelector('.composer').getBoundingClientRect().top, edge: q.classList.contains('edge'), shadow: getComputedStyle(q).boxShadow, gap: first.top - prev.bottom, line: first.top - qr.top,
@@ -121,13 +121,14 @@ const pinAt = () => ev(`(() => { const q = document.querySelector('#log .qpin'),
 const p0 = await pinAt();
 check('at the bottom: the queue ends the transcript, 11px under the live line, no line at its top, the box\'s line right under it', !p0.edge && p0.shadow === 'none' && p0.atEnd && Math.abs(p0.gap - 11) <= 0.5 && Math.abs(p0.qBot - p0.dTop) <= 0.5, JSON.stringify(p0));
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight - l.clientHeight - 200; })()`);
-await c.until(`document.querySelector('#log .qpin').classList.contains('edge')`, 2000);
+await sleep(150);
 const p1 = await pinAt();
 check('scrolled up: the log scrolls, the box stays where it was', !p1.atEnd && Math.abs(p1.box - p0.box) <= 0.5, JSON.stringify([p0, p1]));
-check('scrolled up: the queue stays pinned over the box, a 1px line at its top, at most half the panel', p1.edge && /inset/.test(p1.shadow) && /0px 1px 0px/.test(p1.shadow) && Math.abs(p1.qBot - p1.dTop) <= 0.5 && Math.abs(p1.line - 7.5) <= 0.5 && p1.half, JSON.stringify(p1));
+check('scrolled up: the queue scrolled down with the transcript, under the box\'s line, no line at its top', !p1.edge && p1.shadow === 'none' && p1.qTop > p0.qTop + 1 && p1.qBot > p1.dTop + 1, JSON.stringify([p0, p1]));
+check('a waiting band is at half opacity as a whole', await ev(`getComputedStyle(document.querySelector('${Q}')).opacity === '0.5'`));
 await keep('scrolled');
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight; })()`);
-await c.until(`!document.querySelector('#log .qpin').classList.contains('edge')`, 2000);
+await sleep(150);
 await typeDraft('');
 await ev('document.activeElement.blur()');
 

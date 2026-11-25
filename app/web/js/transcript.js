@@ -331,8 +331,7 @@ const youBody = (m, agent) => `${m.images && !m.imgs?.length ? `<p class="img">[
 const sentHTML = s => waitingOf(s).filter(q => q.queued === false).map(q => [`q:${q.id}`, band(youBody(q, null))]);
 /* The queue (R5.5): the messages you sent while the turn runs, oldest first, as one block at the log's end,
    below the live line (what's working began before you sent them; the author, 2026-11-24), as the CLI shows
-   queued input. The block is sticky to the log's bottom, so when you scroll up it stays pinned over the box
-   with a 1px line at its top (syncEdge), at most half the log. A message Claude takes leaves the block and
+   queued input. The block ends the transcript and scrolls with it, not pinned (2026-11-25). A message Claude takes leaves the block and
    lands just above it as your band, where it waited: nothing moves. */
 const queuedHTML = s => { const q = queuedOf(s); return q.length ? [["queue", `<div class="qpin">${q.map(m =>
   `<div class="prompt qc" data-key="q:${esc(m.id)}"><span class="g">${ind("waiting")}</span><div class="md">${youBody(m, null)}</div></div>`).join("")}</div>`]] : []; };
@@ -483,18 +482,12 @@ export function renderLog() {
   ui.afterLog(); // open diffs and folds stay open (ui-state.js)
   fitTables(log);
   if (follow) log.scrollTop = log.scrollHeight;
-  syncEdge(); ui.note(log); // where you are and what you saw (ui-state.js)
+  ui.note(log); // where you are and what you saw (ui-state.js)
   land(conv, landedBlock); // a message you just sent moves from the box into its place (send-tween.js)
   paintBash(s); // the placeholder counts the messages that wait
 }
 /* a sent message's prompt block, once its record replaced the sent band */
 const landedBlock = id => { const o = (cur()?.outbox || []).find(q => q.id === id); return o?.landed ? conv.querySelector(`#log [data-key="you:${CSS.escape(o.landed)}"]`) : null; };
-/* scrolled up, the queue is pinned over the log's bottom: a 1px line at its top shows the log runs under it */
-function syncEdge() {
-  const log = document.getElementById("log"), q = log?.querySelector(".qpin"); if (!q) return;
-  q.classList.toggle("edge", log.scrollHeight - log.scrollTop - log.clientHeight > 1);
-}
-conv.addEventListener("scroll", e => { if (e.target.id === "log") syncEdge(); }, true);
 /* G: the end of the log */
 export function toEnd() { const log = document.getElementById("log"); if (log) log.scrollTop = log.scrollHeight; }
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ui.note(document.getElementById("log")); });
