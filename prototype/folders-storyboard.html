@@ -220,6 +220,27 @@
     .sum, .opts, .flow, .flow.three { grid-template-columns: minmax(0, 1fr); }
     .shot.big { grid-template-columns: 200px minmax(0, 1fr); }
   }
+  /* fuzzy matches, as nota draws them: accent and heavier on a row, bold and underlined on the selected row */
+  .m { font-weight: 700; color: var(--link); }
+  .on .m { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+  .fr.gone .m { color: inherit; }
+  /* the summary's constraint block, full width under the three columns */
+  .rules4 { margin: 28px 0 0; padding: 14px 18px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); }
+  .rules4 h3 { margin: 0 0 6px; }
+  .rules4 ul { margin: 0; padding-left: 1.2em; columns: 2; column-gap: 40px; }
+  .rules4 li { margin: 0 0 7px; color: var(--ink-2); break-inside: avoid; }
+  .rules4 li b { color: var(--ink); }
+  .reads { border-collapse: collapse; width: 100%; max-width: 1180px; font-size: 14px; margin: 8px 0 0; }
+  .reads th { text-align: left; font-size: 13px; padding: 5px 22px 5px 0; }
+  .reads td { padding: 7px 22px 7px 0; border-top: 1px solid var(--line); vertical-align: top; color: var(--ink-2); }
+  .reads td:first-child { color: var(--ink); font-weight: 500; white-space: nowrap; }
+  .taken td:first-child { font-family: var(--mono); font-size: 12px; font-weight: 400; }
+  /* the live matcher */
+  .demo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; margin: 12px 0 0; align-items: start; }
+  .demo input { width: 100%; background: none; border: 0; outline: none; font: 12px/1.45 var(--mono); color: var(--ink); padding: 0; }
+  .demo .sr .sc { color: var(--faint); text-align: right; }
+  .demo .sr { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 5ch; }
+  .demo .fr { grid-template-columns: minmax(0, 1fr) 5ch; }
 </style>
 </head>
 <body>
@@ -232,6 +253,8 @@
       <ul class="toc">
         <li><a href="#summary">Summary</a></li>
         <li><a href="#picture">The design in one picture</a></li>
+        <li><a href="#fuzzy">Fuzzy search</a></li>
+        <li><a href="#disk">What Synopia reads from disk</a></li>
         <li><a href="#s1">1. First launch, no history</a></li>
         <li><a href="#s2">2. First launch, CLI history</a></li>
         <li><a href="#s3">3. After a year</a></li>
@@ -248,50 +271,113 @@
       <div>
         <h3>Recommended</h3>
         <ul>
-          <li><b>New session asks where, with the answer ready.</b> It opens a folder list over the main area, drawn like Open session. The folder of the session on screen is selected, so <kbd>⌘N</kbd> <kbd>Enter</kbd> starts there.</li>
-          <li><b>The list is every folder you have used</b>, newest first, with each repo's git worktrees under it, including worktrees with no sessions yet. Typing filters. A path starting with <code>~</code> or <code>/</code> completes from disk with <kbd>Tab</kbd>.</li>
-          <li><b>No open session means this list.</b> First launch shows it in the main area, so there is no welcome screen to learn.</li>
-          <li><b>Open session says it searches everything.</b> It already filters the whole history; it now says “Newest 50 of 812”, matches each typed word on its own, and gives ages in months.</li>
-          <li><b>A gone folder is named, not hidden.</b> Its sessions read “Folder gone” and open read-only. <kbd>Enter</kbd> in the box picks a folder to continue in.</li>
-          <li><b><kbd>⌘N</kbd> and <kbd>⌘O</kbd></b>, in a new File menu, work in normal and insert mode.</li>
+          <li><b>New session asks where, with the answer ready.</b> <kbd>n</kbd> in normal mode opens a folder list over the main area, drawn like Open session. The folder of the session on screen is selected, so <kbd>n</kbd> <kbd>Enter</kbd> starts there.</li>
+          <li><b>The list is the folders Synopia already knows</b>: where sessions ran, plus the git worktrees of those repos. Nothing else is read to find folders.</li>
+          <li><b>A path you type completes on <kbd>Tab</kbd></b>, one folder at a time: one read of the folder typed so far, never more.</li>
+          <li><b>A path that doesn't exist can be made.</b> One row, “Create folder &lt;path&gt; and start there”; <kbd>Enter</kbd> makes that one folder and starts in it. It is Synopia's only write to your disk.</li>
+          <li><b>Both lists match fuzzily</b>, with the matcher from nota: letters in order, word starts and runs rank first, matched letters highlighted.</li>
+          <li><b>No open session means this list.</b> First launch shows it in the main area, with only <code>~</code> in it.</li>
+          <li><b>Open session says it searches everything</b> (“Newest 50 of 812”), and <kbd>o</kbd> in normal mode opens it.</li>
+          <li><b>A gone folder is named, not hidden.</b> Its sessions read “Folder gone” and open read-only; <kbd>Enter</kbd> picks a folder to continue in.</li>
         </ul>
       </div>
       <div>
         <h3>Requirement changes</h3>
         <ul>
           <li><span class="id">R3.3, FR-SES-02, Q7</span>: New session opens the folder list instead of starting at once. The session is still empty, with no new worktree. <code>settings.newSessionCwd</code> and its default rule go.</li>
-          <li><span class="id">R3.2, FR-SES-03</span>: the Open list header gives the totals, each word matches title or folder, rows whose folder is gone say “Folder gone”, ages over 60 days read in months.</li>
+          <li><span class="id">R3.2, FR-SES-03</span>: the Open list matches fuzzily, its header gives the totals, rows whose folder is gone say “Folder gone”, ages over 60 days read in months.</li>
+          <li><span class="id">R3.3, new FR-SES-19</span>: a typed path that doesn't exist shows one row, “Create folder &lt;path&gt; and start there”. <kbd>Enter</kbd> runs <code>mkdir -p</code> on that one path, nothing else, and starts the session there. Synopia's only write to your disk.</li>
+          <li><span class="id">New FR-SES-18</span>: one fuzzy matcher, ported from nota, for the folder list and the Open list, with its ranking and highlights.</li>
           <li><span class="id">New R3.11, FR-SES-16</span>: gone folders. A session whose folder no longer exists opens read-only and offers to continue in another folder. This replaces the failed send and its toast.</li>
           <li><span class="id">New R3.12, FR-SES-17</span>: with no open session, the main area shows the folder list.</li>
-          <li><span class="id">New R9.7, FR-KEY-07</span>: <kbd>⌘N</kbd> New session and <kbd>⌘O</kbd> Open session, in a File menu of the shell.</li>
+          <li><span class="id">New R3.13, NFR-10</span>: no directory scans, as in the box below.</li>
+          <li><span class="id">New R9.7, FR-KEY-07</span>: <kbd>n</kbd> New session and <kbd>o</kbd> Open session, in normal mode. No new menu items.</li>
         </ul>
       </div>
       <div>
         <h3>Open questions</h3>
         <ol>
           <li>Continuing a session in another folder: same id or a fork with a new id? Not checked: one scripted run must show whether the SDK resumes a session by id from another folder. The docs say a fork lands in the current folder's project.</li>
-          <li>Should a typed path that doesn't exist offer “Create folder … and start there”? It is shown here; it is the only write Synopia would make to your disk.</li>
           <li>Is typing a path enough for a folder never used, or should the list also have one mouse row, “Choose in Finder…” (the macOS folder picker)?</li>
           <li>A new worktree from this list (<code>git worktree add</code>): later, or never? R3.3 says no new worktree yet.</li>
           <li>Should Synopia guess where a moved repo went (same git remote)? Proposed: no, you pick it.</li>
+          <li>Should the other lists (the <code>/</code> command menu, the model picker) use the same matcher? Proposed: yes, as one change after this one.</li>
         </ol>
       </div>
+    </div>
+    <div class="rules4">
+      <h3>Constraint: no directory scans, ever</h3>
+      <ul>
+        <li><b>Never list the home folder or walk folders</b>, on first start or later. Listing <code>~</code> sets off a run of macOS privacy prompts: Desktop, Documents, Downloads, Pictures, Music, other apps' data, Library.</li>
+        <li><b>The folder list comes from what Synopia knows</b>: the folders of its own sessions and of <code>listSessions()</code>, plus <code>git worktree list</code> in repos already in that list.</li>
+        <li><b>Path completion reads one folder, on <kbd>Tab</kbd> only</b>: the direct children of the path typed so far. Never recursive, never as you type, never ahead of you. <code>~/</code> then <kbd>Tab</kbd> lists <code>~</code>, only then.</li>
+        <li><b>A prompt you cause by typing is acceptable.</b> <code>~/Documents/</code> then <kbd>Tab</kbd> may ask for access to Documents, because you asked to look there.</li>
+        <li><b>“Folder gone” stats known paths only, and late</b>: the rows on screen, once per opening of the list. A stat inside a protected folder can prompt too, so a row there is checked only when you choose it.</li>
+        <li><b>The same late rule for <code>git worktree list</code></b>: repos on screen, and inside a protected folder only once you choose a row there.</li>
+      </ul>
     </div>
   </section>
 
   <section id="picture">
     <h2>The design in one picture</h2>
-    <p class="lede">After a year: 12 open sessions, 43 folders, 812 past sessions. You are in “Login form: keep the email after a failed sign-in” in <code>~/dev/demo-app.fix-login</code> and press <kbd>⌘N</kbd>. That worktree is selected. <kbd>Enter</kbd> starts there; typing finds any other folder.</p>
+    <p class="lede">After a year: 12 open sessions, 43 folders, 812 past sessions. You are in “Login form: keep the email after a failed sign-in” in <code>~/dev/demo-app.fix-login</code> and press <kbd>n</kbd>. That worktree is selected. <kbd>Enter</kbd> starts there; typing finds any other folder.</p>
     <div id="big"></div>
+  </section>
+
+  <section id="fuzzy">
+    <h2>Fuzzy search, from nota</h2>
+    <p class="lede">The folder list and the Open list use the matcher from the author's music player, nota, which is fzf's algorithm in Swift. Synopia ports it to TypeScript in the backend, which sends each row's matched positions; the page only draws them. This page runs a JavaScript port of the same code, so the highlights below are computed, not drawn by hand.</p>
+    <table class="reads">
+      <tr><th>What you type</th><th>What happens</th></tr>
+      <tr><td>How a word matches</td><td>Its letters must appear in the row in order, with gaps allowed: <code>dmapp</code> matches <code>~/dev/demo-app</code>. Case and accents are ignored. Of all the ways a word can line up, the best-scoring one is kept.</td></tr>
+      <tr><td>Several words</td><td>A space splits the query, and every word must match. Words match anywhere and in any order: <code>csv invoice</code> finds the same as <code>invoice csv</code>.</td></tr>
+      <tr><td>How rows rank</td><td>Each matched letter scores 16. A letter at a word start earns a bonus: after a space 10, after <code>/ , : ; |</code> 9, after other punctuation such as <code>-</code> or <code>.</code> 8, and a capital or digit after a lowercase letter 7. The first letter's bonus counts double. Letters in a run keep at least 4 each. A gap costs 3, then 1 for each letter it skips. A row's score is the sum over the words. Higher first; ties keep the list's order, newest first.</td></tr>
+      <tr><td>Session rows</td><td>The row text is the title, then the folder. On a tie, the row with more of the match in its title goes first, as nota prefers a song's title over its album.</td></tr>
+      <tr><td>Folder rows</td><td>A repo and its worktrees stay together, and the group ranks by its best row, as nota ranks an artist by its best track.</td></tr>
+      <tr><td>Highlights</td><td>Matched letters are bold in the link blue. On the selected row, already blue, they are bold and underlined.</td></tr>
+    </table>
+    <h3>Taken from nota</h3>
+    <table class="reads taken">
+      <tr><td>Search/FuzzyMatch.swift</td><td><code>FuzzyMatch.match(_:in:scratch:)</code>: fzf's v2 algorithm, a score matrix over word and text, then a backtrace for the matched positions. The constants at the top of the file, <code>bonusFor(_:_:)</code> for word starts, <code>charClass(_:)</code>, and <code>fold(_:)</code> and <code>term(_:)</code> for case and accents.</td></tr>
+      <tr><td>Search/SearchIndex.swift</td><td><code>SearchIndex.search(_:)</code>: split on spaces, every word must match, scores summed, positions joined, a tie goes to the row with more matches in its title (<code>total * 64 + min(63, title matches)</code>). <code>LibrarySnapshot.filtered(to:)</code>: groups ranked by their best row, ties in list order.</td></tr>
+      <tr><td>Nota/LibraryRowView.swift</td><td>The highlight style: accent and heavier type on a row, bold and underlined on the playing row. <code>utf16Ranges(of:in:)</code> turns positions into text ranges.</td></tr>
+    </table>
+    <h3>Try it on this page's invented data</h3>
+    <div class="demo">
+      <div class="panel pk"><div class="pk-head"><h5>Open session</h5><p>14 invented sessions. The right column is the score.</p></div>
+        <div class="pk-filter"><span class="g">❯</span><input id="dq" value="invoice csv" aria-label="Filter the invented sessions" autocomplete="off" spellcheck="false"></div>
+        <div class="pk-list" id="dl" style="min-height:190px"></div></div>
+      <div class="panel pk"><div class="pk-head"><h5>New session</h5><p>The invented folders, on the same query. Try dmapp.</p></div>
+        <div class="pk-filter"><span class="g">❯</span><span id="dq2" style="color:var(--ink-3)"></span></div>
+        <div class="pk-list" id="dl2" style="min-height:190px"></div></div>
+    </div>
+  </section>
+
+  <section id="disk">
+    <h2>What Synopia reads from disk</h2>
+    <p class="lede">Every read the design makes, its one write, and when. Anything not in this table, Synopia doesn't touch.</p>
+    <table class="reads">
+      <tr><th>Read</th><th>When</th><th>Never</th></tr>
+      <tr><td>Session folders</td><td>From Synopia's own state and <code>listSessions()</code>, which reads <code>~/.claude</code>. No other folder is opened to find them.</td><td>Listing <code>~</code> or any folder to discover projects.</td></tr>
+      <tr><td><code>git worktree list</code></td><td>In a known repo whose row is on screen, once per opening of the list. Inside a protected folder, only when you choose a row there.</td><td>In folders that aren't already in the list.</td></tr>
+      <tr><td>“Folder gone” check</td><td>One stat per known path, for the rows on screen, once per opening of the list. Inside a protected folder, only when you choose that row.</td><td>Checking the whole history, or checking ahead of scrolling.</td></tr>
+      <tr><td>Path completion</td><td>On <kbd>Tab</kbd>: one read of the folder typed so far, listing its direct children. Typing then filters what that read returned.</td><td>Recursion, reading as you type, reading the next level before you ask.</td></tr>
+      <tr><td>A typed path</td><td>One stat of exactly the path typed, when you stop typing, to show “Create folder …” if it doesn't exist; none when a <kbd>Tab</kbd> read already tells.</td><td>Stats of anything you didn't type.</td></tr>
+      <tr><td>Creating a folder</td><td>On <kbd>Enter</kbd> on “Create folder &lt;path&gt; and start there”: <code>mkdir -p</code> of that one path. The only write.</td><td>Any other write to your folders.</td></tr>
+    </table>
+    <p class="lede" style="margin-top:12px">Protected folders are the ones macOS asks about: Desktop, Documents, Downloads, Pictures, Music, Movies, iCloud Drive, other volumes, and other apps' data under <code>~/Library</code>. The list of them lives in one backend module.</p>
   </section>
 
   <section id="s1">
     <h2>1. First launch, no history</h2>
-    <p class="lede">A new Mac. Synopia has no open sessions, and <code>~/.claude</code> has no past sessions. You want to work in <code>~/dev/demo-app</code>, which you have just cloned.</p>
+    <p class="lede">A new Mac. Synopia has no open sessions, and <code>~/.claude</code> has no past sessions, so Synopia knows no folders except your home folder. You want to work in <code>~/dev/demo-app</code>, which you have just cloned.</p>
     <h3>What the window shows first</h3>
     <div class="opts" id="o1"></div>
     <h3>Recommended flow</h3>
     <ol class="flow" id="f1"></ol>
+    <h3>A project that doesn't exist yet</h3>
+    <p class="lede">Today starting a new project means making its folder in a terminal first. With the create row, Synopia covers the whole start without one.</p>
+    <ol class="flow" id="f1b"></ol>
   </section>
 
   <section id="s2">
@@ -305,7 +391,7 @@
 
   <section id="s3">
     <h2>3. After a year</h2>
-    <p class="lede">43 folders used, 812 past sessions, 12 open. On screen: “Login form: keep the email after a failed sign-in” in <code>~/dev/demo-app.fix-login</code>.</p>
+    <p class="lede">43 folders used, 812 past sessions, 12 open. On screen: “Login form: keep the email after a failed sign-in” in <code>~/dev/demo-app.fix-login</code>. Every flow starts in normal mode; from insert mode, press <kbd>Esc</kbd> first.</p>
     <h3>How New session picks the folder</h3>
     <div class="opts" id="o3"></div>
 
@@ -317,7 +403,9 @@
 
     <h3>c. A folder never used</h3>
     <div class="opts" id="o3c"></div>
-    <ol class="flow" id="f3c" style="margin-top:22px"></ol>
+    <ol class="flow three" id="f3c" style="margin-top:22px"></ol>
+    <h3>c, a new project: the folder doesn't exist yet</h3>
+    <ol class="flow" id="f3c2"></ol>
 
     <h3>d. A git worktree of a repo you use</h3>
     <p class="lede">You made <code>~/dev/demo-app.search</code> in a terminal with <code>git worktree add</code>. No session has run there yet.</p>
@@ -346,25 +434,25 @@
     <p class="lede">Synopia is key-driven, but New session and Open session have no key today: you click the sidebar's footer.</p>
     <h3>The two keys</h3>
     <div class="opts" id="o5"></div>
-    <h3>Every flow above, by key</h3>
+    <h3>Every flow above, by key, from normal mode</h3>
     <table class="keys">
       <tr><th>You want to</th><th>Keys</th><th>Presses, not counting your first message</th></tr>
-      <tr><td>Start on a new Mac in <code>~/dev/demo-app</code></td><td>type <code>~/dev/dem</code> <kbd>Tab</kbd> <kbd>Enter</kbd></td><td>9 characters and 2 keys; the list is already there</td></tr>
-      <tr><td>Start where the screen is</td><td><kbd>⌘N</kbd> <kbd>Enter</kbd></td><td>2</td></tr>
-      <tr><td>Start in a folder from last week</td><td><kbd>⌘N</kbd> type <code>notes</code> <kbd>Enter</kbd></td><td>2 and the name</td></tr>
-      <tr><td>Start in a folder never used</td><td><kbd>⌘N</kbd> type <code>~/dev/si</code> <kbd>Tab</kbd> <kbd>Enter</kbd></td><td>3 and the start of the path</td></tr>
-      <tr><td>Start in a worktree of a repo you use</td><td><kbd>⌘N</kbd> type <code>search</code> <kbd>Enter</kbd></td><td>2 and the name</td></tr>
-      <tr><td>Open a session from 9 months ago</td><td><kbd>⌘O</kbd> type <code>invoice csv</code> <kbd>Enter</kbd></td><td>2 and the words</td></tr>
-      <tr><td>Continue a session whose folder is gone</td><td><kbd>⌘O</kbd> type <code>billing</code> <kbd>Enter</kbd> <kbd>Enter</kbd> <kbd>Enter</kbd></td><td>4 and the words; the folder list opens filtered on the repo name</td></tr>
+      <tr><td>Start on a new Mac in <code>~/dev/demo-app</code></td><td>type <code>~/dev/</code> <kbd>Tab</kbd> type <code>dem</code> <kbd>Enter</kbd></td><td>2 keys and 9 characters; the list is already there</td></tr>
+      <tr><td>Start where the screen is</td><td><kbd>n</kbd> <kbd>Enter</kbd></td><td>2</td></tr>
+      <tr><td>Start in a folder from last week</td><td><kbd>n</kbd> type <code>nots</code> <kbd>Enter</kbd></td><td>2 and a few letters</td></tr>
+      <tr><td>Start in a folder never used</td><td><kbd>n</kbd> type <code>~/dev/</code> <kbd>Tab</kbd> type <code>si</code> <kbd>Enter</kbd></td><td>3 and the path</td></tr>
+      <tr><td>Start in a worktree of a repo you use</td><td><kbd>n</kbd> type <code>srch</code> <kbd>Enter</kbd></td><td>2 and a few letters</td></tr>
+      <tr><td>Open a session from 9 months ago</td><td><kbd>o</kbd> type <code>invoice csv</code> <kbd>Enter</kbd></td><td>2 and the words</td></tr>
+      <tr><td>Continue a session whose folder is gone</td><td><kbd>o</kbd> type <code>billing</code> <kbd>Enter</kbd> <kbd>Enter</kbd> <kbd>Enter</kbd></td><td>4 and the word; the folder list opens filtered on the repo name</td></tr>
     </table>
+    <p class="lede" style="margin-top:8px">From insert mode each flow costs one more key, <kbd>Esc</kbd>, as every normal-mode key does.</p>
     <h3>Keys in the folder list</h3>
     <table class="keys">
-      <tr><td>Typing</td><td></td><td>Filters by folder name. A path starting with <code>~</code> or <code>/</code> lists that folder's subfolders on disk.</td></tr>
+      <tr><td>Typing</td><td></td><td>Filters the known folders fuzzily. A path starting with <code>~</code> or <code>/</code> is kept as typed, with nothing read.</td></tr>
       <tr><td><kbd>↑</kbd> <kbd>↓</kbd>, <kbd>j</kbd> <kbd>k</kbd> while the filter is empty</td><td></td><td>Move, as in the Open list.</td></tr>
-      <tr><td><kbd>Tab</kbd></td><td></td><td>Completes the selected path into the filter, as a shell does, to go one folder deeper.</td></tr>
+      <tr><td><kbd>Tab</kbd></td><td></td><td>On a typed path: one read of the folder typed so far, listing its direct children. On a row: fills the filter with its path, to go one folder deeper with the next <kbd>Tab</kbd>.</td></tr>
       <tr><td><kbd>Enter</kbd></td><td></td><td>Starts an empty session in the selected folder and puts the message box in insert mode.</td></tr>
-      <tr><td><kbd>Esc</kbd></td><td></td><td>Closes the list and goes back to the session on screen. With no open session the list stays.</td></tr>
-      <tr><td><kbd>⌘O</kbd> in the list, <kbd>⌘N</kbd> in the Open list</td><td></td><td>Switches to the other list, keeping nothing typed.</td></tr>
+      <tr><td><kbd>Esc</kbd></td><td></td><td>Closes the list and goes back to the session on screen; then <kbd>o</kbd> opens the Open list. With no open session the list stays.</td></tr>
     </table>
   </section>
 
@@ -372,12 +460,13 @@
     <h2>Rejected</h2>
     <ul class="rej">
       <li><b>Starting at once and changing the folder in the header until the first message.</b> It keeps “no dialog”, but the folder can't change once you send, and a wrong one shows only in small type.</li>
-      <li><b>Two commands, one for “here” and one that asks.</b> Two ways to do one thing; <kbd>⌘N</kbd> <kbd>Enter</kbd> already costs one key.</li>
+      <li><b>Two commands, one for “here” and one that asks.</b> Two ways to do one thing; <kbd>n</kbd> <kbd>Enter</kbd> already costs one key.</li>
       <li><b>A welcome screen with a Finder button.</b> A second way to start that you use once.</li>
       <li><b>The macOS folder picker as the main way.</b> It knows nothing about the folders you used or their worktrees, and it is slow by key.</li>
+      <li><b>Listing folders on disk to fill the list.</b> Reading <code>~</code> and below sets off a run of macOS privacy prompts, and fzf-style listing would do it on every open.</li>
       <li><b>Folder first, then sessions, in Open session.</b> Two steps every time, to fix a case typing already covers.</li>
       <li><b>Hiding sessions whose folder is gone.</b> The history is still on disk and still worth reading.</li>
-      <li><b>Normal-mode letters for New and Open.</b> They type in insert mode, and <kbd>⌘N</kbd> <kbd>⌘O</kbd> are what every Mac app uses.</li>
+      <li><b><kbd>⌘N</kbd> and <kbd>⌘O</kbd> in a File menu.</b> The author's call: Synopia's keys stay single letters in normal mode, like <kbd>i</kbd>, <kbd>x</kbd> and <kbd>b</kbd>, with no new menu items.</li>
     </ul>
   </section>
 
@@ -385,6 +474,73 @@
 </div>
 
 <script>
+/* ---------- fuzzy matching: a JavaScript port of nota's FuzzyMatch.match and SearchIndex.search (fzf's v2 algorithm) ---------- */
+const SM = 16, GS = -3, GE = -1, BB = SM / 2, BNW = SM / 2, BC123 = BB + GE, BCON = -(GS + GE), BFM = 2, BBW = BB + 2, BBD = BB + 1;
+/* classes, in nota's order: 0 white, 1 non-word, 2 delimiter, 3 lower, 4 upper, 5 letter, 6 number */
+const charClass = ch => /\s/.test(ch) ? 0 : "/,:;|".includes(ch) ? 2 : /\p{Ll}/u.test(ch) ? 3 : /\p{Lu}/u.test(ch) ? 4 : /\p{N}/u.test(ch) ? 6 : /\p{L}/u.test(ch) ? 5 : 1;
+function bonusFor(p, c) {
+  if (c > 1) { if (p === 0) return BBW; if (p === 2) return BBD; if (p === 1) return BB; }
+  if ((p === 3 && c === 4) || (p !== 6 && c === 6)) return BC123;
+  if (c === 1 || c === 2) return BNW;
+  if (c === 0) return BBW;
+  return 0;
+}
+const fold = ch => ch.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().charAt(0) || ch;
+const prep = s => { const cs = [...s]; return { keys: cs.map(fold), classes: cs.map(charClass) }; };
+function fmatch(term, text) {
+  const m = term.length, n = text.keys.length;
+  if (!m || m > n) return null;
+  const first = []; let j = 0;
+  for (const c of term) { while (j < n && text.keys[j] !== c) j++; if (j >= n) return null; first.push(j); j++; }
+  let last = n - 1; while (text.keys[last] !== term[m - 1]) last--;
+  const W = last + 1, score = new Array(m * W).fill(0), cons = new Array(m * W).fill(0), bonus = [];
+  let prev = 0; for (let col = 0; col < W; col++) { const c = text.classes[col]; bonus[col] = bonusFor(prev, c); prev = c; }
+  let best = 0, bestCol = -1;
+  for (let row = 0; row < m; row++) {
+    const base = row * W, fc = first[row]; let inGap = false;
+    for (let col = fc; col < W; col++) {
+      const left = col > fc ? score[base + col - 1] : 0, s2 = left + (inGap ? GE : GS);
+      let s1 = -1e9, consecutive = 0;
+      if (text.keys[col] === term[row]) {
+        if (row === 0) { s1 = SM + bonus[col] * BFM; consecutive = 1; }
+        else if (col > 0) {
+          const diag = (row - 1) * W + col - 1; let b = bonus[col]; consecutive = cons[diag] + 1;
+          if (consecutive > 1) { const fb = bonus[col - consecutive + 1]; if (b >= BB && b > fb) consecutive = 1; else b = Math.max(b, BCON, fb); }
+          s1 = score[diag] + SM;
+          if (s1 + b < s2) { s1 += bonus[col]; consecutive = 0; } else s1 += b;
+          if (col - 1 < first[row - 1]) { s1 = -1e9; consecutive = 0; }
+        }
+      }
+      cons[base + col] = consecutive; inGap = s1 < s2;
+      const sc = Math.max(s1, s2, 0); score[base + col] = sc;
+      if (row === m - 1 && sc >= best && sc > 0) { best = sc; bestCol = col; }
+    }
+  }
+  if (bestCol < 0) return null;
+  const pos = []; let row = m - 1, col = bestCol, prefer = true;
+  while (col >= 0) {
+    const base = row * W, s = score[base + col];
+    const s1 = row > 0 && col > 0 && col - 1 >= first[row - 1] ? score[base - W + col - 1] : 0;
+    const s2 = col > first[row] ? score[base + col - 1] : 0;
+    if (s > s1 && (s > s2 || (s === s2 && prefer)) && text.keys[col] === term[row]) { pos.push(col); if (row === 0) break; row--; }
+    prefer = cons[base + col] > 1 || (base + W + col + 1 < m * W && row + 1 < m && cons[base + W + col + 1] > 0);
+    col--;
+  }
+  return pos.length === m ? { score: best, positions: pos.reverse() } : null;
+}
+/* every word must match; scores add up; positions join */
+function search(query, s) {
+  const terms = query.trim().split(/\s+/).filter(Boolean).map(t => [...t].map(fold));
+  if (!terms.length) return null;
+  const text = prep(s); let total = 0; const at = new Set();
+  for (const t of terms) { const mt = fmatch(t, text); if (!mt) return null; total += mt.score; mt.positions.forEach(p => at.add(p)); }
+  return { score: total, at };
+}
+/* the text with matched letters marked, from offset `from` in the matched string */
+function hl(s, at, from = 0) {
+  return [...s].map((ch, i) => at && at.has(i + from) ? `<b class="m">${ch}</b>` : ch).join("");
+}
+
 /* ---------- marks ---------- */
 const IND = {
   work: '<span class="ind" aria-hidden="true"><i class="arc"></i></span>',
@@ -411,7 +567,7 @@ const YEAR_SIDE = [
   ["Scratch: date parsing check", "stop", "Your turn, 6 d"],
   ["Notes: reading list import", "stop", "Your turn, 6 d"],
 ];
-/* folders after a year, newest first; kids are worktrees, found by git */
+/* folders after a year, newest first; kids are worktrees, from git worktree list in the known repo */
 const F_YEAR = [
   { p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true },
   { p: "~/dev/demo-app.fix-login", n: "12 sessions", a: "4 min ago", kid: true },
@@ -425,6 +581,8 @@ const F_YEAR = [
   { p: "~/work/mobile-app", n: "63 sessions", a: "2 d ago" },
   { p: "~/dev/dotfiles", n: "22 sessions", a: "4 d ago" },
   { p: "~/dev/scratch", n: "40 sessions", a: "6 d ago" },
+  { p: "~/work/release-notes", n: "4 sessions", a: "5 mo ago" },
+  { p: "~", n: "3 sessions", a: "8 mo ago" },
 ];
 
 /* ---------- builders ---------- */
@@ -436,23 +594,34 @@ function sidebar(rows, { empty } = {}) {
     <div class="sb-foot"><span class="tb">${MOON}</span><span class="b">Open session</span><span class="b on">New session</span></div></aside>`;
 }
 const filter = (typed, ph) => `<div class="pk-filter"><span class="g">❯</span>${typed ? `<span>${typed}<i class="caret"></i></span>` : `<span><i class="caret"></i><span class="ph">${ph}</span></span>`}</div>`;
-function frow(f) {
+/* a folder row; `q` highlights the query: on the whole path, or (path mode) on the part after the folder typed */
+function frow(f, q) {
   const cls = ["fr", f.on && "on", f.kid && "kid", f.last && "last", f.par && "par", f.solo && "solo", f.gone && "gone", f.mkdir && "mkdir"].filter(Boolean).join(" ");
-  return `<div class="${cls}"><span class="p">${f.p}</span><span class="n">${f.n || ""}</span><span class="a">${f.a || ""}</span></div>`;
+  let p = f.p;
+  if (q && !f.mkdir) {
+    const pathMode = /^[~/]/.test(q);
+    if (pathMode) { const cut = q.lastIndexOf("/") + 1, rest = q.slice(cut), m = rest && search(rest, p.slice(cut)); p = m ? p.slice(0, cut) + hl(p.slice(cut), m.at) : p; }
+    else { const m = search(q, p); p = m ? hl(p, m.at) : p; }
+  }
+  return `<div class="${cls}"><span class="p">${p}</span><span class="n">${f.n || ""}</span><span class="a">${f.a || ""}</span></div>`;
 }
 /* the folder list: New session's panel */
-function folders({ title = "New session", meta = "Claude works in the folder you pick. It can't change after your first message.", typed = "", ph = "Type a folder name, or a path starting with ~ or /", rows = [], note = "", empty = "", keys = true }) {
+function folders({ title = "New session", meta = "Claude works in the folder you pick. It can't change after your first message.", typed = "", ph = "Type to find a folder, or a path starting with ~ or /", rows = [], note = "", empty = "", keys = true }) {
   return `<div class="panel pk"><div class="pk-head"><h5>${title}</h5><p>${meta}</p></div>${filter(typed, ph)}
-    <div class="pk-list">${empty ? `<p class="pk-empty">${empty}</p>` : rows.map(frow).join("")}</div>${note ? `<p class="pk-note">${note}</p>` : ""}
+    <div class="pk-list">${rows.map(f => frow(f, typed)).join("")}${empty ? `<p class="pk-empty">${empty}</p>` : ""}</div>${note ? `<p class="pk-note">${note}</p>` : ""}
     ${keys ? `<p class="pk-keys">${typeof keys === "string" ? keys : `${K("↑", "↓")} move, ${K("Tab")} completes a path, ${K("Enter")} starts, ${K("Esc")} closes`}</p>` : ""}</div>`;
 }
-function srow(s) {
-  return `<div class="sr${s.on ? " on" : ""}"><span class="t"><span class="tt">${s.t}</span>${s.tag ? `<span class="tag">${s.tag}</span>` : ""}</span><span class="f${s.gone ? " gone" : ""}">${s.f}</span><span class="a">${s.a}</span></div>`;
+/* a session row: the query matches "title folder", as nota matches "artist album title" */
+function srow(s, q) {
+  let t = s.t, f = s.f;
+  const m = q && search(q, `${s.t} ${s.f}`);
+  if (m) { t = hl(s.t, m.at); f = hl(s.f, m.at, s.t.length + 1); }
+  return `<div class="sr${s.on ? " on" : ""}"><span class="t"><span class="tt">${t}</span>${s.tag ? `<span class="tag">${s.tag}</span>` : ""}</span><span class="f${s.gone ? " gone" : ""}">${f}</span><span class="a">${s.a}</span></div>`;
 }
 /* the Open list */
 function sessions({ meta, typed = "", rows = [], note = "" }) {
-  return `<div class="panel pk"><div class="pk-head"><h5>Open session</h5><p>${meta}</p></div>${filter(typed, "Type to filter by title or folder")}
-    <div class="pk-list">${rows.map(srow).join("")}</div>${note ? `<p class="pk-note${note === "Show 50 more" ? " link" : ""}">${note}</p>` : ""}
+  return `<div class="panel pk"><div class="pk-head"><h5>Open session</h5><p>${meta}</p></div>${filter(typed, "Type to find a session by title or folder")}
+    <div class="pk-list">${rows.map(r => srow(r, typed)).join("")}</div>${note ? `<p class="pk-note${note === "Show 50 more" ? " link" : ""}">${note}</p>` : ""}
     <p class="pk-keys">${K("↑", "↓")} move, ${K("Enter")} opens, ${K("Esc")} closes</p></div>`;
 }
 /* a session view */
@@ -466,27 +635,41 @@ const opt = (o) => `<div class="opt${o.rec ? " is-rec" : ""}">${o.shot}<h4>${o.n
 const step = (s) => `<li><div class="do"><span>${s.do}</span></div>${s.shot}<p class="see">${s.see}</p></li>`;
 const put = (id, html) => { document.getElementById(id).innerHTML = html; };
 const sel = (rows, p) => rows.map(r => ({ ...r, on: r.p === p }));
+const card = (...ps) => `<div class="textcard">${ps.map(p => `<p>${p}</p>`).join("")}</div>`;
 
 /* ---------- the big picture ---------- */
-document.getElementById("big").innerHTML = `<div class="shot big">${sidebar(YEAR_SIDE)}<div class="main">${folders({ rows: sel(F_YEAR, "~/dev/demo-app.fix-login"), note: "43 folders, newest first. Type a name to find one, or a path to start anywhere." })}</div></div>`;
+document.getElementById("big").innerHTML = `<div class="shot big">${sidebar(YEAR_SIDE)}<div class="main">${folders({ rows: sel(F_YEAR.slice(0, 12), "~/dev/demo-app.fix-login"), note: "43 folders, newest first. Type to find one, or a path to start anywhere." })}</div></div>`;
 
 /* ---------- 1. first launch, no history ---------- */
+const HOME_ONLY = [{ p: "~", n: "home folder", a: "", on: true, solo: true }];
+const NOTHING = "No other folders yet. Type a path; Tab lists what is in it.";
+const DEV = [{ p: "~/dev/blog/", n: "not used yet" }, { p: "~/dev/demo-app/", n: "not used yet" }, { p: "~/dev/notes/", n: "not used yet" }];
 put("o1", [
-  { rec: true, name: "The folder list, as New session shows it", why: "The same panel as every later New session, so the first launch teaches the daily path. It is ready to type into.",
-    shot: shot(folders({ empty: "No folders yet. Type the path of a project folder, for example ~/dev/demo-app." }), { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
+  { rec: true, name: "The folder list, with only ~ in it", why: "The same panel as every later New session. Synopia knows no folders yet and reads none to find some; you type the path.",
+    shot: shot(folders({ rows: HOME_ONLY, empty: NOTHING }), { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
   { name: "A welcome screen with a Finder button", why: "A second way to start that you use once, and the Finder picker is a mouse trip in a key-driven app.",
     shot: shot(`<div class="panel welcome"><div><h5>Start in a project folder</h5><p>Claude works in the folder you choose.</p><span class="btn primary">Choose folder…</span></div></div>`, { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
   { name: "Start at once in your home folder", why: "Today's rule with nothing open. Claude works in ~, and a session can't move to ~/dev/demo-app afterwards.",
     shot: shot(session({ meta: 'Folder <span class="mono">~</span>' }), { side: [["Not in a group", "others"], ["New session", "stop", "Your turn", "cur"]], h: 330 }) },
 ].map(opt).join(""));
 put("f1", [
-  { do: "Open Synopia for the first time.", see: "The main area shows the folder list, its filter focused. The sidebar says there are no open sessions.",
-    shot: shot(folders({ empty: "No folders yet. Type the path of a project folder, for example ~/dev/demo-app." }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
-  { do: `Type <code>~/dev/dem</code>.`, see: "A path lists that folder's subfolders on disk, matching what you typed. Folders never used say “not used yet”.",
-    shot: shot(folders({ typed: "~/dev/dem", rows: [{ p: "~/dev/demo-app/", n: "not used yet", on: true }, { p: "~/dev/demo-notes/", n: "not used yet" }] }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
-  { do: `${K("Tab")} completes it, ${K("Enter")} starts.`, see: "An empty session in ~/dev/demo-app, with the message box in insert mode. It joins the sidebar under “Not in a group”.",
+  { do: "Open Synopia for the first time.", see: "The main area shows the folder list, its filter focused. It holds one row, your home folder, which Synopia knows without reading anything.",
+    shot: shot(folders({ rows: HOME_ONLY, empty: NOTHING }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
+  { do: `Type <code>~/dev/</code>, then ${K("Tab")}.`, see: "Tab reads ~/dev once and lists its direct children. Nothing deeper, nothing else, and nothing before you pressed Tab. ~/ then Tab would read ~, only then.",
+    shot: shot(folders({ typed: "~/dev/", rows: DEV.map((r, i) => ({ ...r, on: i === 0 })) }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
+  { do: `Type <code>dem</code>.`, see: "Typing filters the folders that one read returned, fuzzily, with the match highlighted. No new read. Typed into ~/Documents/, the Tab may bring a macOS prompt for Documents: you asked to look there, so that is fine.",
+    shot: shot(folders({ typed: "~/dev/dem", rows: [{ p: "~/dev/demo-app/", n: "not used yet", on: true }] }), { side: [], sideOpts: { empty: "No open sessions" }, h: 300 }) },
+  { do: `${K("Enter")}`, see: "One stat of ~/dev/demo-app, then an empty session there, the box in insert mode. It joins the sidebar under “Not in a group”.",
     shot: shot(session({ meta: 'Folder <span class="mono">~/dev/demo-app</span>, branch main' }), { side: [["Not in a group", "others"], ["New session", "stop", "Your turn", "cur"]], h: 300 }) },
 ].map(step).join(""));
+
+const mk = (path, side) => [
+  { do: `Type <code>${path}</code>.`, see: `One stat of exactly ${path} when you stop typing: it doesn't exist, so the list holds one row. No folder is listed or read.`,
+    shot: shot(folders({ typed: path, rows: [{ p: `Create folder ${path} and start there`, mkdir: true, on: true }] }), side ? { side: [], sideOpts: { empty: "No open sessions" }, h: 260 } : { h: 260 }) },
+  { do: `${K("Enter")}`, see: `mkdir -p ${path}, that one path and nothing else, then an empty session in it. Synopia's only write to your disk.`,
+    shot: shot(session({ meta: `Folder <span class="mono">${path}</span>` }), side ? { side: [["Not in a group", "others"], ["New session", "stop", "Your turn", "cur"]], h: 260 } : { h: 260 }) },
+];
+put("f1b", mk("~/dev/new-app", true).map(step).join(""));
 
 /* ---------- 2. first launch, CLI history ---------- */
 const F_CLI = [
@@ -496,22 +679,23 @@ const F_CLI = [
   { p: "~/dev/notes", n: "6 sessions", a: "5 d ago" },
   { p: "~/dev/dotfiles", n: "3 sessions", a: "12 d ago" },
   { p: "~/dev/scratch", n: "2 sessions", a: "20 d ago" },
+  { p: "~", n: "home folder", a: "" },
 ];
 put("o2", [
   { rec: true, name: "The folder you used last", why: "Where you were working, in the terminal too. Enter continues the habit; anything else is a few letters away.",
-    shot: shot(folders({ rows: sel(F_CLI, "~/work/api") }), { h: 290 }) },
+    shot: shot(folders({ rows: sel(F_CLI, "~/work/api") }), { h: 350 }) },
   { name: "Your home folder", why: "Today's rule with nothing open. Nobody starts a project session in ~, so Enter is never right.",
-    shot: shot(folders({ rows: [{ p: "~", n: "", a: "", on: true }, ...F_CLI] }), { h: 290 }) },
+    shot: shot(folders({ rows: sel(F_CLI, "~") }), { h: 350 }) },
   { name: "Nothing selected", why: "Safe, but Enter does nothing until you move, and it differs from every later New session.",
-    shot: shot(folders({ rows: F_CLI }), { h: 290 }) },
+    shot: shot(folders({ rows: F_CLI }), { h: 350 }) },
 ].map(opt).join(""));
 put("f2", [
-  { do: "Open Synopia for the first time.", see: "The folder list shows the 6 folders from your terminal sessions, with ~/work/api, the newest, selected.",
+  { do: "Open Synopia for the first time.", see: "The folder list shows the 6 folders of your terminal sessions, from listSessions(), and ~. The newest, ~/work/api, is selected.",
     shot: shot(folders({ rows: sel(F_CLI, "~/work/api") }), { side: [], sideOpts: { empty: "No open sessions" }, h: 330 }) },
-  { do: `${K("⌘O")} instead, to pick up a terminal session.`, see: "The Open list, as today, with the totals. The session a terminal still runs says so and opens read-only.",
+  { do: `${K("Esc")}, then ${K("o")}, to pick up a terminal session.`, see: "The Open list, as today, with the totals. The session a terminal still runs says so and opens read-only.",
     shot: shot(sessions({ meta: "37 past sessions in 6 folders, newest first.", rows: [
-      { t: "API: pagination for the orders endpoint", tag: "Open in a terminal", f: "~/work/api", a: "3 h ago" },
-      { t: "API: rate limit headers", f: "~/work/api", a: "5 h ago", on: true },
+      { t: "API: pagination for the orders endpoint", tag: "Open in a terminal", f: "~/work/api", a: "3 h ago", on: true },
+      { t: "API: rate limit headers", f: "~/work/api", a: "5 h ago" },
       { t: "Login form: keep the email after a failed sign-in", f: "~/dev/demo-app.fix-login", a: "1 d ago" },
       { t: "Demo app: upgrade the test runner", f: "~/dev/demo-app", a: "1 d ago" },
       { t: "Weekly notes cleanup", f: "~/dev/notes", a: "5 d ago" },
@@ -520,54 +704,60 @@ put("f2", [
 
 /* ---------- 3. after a year ---------- */
 put("o3", [
-  { rec: true, name: "Ask, with the folder on screen selected", why: "One way for every case: ⌘N Enter for here, a few letters for anywhere else. You see the folder before it is fixed.",
+  { rec: true, name: "Ask, with the folder on screen selected", why: "One way for every case: n Enter for here, a few letters for anywhere else. You see the folder before it is fixed.",
     shot: shot(folders({ rows: sel(F_YEAR, "~/dev/demo-app.fix-login").slice(0, 8) }), { h: 330 }) },
   { name: "Start at once, change it in the header", why: "Keeps “no dialog” and costs one key for here, but a wrong folder shows only in small type, and it can't change after you send.",
     shot: shot(session({ meta: 'Folder <span class="chip">~/dev/demo-app.fix-login ▾</span> Change it before your first message' }), { h: 330 }) },
-  { name: "Two commands: here, or ask", why: "⌘N starts here, ⌘⇧N asks. Two ways to do one thing, to save a single Enter.",
-    shot: shot(`<div class="menu" style="margin:14px auto"><div class="mt">File</div><div class="mi on">New Session Here<span>⌘N</span></div><div class="mi">New Session In…<span>⇧⌘N</span></div><hr><div class="mi">Open Session…<span>⌘O</span></div></div>`, { h: 330 }) },
+  { name: "Two commands: here, or ask", why: "n starts here, N asks. Two ways to do one thing, to save a single Enter.",
+    shot: shot(card(`${K("n")} New session in the folder on screen`, `${K("N")} New session, asking for the folder`), { h: 330 }) },
 ].map(opt).join(""));
 
 put("f3a", [
-  { do: `${K("⌘N")}`, see: "The worktree of the session on screen is selected, under its repo. Nothing else to do.",
+  { do: `${K("n")}`, see: "The worktree of the session on screen is selected, under its repo. Nothing else to do.",
     shot: shot(folders({ rows: sel(F_YEAR, "~/dev/demo-app.fix-login").slice(0, 7) }), { side: YEAR_SIDE.slice(0, 6), h: 300 }) },
   { do: `${K("Enter")}`, see: "An empty session in the same worktree, in “Not in a group”, box in insert mode. You type your first message.",
     shot: shot(session({ meta: 'Folder <span class="mono">~/dev/demo-app.fix-login</span>, branch fix-login' }), { side: [...YEAR_SIDE.slice(0, 5), ["New session", "stop", "Your turn", "cur"], YEAR_SIDE[5]].map((r, i) => i === 1 ? [r[0], r[1], r[2]] : r), h: 300 }) },
 ].map(step).join(""));
 
 put("f3b", [
-  { do: `${K("⌘N")}, type <code>notes</code>.`, see: "Each folder whose name holds the word, newest first. ~/dev/notes, used 6 days ago, comes first and is selected.",
-    shot: shot(folders({ typed: "notes", rows: [{ p: "~/dev/notes", n: "31 sessions", a: "6 d ago", on: true }, { p: "~/work/release-notes", n: "4 sessions", a: "5 mo ago" }, { p: "~/dev/demo-notes", n: "not used yet", a: "" }] }), { h: 250 }) },
+  { do: `${K("n")}, type <code>nots</code>.`, see: "The letters n, o, t, s in order match two known folders. ~/dev/notes ranks first: its match starts after a “/”, and a tie would go to the newer one.",
+    shot: shot(folders({ typed: "nots", rows: [{ p: "~/dev/notes", n: "31 sessions", a: "6 d ago", on: true, solo: true }, { p: "~/work/release-notes", n: "4 sessions", a: "5 mo ago" }] }), { h: 250 }) },
   { do: `${K("Enter")}`, see: "An empty session in ~/dev/notes.",
     shot: shot(session({ meta: 'Folder <span class="mono">~/dev/notes</span>' }), { h: 250 }) },
 ].map(step).join(""));
 
+const DEV_YEAR = ["blog", "demo-app", "notes", "scratch", "side-project", "sizes-demo"].map(x => ({ p: `~/dev/${x}/`, n: ["side-project", "sizes-demo"].includes(x) ? "not used yet" : "" }));
 put("o3c", [
-  { rec: true, name: "Type the path, Tab completes", why: "The same field, no second tool, and fast by key. A path that doesn't exist offers to create it (open question 2).",
+  { rec: true, name: "Type the path, Tab reads one folder", why: "The same field and fast by key. Only the folder you typed is read, on Tab. A path that doesn't exist offers to create it, so no terminal is needed to start a new project.",
     shot: shot(folders({ typed: "~/dev/si", rows: [{ p: "~/dev/side-project/", n: "not used yet", on: true }, { p: "~/dev/sizes-demo/", n: "not used yet" }, { p: "Create folder ~/dev/si and start there", mkdir: true }] }), { h: 270 }) },
-  { name: "A “Choose in Finder…” row", why: "Familiar with a mouse, but a second way to the same place, and it knows nothing about your folders (open question 3).",
+  { name: "A “Choose in Finder…” row", why: "Familiar with a mouse, but a second way to the same place, and it knows nothing about your folders (open question 2).",
     shot: shot(`<div style="padding-top:22px"><div class="finder"><div class="fb"><div class="fl"><b>Favourites</b>Home<br>dev<br>work<br>Desktop</div><div class="fc"><div>blog</div><div>demo-app</div><div>notes</div><div class="on">side-project</div><div>sizes-demo</div></div><div class="fc"><div style="color:var(--ink-3)">README.md</div><div style="color:var(--ink-3)">src</div></div></div><div class="ff"><span class="btn">Cancel</span><span class="btn go">Open</span></div></div></div>`, { h: 270 }) },
-  { name: "Only folders you have used", why: "Clean, but the first session in a new project needs some other way in, and there is none.",
+  { name: "Only folders you have used", why: "Nothing read at all, but the first session in a new project needs some other way in, and there is none.",
     shot: shot(folders({ typed: "side", empty: "No folder you have used matches “side”." }), { h: 270 }) },
 ].map(opt).join(""));
 put("f3c", [
-  { do: `${K("⌘N")}, type <code>~/dev/si</code>.`, see: "Subfolders of ~/dev that start with “si”. None was used before.",
-    shot: shot(folders({ typed: "~/dev/si", rows: [{ p: "~/dev/side-project/", n: "not used yet", on: true }, { p: "~/dev/sizes-demo/", n: "not used yet" }, { p: "Create folder ~/dev/si and start there", mkdir: true }] }), { h: 250 }) },
-  { do: `${K("Tab")} then ${K("Enter")}.`, see: "Tab fills in ~/dev/side-project/ and lists its subfolders; Enter starts in it. From now on it is in the list like any other folder.",
-    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/side-project</span>, branch main' }), { h: 250 }) },
+  { do: `${K("n")}, type <code>~/dev/</code>, then ${K("Tab")}.`, see: "One read of ~/dev: its direct children. Known ones show their sessions on the known rows; the rest say “not used yet”.",
+    shot: shot(folders({ typed: "~/dev/", rows: DEV_YEAR.map((r, i) => ({ ...r, on: i === 0 })) }), { h: 270 }) },
+  { do: `Type <code>si</code>.`, see: "The children from that read, filtered and highlighted. Nothing new is read.",
+    shot: shot(folders({ typed: "~/dev/si", rows: [{ p: "~/dev/side-project/", n: "not used yet", on: true }, { p: "~/dev/sizes-demo/", n: "not used yet" }] }), { h: 270 }) },
+  { do: `${K("Enter")}`, see: "An empty session in ~/dev/side-project. From now on it is a known folder, in the list like any other.",
+    shot: shot(session({ meta: 'Folder <span class="mono">~/dev/side-project</span>, branch main' }), { h: 270 }) },
 ].map(step).join(""));
 
+put("f3c2", [{ ...mk("~/dev/side-quest")[0], do: `${K("n")}, type <code>~/dev/side-quest</code>.` }, mk("~/dev/side-quest")[1]].map(step).join(""));
+
+const SEARCH_ROWS = [{ p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true }, { p: "~/dev/demo-app.search", n: "none yet", kid: true, last: true, on: true }];
 put("o3d", [
-  { rec: true, name: "Worktrees under their repo, found by git", why: "Git knows every worktree of a repo you use, so one with no sessions yet is listed too. The 1px guides match the sidebar's tree.",
-    shot: shot(folders({ typed: "search", rows: [{ p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true }, { p: "~/dev/demo-app.search", n: "none yet", kid: true, last: true, on: true }] }), { h: 250 }) },
+  { rec: true, name: "Worktrees under their repo, from git", why: "git worktree list in a repo Synopia knows names every worktree, even one with no sessions, without reading other folders. The 1px guides match the sidebar's tree.",
+    shot: shot(folders({ typed: "srch", rows: SEARCH_ROWS }), { h: 250 }) },
   { name: "A flat list of folders with sessions", why: "Simpler, but a fresh worktree isn't in it, so you type its full path. Worktrees of one repo scatter by date.",
-    shot: shot(folders({ typed: "search", empty: "No folder you have used matches “search”. Type a path to start anywhere." }), { h: 250 }) },
-  { name: "A “New worktree…” row", why: "Makes the worktree too, but that is a new feature with its own questions: branch, base, naming (open question 4).",
-    shot: shot(folders({ typed: "search", rows: [{ p: "~/dev/demo-app.search", n: "none yet", on: false, solo: true }, { p: "New worktree of demo-app named “search”", mkdir: true, on: true }] }), { h: 250 }) },
+    shot: shot(folders({ typed: "srch", empty: "No folder you have used matches “srch”. Type a path to start anywhere." }), { h: 250 }) },
+  { name: "A “New worktree…” row", why: "Makes the worktree too, but that is a new feature with its own questions: branch, base, naming (open question 3).",
+    shot: shot(folders({ typed: "srch", rows: [{ p: "~/dev/demo-app.search", n: "none yet", solo: true }, { p: "New worktree of demo-app named “srch”", mkdir: true, on: true }] }), { h: 250 }) },
 ].map(opt).join(""));
 put("f3d", [
-  { do: `${K("⌘N")}, type <code>search</code>.`, see: "The worktree, under its repo so you see which repo it belongs to. “none yet” says no session ran there.",
-    shot: shot(folders({ typed: "search", rows: [{ p: "~/dev/demo-app", n: "214 sessions", a: "1 h ago", par: true }, { p: "~/dev/demo-app.search", n: "none yet", kid: true, last: true, on: true }] }), { h: 230 }) },
+  { do: `${K("n")}, type <code>srch</code>.`, see: "The worktree, under its repo so you see which repo it belongs to; the repo row stays as its group's head. “none yet” says no session ran there.",
+    shot: shot(folders({ typed: "srch", rows: SEARCH_ROWS }), { h: 230 }) },
   { do: `${K("Enter")}`, see: "An empty session in the worktree, on its own branch.",
     shot: shot(session({ meta: 'Folder <span class="mono">~/dev/demo-app.search</span>, branch search' }), { h: 230 }) },
 ].map(step).join(""));
@@ -579,8 +769,12 @@ const OPEN_RECENT = [
   { t: "Web shop: product image sizes", f: "~/work/web-shop", a: "1 d ago" },
   { t: "Demo app: upgrade the test runner", f: "~/dev/demo-app", a: "2 d ago" },
 ];
+const INVOICE = [
+  { t: "Invoice export: CSV columns", f: "~/work/web-shop", a: "9 mo ago", on: true },
+  { t: "Invoice export: CSV encoding for accents", f: "~/work/web-shop", a: "9 mo ago" },
+  { t: "Import old invoices from CSV", f: "~/work/api", a: "11 mo ago" }];
 put("o3o", [
-  { rec: true, name: "Search all, and say so", why: "Typing already reaches all 812; the header and the last line now say it. Each word matches title or folder, so “invoice csv” finds it.",
+  { rec: true, name: "Search all, fuzzily, and say so", why: "Typing already reaches all 812; the header and the last line now say it. Each word matches on its own, so “invoice csv” finds it.",
     shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", rows: OPEN_RECENT.slice(0, 4), note: "Newest 50 of 812. Type to search all of them." }), { h: 290 }) },
   { name: "Folder first, then its sessions", why: "Good for browsing one folder, but two steps every time, and you have to remember the folder.",
     shot: shot(`<div class="panel pk"><div class="pk-head"><h5>Open session</h5><p>Pick a folder, then a session.</p></div><div class="split"><div class="pk-list">${["~/dev/demo-app", "~/work/api", "~/work/infra", "~/work/web-shop", "~/dev/notes"].map((p, i) => `<div class="fr${i === 3 ? " on" : ""}" style="grid-template-columns:1fr"><span class="p">${p}</span></div>`).join("")}</div><div class="pk-list">${["Web shop: product image sizes|1 d ago", "Web shop: cart totals with discounts|1 d ago", "Web shop: checkout copy|3 wk ago", "Invoice export: CSV columns|9 mo ago"].map(x => { const [t, a] = x.split("|"); return `<div class="sr" style="grid-template-columns:1fr 8ch"><span class="t">${t}</span><span class="a">${a}</span></div>`; }).join("")}</div></div></div>`, { h: 290 }) },
@@ -588,13 +782,10 @@ put("o3o", [
     shot: shot(sessions({ meta: "Past sessions, newest first.", rows: OPEN_RECENT.slice(0, 4).map(r => ({ ...r, on: false })), note: "Show 50 more" }), { h: 290 }) },
 ].map(opt).join(""));
 put("f3o", [
-  { do: `${K("⌘O")}`, see: "The newest past sessions, with the totals in the header and the last line saying typing searches all 812.",
+  { do: `${K("o")}`, see: "The newest past sessions, with the totals in the header and the last line saying typing searches all 812.",
     shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", rows: OPEN_RECENT, note: "Newest 50 of 812. Type to search all of them." }), { h: 280 }) },
-  { do: `Type <code>invoice csv</code>, then ${K("Enter")}.`, see: "Both words match, in the title or the folder. Ages past 60 days read in months. Enter opens it; it resumes on your first message.",
-    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "invoice csv", rows: [
-      { t: "Invoice export: CSV columns", f: "~/work/web-shop", a: "9 mo ago", on: true },
-      { t: "Invoice export: CSV encoding for accents", f: "~/work/web-shop", a: "9 mo ago" },
-      { t: "Import old invoices from CSV", f: "~/work/api", a: "11 mo ago" }], note: "3 sessions match." }), { h: 280 }) },
+  { do: `Type <code>invoice csv</code>, then ${K("Enter")}.`, see: "Both words match, in the title or the folder, highlighted where they matched. Ages past 60 days read in months. Enter opens it; it resumes on your first message.",
+    shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "invoice csv", rows: INVOICE, note: "3 sessions match." }), { h: 280 }) },
 ].map(step).join(""));
 
 /* ---------- 4. moved and deleted folders ---------- */
@@ -603,18 +794,18 @@ const GONE_LOG = `<div class="pr"><span class="g">❯</span><span>Split the bill
 put("o4", [
   { rec: true, name: "Name it, open read-only, continue elsewhere", why: "You still read the whole history, and one key takes it on in a folder that exists. Nothing fails after you have typed a message.",
     shot: shot(session({ title: "Billing form: split into steps", meta: GONE_META, log: GONE_LOG, line: "This folder no longer exists. <b>Enter</b> picks a folder to continue in." }), { h: 300 }) },
-  { name: "Hide sessions whose folder is gone", why: "A tidy list, but months of decisions vanish from Synopia while their transcripts are still on disk.",
+  { name: "Hide sessions whose folder is gone", why: "A tidy list, but months of decisions vanish from Synopia while their transcripts are still on disk. It would also mean a stat of every folder in the history.",
     shot: shot(sessions({ meta: "803 past sessions in 41 folders, newest first.", typed: "billing", rows: [{ t: "Billing page: currency rounding", f: "~/work/web-shop", a: "4 mo ago", on: true }], note: "9 sessions from folders that no longer exist are hidden." }), { h: 300 }) },
   { name: "Today: open, then fail on send", why: "Nothing warns you until your message bounces, and then there is no way forward.",
     shot: shot(session({ title: "Billing form: split into steps", meta: 'Folder <span class="mono">~/dev/demo-app.billing-v2</span>', log: GONE_LOG, box: "insert" }) + `<div class="toast">Folder ~/dev/demo-app.billing-v2 no longer exists</div>`, { h: 300 }) },
 ].map(opt).join(""));
 put("f4", [
-  { do: `${K("⌘O")}, type <code>billing</code>.`, see: "Rows whose folder is gone say “Folder gone”, in words, beside the title, and the folder is struck through. They stay selectable.",
+  { do: `${K("o")}, type <code>billing</code>.`, see: "Rows whose folder is gone say “Folder gone”, in words, and the folder is struck through. Only the rows on screen were checked, one stat per known folder; a row in a protected folder is checked when you choose it.",
     shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "billing", rows: [
       { t: "Billing form: split into steps", tag: "Folder gone", f: "~/dev/demo-app.billing-v2", gone: true, a: "8 d ago", on: true },
       { t: "Billing form: validation messages", tag: "Folder gone", f: "~/dev/demo-app.billing-v2", gone: true, a: "9 d ago" },
       { t: "Billing page: currency rounding", f: "~/work/web-shop", a: "4 mo ago" }] }), { h: 290 }) },
-  { do: `${K("Enter")}`, see: "The transcript shows as usual. The message box holds one line instead of the field. A session already in the sidebar whose folder goes shows the same line.",
+  { do: `${K("Enter")}`, see: "The transcript shows as usual. The message box holds one line instead of the field. A session already in the sidebar whose folder goes shows the same line when you send, the moment Synopia stats it anyway.",
     shot: shot(session({ title: "Billing form: split into steps", meta: GONE_META, log: GONE_LOG, line: "This folder no longer exists. <b>Enter</b> picks a folder to continue in." }), { h: 290 }) },
   { do: `${K("Enter")}`, see: "The folder list, titled for this, filtered on the repo's name (the part before the dot of a worktree). Gone folders that match show dimmed and can't be picked.",
     shot: shot(folders({ title: "Continue in a folder", meta: "“Billing form: split into steps” continues here, with its whole history.", typed: "demo-app", rows: [
@@ -626,9 +817,9 @@ put("f4", [
     shot: shot(session({ title: "Billing form: split into steps", meta: 'Folder <span class="mono">~/dev/demo-app</span>, branch main', log: GONE_LOG + `<div class="sep">Continued in ~/dev/demo-app</div>` }), { h: 290 }) },
 ].map(step).join(""));
 put("f4m", [
-  { do: `${K("⌘N")}, type <code>api</code>.`, see: "New session lists only folders that exist: ~/work/api. The old ~/dev/api shows dimmed as “Folder gone” and points you to its sessions.",
+  { do: `${K("n")}, type <code>api</code>.`, see: "~/work/api exists. The old ~/dev/api, a known folder on screen, got its one stat: it shows dimmed as “Folder gone” and points to its sessions.",
     shot: shot(folders({ typed: "api", rows: [{ p: "~/work/api", n: "88 sessions", a: "1 h ago", on: true }, { p: "~/dev/api", n: "Folder gone", a: "8 mo ago", gone: true }], note: "~/dev/api is gone. Its 74 sessions are in Open session." }), { h: 250 }) },
-  { do: `${K("⌘O")}, type <code>api</code>.`, see: "Old and new sessions together. An old one continues in ~/work/api as in the steps above; Synopia doesn't guess the new place (open question 5).",
+  { do: `${K("Esc")} ${K("o")}, type <code>api</code>.`, see: "Old and new sessions together. An old one continues in ~/work/api as in the steps above; Synopia doesn't guess the new place (open question 4).",
     shot: shot(sessions({ meta: "812 past sessions in 43 folders, newest first.", typed: "api", rows: [
       { t: "API: pagination for the orders endpoint", f: "~/work/api", a: "2 h ago", on: true },
       { t: "API: rate limit headers", f: "~/work/api", a: "1 d ago" },
@@ -637,13 +828,40 @@ put("f4m", [
 
 /* ---------- 5. keyboard ---------- */
 put("o5", [
-  { rec: true, name: "⌘N and ⌘O in a File menu", why: "What every Mac app uses, they work in normal and insert mode, and the menu shows them to a mouse user.",
-    shot: shot(`<div class="menu" style="margin:22px auto"><div class="mt">File</div><div class="mi on">New Session<span>⌘N</span></div><div class="mi">Open Session…<span>⌘O</span></div></div>`, { h: 190 }) },
-  { name: "n and o in normal mode", why: "Vim-like, but in insert mode they type, so you press Esc first: three keys where two do.",
-    shot: shot(`<div class="textcard"><p>${K("Esc")} ${K("n")} New session</p><p>${K("Esc")} ${K("o")} Open session</p><p>In insert mode n and o type into the box.</p></div>`, { h: 190 }) },
+  { rec: true, name: "n and o in normal mode", why: "Single letters, like i, x and b. In insert mode Esc comes first, as for every normal-mode key. No new menu items.",
+    shot: shot(card(`${K("n")} New session`, `${K("o")} Open session`, `In insert mode: ${K("Esc")} first.`), { h: 170 }) },
+  { name: "⌘N and ⌘O in a File menu", why: "The Mac convention, in both modes, but the author keeps Synopia's keys in normal mode and wants no new menu items.",
+    shot: shot(`<div class="menu" style="margin:22px auto"><div class="mt">File</div><div class="mi on">New Session<span>⌘N</span></div><div class="mi">Open Session…<span>⌘O</span></div></div>`, { h: 170 }) },
   { name: "Both", why: "Two ways to do each thing.",
-    shot: shot(`<div class="textcard"><p>${K("⌘N")} or ${K("n")} New session</p><p>${K("⌘O")} or ${K("o")} Open session</p></div>`, { h: 190 }) },
+    shot: shot(card(`${K("⌘N")} or ${K("n")} New session`, `${K("⌘O")} or ${K("o")} Open session`), { h: 170 }) },
 ].map(opt).join(""));
+
+/* ---------- the live matcher ---------- */
+const DEMO = [
+  ["Search: rank exact title matches first", "~/dev/demo-app.search"], ["Infra: rotate the staging certificates", "~/work/infra"],
+  ["API: pagination for the orders endpoint", "~/work/api"], ["Web shop: product image sizes", "~/work/web-shop"],
+  ["Demo app: upgrade the test runner", "~/dev/demo-app"], ["Weekly notes cleanup", "~/dev/notes"],
+  ["Billing form: split into steps", "~/dev/demo-app.billing-v2"], ["Billing page: currency rounding", "~/work/web-shop"],
+  ["API: auth token refresh", "~/dev/api"], ["Invoice export: CSV columns", "~/work/web-shop"],
+  ["Invoice export: CSV encoding for accents", "~/work/web-shop"], ["Import old invoices from CSV", "~/work/api"],
+  ["Dotfiles: zsh startup time", "~/dev/dotfiles"], ["Blog: draft on keyboard-first tools", "~/dev/blog"]];
+function drawDemo() {
+  const q = document.getElementById("dq").value;
+  document.getElementById("dq2").textContent = q;
+  const hits = DEMO.map(([t, f], i) => {
+    const m = search(q, `${t} ${f}`); if (!m) return null;
+    const inTitle = [...m.at].filter(p => p < t.length).length;
+    return { t, f, i, m, rank: m.score * 64 + Math.min(63, inTitle) };
+  }).filter(Boolean).sort((a, b) => b.rank - a.rank || a.i - b.i);
+  document.getElementById("dl").innerHTML = (q.trim() ? hits : DEMO.map(([t, f], i) => ({ t, f, i }))).slice(0, 9).map((h, k) =>
+    `<div class="sr${k === 0 ? " on" : ""}"><span class="t"><span class="tt">${h.m ? hl(h.t, h.m.at) : h.t}</span></span><span class="f">${h.m ? hl(h.f, h.m.at, h.t.length + 1) : h.f}</span><span class="sc">${h.m ? h.m.score : ""}</span></div>`).join("")
+    || `<p class="pk-empty">No session matches “${q.replace(/[<&]/g, "")}”.</p>`;
+  const fh = F_YEAR.map((f, i) => ({ f, i, m: search(q, f.p) })).filter(x => !q.trim() || x.m).sort((a, b) => (b.m?.score || 0) - (a.m?.score || 0) || a.i - b.i);
+  document.getElementById("dl2").innerHTML = fh.slice(0, 9).map((x, k) => `<div class="fr${k === 0 ? " on" : ""}"><span class="p">${x.m ? hl(x.f.p, x.m.at) : x.f.p}</span><span class="a">${x.m ? x.m.score : ""}</span></div>`).join("")
+    || `<p class="pk-empty">No folder matches.</p>`;
+}
+document.getElementById("dq").addEventListener("input", drawDemo);
+drawDemo();
 
 /* ---------- theme: follows the system until the button picks one ---------- */
 const root = document.documentElement, btn = document.getElementById("theme");
