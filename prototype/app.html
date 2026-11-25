@@ -526,6 +526,13 @@
 
 
   .liveln b { color: var(--green); }
+  /* the Working line on a 1px rule edge to edge through its middle; the mark and words break it; it takes no space (R5.5, 2026-11-25) */
+  .log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 16px; max-width: none; }
+  .log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(12px * 1.45 / 2 - .5px); height: 1px; background: var(--line); }
+  .log-inner > .liveln.rule > .g { background: var(--panel); box-shadow: -5px 0 0 var(--panel); }
+  .log-inner > .liveln.rule > :not(.g) { position: relative; display: inline; background: var(--panel); padding-right: 1ch; }
+  /* shell output in its own subtle panel under its command (R5.6, R7.2, 2026-11-25) */
+  .res > .out { display: block; color: var(--ink-2); white-space: pre-wrap; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
 
   .log { overflow-x: hidden; }
 
@@ -1345,7 +1352,7 @@ function itemsHTML(items, sessionBusy, s) {
 }
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
-  const line = (mark, t) => `<div class="ln liveln"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
+  const line = (mark, t) => `<div class="ln liveln rule"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", A.items.filter(x => x.k === "tool").pop());
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
@@ -1387,7 +1394,7 @@ function renderConv() {
     </header>
     <div class="log" id="log"><div class="log-inner">
       ${hidden > 0 ? `<p class="earlier">… ${hidden} earlier items not shown in this prototype</p>` : ""}
-      ${B ? `<div class="ln tool"><span class="g">●</span><div><span class="name">${B.kind === "monitor" ? "Monitor" : "Bash"}</span>(${esc(B.description || B.command)})<div class="mono" style="white-space:pre-wrap">${esc(B.command)}</div><div class="res"><span class="lcorner" aria-hidden="true"></span><span class="mono">its output, whole, as the terminal printed it (the app reads it)</span></div></div></div>
+      ${B ? `<div class="ln tool"><span class="g">●</span><div><span class="name">${B.kind === "monitor" ? "Monitor" : "Bash"}</span>(${esc(B.description || B.command)})<div class="mono" style="white-space:pre-wrap;color:var(--ink)">${esc(B.command)}</div><div class="res"><span class="lcorner" aria-hidden="true"></span><span class="mono out">its output, whole, as the terminal printed it (the app reads it)</span></div></div></div>
         <div class="ln ${bst === "running" ? "liveln" : "doneln"}"><span class="g">${ind(bst === "running" ? (B.kind === "monitor" ? "k_mon" : "k_shell") : bst === "failed" ? "failed" : "done")}</span><div>${bst === "running" ? "<b>Running</b>" : `${bst === "failed" ? "Failed" : "Finished"} after ${took(bgMs(B))}. ${esc(B.summary || "")}`}</div></div>`
       : view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
       ${B ? "" : liveLine(s, A)}

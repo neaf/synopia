@@ -4,11 +4,11 @@
 //        node queued.mjs <url> <state-dir> <claude-dir>
 // Checks: the pane is one panel (header, log and box are rows of it, none a panel of its own); the box is its
 // last row under a 1px line, in the default state too; a posted band's 2.5px left edge shows whole. Two
-// messages sent during a turn show in order below the live line, each the posted band with a still clock in
+// messages sent during a turn show in order below the live line, which is drawn on a 1px rule edge to edge that takes no space, each the posted band with a still clock in
 // place of ❯ and lighter text; no veil; the box's placeholder counts them. Scrolled up, the queue and the box
 // stay pinned to the panel's bottom, at most half of it, with a 1px line at the queue's top. The first lands
-// (its queued_command appended to the fixture file): it becomes the posted prompt in place and nothing moves;
-// the second lands: none waits. A third, then Esc, Esc: it disappears and its text is back in the box. A message
+// (its queued_command appended to the fixture file): it becomes the posted prompt above the live line, the two swap
+// places and nothing else moves; the second lands the same way: none waits. A third, then Esc, Esc: it disappears and its text is back in the box. A message
 // sent while nothing runs isn't queued and shows at once: its band moves up from the box (a copy, fixed on
 // screen), ends in place, the band itself never moves; with reduced motion nothing moves. A queued message
 // with a pasted (made-up) image: its thumbnail opens the viewer; landed, the same size. Writes queued-two.png,
@@ -68,8 +68,13 @@ const order = () => ev(`[...document.querySelectorAll('${BLOCKS}')].map(e => e.m
   : e.matches('.prompt') ? 'you:' + e.textContent.replace('❯', '').trim() : e.matches('.liveln') ? 'live' : '').filter(Boolean)`);
 const queuedRows = () => ev(`document.querySelectorAll('${Q}').length`);
 // every block's top, keyed by its text (a band keeps its text when it lands), and the box's
-const tops = () => ev(`[...document.querySelectorAll('${BLOCKS}'), document.querySelector('.dock .composer')].map(e => [e.matches('.liveln') ? 'live' : e.matches('.composer') ? 'box' : e.textContent.replace('❯', '').trim().slice(0, 60), e.getBoundingClientRect().top])`);
-const moved = (a, b) => { const m = new Map(b); return a.filter(([k, t]) => !m.has(k) || Math.abs(m.get(k) - t) > 0.5).map(([k, t]) => `${k}: ${t} -> ${m.get(k)}`); };
+const tops = () => ev(`[...document.querySelectorAll('${BLOCKS}'), document.querySelector('.dock .composer')].map(e => [e.matches('.liveln') ? 'live' : e.matches('.composer') ? 'box' : e.textContent.replace('❯', '').trim().slice(0, 60), e.getBoundingClientRect().top, e.getBoundingClientRect().height])`);
+// a taken message and the live line swap places (R5.5): the band moves up by the line's height and the 11px gap, the
+// line down by the band's and the gap; nothing else moves. What moved, besides those two as they should.
+const swapped = (a, b, text) => { const m = new Map(b.map(([k, t, h]) => [k, { t, h }])), ha = new Map(a.map(([k, , h]) => [k, h])), band = text.slice(0, 60);
+  const want = (k) => k === 'live' ? m.get(band).h + 11 : k === band ? -(ha.get('live') + 11) : 0;
+  const bad = a.filter(([k, t]) => !m.has(k) || Math.abs(m.get(k).t - t - want(k)) > 0.5).map(([k, t]) => `${k}: ${t} -> ${m.get(k)?.t} (want ${want(k) >= 0 ? '+' : ''}${want(k)})`);
+  return m.has(band) && m.has('live') ? bad : ['no band or no live line after', ...bad]; };
 const placeholder = () => ev(`document.getElementById('msg').placeholder`);
 const varColor = (name) => `(() => { const i = document.createElement('i'); i.style.color = getComputedStyle(document.documentElement).getPropertyValue('${name}'); document.body.append(i); const v = getComputedStyle(i).color; i.remove(); return v; })()`;
 
@@ -104,6 +109,14 @@ check('a waiting band keeps the posted band\'s fill, edge and padding, at half o
 check('a still clock in place of ❯: no ❯, a clock mark, nothing moving', ql.g === '' && ql.clock && ql.moving === 0 && pl.g === '❯' && !/\bqc\b/.test(pl.cls), JSON.stringify(ql));
 check('its text is the lighter grey, the posted band\'s is not', ql.ink === await ev(varColor('--ink-3')) && pl.ink !== ql.ink, `${ql.ink} vs ${pl.ink}`);
 check('no veil', await ev(`!document.querySelector('.qveil')`));
+// the Working line (R5.5, A): a 1px rule, edge to edge across the log, through the line's middle, taking no space;
+// the mark and the words sit on it, on the panel's colour
+const rule = await ev(`(() => { const l = document.querySelector('#log .liveln'), log = document.getElementById('log'), b = getComputedStyle(l, '::before'), r = l.getBoundingClientRect(), lr = log.getBoundingClientRect();
+  const lh = parseFloat(getComputedStyle(l).lineHeight), left = lr.left + log.clientLeft, right = left + log.clientWidth, top = parseFloat(b.top);
+  const panel = getComputedStyle(document.querySelector('.thread')).backgroundColor, under = [l.querySelector(':scope > .g'), l.querySelector('summary, :scope > div')].map(e => getComputedStyle(e).backgroundColor);
+  return { pos: b.position, h: b.height, w: Math.round(parseFloat(b.width) * 100) / 100, bg: b.backgroundColor, from: +(r.left - left).toFixed(2), to: +(r.right - right).toFixed(2), lineH: +(r.height - lh).toFixed(2), mid: +(top + 0.5 - lh / 2).toFixed(2), under, panel }; })()`);
+check('the Working line is on a 1px rule edge to edge through its middle, taking no space', rule.pos === 'absolute' && rule.h === '1px' && rule.bg === await ev(varColor('--line'))
+  && Math.abs(rule.from) <= 0.5 && Math.abs(rule.to) <= 0.5 && Math.abs(rule.lineH) <= 0.5 && Math.abs(rule.mid) <= 0.01 && rule.under.every((x) => x === rule.panel), JSON.stringify(rule));
 check('the live line keeps Working, without the "queued" sentence', await ev(`(() => { const l = document.querySelector('#log .liveln'); return /Working/.test(l.textContent) && !/queued/i.test(l.textContent); })()`), await ev(`document.querySelector('#log .liveln')?.textContent`));
 check('the sidebar says how many wait, its mark queued (blue centre)', await ev(`/Working, 2 messages queued/.test(document.querySelector('.row[data-id="${A}"]').textContent) && !!document.querySelector('.row[data-id="${A}"] .ind circle[fill="var(--mk-0550AE)"]')`),
   await ev(`document.querySelector('.row[data-id="${A}"]').textContent`));
@@ -138,11 +151,11 @@ const file = path.join(dirOf(claude), `${A}.jsonl`);
 fs.appendFileSync(file, rec(A, { type: 'attachment', uuid: 'q-land1', timestamp: new Date().toISOString(), attachment: { type: 'queued_command', prompt: FIRST, commandMode: 'prompt' } }));
 check('the first landed: one waiting band left', await c.until(`document.querySelectorAll('${Q}').length === 1 && __synopia.cur().items.some(i => i.id === 'q-land1')`, 8000), String(await queuedRows()));
 const o2 = await order();
-check('it became the posted prompt in its place, once, under the live line, the second still waiting below it',
-  JSON.stringify(o2.slice(-3)) === JSON.stringify(['live', 'you:Also check the demo notes when you are done.', 'q:And then rename the demo folder.'])
+check('it became the posted prompt, once, above the live line, the second still waiting below it',
+  JSON.stringify(o2.slice(-3)) === JSON.stringify(['you:Also check the demo notes when you are done.', 'live', 'q:And then rename the demo folder.'])
   && o2.filter((x) => x.includes('Also check')).length === 1, JSON.stringify(o2));
-const m1 = moved(before, await tops());
-check('nothing moved when it landed: not the log, the queue or the box', m1.length === 0, m1.join('; '));
+const m1 = swapped(before, await tops(), 'Also check the demo notes when you are done.');
+check('it landed: the band and the live line swapped places, nothing else moved (the log, the queue, the box)', m1.length === 0, m1.join('; '));
 check('the box says one waits', (await placeholder()) === "1 waiting for Claude's next step", await placeholder());
 // never both at once, never neither: watch every change from here while the backend drops it
 await ev(`(() => { window.__seen = []; const f = () => { const n = [...document.querySelectorAll('#log .prompt')].filter(p => /Also check/.test(p.textContent)).length; __seen.push(n); };
@@ -155,8 +168,9 @@ await shot('queued-landed.png');
 const before2 = await tops();
 fs.appendFileSync(file, rec(A, { type: 'attachment', uuid: 'q-land2', timestamp: new Date().toISOString(), attachment: { type: 'queued_command', prompt: SECOND, commandMode: 'prompt' } }));
 check('the second landed: none waits', await c.until(`document.querySelectorAll('${Q}').length === 0 && __synopia.cur().items.some(i => i.id === 'q-land2')`, 8000), String(await queuedRows()));
-const m2 = moved(before2, await tops());
-check('nothing moved when the last landed', m2.length === 0, m2.join('; '));
+const m2 = swapped(before2, await tops(), 'And then rename the demo folder.');
+check('the last landed: it and the live line swapped places, nothing else moved', m2.length === 0, m2.join('; '));
+check('both landed above the live line, in the order sent', JSON.stringify((await order()).slice(-3)) === JSON.stringify(['you:Also check the demo notes when you are done.', 'you:And then rename the demo folder.', 'live']), JSON.stringify(await order()));
 check('the queue is gone, the log runs down to the box\'s line', await ev(`!document.querySelector('.qpin') && Math.abs(document.getElementById('log').getBoundingClientRect().bottom - document.querySelector('.dock').getBoundingClientRect().top) <= 0.5`));
 check('the box says Message <title> again', /^Message .*, \/ for commands$/.test(await placeholder()), await placeholder());
 
@@ -230,8 +244,8 @@ check('landed: the posted band, once, none waiting', await c.until(`!!(${PI}) &&
 check('landed: its thumbnail from the transcript', await c.until(`(() => { const i = ${PI}.querySelector('.thumb img'); return i.complete && i.naturalWidth === 240 && !/ref=queued/.test(i.src); })()`));
 const pShape = await ev(shape(PI));
 check('the same thumbnail size, width and height as when it waited', pShape === qShape, `${qShape} | ${pShape}`);
-const m3 = moved(beforeC, await tops());
-check('nothing moved when the image message landed', m3.length === 0, m3.join('; '));
+const m3 = swapped(beforeC, await tops(), PIC);
+check('the image message landed above the live line, the two swapped, nothing else moved', m3.length === 0, m3.join('; '));
 
 // a wide window: every band's fill runs to the panel's inner right while its text keeps the 150ch measure, and a
 // step line of one long token wraps inside the panel

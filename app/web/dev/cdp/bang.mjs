@@ -11,7 +11,7 @@
 // running turn takes in (two queued_command records) is one row, not a queued message, with nothing left at the end; a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, writeScript, terminal } from './helpers.mjs';
+import { records, writeScript, terminal, outPanel, shot as shotTo } from './helpers.mjs';
 
 const D = 'b4b4b4b4-0000-4000-8000-0000000000d1'; // driven, idle
 const N = 'b4b4b4b4-0000-4000-8000-0000000000e2'; // not driven: a terminal's Claude Code holds it
@@ -91,7 +91,9 @@ check('the non-zero exit is noted', r?.failed && /Exit code 3/.test(r?.text ?? '
 check('stderr has its own shape (a 1px rule), not only its colour', await ev(`(() => { const e = [...document.querySelectorAll('#log .bang .step-out .out.err')].pop(); const st = getComputedStyle(e); return st.borderLeftWidth === '1px' && st.borderLeftStyle === 'solid'; })()`));
 check('shown once (the live run gave way to the item)', (await ev(`[...document.querySelectorAll('#log .bang')].filter(x => x.querySelector('.bang-cmd .cmd').textContent === 'echo hi; echo err >&2; exit 3').length`)) === 1);
 check('no ALL CAPS', await ev(`[...document.querySelectorAll('#log .bang *')].every(x => getComputedStyle(x).textTransform === 'none')`));
+{ const p = await outPanel(c, "#log .bang .step-out .out:not(.err)"); check("its output sits in the output panel, stderr beside it with its rule", !!p && p.ok, JSON.stringify(p)); }
 await shot('bang-exit.png');
+if (process.env.SYNOPIA_SHOTS) { fs.mkdirSync(process.env.SYNOPIA_SHOTS, { recursive: true }); await shotTo(c, path.join(process.env.SYNOPIA_SHOTS, `bang-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`)); }
 
 // a long output: 20 lines, then Show all
 const n0 = await bangs();
@@ -104,6 +106,7 @@ const cutText = await ev(`[...document.querySelectorAll('#log .bang')].pop().que
 check('20 lines, then "Show all 45 lines"', cutText === '20|Show all 45 lines', cutText);
 await ev(`document.querySelector('#log [data-full^="bang:"]').click()`);
 check('Show all shows the 45', await c.until(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.step-out .out').textContent.split('\\n').length === 45 && !document.querySelector('#log [data-full^="bang:"]')`));
+check('all 45 in the one output panel', await ev(`(() => { const b = [...document.querySelectorAll('#log .bang')].pop(); return b.querySelectorAll('.step-out .out:not(.err)').length === 1 && getComputedStyle(b.querySelector('.step-out .out')).display === 'block'; })()`));
 
 // Esc, Esc ends a sleep 30; one at a time
 await ev(`document.getElementById('msg').focus()`);

@@ -9,7 +9,7 @@
 //        node rail.mjs make <claude-dir> <tasks-dir>: the shells' made-up output files, named in the copied transcripts
 import fs from 'node:fs';
 import path from 'node:path';
-import { shot as shotTo, spySent } from './helpers.mjs';
+import { shot as shotTo, spySent, outPanel } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 const RV = '77777777-0000-4000-8000-000000000007';
 if (process.argv[2] === 'make') {
@@ -156,6 +156,7 @@ check('its header names it, says it runs and whose it is', v.title === 'Serve th
 check('its log is the command, then the whole output as plain text (no escape sequences), then the moving running mark',
   v.cmd === 'npx serve demo' && v.out.startsWith('   ┌') && v.out.includes('- Local:    http://localhost:3000') && v.out.includes('HTTP  13:00:12') && !/\x1b|\[0m|\[32m/.test(v.out) && v.live && v.moving > 0 && !v.end, JSON.stringify(v));
 check('its log is monospace', await ev(`getComputedStyle(document.querySelector('#log .bg-run .out')).fontFamily.includes('JetBrains Mono')`));
+{ const p = await outPanel(c, "#log .bg-run .step-out .out"); check("a shell view: the command, then its output in the output panel", !!p && p.ok, JSON.stringify(p)); }
 const hShell = await head();
 check('the header has the same height and line tops as the main and the subagent view (within 0.5 px)',
   Math.abs(hShell.h - hSub.h) <= 0.5 && near(hShell.tops, hSub.tops) && near(hShell.hs, hSub.hs) && near(hShell.bases, hSub.bases) && near(hShell.acts, hSub.acts), JSON.stringify({ hShell, hSub }));
@@ -167,6 +168,7 @@ await open('.rail .card[data-bg="toolu_bmon1"]');
 v = await view();
 check("a subagent's monitor opens with its events and names the subagent", v.view === 'toolu_bmon1' && v.title === 'Watch the resize log' && /^Claude hears each event\. Monitor of the subagent Build image thumbnails in ‹ /.test(v.meta)
   && v.out === 'resized 12 of 48: hero.png, team.jpg\nresized 30 of 48\nskipped logo.svg (vector)' && v.live, JSON.stringify(v));
+{ const p = await outPanel(c, "#log .bg-run .step-out .out"); check("a monitor's events go in the same output panel", !!p && p.ok, JSON.stringify(p)); }
 // a finished shell from Past: its output, a carriage-returned line as it ended, how it ended
 await open('.rail .pr[data-bg="toolu_bsh2"]');
 v = await view();
@@ -190,6 +192,7 @@ for (let i = 0; i < 4 && (await view()).earlier; i++) { await ev(`document.query
 v = await view();
 const all = v.out.split('\n').filter(Boolean);
 check('earlier output loads down to the first line, each line once', !v.earlier && all.length === 6000 && all[0] === 'copied icons/icon-0001.svg -> out/icon-0001.svg' && new Set(all).size === 6000, JSON.stringify({ n: all.length, first: all[0], earlier: v.earlier }));
+{ const p = await outPanel(c, '#log .bg-run .step-out .out'); check('a long output, loaded whole, is in the one output panel', !!p && p.ok && (await ev(`document.querySelectorAll('#log .bg-run .step-out .out:not(.err)').length`)) === 1, JSON.stringify(p)); }
 // ---------- R5.12: only Main conversation has the message box ----------
 await ev(`document.querySelector('[data-back-main]').click()`); await sleep(300);
 await ev(`(() => { const t = document.getElementById('msg'); t.value = 'a main draft'; t.dispatchEvent(new Event('input')); })()`);

@@ -50,6 +50,7 @@
 /* ---------- transcript ---------- */
 /* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
 :root[data-theme="dark"] .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+:root[data-theme="dark"] .log.bg-asking .liveln.rule[data-fg] { --rule-bg: var(--blue-bg); }
 :root[data-theme="dark"] .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px var(--blue-bg), 0 0 0 3px var(--blue-line); }
 :root[data-theme="dark"] .log .jump-mark { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
 :root[data-theme="dark"] .log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; }

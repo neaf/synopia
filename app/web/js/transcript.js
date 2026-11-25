@@ -241,11 +241,11 @@ export function itemsHTML(items, sessionBusy, s) {
   const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   /* `mid`: a message the running turn took in from its queue (R5.5): the turn goes on through it, so no
-     "Worked for" line before it, and the live line may stay above it (logEntries) */
+     "Worked for" line before it */
   const prompt = (html, ts, key, whole, mid = false) => {
     flush(); if (!mid) endTurn(); putTitles();
     if (ts && day(ts) !== lastDay) { out.push([`day:${key}`, `<div class="done">${day(ts)}</div>`]); lastDay = day(ts); }
-    out.push(whole ? [`bang:${key}`, whole] : [`you:${key}`, band(html), ...(mid ? ["mid"] : [])]);
+    out.push(whole ? [`bang:${key}`, whole] : [`you:${key}`, band(html)]);
     if (!mid) { turnStart = ts; turnKey = key; turnMs = null; }
   };
   for (const it of items) {
@@ -326,13 +326,14 @@ export const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length
 const band = body => `<div class="prompt"><span class="g">❯</span><div class="md">${body}</div></div>`;
 const youBody = (m, agent) => `${m.images && !m.imgs?.length ? `<p class="img">[${m.images} pasted image${m.images > 1 ? "s" : ""}]</p>` : ""}${md(m.text || "")}${thumbsHTML(m.imgs, current, agent, "your message")}`;
 /* messages you sent while the turn runs, oldest first, below the live line (what's working began before
-   it), as the CLI shows queued input. Once its prompt item is in, that shows instead, in the same place. */
+   it), as the CLI shows queued input. Once its prompt item is in, that shows instead, above the live line. */
 /* a message sent while idle shows at once as your normal prompt, until its own record replaces it */
 const sentHTML = s => waitingOf(s).filter(q => q.queued === false).map(q => [`q:${q.id}`, band(youBody(q, null))]);
 /* The queue (R5.5): the messages you sent while the turn runs, oldest first, as one block at the log's end,
    below the live line (what's working began before you sent them; the author, 2026-11-24), as the CLI shows
    queued input. The block ends the transcript and scrolls with it, not pinned (2026-11-25). A message Claude takes leaves the block and
-   lands just above it as your band, where it waited: nothing moves. */
+   lands above the live line as your band, on Claude's side of it: the band and the line swap places, and nothing else
+   moves (2026-11-25). */
 const queuedHTML = s => { const q = queuedOf(s); return q.length ? [["queue", `<div class="qpin">${q.map(m =>
   `<div class="prompt qc" data-key="q:${esc(m.id)}"><span class="g">${ind("waiting")}</span><div class="md">${youBody(m, null)}</div></div>`).join("")}</div>`]] : []; };
 /* the "working" line closes the transcript, like the CLI's spinner line. Inside a turn it can read
@@ -349,7 +350,7 @@ function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "") => {
     const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? `${esc(toolName(t))}${objOf(t)}` : "")}</span>`;
     const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div>${head}</div>`;
-    return `<div class="ln liveln" data-state="${A ? "green" : s.state.tone}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}><span class="g">${ind(mark)}</span>${body}</div>`;
+    return `<div class="ln liveln rule" data-state="${A ? "green" : s.state.tone}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}><span class="g">${ind(mark)}</span>${body}</div>`;
   };
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
   if (s.state.light !== "green") return "";
@@ -436,10 +437,8 @@ function logEntries(s, A) {
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   if (!A) out.push(...sentHTML(s)); // sent while idle: the new turn's prompt, at once, until its record lands
   if (!A) out.push(...bangLiveHTML(s));
-  /* above the messages the turn took in from its queue that Claude hasn't answered yet: they land where
-     they waited, under it, and nothing moves (R5.5) */
-  let at = out.length; while (at > 0 && out[at - 1][2] === "mid") at--;
-  out.splice(at, 0, ["live", liveLine(s, A)]);
+  /* the live line closes the transcript: a message the turn took in from its queue lands above it (R5.5) */
+  out.push(["live", liveLine(s, A)]);
   if (!A) out.push(...queuedHTML(s)); // last: the block sticks to the log's bottom
   return out;
 }

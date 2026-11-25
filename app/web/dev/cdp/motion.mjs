@@ -129,7 +129,13 @@ const centred = async (label, need) => {
   check(`${label}: every transcript mark sits on its line's ● (within 0.5 px)`, missing.length === 0 && r.every((x) => Math.abs(x.dy) <= .5),
     JSON.stringify(r.filter((x) => Math.abs(x.dy) > .5).concat(missing.length ? [{ missing: missing.map(String) }, ...r] : [])));
 };
-const NEED = [/queued clock/, /claude ●/, /tool running ●/, /agent one svg/, /wave row/, /liveln svg/, /ln agent ind/];
+// the Working line's mark sits on its 1px rule (R5.5) and keeps moving: a running, infinite, linear animation
+await reduce(false); await sleep(100);
+const onRule = await ev(`(() => { const l = document.querySelector('#log .liveln.rule'); if (!l) return null; const b = getComputedStyle(l, '::before');
+  const an = l.querySelector('.g .ind').getAnimations({ subtree: true }); return { rule: b.height === '1px' && b.position === 'absolute', n: an.length, running: an.every(a => a.playState === 'running' && a.effect.getTiming().iterations === Infinity && a.effect.getComputedTiming().easing === 'linear') }; })()`);
+check('the Working line\'s mark on its rule keeps moving (linear, infinite)', !!onRule && onRule.rule && onRule.n > 0 && onRule.running, JSON.stringify(onRule));
+await reduce(true);
+const NEED = [/queued clock/, /claude ●/, /tool running ●/, /agent one svg/, /wave row/, /liveln rule svg/, /ln agent ind/];
 await centred('1x', NEED);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 2, mobile: false });
 await sleep(200);

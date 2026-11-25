@@ -74,6 +74,15 @@ export async function serverSend(url, ...msgs) {
   }
 }
 
+// The output panel (R5.6, app.css `.step-out .out:not(.err)`) of the first element `sel` matches: its styles, and
+// whether they are the panel's in every place it shows (a step, a `!` command, a shell's view): the --sub fill, a
+// 1px --line-2 line, 5.5px corners, 3.5px 9px padding. null when nothing matches.
+export const outPanel = (c, sel) => c.ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null;
+  const st = getComputedStyle(e), v = n => { const i = document.createElement('i'); i.style.color = getComputedStyle(document.documentElement).getPropertyValue(n); document.body.append(i); const c = getComputedStyle(i).color; i.remove(); return c; };
+  const got = { display: st.display, bg: st.backgroundColor, border: [st.borderTopWidth, st.borderRightWidth, st.borderBottomWidth, st.borderLeftWidth, st.borderTopStyle, st.borderTopColor].join(' '), radius: st.borderTopLeftRadius, pad: st.padding };
+  const want = { display: 'block', bg: v('--sub'), border: '1px 1px 1px 1px solid ' + v('--line-2'), radius: '5.5px', pad: '3.5px 9px' };
+  return { ok: JSON.stringify(got) === JSON.stringify(want), got, want }; })()`);
+
 // A PNG of the page, or of `clip` ({ x, y, width, height }, scale 1 unless given), written to `file`.
 export async function shot(c, file, clip) {
   const r = await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { scale: 1, ...clip } } : {}) });

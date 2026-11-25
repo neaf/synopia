@@ -133,8 +133,12 @@ details.step > summary { cursor: pointer; list-style: none; }
 details.step > summary::-webkit-details-marker { display: none; }
 .step-out { margin: 2px 0 5.5px; }
 .body .step-out { margin-left: 3ch; }
-.step-out .cmd { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .cmd { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* the output in its own subtle panel under its command, as a code block in Claude's text (.md pre): one look for all
+   shell output, a step's result, a `!` command's, a shell's or monitor's view (prototype/working-shell-storyboard.html C,
+   2026-11-25); stderr keeps its red rule beside it */
+.step-out .out:not(.err) { display: block; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
 .step-out .earlier.more { margin: 0 0 0 3ch; }
 /* runView: a quiet description over the command, stderr in red, the running row's note fainter; an open
    running step shows "Running, 42s" in its body, so its line's own "Running" row steps aside */
@@ -601,6 +605,17 @@ body:not(.is-dragging) .g-empty { display: none; }
 .liveln b { color: var(--green); }
 .liveln[data-state="amber"] b { color: var(--amber); }
 .liveln[data-state="grey"] b { color: var(--ink-3); }
+/* the Working line (R5.5, prototype/working-shell-storyboard.html A, 2026-11-25): a 1px rule edge to edge across
+   the log through the line's middle, the moving mark and the words sitting on it and breaking it; a pseudo-element,
+   so it takes no space. The breaks are the panel's colour (--rule-bg; the "Send to background?" tint while b, b asks).
+   The right padding keeps the words in the 150ch measure at any width. */
+.log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 max(16px, calc(100% + 16px - 150ch)) 0 16px; max-width: none; --rule-bg: var(--panel); }
+.log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--log-font) * var(--log-lh) / 2 - .5px); height: 1px; background: var(--line); }
+.log-inner > .liveln.rule > .g { background: var(--rule-bg); box-shadow: -5px 0 0 var(--rule-bg); }
+.log-inner > .liveln.rule > :not(.g) { position: relative; }
+.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div { display: inline; background: var(--rule-bg); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.log-inner > .liveln.rule > details { display: inline; }
+.log.bg-asking .liveln.rule[data-fg] { --rule-bg: #DDF4FF; }
 
 .log { overflow-x: hidden; }
 

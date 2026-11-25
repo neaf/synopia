@@ -11,7 +11,7 @@
 // Writes steps.png and steps-running.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, fresh, shot, running } from './helpers.mjs';
+import { records, fresh, shot, running, outPanel } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 
 const S = 'b7b7b7b7-0000-4000-8000-0000000000c1'; // driven, its Bash runs
@@ -48,6 +48,7 @@ await click('List the demo folder');
 await sleep(150);
 const bash = await ev(`(() => { const d = ${step('List the demo folder')}; return d.open ? d.querySelector('.step-out').innerText : ''; })()`);
 check('a Bash step opens to its command and output', bash.includes('ls -la /Users/fixture/dev/demo') && bash.includes('notes.md') && bash.includes('README.md'), JSON.stringify(bash));
+{ const p = await ev(`(() => { const d = ${step('List the demo folder')}, o = d.querySelector('.step-out .out'); o.id = 'st-out'; return true; })()`) && await outPanel(c, '#st-out'); check('its output sits in the output panel under the command, in ink', !!p && p.ok && await ev(`getComputedStyle(${step('List the demo folder')}.querySelector('.step-out .cmd')).color === getComputedStyle(document.querySelector('.c-title')).color`), JSON.stringify(p)); }
 await click('Grep(TODO)');
 await sleep(150);
 const lines = () => ev(`(() => { const d = ${step('Grep(TODO)')}; return d.open ? d.querySelector('.out').textContent.split('\\n').length : 0; })()`);
@@ -56,6 +57,7 @@ check('the input of a search shows', (await ev(`${step('Grep(TODO)')}.querySelec
 check('"Show all 32 lines"', (await ev(`${step('Grep(TODO)')}.querySelector('[data-full]')?.textContent`)) === 'Show all 32 lines');
 await ev(`${step('Grep(TODO)')}.querySelector('[data-full]').click()`);
 check('show all loads the full result', await until(`(() => { const d = ${step('Grep(TODO)')}; return d && d.open && d.querySelector('.out').textContent.split('\\n').length === 32 && !d.querySelector('[data-full]'); })()`));
+check('the full result is in the one output panel', await ev(`(() => { const d = ${step('Grep(TODO)')}; return d.querySelectorAll('.step-out .out:not(.err)').length === 1 && getComputedStyle(d.querySelector('.out')).display === 'block'; })()`));
 check('one toolOutput message', (await ev(`JSON.stringify(__synopia.sent('toolOutput'))`)) === JSON.stringify([{ t: 'toolOutput', sid: '11111111-0000-4000-8000-000000000001', agent: null, toolUseId: 'toolu_grep1' }]));
 // a live update that redraws the block: the running fetch finishes
 const before = await ev(`document.querySelector('details.fold').closest('[data-key]').dataset.key`);
@@ -68,6 +70,7 @@ await ev(`document.querySelector('details.fold').closest('[data-key]').scrollInt
 await sleep(200);
 const clip = await ev(`(() => { const r = document.querySelector('details.fold').closest('[data-key]').getBoundingClientRect(); return { x: Math.max(0, r.left - 20), y: Math.max(0, r.top - 10), width: Math.min(1000, r.width + 40), height: Math.min(800, r.height + 20), scale: 1 }; })()`);
 await shot(c, path.join(stateDir, 'steps.png'), clip);
+if (process.env.SYNOPIA_SHOTS) { fs.mkdirSync(process.env.SYNOPIA_SHOTS, { recursive: true }); await shot(c, path.join(process.env.SYNOPIA_SHOTS, `step-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`), clip); }
 await click('Grep(TODO)');
 await sleep(150);
 check('a click closes it', await ev(`!${step('Grep(TODO)')}.open`));
