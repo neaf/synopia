@@ -197,7 +197,7 @@ Markdown a person reads at a glance, with a fixed line shape so code can read it
 
 - [x] Y3 · answered 2026-11-26 14:05 · "Run it" · done: 14 entries added to the todo file
 - [-] Y6 · dropped 2026-11-26 15:10 · #818 was closed
-- [>] Y7 · superseded by Y9 · 2026-11-26 15:12
+- [>] Y7 · superseded by Y5 · 2026-11-26 15:12
 ```
 
 - Box marks: `[ ]` open (with `- state: answered`, `due` or `later` as a field when it isn't plain open), `[x]` answered, done or went ahead, `[-]` dropped, `[>]` superseded.
@@ -226,22 +226,22 @@ At the end of the turn:
 
 ### The reply's block, written from the ledger
 
-The reply ends with one block, always in this shape, generated from the ledger after it is written, never retyped from memory:
+The reply ends with one block, always in this shape, printed by `ledger.py block` from the ledger after it is written, never retyped from memory. For the ledger above, at 15:10, with A1 named because it changed:
 
 ```markdown
 **Waiting on you** (4)
 - **Y1** decision: Run `bin/schema-lint --fix` now, or look at the 14 warnings first? (I'd look first)
 - **Y2** your task: Answer the 2 review threads from Mira on #812.
-- **Y4** goes ahead when CI is green: mark #812 to #815 ready, #812 first. Say if you want another order.
-- **Y5** decision: Can I remove ~/dev/shop-wt-cart and ~/dev/shop-wt-tax? (new)
+- **Y4** default: Mark #812 to #815 ready in this order: #812, #814, #813, #815. (goes ahead when CI is green on all four, unless you object)
+- **Y5** decision: Can I remove the worktrees ~/dev/shop-wt-cart and ~/dev/shop-wt-tax?
 
 **Claude will check** (1)
-- **A1** after the M2 stack merges: re-check #820's conflict.
+- **A1** after the M2 stack merges: Re-check #820, which GitHub shows as conflicting.
 
-Closed this turn: Y3 (you said "Run it": 14 entries added).
+Closed this turn: Y6 (dropped: #818 was closed); Y7 (superseded by Y5).
 ```
 
-- Every open `Y` item is listed, in id order, every turn, so nothing drops out of sight. New ones say "(new)".
+- Every open `Y` item is listed, in id order, every turn, so nothing drops out of sight. New ones say "(new)"; the lines closed this turn follow the lists.
 - `A` items are listed only when one is new, due, or changed, so the block stays short.
 - With nothing open, the block is one line: "Nothing waits on you."
 
@@ -377,7 +377,7 @@ And in the reply's block, a review item reads like the rest:
 
 ```markdown
 - **Y7** decision, from Rebase #820 on main: The 2027 reduced rate is 12% on main and 15% in the #820 fixture: which is right?
-- **Y8** review: Receipt email copy, ready in `prototype/receipt-copy-storyboard.html`. (new)
+- **Y8** review: Receipt email copy (new)
 ```
 
 ### In Synopia
