@@ -25,7 +25,7 @@ How Synopia is built: modules, data flow, threading, interfaces and who owns wha
 
 Rules the design keeps:
 - Each external system's quirks sit in one adapter module named after it, mapped to one topic doc (table under "External-system adapters").
-- Pure logic (claude-jsonl, transcript, status, layout, cards mapping, bang format, md, format, protocol) has no I/O and is tested without a CLI, browser or app.
+- Pure logic (claude-jsonl, ledger, transcript, status, layout, cards mapping, bang format, md, format, protocol) has no I/O and is tested without a CLI, browser or app.
 - One owner per piece of state (table under "State ownership").
 - Nothing blocks the Node loop: no synchronous child process anywhere; file reads stay sliced at 4 MB per turn.
 - The page stays plain JavaScript served by the backend, no build step: native ES modules plus one classic head script (`theme.js`, first paint). No import cycles; only `test-api.js` writes `window` (`check-web.mjs` fails otherwise).
@@ -61,6 +61,7 @@ Rules the design keeps:
 | `runs.ts` | When your `!` run or the credential refresh gets its panel card (R7.1, 2026-11-26): `cardAt` (3 s after the start, or when it first waited; none for a run over sooner). `bang.ts` and `creds.ts` send it; the page shows a card once its clock passes it. Claude's background shells and monitors carry none: their card shows from their start (`rail.js`). |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
+| `ledger.ts` | Adapter for the open-items ledger, `.ai-notes/<area>/open-items.md` (FR-ITEM-01, FR-ITEM-04): `parse` of the version 1 line shapes into open items, closed lines and the lines it can't read (one bad line never fails the file), `blockOf` (an item's own lines), `nextId`, `fromOf`, `optionsOf`, `stampTime` (local time, date-only stamps), the path rule `isLedgerPath`, a brief's `Open items:` line (`ownedIds`) and `ownerOf` (the brief first, the `subagent` field by name second). Pure. |
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
 | `tail.ts` | File tailing by byte offset and the subagent folder watcher: 4 MB slices, `fs.watch` plus the 1 s poll, reset on shrink, inode change or content rewrite (not on a bare touch). |
 | `transcripts.ts` | The reading set: one Tailer + Transcript per open session and subagent, the new-session finder, the one 1 s poll, facts for other modules, async rereads for `toolOutput` and `/api/image`. |
@@ -195,6 +196,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 | `<state>/backend.log` | `log.ts` | page checks (preview, open) |
 | `~/.claude/projects/**` | Claude Code | `tail.ts` / `claude-jsonl.ts` |
 | `~/.claude/sessions/<pid>.json` | Claude Code | `cli-terminals.ts` (never `*.key`) |
+| `<folder>/.ai-notes/<area>/open-items.md` | the agent and the open-items skill | `open-items.ts` through `ledger.ts` (the format) |
 | Your folders | you | `folders.ts`: one `readdir` on Tab, stats of named paths, `mkdir -p` of a typed path on its create row; `session.ts` stats its own folder |
 
 `<state>` is `~/Library/Application Support/Synopia/` for the app, `app/.dev-state/` for `dev.sh`, a temp folder per page-check run. The daemon's files are in [Daemon files](Daemon%20files.md).
@@ -289,6 +291,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 |---|---|
 | `claude-jsonl.ts`, `tail.ts` | [Claude Code transcripts](Claude%20Code%20transcripts.md) |
 | `cli-terminals.ts` | [Claude Code terminals](Claude%20Code%20terminals.md) |
+| `ledger.ts` | [Open items](Open%20items.md) |
 | `sdk.ts`, `dev/scripted-sdk.ts`, `mcp.ts` (control calls) | [Agent SDK](Agent%20SDK.md) |
 | `mcp.ts` (`claude mcp login`, `logout`) | [Claude Code terminals](Claude%20Code%20terminals.md) |
 | `daemon-files.ts`, `DaemonFiles.swift` | [Daemon files](Daemon%20files.md) |
@@ -433,10 +436,10 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-KEY-06 | composer.js, keys.js |
 | FR-KEY-07 | keys.js, folder-list.js, open-list.js |
 | FR-REV-01 | replaced by FR-ITEM-03; until it lands status.ts, store.ts, router.ts, publisher.ts, transcript.js, rail.js |
-| FR-ITEM-01 | none yet (planned: ledger.ts, transcript.ts, open-items.ts) |
+| FR-ITEM-01 | ledger.ts (the format, the path rule); planned: transcript.ts, open-items.ts |
 | FR-ITEM-02 | none yet (planned: open-items.ts, ledger.ts, store.ts) |
 | FR-ITEM-03 | none yet (planned: open-items.ts, router.ts, publisher.ts, status.ts, rail.js, transcript.js) |
-| FR-ITEM-04 | none yet (planned: ledger.ts, transcript.ts, open-items.ts, rail.js) |
+| FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`); planned: transcript.ts, open-items.ts, rail.js |
 | FR-ITEM-05 | none yet (planned: publisher.ts, protocol.js, state.js, open-items.js, rail.js, composer.js) |
 | FR-ITEM-06 | none yet (planned: open-items.ts, status.ts, sidebar.js, tween.js) |
 | FR-ITEM-07 | none yet (planned: open-items.ts, keys.js, ui-state.js, rail.js) |
