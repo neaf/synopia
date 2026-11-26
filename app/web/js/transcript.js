@@ -34,18 +34,23 @@ const deniedWord = t => t.state === "denied" && !t.answer ? (t.denied === "auto"
 const startedHTML = t => `<span class="started">Started <button class="alink" data-session="${esc(t.session)}" title="Open this session">${esc(t.obj || "the new session")}</button></span>`;
 let showSession = () => {};
 export function onSession(fn) { showSession = fn; } // main.js: selects it, or opens it again
-/* a Bash or Monitor step is a run (R5.6, 2026-11-26, runs.js): one row of the same shape as your `!` command,
-   whose click opens its shell view; it never expands in place */
+/* a Bash or Monitor step: the live line naming it opens its shell view (R5.5) */
 const isShell = t => t.name === "Bash" || t.name === "Monitor";
 let rowOf = () => null; // the session the rows are drawn for: its background entries and whether Synopia drives it (set by itemsHTML)
+/* the background entry of a Bash that runs or ran in the background (run_in_background, b, b, a timeout), not a step's own */
+const bgEntry = t => { const s = rowOf(); return s ? bgOf(s).find(x => x.toolUseId === t.id && !x.step) || null : null; };
+/* A monitor, or a Bash in the background, is a run (R5.6, runs.js): one row of the same shape as your `!` command,
+   in its place, never folded, whose click opens its shell view. An ordinary foreground Bash is a step like any
+   other (2026-11-26): it folds with the steps around it and expands in place. */
+const isRun = t => t.name === "Monitor" || (t.name === "Bash" && !!bgEntry(t));
 function shellRow(t) {
-  const s = rowOf(), b = s ? bgOf(s).find(x => x.toolUseId === t.id && !x.step) : null;
+  const s = rowOf(), b = bgEntry(t);
   const opens = s && bgById(s, t.id) ? t.id : null;
   /* the images of its result show under it (R5.13) */
   return claudeRowHTML(stepRun(t, b, !!s?.state?.driven, deniedWord(t)), { open: opens, attrs: `${fgMark(t)} data-item="${esc(t.id)}"` }).replace(/<\/div>$/, () => `${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`);
 }
 function toolLine(t) {
-  if (isShell(t)) return shellRow(t);
+  if (isRun(t)) return shellRow(t);
   const res = t.session ? `<div class="res"><span class="lcorner" aria-hidden="true"></span>${startedHTML(t)}</div>` : deniedWord(t) ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${deniedWord(t)}</span></div>`
     : t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
@@ -269,10 +274,10 @@ export function itemsHTML(items, sessionBusy, s) {
   const flush = () => {
     if (!run.length) return;
     const agents = run.filter(t => t.name === "Agent" || t.name === "Task"), other = run.filter(t => !(t.name === "Agent" || t.name === "Task"));
-    /* a shell step is a row of its own, in its place: the other steps around it fold as before */
+    /* a run is a row of its own, in its place: the steps around it, a foreground Bash among them, fold as before */
     let seg = [];
     const put = () => { if (seg.length) out.push([`run:${seg[0].id}`, toolsHTML(seg)]); seg = []; };
-    for (const t of other) { if (isShell(t)) { put(); out.push([`run:${t.id}`, shellRow(t)]); } else seg.push(t); }
+    for (const t of other) { if (isRun(t)) { put(); out.push([`run:${t.id}`, shellRow(t)]); } else seg.push(t); }
     put();
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
@@ -424,9 +429,10 @@ const liveName = (s, t) => { if (!isAgent(t)) return `${esc(toolName(t))}${objOf
 function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "", state = A ? "green" : s.state.tone) => {
     const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? liveName(s, t) : "")}</span>`;
-    const body = !extra && liveStep(t) && !isShell(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
-    /* a Bash step named here opens its shell view, as its row does (R5.5, 2026-11-26) */
+    /* a Bash step named here opens its shell view (R5.5, 2026-11-26), even while its own line folds and expands in
+       place; a step with no view (a subagent's own Bash, any other tool) expands from here as from its line */
     const opens = !A && !extra && t && isShell(t) && bgById(s, t.id) ? ` data-bg="${esc(t.id)}" title="Open its shell view"` : "";
+    const body = !extra && liveStep(t) && !opens ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
     return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g">${ind(mark)}</span>${body}</div>`;
   };
   // a subagent waiting on its own background work: still, it runs nothing itself (its shells move in the panel)
