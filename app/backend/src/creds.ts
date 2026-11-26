@@ -8,7 +8,7 @@
 // cardAt) with the lock, its output, input and stop in its shell view. While it waits for input (pty.ts
 // InputWatch) its sessions read "Needs you, sign-in expired" again, not refreshing. Exit 0: the sessions'
 // sign-in clears and the CLI's next retry takes the new credentials (it reloads them after a credential
-// error), with nothing to send again. A failure, or no command yet: the session needs you, and the dock
+// error); a session whose turn already failed on them resumes it once (session.ts credentialsRefreshed). A failure, or no command yet: the session needs you, and the dock
 // line offers the command to save (prefilled with the folder's `awsAuthRefresh` setting, else an
 // executable bin/aws-login there, else empty). Saving runs it at once; saving it empty clears it.
 // The command's output is only sent to the pages, never logged nor stored. Claude Code's own

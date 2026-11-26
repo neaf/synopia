@@ -2,7 +2,7 @@
 // transcripts.md records (made-up content). Assistant records hold one block each, as the CLI writes them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, agentMetaOf, fileEditOf, inputEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords, movedContext } from '../src/claude-jsonl.ts';
+import { classify, agentMetaOf, fileEditOf, inputEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords, movedContext, RESUME_TEXT } from '../src/claude-jsonl.ts';
 import type { ClaudeRecord, UserRecord, AssistantRecord, ToolUse } from '../src/claude-jsonl.ts';
 
 const ts = '2026-11-24T10:00:00.000Z';
@@ -186,6 +186,15 @@ test('the moved context line (R3.11): Synopia\'s own, read back as "Continued in
   assert.match(text, /^<synopia-moved to="~\/dev\/a &quot;b&quot;">This session continues in \/Users\/demo\/dev\/a "b"\. Its folder ~\/dev\/gone no longer exists/);
   assert.deepEqual(bodyOf(text), { kind: 'moved', to: '~/dev/a "b"' });
   assert.deepEqual(bodyOf('<synopia-other>x</synopia-other>'), { kind: 'system' });
+});
+
+test('the resume after a credential refresh (R8.2, 2026-11-26): Synopia\'s fixed text, as a prompt record or a queued one', () => {
+  assert.equal(RESUME_TEXT, 'Continue: the model\'s credentials were refreshed.');
+  assert.deepEqual(bodyOf(RESUME_TEXT), { kind: 'resumed' });
+  assert.deepEqual(user([{ type: 'text', text: RESUME_TEXT }]).body, { kind: 'resumed' });
+  const q = classify({ type: 'attachment', uuid: 'q1', timestamp: ts, attachment: { type: 'queued_command', prompt: RESUME_TEXT, commandMode: 'prompt' } });
+  assert.deepEqual(q.kind === 'queued' && q.user?.body, { kind: 'resumed' });
+  assert.deepEqual(bodyOf(`${RESUME_TEXT} And fix the tests.`), { kind: 'prompt' }, 'only the text alone');
 });
 
 test('inputEditOf: an Edit or Write from its input, for a subagent result with no toolUseResult', () => {

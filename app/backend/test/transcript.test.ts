@@ -612,6 +612,17 @@ test('turn: a prompt opens it, turn_duration or stop_hook_summary closes it', ()
   assert.equal(t.turnRunning(NOW, QUIET), true, 'a queued message is taken in by a running turn');
 });
 
+test('turn: Synopia\'s resume after a credential refresh is its own quiet item, not your prompt, and opens a turn (R8.2)', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('u1', 'Go', ago(5)), replied('a1', ago(5), [{ type: 'text', text: 'Could not load credentials from any providers' }]), { type: 'system', subtype: 'stop_hook_summary', timestamp: ago(5) }]);
+  t.pushAll([typed('u2', 'Continue: the model\'s credentials were refreshed.', ago(3))]);
+  assert.deepEqual(t.items.at(-1), { id: 'u2', k: 'resumed', ts: ago(3) });
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+  t.pushAll([{ type: 'system', subtype: 'stop_hook_summary', timestamp: ago(2) }]);
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  assert.equal(t.items.find((i) => i.id === 'u2')?.workedMs, 60_000, 'the resumed turn has its time');
+});
+
 test('turn: quiet for 30 min with no tool waiting is your turn; a tool without its result runs on', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([typed('u1', 'Go', ago(45)), replied('a1', ago(44), [{ type: 'text', text: 'On it.' }])]);

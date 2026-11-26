@@ -209,6 +209,7 @@ export type UserBody =
   | { kind: 'system' } // reminders, local command output, hooks: skipped
   | { kind: 'interrupt'; interrupt: Interrupt }
   | { kind: 'moved'; to: string } // Synopia continued the session in another folder (movedContext)
+  | { kind: 'resumed' } // Synopia resumed a turn that failed on the credentials, once they were refreshed (RESUME_TEXT)
   | { kind: 'prompt' };
 
 type Base = { uuid: string; ts: string | null; sidechain: boolean };
@@ -259,6 +260,12 @@ export function movedContext(to: string, abs: string, from: string): string {
   return `${MOVED_TAG} to="${escAttr(to)}">This session continues in ${abs}. Its folder ${from} no longer exists, so work in ${abs} from here.</synopia-moved>`;
 }
 
+// Synopia's message that resumes a turn that failed on the model's credentials, once the folder's refresh
+// command succeeded (R8.2, 2026-11-26). It goes as any message you send, so the CLI writes it as a prompt: a
+// plain `user` record whose content is this text (or a `queued_command` holding it). The transcript shows it
+// as "Resumed after the credential refresh", not as your prompt. The one place for its wording.
+export const RESUME_TEXT = 'Continue: the model\'s credentials were refreshed.';
+
 function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolean): UserBody {
   if (onlyResults) return { kind: 'results' };
   if (text.startsWith('<bash-input>')) {
@@ -276,6 +283,7 @@ function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolea
     return { kind: 'command', text: `${m ? m[1] : ''} ${args ? args[1] : ''}`.trim() };
   }
   if (text.startsWith(MOVED_TAG)) return { kind: 'moved', to: unescapeAttr(/^<synopia-moved to="([^"]*)"/.exec(text)?.[1] ?? '') };
+  if (!images && text.trim() === RESUME_TEXT) return { kind: 'resumed' };
   if (text.startsWith('<') && !images) return { kind: 'system' };
   if (text.startsWith(TURNED_DOWN_MARKER)) return { kind: 'interrupt', interrupt: 'toolUse' };
   if (text.startsWith(STOP_MARKER)) return { kind: 'interrupt', interrupt: 'stop' };

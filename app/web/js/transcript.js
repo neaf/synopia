@@ -293,6 +293,8 @@ export function itemsHTML(items, sessionBusy, s) {
     /* a plan whose process ended before you answered reads "Not answered (Synopia quit)", as a question does */
     if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
+    /* Synopia resumed a turn the credentials failed (R8.2, 2026-11-26): a quiet line, not your band, that opens Claude's turn */
+    if (it.k === "resumed") { prompt(null, it.ts, it.id, `<div class="done retitle resumed">Resumed after the credential refresh</div>`); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
     if (it.k === "you") { const mid = !!it.queued && !!turnStart && !turnMs; prompt(youBody(it, view), it.ts, it.id, null, mid); turnMs = it.workedMs || (mid ? turnMs : null); lastTs = it.ts; continue; }
     /* a bash-mode command: on your prompt's band, but no turn of Claude's (the next prompt doesn't end one) */
     if (it.k === "bang") {

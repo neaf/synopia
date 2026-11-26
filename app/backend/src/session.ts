@@ -28,7 +28,7 @@ import type { Client } from './server.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
-import { movedContext } from './claude-jsonl.ts';
+import { movedContext, RESUME_TEXT } from './claude-jsonl.ts';
 import type { BangRun } from './bang.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
@@ -164,6 +164,7 @@ export class Session {
   private contextOnly = false; // the process took only bash mode's context: its init starts no turn
   private bang: Bang | null = null; // the `!` command that runs or ran last: one at a time
   private wasSignedOut = false; // what onSignedOut last said
+  private resumed = false; // the latest turn is Synopia's resume after a credential refresh (credentialsRefreshed)
   private ownEnd = 0; // when a process of ours last ended (0: none yet), for feedRunning
   private askId = ''; // the tool use id of the question or plan another process asks (R6.8)
   private closed = false;
@@ -244,6 +245,20 @@ export class Session {
 
   // ---------- sending ----------
 
+  // The folder's credential refresh command succeeded (creds.ts, R8.2, 2026-11-26). A turn still retrying
+  // takes the new credentials at its next retry. A latest main turn that already failed on them is resumed
+  // once, with Synopia's fixed message (claude-jsonl.ts RESUME_TEXT) through the normal send path, never
+  // your prompt again: only with no message of yours since and nothing queued, held or waiting on a card,
+  // and not when that turn was itself the resume (no loop: it stays needs you, sign-in expired).
+  credentialsRefreshed(): void {
+    const failed = this.status.credentialsRefreshed();
+    if (!failed || this.resumed || this.closed || this.gone || this.terminalHolds) return;
+    if (this.cards.size || this.held.length || this.queue.length || this.status.queuedCount || this.outbox.some((o) => !o.landed)) return;
+    const r = this.send(RESUME_TEXT);
+    this.resumed = r.ok;
+    this.d.log('session.resume', { sid: this.id, ok: r.ok });
+  }
+
   // `uuid`: the page's id for the message; the page shows it at once (queued while a turn runs).
   // `by`: the page that sent it.
   send(text: string, images: Image[] = [], uuid?: string, by: By = null, now = false): SendResult {
@@ -254,6 +269,7 @@ export class Session {
     const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, images: imagesIn(content, images), by, ...(now ? { now } : {}) };
     if (this.terminal) return this.queueTakeover(m);
     const queues = queuesBehind(this.status.status); // a turn runs: it shows queued until it lands (R5.5)
+    this.resumed = false; // a message of yours: a later credential failure may resume again
     const r = this.deliver(m);
     if (r.ok && uuid && !this.terminalHolds && !this.held.includes(m)) this.sent(uuid, text, images.length, sentImages(content), queues);
     return r;
@@ -623,6 +639,7 @@ export class Session {
     } else if (m.type === 'result') {
       this.clearStream();
       this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined, text: typeof m.result === 'string' ? m.result : undefined });
+      if (!this.status.signedOutNow) this.resumed = false; // the turn didn't fail on the credentials
       this.d.onTurnEnded?.(this.id);
       this.releaseHeld(); // held behind a card that is gone: they are the next turn
     }

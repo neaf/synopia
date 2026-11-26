@@ -28,7 +28,7 @@ export type Output = { text: string; lines: number; cut: boolean; interrupted?: 
 // content); the page loads it from `GET /api/image`. `w` and `h` come from the image's header when cheap.
 export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
 export type Item = {
-  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang' | 'moved' | 'aside'; ts: string | null;
+  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang' | 'moved' | 'resumed' | 'aside'; ts: string | null;
   // aside: f, f interrupted the turn for your queued messages (R9.8, 2026-11-26): the live line as it was then, a
   // still record. `step`: the main step it named (a tool item's id), none while Claude only wrote or thought.
   // claude: `aside` is the id of the aside whose interrupted reply this text was, so it shows greyed above it.
@@ -641,6 +641,14 @@ export class Transcript {
     // Synopia continued it in another folder (R3.11): a quiet line in place, not a turn
     if (body.kind === 'moved') {
       this.put({ id: uuid, k: 'moved', ts: u.ts, cwd: body.to });
+      return;
+    }
+    // Synopia resumed a turn the credentials failed (R8.2, 2026-11-26): a quiet line that opens Claude's turn
+    if (body.kind === 'resumed') {
+      r.turnOpen = true;
+      r.afterMarker = false;
+      r.lastErrors = [];
+      r.lastYou = this.put({ id: uuid, k: 'resumed', ts: u.ts });
       return;
     }
     for (const n of u.notes) this.note(n, u.ts);
