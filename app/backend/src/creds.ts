@@ -4,7 +4,9 @@
 // its folder, else the folder itself. With a command saved for that folder (state.json `refresh`), Synopia
 // runs it once for that expiry, shared by every session of the folder: `zsh -lc <command>` in the folder,
 // in one pseudo-terminal for the whole run (pty.ts), so a sign-in that prints a code, opens the browser or
-// asks for Enter works; the page shows its output live and can type a line into it. Exit 0: the sessions'
+// asks for Enter works. It is a run like any other (2026-11-26): its preview in the dock line, its card (runs.ts
+// cardAt) with the lock, its output, input and stop in its shell view. While it waits for input (pty.ts
+// InputWatch) its sessions read "Needs you, sign-in expired" again, not refreshing. Exit 0: the sessions'
 // sign-in clears and the CLI's next retry takes the new credentials (it reloads them after a credential
 // error), with nothing to send again. A failure, or no command yet: the session needs you, and the dock
 // line offers the command to save (prefilled with the folder's `awsAuthRefresh` setting, else an
@@ -15,7 +17,8 @@ import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PtyRun, PtyStart } from './pty.ts';
-import { plainText } from './pty.ts';
+import { InputWatch, plainText } from './pty.ts';
+import { cardAt } from './runs.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { sentence } from './mcp.ts';
@@ -27,7 +30,8 @@ const OUT_CAP = 16 * 1024;
 
 // ask: no command saved; running; failed: the last run failed (or the credentials still fail); idle: nothing.
 export type Phase = 'idle' | 'ask' | 'running' | 'failed';
-export type CredsFrame = { t: 'creds'; root: string; sids: string[]; phase: Phase; command: string; output: string; error: string };
+// `at`: when the run started (ms, 0 with none); `waiting`, `quiet`: pty.ts InputWatch's; `cardAt`: runs.ts.
+export type CredsFrame = { t: 'creds'; root: string; sids: string[]; phase: Phase; command: string; output: string; error: string; at: number; waiting: boolean; quiet: boolean; cardAt: number | null };
 
 export type CredsDeps = {
   start: PtyStart;
@@ -43,9 +47,11 @@ export type CredsDeps = {
   now?: () => number;
   timeoutMs?: number;
   againMs?: number; // AGAIN_MS (checks: shorter)
+  promptMs?: number; // pty.ts PROMPT_QUIET_MS
+  hintMs?: number; // pty.ts QUIET_HINT_MS
 };
 
-type Folder = { root: string; sids: Set<string>; phase: Phase; prefill: string; output: string; error: string; okAt: number; run: PtyRun | null };
+type Folder = { root: string; sids: Set<string>; phase: Phase; prefill: string; output: string; error: string; okAt: number; run: PtyRun | null; at: number; watch: InputWatch | null };
 
 // The folder a session's credentials are refreshed for: the git root of `cwd` (a `.git` folder or file),
 // else `cwd`.
@@ -95,7 +101,7 @@ export class Creds {
     const f = await this.folderOf(sid, cwd);
     if (f.sids.has(sid) && f.phase !== 'idle') return;
     f.sids.add(sid);
-    if (f.run) { this.d.refreshing([sid], true); this.publish(f); return; }
+    if (f.run) { if (!f.watch?.state.waiting) this.d.refreshing([sid], true); this.publish(f); return; }
     const cmd = this.d.commands[f.root];
     if (!cmd) { await this.ask(f, cwd); return; }
     if (f.phase === 'failed') { this.publish(f); return; } // waits for your Save
@@ -176,7 +182,7 @@ export class Creds {
     if (was && was !== root) this.leave(sid);
     this.bySid.set(sid, root);
     let f = this.folders.get(root);
-    if (!f) this.folders.set(root, f = { root, sids: new Set(), phase: 'idle', prefill: '', output: '', error: '', okAt: 0, run: null });
+    if (!f) this.folders.set(root, f = { root, sids: new Set(), phase: 'idle', prefill: '', output: '', error: '', okAt: 0, run: null, at: 0, watch: null });
     return f;
   }
 
@@ -195,7 +201,7 @@ export class Creds {
     this.bySid.delete(sid);
     const f = this.folders.get(root);
     if (!f || !f.sids.delete(sid)) return;
-    if (f.run) this.d.refreshing([sid], false);
+    if (f.run && !f.watch?.state.waiting) this.d.refreshing([sid], false);
     if (!f.sids.size && !f.run) { f.phase = 'idle'; f.error = ''; f.output = ''; }
     this.publish(f);
   }
@@ -205,10 +211,19 @@ export class Creds {
     f.error = '';
     f.output = '';
     let raw = '';
+    f.at = this.now();
     this.log('creds.run', { sessions: f.sids.size });
+    // waiting for input: needs you again (signed out), until output comes
+    const watch = new InputWatch({ now: () => this.now(), promptMs: this.d.promptMs, hintMs: this.d.hintMs, onChange: (st) => {
+      if (f.watch !== watch) return;
+      this.d.refreshing([...f.sids], !st.waiting);
+      this.publish(f);
+    } });
+    f.watch = watch;
     const run = this.d.start(command, {
       cwd: f.root, shell: this.d.shell, timeoutMs: this.d.timeoutMs ?? RUN_TIMEOUT_MS,
       onData: (text) => {
+        watch.take('out', text); // output again: no longer waiting
         raw = (raw + text).slice(-4 * OUT_CAP);
         f.output = screenText(raw);
         this.publish(f);
@@ -219,6 +234,8 @@ export class Creds {
     this.publish(f);
     void run.done.then(({ code, timedOut, killed }) => {
       f.run = null;
+      watch.stop();
+      f.watch = null;
       const sids = [...f.sids];
       this.d.refreshing(sids, false);
       if (code === 0) {
@@ -243,8 +260,10 @@ export class Creds {
   }
 
   private frame(f: Folder): CredsFrame {
-    const shown = f.sids.size ? f.phase : 'idle';
-    return { t: 'creds', root: f.root, sids: [...f.sids], phase: shown, command: this.d.commands[f.root] ?? f.prefill, output: shown === 'running' ? f.output : '', error: f.error };
+    const shown = f.sids.size ? f.phase : 'idle', st = f.watch?.state;
+    const running = shown === 'running';
+    return { t: 'creds', root: f.root, sids: [...f.sids], phase: shown, command: this.d.commands[f.root] ?? f.prefill, output: running ? f.output : '', error: f.error,
+      at: running ? f.at : 0, waiting: running && Boolean(st?.waiting), quiet: running && Boolean(st?.quiet), cardAt: running ? cardAt(f.at, null, st?.waitedAt ?? null) : null };
   }
 
   private publish(f: Folder): void {

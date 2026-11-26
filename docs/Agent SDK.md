@@ -151,7 +151,7 @@ Code: `transcript.ts` `refreshTool` (`fg`). Source: background live run (CLI 2.1
 - The JSONL gets its `<status>killed</status>` notification only when a turn runs next. A task ended between turns is kept in memory only; the JSONL's notification or the process-end mark covers a restart.
 - A resumed process emits `stopped` notifications for the shells the previous process left behind.
 - `stopTask` with a subagent shell's `task_started` id stopped it (2 then 0 processes by `pgrep`). Monitors were not run.
-- Synopia has no Stop row and does not call `stopTask` (decision Q4, 2026-11-24); the facts above stay for when a key is designed.
+- Synopia calls `stopTask` from Esc, Esc in a background shell's or monitor's shell view (2026-11-26, R9.4), with the task id the transcript or `task_started` gave (`sdk.ts` `SessionProcess.stopTask`, `session.ts` `stopTask`); the `task_notification` that follows ends it. There is still no Stop row (decision Q4, 2026-11-24).
 
 Code: `session.ts` `onMessage` (`task_notification`). Source: live runs S4 and M1-final.
 

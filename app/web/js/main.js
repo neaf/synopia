@@ -25,6 +25,7 @@ import { toast } from "./toast.js";
 import { onThemeChange } from "./theme-switch.js";
 import { onGraceEnd } from "./tween.js";
 import { installTestApi } from "./test-api.js";
+import { applyFound } from "./find.js";
 
 /* render(part): side, header, log, card, rail, or conv (all of the view) */
 function render(...parts) {
@@ -75,10 +76,11 @@ function onMessage(m) {
     }
     case "items": {
       if (!state.applyItems(m)) break;
-      if (!isViewed(m.sid, m.agent)) break;
+      // the shell view of Claude's foreground Bash (R7.2, 2026-11-26): its step's own item comes while the view is on
+      if (!isViewed(m.sid, m.agent)) { if (m.sid === state.current && !m.agent && state.view && m.upsert.some(i => i.id === state.view)) render("log", "header", "rail"); break; }
       ui.resetIn(m); // the log a view switch held back renders now, once
       if (m.prepend) { transcript.renderLogKeepingPlace(); ui.items(m); break; } // earlier items: the card and header don't change
-      render("log", "card", "header"); // the header drops its Now line while a new session is empty
+      render("log", "card", "header", "rail"); // the header drops its Now line while a new session is empty; a Bash step's card is in the panel (R7.1)
       syncPrompt(); // the marked steps ended or went to the background
       ui.items(m); // a restored scroll waits for these
       runHooks(m);
@@ -125,9 +127,10 @@ function onMessage(m) {
     }
     case "toast": transcript.clearAsked(); toast(m.text); break; // a failed toolOutput replies with a toast
     case "toolOutput": transcript.applyToolOutput(m); break;
+    case "found": applyFound(m); break; // ⌘F's matches (find.js)
     case "recent": applyRecent(m); break;
     case "mcp": applyMcp(m); break;
-    case "creds": applyCreds(m); render("card"); break; // the dock's credential line (creds-line.js)
+    case "creds": applyCreds(m); render(state.view?.startsWith("creds:") ? "conv" : "card", "rail", "header", "log"); break; // the dock's credential line (creds-line.js) a refresh's shell view goes with its run
     case "folders": applyFolders(m); break;
     case "completion": applyCompletion(m); break;
     case "folderState": applyFolderState(m); applyOpenFolderState(m); break;
@@ -178,7 +181,8 @@ installTestApi({ inject: onMessage, render });
 
 /* live durations and ages tick once a second, in place */
 setInterval(() => {
-  const now = Date.now(); state.tick(now);
+  const now = Date.now(), was = state.nowish; state.tick(now);
+  const s = state.cur(); if (s && rail.cardsDue(s, was, now)) render("rail"); // a run's card came due (R7.1: 3 s after its start)
   document.querySelectorAll("[data-live]").forEach(el => { el.textContent = format.tookLive(now - new Date(el.dataset.live)); });
   document.querySelectorAll("[data-age]").forEach(el => { el.textContent = format.dur(+el.dataset.age); });
   document.querySelectorAll("[data-until]").forEach(el => { el.textContent = format.left(+el.dataset.until); });

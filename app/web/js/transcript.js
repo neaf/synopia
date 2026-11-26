@@ -2,7 +2,7 @@
    Claude Code CLI shows a conversation: prompts, Claude's text, tool steps and runs, subagent waves and
    reports, files changed, the turn's "Worked for" line, the live line, queued and held messages, `!`
    commands. renderLog patches the blocks by key, so open steps, diffs and folds stay as they are. */
-import { store, current, view, cur, isViewed, selectView, requestsOf, waitingOf, queuedOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs, ownBg } from "./state.js";
+import { store, current, view, cur, isViewed, selectView, requestsOf, waitingOf, queuedOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs, ownBg, bgById } from "./state.js";
 import { request, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
@@ -10,7 +10,8 @@ import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes, linkText } from "./md.js";
 import { ind, kind } from "./marks.js";
 import { bgOf, bgState, renderRail } from "./rail.js";
-import { shownBg, bgHeaderHTML, bgLogEntries, loadEarlierOutput, bangInputHTML } from "./bg-view.js";
+import { shownBg, bgHeaderHTML, bgLogEntries, loadEarlierOutput, syncRunDock, runDockHTML, typesTo, applyStepOutput } from "./bg-view.js";
+import { claudeRowHTML, ownRowHTML, stepRun, ownRun } from "./runs.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
@@ -33,14 +34,25 @@ const deniedWord = t => t.state === "denied" && !t.answer ? (t.denied === "auto"
 const startedHTML = t => `<span class="started">Started <button class="alink" data-session="${esc(t.session)}" title="Open this session">${esc(t.obj || "the new session")}</button></span>`;
 let showSession = () => {};
 export function onSession(fn) { showSession = fn; } // main.js: selects it, or opens it again
+/* a Bash or Monitor step is a run (R5.6, 2026-11-26, runs.js): one row of the same shape as your `!` command,
+   whose click opens its shell view; it never expands in place */
+const isShell = t => t.name === "Bash" || t.name === "Monitor";
+let rowOf = () => null; // the session the rows are drawn for: its background entries and whether Synopia drives it (set by itemsHTML)
+function shellRow(t) {
+  const s = rowOf(), b = s ? bgOf(s).find(x => x.toolUseId === t.id && !x.step) : null;
+  const opens = s && bgById(s, t.id) ? t.id : null;
+  /* the images of its result show under it (R5.13) */
+  return claudeRowHTML(stepRun(t, b, !!s?.state?.driven, deniedWord(t)), { open: opens, attrs: `${fgMark(t)} data-item="${esc(t.id)}"` }).replace(/<\/div>$/, () => `${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`);
+}
 function toolLine(t) {
+  if (isShell(t)) return shellRow(t);
   const res = t.session ? `<div class="res"><span class="lcorner" aria-hidden="true"></span>${startedHTML(t)}</div>` : deniedWord(t) ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${deniedWord(t)}</span></div>`
     : t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
     : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
     : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   const line = `<span class="name">${esc(toolName(t))}</span>${objOf(t)}${editCounts(t)}${res}`;
   /* the images of its result show under it, open or not (R5.13) */
-  return `<div class="ln tool ${esc(t.state)}"${fgMark(t)}><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
+  return `<div class="ln tool ${esc(t.state)}"${fgMark(t)} data-item="${esc(t.id)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
 }
 /* the source the viewer names for a step's images: a Read's file path, otherwise the step as its line reads */
 const imgFrom = t => t.name === "Read" && t.obj ? t.obj : `${toolName(t)}${t.obj ? `(${t.obj})` : ""}`;
@@ -112,12 +124,12 @@ function stepHTML(t) {
 }
 function showAll(id) {
   const key = stepKey(id);
-  if (id.startsWith("bang:")) { openBangs.add(key); renderLog(); return; } // a `!` command's output is all on the page
   if (id.startsWith("diff:")) { openDiffs.add(key); renderLog(); return; } // so is an edit's diff
   if (stepAsked === key) return;
   if (request({ t: "toolOutput", sid: current, agent: view || null, toolUseId: id })) stepAsked = key;
 }
 export function applyToolOutput(m) {
+  applyStepOutput(m); // a step's shell view has its whole result too (bg-view.js)
   const key = `${m.sid}|${m.agent || ""}|${m.toolUseId}`;
   if (stepAsked === key) stepAsked = null;
   fullOut.set(key, String(m.text ?? ""));
@@ -136,7 +148,7 @@ function toolsHTML(run) {
   return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
     <div class="body">${run.map(t => {
       const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${editCounts(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
-      return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)}>${row}</div>`;
+      return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)} data-item="${esc(t.id)}">${row}</div>`;
     }).join("")}</div></details>${thumbsHTML(run.flatMap(t => (t.imgs || []).map(m => ({ ...m, from: imgFrom(t) }))), current, view)}</div>`; // one row for the run's images (R5.12b)
 }
 
@@ -226,9 +238,10 @@ function waveHTML(tools, s) {
   // A subagent whose turn ended but whose own background shell or monitor still runs isn't done: it
   // resumes when that work reports, so it reads as running.
   const busy = a => a && (!a.finished || bgOf(s).some(b => b.agentId === a.id && bgState(b) === "running"));
-  const markOf = a => !a ? "done" : busy(a) ? (a.fork ? "k_fork" : "k_sub") : a.review ? "review" : (a.fork ? "s_fork" : "s_sub");
+  // motion means it is doing something itself (2026-11-26): one waiting on its own background work is still
+  const markOf = a => !a ? "done" : busy(a) && !a.waiting ? (a.fork ? "k_fork" : "k_sub") : a.review && !busy(a) ? "review" : (a.fork ? "s_fork" : "s_sub");
   // in a wave the name carries the b, b mark (R9); a single line carries it on the whole line
-  const nameOf = (t, a, mark = fgMark(t)) => a ? `<button class="alink"${mark} data-agent="${esc(a.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span${mark}>${esc(t.obj)}</span>`;
+  const nameOf = (t, a, mark = fgMark(t)) => a ? `<button class="alink"${mark} data-agent="${esc(a.id)}" data-item="${esc(t.id)}" title="Open this ${a.fork ? "fork" : "subagent"}'s transcript">${esc(a.description)}</button>` : `<span${mark} data-item="${esc(t.id)}">${esc(t.obj)}</span>`;
   const time = a => a ? (busy(a) ? live(a.start, a.finished ? nowish - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
@@ -248,6 +261,7 @@ function waveHTML(tools, s) {
 /* The log as keyed blocks: [key, html], one root element each. Keys come from item ids, so renderLog
    can keep the blocks that didn't change and replace the ones that did. */
 export function itemsHTML(items, sessionBusy, s) {
+  rowOf = () => s;
   const out = []; let run = []; let turnStart = null; let turnKey = null; let turnMs = null; let lastTs = null; let lastDay = null; let turnPatches = []; let waiting = false;
   /* title changes (R5.x) wait for the next block: one between turns goes after the turn's "Worked for" line */
   let titles = [];
@@ -255,7 +269,11 @@ export function itemsHTML(items, sessionBusy, s) {
   const flush = () => {
     if (!run.length) return;
     const agents = run.filter(t => t.name === "Agent" || t.name === "Task"), other = run.filter(t => !(t.name === "Agent" || t.name === "Task"));
-    if (other.length) out.push([`run:${other[0].id}`, toolsHTML(other)]);
+    /* a shell step is a row of its own, in its place: the other steps around it fold as before */
+    let seg = [];
+    const put = () => { if (seg.length) out.push([`run:${seg[0].id}`, toolsHTML(seg)]); seg = []; };
+    for (const t of other) { if (isShell(t)) { put(); out.push([`run:${t.id}`, shellRow(t)]); } else seg.push(t); }
+    put();
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
@@ -281,7 +299,6 @@ export function itemsHTML(items, sessionBusy, s) {
       const b = it.live && s?.bang;
       if (b) { // the run Synopia shows until its records land (placeBangs put it where it started)
         prompt(null, it.ts, it.id, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b, !!ownOf(s, b.id)));
-        if (b.running && b.quiet) out.push([`bangin:${b.id}`, bangInputHTML(b.id)]); // it may wait for you: its input line
         lastTs = it.ts; continue;
       }
       if (!it.sh && bangLiveOf(s)?.id === it.id) continue; // its output isn't in yet: the live run shows it
@@ -321,29 +338,14 @@ export function itemsHTML(items, sessionBusy, s) {
   return out;
 }
 /* ---------- bash mode (R5.13): a `!` command, as the CLI shows it ----------
-   The command on the prompt band with `!` for `❯`, then the run under it (runView). The same for a command
-   run from Synopia (while it runs and until its records land: the session's `bang`) or recorded by the CLI. */
-/* Its whole output is on the page (30,000 characters at most), so the 20-line cut is made here, and "Show all"
-   (data-full, key `bang:<id>`) opens it in place instead of asking the server (showAll). */
-/* While it runs the row stays compact (R5.13, 2026-11-26): the last BANG_TAIL lines, and the command opens
-   the whole output in the shell view (bg-view.js), as does its row in the panel (rail.js). `opens`: a run the
-   panel lists (state.js ownBg). */
-const BANG_LINES = 20, BANG_TAIL = 5, openBangs = new Set();
-const bangKey = id => `bang:${id}`;
+   The command on the prompt band with `!` for `❯`, then the run row's preview under it (runs.js, 2026-11-26): its
+   last 3 lines and its state line, the same shape as Claude's runs. The same for a command run from Synopia (while
+   it runs and until its records land: the session's `bang`) or recorded by the CLI. A click on the row opens its
+   shell view (bg-view.js), the only place for its whole output, its input and its stop. `opens`: a run the
+   session lists (state.js ownBg); one the CLI recorded has its row only. */
 function bangHTML(id, cmd, sh, run, opens = false) {
-  const lines = t => t ? String(t).replace(/\n$/, "").split("\n") : [];
-  const o = lines(sh?.out), e = lines(sh?.err), total = o.length + e.length;
-  const running = Boolean(run?.running);
-  const cut = !running && total > BANG_LINES && !openBangs.has(stepKey(bangKey(id)));
-  const eTail = running ? e.slice(-Math.min(e.length, 2)) : e, oTail = running ? o.slice(-(BANG_TAIL - eTail.length)) : o;
-  const out = !sh ? null : cut ? o.slice(0, BANG_LINES).join("\n") : oTail.join("\n");
-  const err = cut ? e.slice(0, Math.max(0, BANG_LINES - o.length)).join("\n") : eTail.join("\n");
-  const view = runView({ key: bangKey(id), input: "", desc: "", out: running && !out ? null : out ?? "", err, truncatedTotal: cut ? total : 0, running, startedAt: run ? run.at : null,
-    note: running ? "Esc, Esc to end it" : "", exit: sh?.exit ?? run?.exit ?? null, stopped: Boolean(run?.interrupted || sh?.interrupted) });
-  const capped = sh?.cut ? `<div class="res"><span></span><span>Output cut at 30,000 characters</span></div>` : "";
-  const note = run?.error ? `<div class="res failed"><span></span><span>${esc(run.error)}</span></div>` : "";
-  const link = opens ? ` data-bg="${esc(run?.id || id)}" title="Open its whole output"` : "";
-  return `<div class="bang${running ? " running" : ""}" data-bang="${esc(id)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd${opens ? " opens" : ""}"${link}>${esc(cmd)}</div></div><div class="bang-res">${view}${capped}${note}</div></div>`;
+  const s = rowOf(), meta = run || (s?.bangs || []).find(r => r.id === id || r.landed === id) || null;
+  return ownRowHTML(ownRun(cmd, meta, sh || (run ? null : { out: "", err: "", cut: false, exit: null })), { open: opens ? (run?.id || meta?.id || id) : null, attrs: ` data-bang="${esc(id)}" data-item="${esc(id)}"` });
 }
 /* the panel's run for a bash item: by the run's id, or the item it landed as */
 const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed === id) : null;
@@ -399,26 +401,17 @@ const liveFg = s => { const t = s.state.light === "green" && !phaseText(s) ? run
 /* what the live line names: a subagent or fork by the panel's kind tag and its name; any other tool by its
    CLI name, Bash(…) */
 const liveName = (s, t) => { if (!isAgent(t)) return `${esc(toolName(t))}${objOf(t)}`; const a = agentByTool(s, t.toolUseId); return `${kind(a?.fork ? "fork" : "sub")} ${esc(a ? a.description : t.obj || "")}`; };
-/* the main turn over, background work still running (the panel's tree: a subagent's own shells hang under it):
-   the one that runs by its kind tag and name, or the panel's "N running in the background" */
-function bgRunning(s) {
-  const agents = agentsOf(s).filter(a => !a.finished), shells = bgOf(s).filter(b => bgState(b) === "running" && !agents.some(a => a.id === b.agentId));
-  const order = { fork: 0, sub: 1, shell: 2, mon: 3 };
-  return [...agents.map(a => ({ k: a.fork ? "fork" : "sub", name: a.description })), ...shells.map(b => ({ k: b.kind === "monitor" ? "mon" : "shell", name: b.description || b.command }))]
-    .sort((p, q) => order[p.k] - order[q.k]);
-}
 function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "", state = A ? "green" : s.state.tone) => {
     const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? liveName(s, t) : "")}</span>`;
-    const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
-    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}><span class="g">${ind(mark)}</span>${body}</div>`;
+    const body = !extra && liveStep(t) && !isShell(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
+    /* a Bash step named here opens its shell view, as its row does (R5.5, 2026-11-26) */
+    const opens = !A && !extra && t && isShell(t) && bgById(s, t.id) ? ` data-bg="${esc(t.id)}" title="Open its shell view"` : "";
+    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g">${ind(mark)}</span>${body}</div>`;
   };
   // a subagent waiting on its own background work: still, it runs nothing itself (its shells move in the panel)
   if (A) return A.finished ? "" : A.waiting ? line(A.fork ? "s_fork" : "s_sub", null, "Waiting", "on its own background work") : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
-  if (s.state.light === "amber") {
-    const bg = bgRunning(s);
-    return bg.length ? line("k_" + bg[0].k, null, "Working", bg.length === 1 ? `${kind(bg[0].k)} ${esc(bg[0].name)}` : `${bg.length} running in the background`, "green") : "";
-  }
+  /* the main turn over: no live line, even while background work runs (2026-11-26): the panel and the sidebar show it */
   if (s.state.light !== "green") return "";
   return line(s.state.mark, runningStep(s.items), s.state.word, phaseText(s));
 }
@@ -456,10 +449,11 @@ export function renderConv() {
     <div class="thread panel">
     <header class="c-head"></header>
     <div class="log" id="log"><div class="log-inner"></div></div>
-    <div class="dock${view ? " nobox" : ""}"><div class="dock-inner">${view
+    <div class="dock${view ? (typesTo(shownBg()) ? " runbox" : " nobox") : ""}"><div class="dock-inner">${view
       /* a subagent, shell or monitor view has no message box (R5.12): the dock shows only the prompt of a key
-         that acts on the session (Esc, Esc; x, x), on the box's line */
-      ? `<div class="composer noinput"><span class="g">❯</span></div>`
+         that acts on the session (Esc, Esc; x, x), on the box's line. A run you or Synopia started has, while it
+         runs, a `!` band in the box's place that types into it (bg-view.js runDockHTML, 2026-11-26). */
+      ? (typesTo(shownBg()) ? runDockHTML(shownBg()) : `<div class="composer noinput"><span class="g">❯</span></div>`)
       : `<div class="composer"><div class="slash" id="slash" role="listbox" hidden></div>
         <div class="attach" style="grid-column:2"></div>
         <span class="g">❯</span><textarea id="msg" rows="1" aria-label="Message"></textarea>
@@ -544,6 +538,7 @@ export function renderLog() {
   const follow = ui.atEnd(log) && document.visibilityState === "visible";
   const B = shownBg(); // a shell or monitor shows its output (bg-view.js)
   patchChildren(log.querySelector(".log-inner"), B ? bgLogEntries(s, B, runView) : logEntries(s, view && agentById(s, view)));
+  if (B) syncRunDock(B); // the box's place follows the run: its `!` band while it can type
   ui.afterLog(); // open diffs and folds stay open (ui-state.js)
   fitTables(log);
   const sent = follow && takeSent(id => log.querySelector(`[data-key="q:${CSS.escape(id)}"]`) || landedBlock(id));
@@ -612,7 +607,7 @@ conv.addEventListener("click", e => {
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { selectView(null); renderConv(); }
   else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
-  else if (t.dataset.bg) { selectView(t.dataset.bg); renderConv(); } // a shell or monitor opens in the pane, as a subagent does (R7.2)
+  else if (t.dataset.bg) { if (e.target.closest("a[href]")) return; selectView(t.dataset.bg); renderConv(); } // a shell or monitor opens in the pane, as a subagent does (R7.2)
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });

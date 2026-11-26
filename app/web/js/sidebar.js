@@ -2,7 +2,7 @@
    (backend layout.ts): the page draws the one it got (state.js store.layout) and sends intents, as acked
    actions: `moveSession` and `newGroup` from a drop (dnd.js), `renameGroup` from the name field. Nothing
    here changes the layout itself, so a refused or unsent intent leaves the sidebar as the backend has it. */
-import { store, data, current, select, agentsOf, agentMs } from "./state.js";
+import { store, data, current, select, agentsOf, agentMs, isClaudeBg } from "./state.js";
 import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
@@ -21,6 +21,7 @@ export function rowHTML(s) {
       ${s.now ? `<span class="r-now" data-line="now">${esc(s.now)}</span>` : ""}
       ${agentsOf(s).filter(a => !a.finished || inGrace(s.id, a.id)).slice(0, 3).map(a => { const k = a.fork ? "fork" : "sub", x = { agent: a, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done" };
         return `<span class="r-agent kc-${k}" data-line="a:${esc(a.id)}"><i class="el"></i>${a.finished ? `${ind(bgMarkKey(x))}${ind("s_" + k)}` : ind((a.waiting ? "s_" : "k_") + k)} <b class="kw">${esc(a.description)}</b> ${a.finished ? took(agentMs(a)) : `${a.waiting ? "waiting, " : ""}${live(a.start, agentMs(a))}`}</span>`; }).join("")}
+      ${waitLine(s)}
       ${bgLine(s)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(s.state.review)}
     </span>
@@ -32,7 +33,7 @@ export function rowHTML(s) {
 /* the main thread's shells and monitors as one line: a count while any runs; once the last finishes, its final
    status for the grace (tween.js), then the line leaves. A subagent's own, and your `!` runs, stay in the panel. */
 function bgLine(s) {
-  const own = bgOf(s).filter(b => !b.agentId && !b.own), n = own.filter(b => bgState(b) === "running").length;
+  const own = bgOf(s).filter(b => !b.agentId && isClaudeBg(b)), n = own.filter(b => bgState(b) === "running").length;
   const many = c => `${c} shell${c > 1 ? "s" : ""} or monitor${c > 1 ? "s" : ""}`;
   if (n) return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${many(n)} running</span>`;
   const gr = own.filter(b => inGrace(s.id, b.toolUseId)).sort((p, q) => new Date(p.end || 0) - new Date(q.end || 0)), b = gr.at(-1);
@@ -40,6 +41,11 @@ function bgLine(s) {
   const st = bgState(b), x = { bg: b, running: false, failed: st === "failed", st };
   const word = st === "failed" ? "failed" : st === "timed out" ? "timed out" : st === "stopped" || st === "killed" ? "stopped" : "finished";
   return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))} ${many(gr.length)} ${word}</span>`;
+}
+/* a run of yours that waits for input (R4.2, 2026-11-26): the only run of yours that reaches the sidebar, as needs you */
+function waitLine(s) {
+  const b = bgOf(s).find(x => x.own && x.waiting && bgState(x) === "running"); if (!b) return "";
+  return `<span class="r-agent kc-shell" data-line="wait"><i class="el"></i>${ind("pause")} <b class="kw"><span class="who">!</span> ${esc(b.command)}</b> waits</span>`;
 }
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
 function rowWord(s) {

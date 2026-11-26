@@ -321,12 +321,15 @@ await c.until(`(__synopia.current() || '').startsWith('88888888') && ${settled} 
 const waitView = () => ev(`(() => { const card = document.querySelector('.rail .now .card[data-agent="${WA}"]'), sh = document.querySelector('.rail .kid[data-line="${WA}"] > .kids .card[data-bg="toolu_dsh"]');
   const moving = (e) => e ? (e.querySelector('.ind')?.getAnimations({ subtree: true }) || []).filter((a) => a.playState === 'running').length : -1, row = document.querySelector('#groups .row[data-id^="88888888"]');
   return JSON.stringify({ card: !!card, cardMoves: moving(card), cardM: card?.querySelector('.m')?.textContent || '', shell: !!sh, shellMoves: moving(sh), main: document.querySelector('.main-row .m')?.textContent, word: document.querySelector('.main-row .w')?.textContent,
+    mainMoves: moving(document.querySelector('.rail .main-row')), sideMoves: moving(row?.querySelector('.r-side')),
     pastAgent: !!document.querySelector('.rail .pr[data-agent="${WA}"]'), pastShell: document.querySelector('.rail .pr[data-bg="toolu_dsh"]')?.innerHTML || '', side: row?.querySelector('.r-state')?.textContent || '', sub: row?.querySelector('[data-line="a:${WA}"]')?.textContent.trim() || '' }); })()`).then(JSON.parse);
 let w = await waitView();
 check('a subagent waiting on its own background work stays in the running part with the still kind mark and says so',
   w.card && w.cardMoves === 0 && /^subagent, started .*, waiting on its background work$/.test(w.cardM) && !w.pastAgent, JSON.stringify(w));
 check('its own background shell runs under it, with the moving mark', w.shell && w.shellMoves > 0 && !w.pastShell, JSON.stringify(w));
-check('Main conversation counts it and the session is working, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Working' && w.side === 'Working' && /^Run the page bench waiting, /.test(w.sub), JSON.stringify(w));
+// motion means an agent is doing something (2026-11-26): the main turn is over, so the session is your turn, still
+check('Main conversation counts it, and the session is your turn with no moving mark, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Your turn' && /^Your turn, /.test(w.side) && w.mainMoves === 0 && w.sideMoves === 0 && /^Run the page bench waiting, /.test(w.sub), JSON.stringify(w));
+check('no live line once the main turn is over, though its subagent and shell run', await ev(`!document.querySelector('#log .liveln')`), await ev(`document.querySelector('#log .liveln')?.textContent || ''`));
 await shot('rail-waiting');
 // its shell ends (notified in its own file), it reports: the subagent and its shell go to Past, the shell done, not stopped
 const wdir = path.join(claude, 'projects', '-tmp-fixture');
@@ -337,5 +340,35 @@ fs.appendFileSync(path.join(wdir, `${WT}.jsonl`), wnote(32, 'finished', 'All 40 
 check('after its report the subagent moves to Past', await c.until(`!!document.querySelector('.rail .pr[data-agent="${WA}"]') && !document.querySelector('.rail .now .card[data-agent="${WA}"]')`, 12000));
 w = await waitView();
 check("its shell is in Past as done, not stopped, and Main conversation runs nothing", /class="chk"/.test(w.pastShell) && !/var\(--ink-3\)"\/><\/svg>/.test(w.pastShell) && w.main === 'Nothing running in the background' && w.word === 'Your turn', JSON.stringify(w));
+
+// ---------- who started a run, by its sign on the card (R7.1, 2026-11-26) ----------
+// your `!` runs (one running, one ended) and the folder's credential refresh waiting for input, put in as the backend
+// sends them, beside Claude's background shell; the card shows from its cardAt (3 s after the start, or when it waits)
+{
+  const now = Date.now(), sid = await ev(`__synopia.current()`);
+  const bangs = [
+    { id: 'who-run', cmd: 'bin/rspec', at: now - 62000, end: null, running: true, exit: null, interrupted: false, waiting: false, quiet: false, cardAt: now - 59000 },
+    { id: 'who-soon', cmd: 'git status', at: now - 1000, end: null, running: true, exit: null, interrupted: false, waiting: false, quiet: false, cardAt: now + 2000 },
+    { id: 'who-done', cmd: 'npm run build', at: now - 90000, end: now - 40000, running: false, exit: 0, interrupted: false, waiting: false, quiet: false, cardAt: now - 87000 },
+    { id: 'who-instant', cmd: 'open .', at: now - 30000, end: now - 29800, running: false, exit: 0, interrupted: false, waiting: false, quiet: false, cardAt: null },
+  ];
+  await ev(`__synopia.inject({ t: 'session', id: '${sid}', bangs: ${JSON.stringify(bangs)} })`);
+  await ev(`__synopia.inject({ t: 'creds', root: '/tmp/fixture', sids: ['${sid}'], phase: 'running', command: 'bin/aws-login', output: 'Signed in in the browser.\\nEnter the MFA code for demo-admin: ', error: '', at: ${now - 20000}, waiting: true, quiet: false, cardAt: ${now - 19000} })`);
+  await ev(`__synopia.render('rail')`);
+  const cards = await ev(`(() => { const one = id => { const r = document.querySelector('.rail [data-bg="' + id + '"]'); if (!r) return null; const w = r.querySelector('.n .who'); return { now: !!r.closest('.now'), past: r.classList.contains('pr'), who: w ? (w.classList.contains('lock') ? 'lock' : w.textContent) : '', lockMark: !!w?.querySelector('.lock'), color: w ? getComputedStyle(w).color : '', name: r.querySelector('.n').textContent, m: r.querySelector('.m')?.textContent || '', waits: r.classList.contains('waits'), pause: !!r.querySelector(':scope > .ind .bars') }; };
+    const claude = document.querySelector('.rail .now .card[data-bg="toolu_dsh"], .rail .card.kc-shell:not([data-bg^="who-"]):not([data-bg^="creds:"])');
+    return { run: one('who-run'), soon: one('who-soon'), done: one('who-done'), instant: one('who-instant'), creds: one('creds:/tmp/fixture'), claude: claude ? { who: !!claude.querySelector('.who') } : 'none',
+      pastClaude: [...document.querySelectorAll('.rail .past .pr[data-bg]')].filter(p => !/^(who-|creds:)/.test(p.dataset.bg)).map(p => !!p.querySelector('.who')) }; })()`);
+  check('your running ! run: its card with the pink ! before the command, "shell, started by you"', !!cards.run && cards.run.now && cards.run.who === '!' && /^rgb\((191, 57, 137|247, 120, 186)\)$/.test(cards.run.color) && cards.run.name === '!bin/rspec' && /^shell, started by you /.test(cards.run.m), JSON.stringify(cards.run));
+  check('a run under 3 s old has no card yet', cards.soon === null, JSON.stringify(cards.soon));
+  check('your ended run: its Past line with the !', !!cards.done && cards.done.past && cards.done.who === '!', JSON.stringify(cards.done));
+  check('a run over at once (no cardAt) has no card and no Past line', cards.instant === null, JSON.stringify(cards.instant));
+  check('the credential refresh: the lock, red as it waits for input, "shell, waits for input"', !!cards.creds && cards.creds.who === 'lock' && cards.creds.lockMark && cards.creds.waits && cards.creds.pause && /shell, waits for input/.test(cards.creds.m), JSON.stringify(cards.creds));
+  check('Claude\'s runs have no sign, on their cards and Past lines', cards.pastClaude.every(x => x === false) && (cards.claude === 'none' || cards.claude.who === false), JSON.stringify(cards));
+  check('Main conversation counts only Claude\'s background work, not yours nor Synopia\'s', /^(Nothing|\d) /.test(await ev(`document.querySelector('.rail .main-row .m').textContent`)) && !/[2-9] running/.test(await ev(`document.querySelector('.rail .main-row .m').textContent`)), await ev(`document.querySelector('.rail .main-row .m').textContent`));
+  check('the run under 3 s gets its card once due', await c.until(`!!document.querySelector('.rail .now [data-bg="who-soon"] .who')`, 5000));
+  await shot('rail-who');
+  if (process.env.SYNOPIA_SHOTS) await shotTo(c, path.join(process.env.SYNOPIA_SHOTS, `rail-who-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`), await ev(`(() => { const r = document.querySelector('.rail').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, 520), scale: 1 }; })()`));
+}
 c.print();
 c.close();

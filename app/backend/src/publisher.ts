@@ -10,7 +10,9 @@
 import os from 'node:os';
 import { transcriptStatus, sessionState, badgeOf, blockedLast } from './status.ts';
 import type { BadgeCounter, Running, SessionState, Needs, Status, StatusDetail } from './status.ts';
-import type { Agent, Item, PendingAsk, Transcript } from './transcript.ts';
+import type { Agent, Background, Item, PendingAsk, Transcript } from './transcript.ts';
+import { cardAtIso } from './runs.ts';
+import { plainText } from './pty.ts';
 import { Transcripts, WINDOW, effortOf } from './transcripts.ts';
 import type { ReadChanges } from './transcripts.ts';
 import type { Client } from './server.ts';
@@ -22,6 +24,8 @@ import type { Returned } from './sdk.ts';
 import { VERSION } from '../../web/js/protocol.js';
 import { outputTail, outputBefore, outputSize, readOutput, eventTail, eventsFrom, eventsBefore } from './task-output.ts';
 import type { OutputPart } from './task-output.ts';
+import { FIND_READ } from './find.ts';
+import type { FindSource } from './find.ts';
 
 export { WINDOW } from './transcripts.ts';
 export const RECHECK_MS = 60_000;
@@ -102,6 +106,8 @@ export class Publisher {
   private dirty = new Set<string>();
   private recheck: NodeJS.Timeout | null = null;
   private outTimer: NodeJS.Timeout | null = null;
+  private tailTimer: NodeJS.Timeout | null = null;
+  private tails = new Map<string, string>(); // "<sid>|<bg>" -> a running shell's last lines (bgOut), from its output file
 
   constructor(opts: PublisherOptions) {
     this.opts = opts;
@@ -124,6 +130,8 @@ export class Publisher {
     this.recheck = null;
     if (this.outTimer) clearInterval(this.outTimer);
     this.outTimer = null;
+    if (this.tailTimer) clearInterval(this.tailTimer);
+    this.tailTimer = null;
   }
 
   // ---------- sending ----------
@@ -314,6 +322,23 @@ export class Publisher {
     return true;
   }
 
+  // What `find` searches in a view (find.ts, R5.12e): a conversation's items (`view` a subagent's id, null for the
+  // main one), else a `!` run's output, a monitor's events, or a shell's output file's last FIND_READ bytes.
+  async findSource(sid: string, view: string | null): Promise<FindSource | null> {
+    const t = this.transcripts.get(sid, view);
+    if (t) return { items: t.items };
+    if (view === null) return null;
+    const own = this.pubs.get(sid)?.shown?.bangOutput(view);
+    if (own) return { id: view, text: own.err ? `${own.out}\n${own.err}` : own.out };
+    const o = this.transcripts.outputOf(sid, view);
+    if (!o) return null;
+    if (o.kind === 'monitor') return { id: view, text: o.events.map((e) => e.text).join('\n') };
+    if (!o.file) return { id: view, text: '' };
+    const size = await outputSize(o.file);
+    const part = size < 0 ? null : await readOutput(o.file, Math.max(0, size - FIND_READ), size, true);
+    return { id: view, text: part ? part.text : '' };
+  }
+
   // `view` with `bg` (R7.2): the page shows a background shell's or monitor's output, the last part of
   // it (task-output.ts) or from `from` (where its loaded output began, before a reload), as one
   // `output` reset. Then what the shell or monitor adds, as `output` appends: on each flush of the
@@ -369,6 +394,7 @@ export class Publisher {
       void this.outRun(client, sub, async () => {
         sub.more = false;
         const o = this.transcripts.outputOf(sub.sid, sub.bg as string), out = sub.out;
+        if (!o && out) return null; // none (a foreground step's view, until it moves): its reset said so once
         if (!o || !out) return this.outReset(sub, null);
         if (o.kind === 'monitor') {
           const part = eventsFrom(o.events, out.to);
@@ -420,6 +446,62 @@ export class Publisher {
     return sub.chain;
   }
 
+  // ---------- a run's row in the transcript (R5.6, 2026-11-26) ----------
+  // A shell or monitor as the pages get it: when its card shows (runs.ts cardAt), and its last TAIL_LINES lines for
+  // the run row (a shell's from its output file, read by tailMore; a monitor's from its events) with how many
+  // events a monitor has.
+  private bgOut(sid: string, b: Background): Background & { cardAt: number | null; tail: string; events?: number } {
+    const cardAt = cardAtIso(b.start, b.end);
+    if (b.kind === 'monitor') {
+      const ev = this.transcripts.outputOf(sid, b.toolUseId)?.events ?? [];
+      return { ...b, cardAt, tail: ev.slice(-TAIL_LINES).map((e) => e.text.split('\n').pop() ?? '').join('\n'), events: ev.length };
+    }
+    const key = `${sid}|${b.toolUseId}`;
+    if (b.status === 'running' || !this.tails.has(key)) this.tailTimers();
+    return { ...b, cardAt, tail: this.tails.get(key) ?? '' };
+  }
+
+  // Every outputMs, the last 4 KB of each shell's output file whose tail isn't read since it ended: a changed
+  // tail goes out as a `background` upsert. Runs while a shell runs in a shown session.
+  private tailTimers(): void {
+    const every = this.opts.outputMs ?? 1000;
+    if (every <= 0 || this.tailTimer) return;
+    this.tailTimer = setInterval(() => void this.tailMore(), every);
+    this.tailTimer.unref?.();
+  }
+
+  private tailing = false;
+  private async tailMore(): Promise<void> {
+    if (this.tailing) return;
+    this.tailing = true;
+    let busy = false;
+    try {
+      for (const p of this.pubs.values()) {
+        const t = this.transcripts.get(p.id);
+        if (!t) continue;
+        const up: Background[] = [];
+        for (const b of t.background()) {
+          const key = `${p.id}|${b.toolUseId}`, ended = b.status !== 'running';
+          if (b.kind !== 'shell' || (ended && this.tails.has(key))) continue;
+          busy ||= !ended;
+          const file = this.transcripts.outputOf(p.id, b.toolUseId)?.file;
+          const size = file ? await outputSize(file) : -1;
+          const part = size > 0 ? await readOutput(file as string, Math.max(0, size - 4096), size, true) : null;
+          const tail = part ? lastLines(plainText(part.text), TAIL_LINES) : '';
+          if (!file && !ended) continue; // no file named yet (a foreground step moved a moment ago)
+          if (this.tails.get(key) !== tail || !this.tails.has(key)) {
+            this.tails.set(key, tail);
+            up.push(b);
+          }
+        }
+        if (up.length && this.pubs.get(p.id) === p) this.broadcast({ t: 'background', sid: p.id, upsert: up.map((b) => this.bgOut(p.id, b)) });
+      }
+    } finally {
+      this.tailing = false;
+    }
+    if (!busy && this.tailTimer) { clearInterval(this.tailTimer); this.tailTimer = null; }
+  }
+
   // The look at shown shells' files runs only while a page shows one.
   private outTimers(): void {
     const every = this.opts.outputMs ?? 1000;
@@ -445,7 +527,7 @@ export class Publisher {
     return this.transcripts.ids().map((id) => {
       const p = this.pub(id) as Pub;
       const t = this.transcripts.get(id) as Transcript;
-      return { ...this.metaOf(p), agents: this.agentsOut(t.agents()), background: t.background(), stream: p.stream, held: p.held };
+      return { ...this.metaOf(p), agents: this.agentsOut(t.agents()), background: t.background().map((b) => this.bgOut(p.id, b)), stream: p.stream, held: p.held };
     });
   }
 
@@ -532,7 +614,7 @@ export class Publisher {
       this.broadcast({ t: 'agents', sid, upsert: this.agentsOut(ch.agents.map((id) => t.getAgent(id)).filter((a): a is Agent => Boolean(a))) });
     }
     if (ch.background.length) {
-      this.broadcast({ t: 'background', sid, upsert: ch.background.map((id) => t.getBackground(id)).filter(Boolean) });
+      this.broadcast({ t: 'background', sid, upsert: ch.background.map((id) => t.getBackground(id)).filter((b): b is Background => Boolean(b)).map((b) => this.bgOut(sid, b)) });
     }
     this.sendItems(sid, t, ch);
     this.outMore(sid);
@@ -550,6 +632,8 @@ export class Publisher {
 
   private sendItems(sid: string, t: Transcript, ch: ReadChanges): void {
     for (const [client, sub] of this.liveSubs()) {
+      // the shell view of Claude's foreground Bash (R7.2, 2026-11-26): its step is a main item, sent as it changes
+      if (sub.sid === sid && sub.bg && !ch.reset && ch.items.includes(sub.bg)) this.sendUpserts(client, { ...sub, from: 0 }, t, [sub.bg]);
       if (sub.sid !== sid || sub.bg) continue;
       if (sub.agent === null) {
         if (ch.reset) this.sendReset(client, sub);
@@ -665,6 +749,7 @@ export class Publisher {
         ask,
         interrupted: interruptedLast(t.items),
         blocked: blockedLast(t.items),
+        input: Boolean(p.shown?.bang()?.running && p.shown.bang()?.waiting),
         review: t.agents().filter((a) => a.finished && this.toReview(a)).length,
         // a status from Synopia's own process, not the transcript alone nor a terminal that holds it
         driven: p.status !== null && !p.statusDetail.terminal && !p.statusDetail.external,
@@ -678,13 +763,16 @@ export class Publisher {
     };
   }
 
-  // Items as the pages get them: a running tool whose start is known carries it as `since`.
+  // Items as the pages get them: a running tool whose start is known carries it as `since`, and a Bash step
+  // when its card shows (runs.ts cardAt; R7.1, 2026-11-26: from its start to its result, none when it ended
+  // without one).
   private dress(sid: string, items: Item[]): Item[] {
     const since = this.pubs.get(sid)?.since;
-    if (!since?.size) return items;
     return items.map((i) => {
-      const at = i.k === 'tool' && i.state === 'running' ? since.get(i.id) : undefined;
-      return at === undefined ? i : { ...i, since: new Date(at).toISOString() } as Item;
+      if (i.k !== 'tool') return i;
+      const at = i.state === 'running' ? since?.get(i.id) : undefined;
+      const card = i.name === 'Bash' ? { cardAt: cardAtIso(i.ts, i.state === 'running' ? null : i.out?.at ?? i.ts) } : null;
+      return at === undefined && !card ? i : { ...i, ...(at === undefined ? {} : { since: new Date(at).toISOString() }), ...card } as Item;
     });
   }
 
@@ -735,4 +823,11 @@ function interruptedLast(items: Item[]): boolean {
     return items[i].k === 'you' && items[i].interrupted === true;
   }
   return false;
+}
+
+// A run row's preview (R5.6): the last `n` lines of a text, the trailing line feed aside.
+export const TAIL_LINES = 3;
+export function lastLines(text: string, n: number): string {
+  const lines = text.replace(/\n+$/, '').split('\n');
+  return lines.slice(-n).join('\n');
 }

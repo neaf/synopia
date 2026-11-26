@@ -17,6 +17,12 @@ export let mounted = null;
 export function setMounted(key) { mounted = key || null; }
 /* the 1 s ticker's time (main.js), so every live time in one render agrees */
 export let nowish = Date.now();
+/* The credential refresh of each folder (creds.ts, R8.2, 2026-11-26): the backend owns it, this is the last
+   `creds` frame per folder, whole, naming the sessions it is for. creds-line.js draws it. */
+const credsByRoot = new Map();
+export function applyCreds(m) { if (m.phase === "idle" || !m.sids.length) credsByRoot.delete(m.root); else credsByRoot.set(m.root, m); }
+export const credsOf = sid => [...credsByRoot.values()].find(f => f.sids.includes(sid)) || null;
+export const credsAll = () => [...credsByRoot.values()].map(f => ({ ...f, sids: [...f.sids] }));
 export function tick(now) { nowish = now; }
 
 const syncData = () => { data = [...store.sessions.values()]; };
@@ -32,11 +38,30 @@ export function ownBg(s) {
   if (!out) ownMemo.set(runs, out = runs.map(r => ({ toolUseId: r.id, own: true, kind: "shell", description: "", command: r.cmd, timeout: 0, persistent: false,
     start: new Date(r.at).toISOString(), end: r.end ? new Date(r.end).toISOString() : null, landed: r.landed || null,
     status: r.running ? "running" : r.interrupted ? "killed" : r.exit === 0 ? "completed" : "failed",
-    summary: !r.running && !r.interrupted && r.exit ? `Exit code ${r.exit}` : "" })));
+    summary: !r.running && !r.interrupted && r.exit ? `Exit code ${r.exit}` : "", waiting: !!r.waiting, quiet: !!r.quiet, cardAt: r.cardAt ?? null })));
   return out;
 }
-/* a session's background shells and monitors: Claude's, then your `!` runs */
-export const bgAll = s => { const own = ownBg(s); return own.length ? [...(s?.background || []), ...own] : (s?.background || []); };
+/* Claude's foreground Bash steps of the main conversation (R7.1, R7.2, 2026-11-26) as runs of the panel and the shell
+   view, marked `step`: the turn's own step, not background work. One that runs in the background is its entry. */
+export function stepBg(s) {
+  const items = s?.items; if (!items?.length) return [];
+  const bg = new Set((s.background || []).map(b => b.toolUseId)), out = [];
+  for (const t of items) if (t.k === "tool" && t.name === "Bash" && !t.bg && !bg.has(t.id))
+    out.push({ toolUseId: t.id, step: true, kind: "shell", description: t.obj || "", command: t.input || "", timeout: 0, persistent: false, start: t.since || t.ts,
+      end: t.state === "running" ? null : t.out?.at || t.ts, status: t.state === "running" ? "running" : t.state === "failed" ? "failed" : t.state === "stopped" ? "stopped" : "completed", summary: "", cardAt: t.cardAt });
+  return out;
+}
+/* the folder's credential refresh while it runs (creds.ts, 2026-11-26), as a run Synopia started, marked `creds` */
+export function credsBg(s) {
+  const f = s && credsOf(s.id); if (!f || f.phase !== "running" || !f.at) return [];
+  return [{ toolUseId: `creds:${f.root}`, creds: f.root, kind: "shell", description: "Refresh credentials", command: f.command || "", timeout: 0, persistent: false,
+    start: new Date(f.at).toISOString(), end: null, status: "running", summary: "", cardAt: f.cardAt ?? null, waiting: !!f.waiting, quiet: !!f.quiet }];
+}
+/* Claude's own background work (not a step of its turn, nor yours or Synopia's): what "N running in the background" counts */
+export const isClaudeBg = b => !b.own && !b.step && !b.creds;
+/* a session's runs for the panel and the shell view: Claude's background shells and monitors, its foreground Bash
+   steps, your `!` runs, then the credential refresh */
+export const bgAll = s => [...(s?.background || []), ...stepBg(s), ...ownBg(s), ...credsBg(s)];
 /* a session's background shell or monitor, by its tool use id (a `!` run by its id) */
 export const bgById = (s, id) => bgAll(s).find(b => b.toolUseId === id);
 /* what a view id names in the session: a subagent or a shell or monitor */

@@ -102,6 +102,8 @@
 /* ---------- the file preview: bat's dark theme comes from the backend; the find marks and change bars here ---------- */
 :root[data-theme="dark"] ::highlight(pv-find) { background-color: #5C4A16; }
 :root[data-theme="dark"] ::highlight(pv-cur) { background-color: #E3B341; color: #1F2328; }
+:root[data-theme="dark"] ::highlight(tf-find) { background-color: #5C4A16; }
+:root[data-theme="dark"] ::highlight(tf-cur) { background-color: var(--blue-bg); color: var(--ink); text-decoration-color: var(--blue-line); }
 :root[data-theme="dark"] .pl.chg .no { box-shadow: inset 2px 0 0 #3FB950; }
 :root[data-theme="dark"] .pl.cut .no { background-image: linear-gradient(#FF7B72, #FF7B72); }
 :root[data-theme="dark"] .creds-line input:focus { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }

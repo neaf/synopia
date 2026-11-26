@@ -88,10 +88,11 @@ const line = await ev(`(() => { const b = document.querySelector('.dock .compose
 check('the box is the panel\'s last row, a 1px line above it in the default state', line.w === '1px' && line.style === 'solid' && line.color === await ev(varColor('--line-2')) && line.mode === 'normal' && Math.abs(line.panel - 1 - line.last) <= 0.5, JSON.stringify(line));
 // Chrome computes a 2.5px border as 2px (it snaps border widths), WebKit at 2x draws 2.5px: the stylesheet's
 // width, and the band's edge at the log's own edge, so nothing of it is clipped
-const edge = await ev(`(() => { const log = document.getElementById('log'), b = log.querySelector('.prompt'), r = b.getBoundingClientRect(), lr = log.getBoundingClientRect();
+// (the band scrolled into view first: the fixture's running Bash has its card, so the panel narrows the log; 2026-11-26)
+const edge = await ev(`(() => { const log = document.getElementById('log'), b = log.querySelector('.prompt'); const was = log.scrollTop; b.scrollIntoView({ block: 'center' }); const r = b.getBoundingClientRect(), lr = log.getBoundingClientRect();
 
   const hit = document.elementFromPoint(r.left + 0.5, r.top + r.height / 2), hit2 = document.elementFromPoint(r.left + 2, r.top + r.height / 2);
-  return { painted: b.clientLeft, from: r.left - lr.left, hit: !!hit && b.contains(hit), hit2: !!hit2 && b.contains(hit2) }; })()`);
+  const out = { painted: b.clientLeft, from: r.left - lr.left, hit: !!hit && b.contains(hit), hit2: !!hit2 && b.contains(hit2) }; log.scrollTop = was; return out; })()`);
 check('a posted band\'s left edge is 2.5px, whole: it starts at the log\'s edge, not clipped', /(^|\n)\.prompt \{[^}]*border-left: 2\.5px solid/.test(fs.readFileSync(new URL('../../css/app.css', import.meta.url), 'utf8')) && edge.painted >= 2 && Math.abs(edge.from) <= 0.01 && edge.hit && edge.hit2, JSON.stringify(edge));
 
 await sendText(FIRST);
@@ -109,11 +110,15 @@ check('a waiting band keeps the posted band\'s fill, edge and padding, at half o
 check('a still clock in place of ❯: no ❯, a clock mark, nothing moving', ql.g === '' && ql.clock && ql.moving === 0 && pl.g === '❯' && !/\bqc\b/.test(pl.cls), JSON.stringify(ql));
 check('its text is the lighter grey, the posted band\'s is not', ql.ink === await ev(varColor('--ink-3')) && pl.ink !== ql.ink, `${ql.ink} vs ${pl.ink}`);
 check('no veil', await ev(`!document.querySelector('.qveil')`));
+// where the run row sits (R5.6, 2026-11-26): Claude's running Bash is one run row in its place, above the live line and the queue, with no field
+const rowAt = await ev(`(() => { const r = document.querySelector('#log .ln.tool.runrow[data-bg="toolu_q1"]'), l = document.querySelector('#log .liveln'), q = document.querySelector('#log .qpin'); if (!r || !l || !q) return null;
+  const F = Node.DOCUMENT_POSITION_FOLLOWING; return { ps: r.querySelector(':scope > .g.ps')?.textContent, cmd: r.querySelector('.cmd')?.textContent, st: r.querySelector('.res.rst')?.textContent || '', beforeLive: !!(r.compareDocumentPosition(l) & F), liveBeforeQueue: !!(l.compareDocumentPosition(q) & F), field: !!r.querySelector('input, textarea, details') }; })()`);
+check('the running Bash is a run row in its place: $ npm test, Running, above the live line and the queue, no field', !!rowAt && rowAt.ps === '$' && rowAt.cmd === 'npm test' && /^Running/.test(rowAt.st) && rowAt.beforeLive && rowAt.liveBeforeQueue && !rowAt.field, JSON.stringify(rowAt));
 // the Working line (R5.5, A): a 1px rule, edge to edge across the log, through the line's middle, taking no space;
 // the mark and the words sit on it, on the panel's colour
 const rule = await ev(`(() => { const l = document.querySelector('#log .liveln'), log = document.getElementById('log'), b = getComputedStyle(l, '::before'), r = l.getBoundingClientRect(), lr = log.getBoundingClientRect();
   const lh = parseFloat(getComputedStyle(l).lineHeight), left = lr.left + log.clientLeft, right = left + log.clientWidth, top = parseFloat(b.top);
-  const panel = getComputedStyle(document.querySelector('.thread')).backgroundColor, under = [l.querySelector(':scope > .g'), l.querySelector('summary, :scope > div')].map(e => getComputedStyle(e).backgroundColor);
+  const panel = getComputedStyle(document.querySelector('.thread')).backgroundColor, under = [l.querySelector(':scope > .g'), l.querySelector('summary, :scope > div > .lh')].map(e => getComputedStyle(e).backgroundColor);
   return { pos: b.position, h: b.height, w: Math.round(parseFloat(b.width) * 100) / 100, bg: b.backgroundColor, from: +(r.left - left).toFixed(2), to: +(r.right - right).toFixed(2), lineH: +(r.height - lh).toFixed(2), mid: +(top + 0.5 - lh / 2).toFixed(2), under, panel }; })()`);
 check('the Working line is on a 1px rule edge to edge through its middle, taking no space', rule.pos === 'absolute' && rule.h === '1px' && rule.bg === await ev(varColor('--line'))
   && Math.abs(rule.from) <= 0.5 && Math.abs(rule.to) <= 0.5 && Math.abs(rule.lineH) <= 0.5 && Math.abs(rule.mid) <= 0.01 && rule.under.every((x) => x === rule.panel), JSON.stringify(rule));
@@ -131,7 +136,7 @@ const pinAt = () => ev(`(() => { const q = document.querySelector('#log .qpin'),
   return { qTop: qr.top, qBot: qr.bottom, dTop: d.getBoundingClientRect().top, box: d.querySelector('.composer').getBoundingClientRect().top, edge: q.classList.contains('edge'), shadow: getComputedStyle(q).boxShadow, gap: first.top - prev.bottom, line: first.top - qr.top,
     half: qr.height + d.getBoundingClientRect().height <= t.clientHeight / 2 + 0.5, atEnd: log.scrollHeight - log.scrollTop - log.clientHeight < 1, logBot: log.getBoundingClientRect().bottom }; })()`);
 const p0 = await pinAt();
-check('at the bottom: the queue ends the transcript, 11px under the live line, no line at its top, the box\'s line right under it', !p0.edge && p0.shadow === 'none' && p0.atEnd && Math.abs(p0.gap - 11) <= 0.5 && Math.abs(p0.qBot - p0.dTop) <= 0.5, JSON.stringify(p0));
+check('at the bottom: the queue ends the transcript, 11px under the live line, no line at its top, the box\'s line right under it', !p0.edge && p0.shadow === 'none' && p0.atEnd && Math.abs(p0.gap - 11) <= 0.5 && Math.abs(p0.qBot - p0.dTop) <= 0.75, JSON.stringify(p0)); // 0.75: subpixel rounding with the panel beside the log
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight - l.clientHeight - 200; })()`);
 await sleep(150);
 const p1 = await pinAt();

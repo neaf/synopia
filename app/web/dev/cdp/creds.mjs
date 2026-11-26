@@ -3,9 +3,12 @@
 // that really run in a pseudo-terminal (creds.ts, pty.ts; `sh -lc` under the script). Checks: a server error retry
 // reads "Retrying, attempt 4 of 10" in the sidebar with its countdown, and the live line has the CLI's sentence and
 // the countdown; two sessions of one folder whose sign-in expired read "Needs you, sign-in expired", the dock line
-// has the CLI's sentence and the command prefilled from the folder's executable bin/aws-login; Save runs it: both
-// rows read "Refreshing credentials…", the other session shows the same live run, its printed code shows, a line
-// typed into it reaches it, and its exit 0 clears both (back to retrying); a later expiry in that folder runs the
+// has the CLI's sentence and the command prefilled from the folder's executable bin/aws-login; Save runs it as a run
+// like any other (2026-11-26): the dock line keeps one line over the run's preview (its last lines and state line),
+// its printed code shows, the other session shows the same run; it prints a prompt and waits, so both rows and the
+// dock line read "Needs you, sign-in expired" and its card has the lock, red; the preview opens its shell view (the
+// lock in the gutter), where i and a typed line reach it in the box's ! band, and its exit 0 clears both (back to
+// retrying) and closes the view; a later expiry in that folder runs the
 // saved command by itself; a folder with no guess has an empty field, and a command that exits 1 brings the
 // editable line back with its sentence. Writes creds-*.png.
 // usage: node creds.mjs make <claude-dir>   writes the fixture (run.sh does this first)
@@ -88,19 +91,34 @@ check('expired: dock line words', d1.startsWith('Needs you, sign-in expired') &&
 check('expired: the command guessed from bin/aws-login', (await field('creds-cmd')) === 'bin/aws-login', JSON.stringify(await field('creds-cmd')));
 await shot('expired');
 
-// 3. Save runs it, shared by the folder's sessions; its output live; a typed line reaches it; exit 0 clears both
+// 3. Save runs it, shared by the folder's sessions; a run like any other: the preview in the dock, its card with
+// the lock, waiting for input is needs you, and its shell view types into it; exit 0 clears both
+const preview = () => ev(`(() => { const r = document.querySelector('.dock .status.creds .runrow'); return r ? { cmd: r.querySelector('.cmd')?.textContent, out: r.querySelector('.out')?.textContent || '', st: r.querySelector('.res.rst')?.textContent || '', waits: !!r.querySelector('.res.rst.waits'), link: r.dataset.bg || '' } : null; })()`);
+const typeRun = async (text) => {
+  await ev(`document.querySelector('.dock .status.creds .runrow').click()`);
+  check('refresh: the preview opens its shell view, the lock in the gutter and the ! band in the box\'s place', await until(`(__synopia.view() || '').startsWith('creds:') && !!document.querySelector('#log .bg-run > .g .lock') && !!document.getElementById('run-in')`, 4000), await ev(`document.getElementById('conv').textContent.slice(0, 300)`));
+  check('refresh: its header says Synopia started it', /Refresh credentials/.test(await ev(`document.querySelector('.c-head').textContent`)) && /started by Synopia/.test(await ev(`document.querySelector('.c-head').textContent`)), await ev(`document.querySelector('.c-head').textContent`));
+  await key('i', { code: 'KeyI', vk: 73 });
+  await until(`document.activeElement?.id === 'run-in'`, 2000);
+  await c.cdp('Input.insertText', { text });
+  await ev('__synopia.spy()');
+  await K.enter();
+  check('refresh: the typed line goes as credsInput', await until(`__synopia.sent('credsInput').length === 1 && __synopia.sent('credsInput')[0].text === ${JSON.stringify(text)}`, 3000));
+};
 await ev(`document.querySelector('[data-creds="save"]').click()`);
-check('refresh: both rows refreshing', await until(`['${A1}', '${A2}'].every(id => document.querySelector('.row[data-id="' + id + '"] .r-state')?.textContent.trim() === 'Refreshing credentials…')`, 6000), JSON.stringify([await word(A1), await word(A2)]));
-check('refresh: the printed code shows', await until(`(document.getElementById('creds-out')?.textContent ?? '').includes('WXYZ-0001')`, 6000), JSON.stringify(await dock()));
-check('refresh: a moving mark on the line', await ev(`!!document.querySelector('.dock .status.creds .rot, .dock .status.creds [class*="rot"]')`), await ev(`document.querySelector('.dock .status.creds b')?.innerHTML.slice(0, 200)`));
+check('refresh: it runs, one run for the folder', await until(`__synopia.creds().filter(f => f.phase === 'running').length === 1`, 6000));
+check('refresh: the dock line keeps one line, with the run\'s preview under it: its command and its printed code', await until(`(() => { const r = document.querySelector('.dock .status.creds .runrow'); return !!r && r.querySelector('.cmd').textContent === 'bin/aws-login' && /WXYZ-0001/.test(r.textContent); })()`, 6000), JSON.stringify(await dock()));
+check('refresh: no field and no Cancel in the dock any more', await ev(`!document.getElementById('creds-in') && !document.querySelector('[data-creds="cancel"]')`));
+check('refresh: it prints a prompt and waits: both rows need you again', await until(`['${A1}', '${A2}'].every(id => /^Needs you, sign-in expired, /.test(document.querySelector('.row[data-id="' + id + '"] .r-state')?.textContent.trim() ?? ''))`, 6000), JSON.stringify([await word(A1), await word(A2)]));
+const pv = await preview();
+check('refresh: the dock line says so, and the preview reads "Waits for input" in red', /^Needs you, sign-in expired/.test(await dock()) && !!pv && pv.waits && /^Waits for input, \d+s$/.test(pv.st) && /Press Enter when you are done/.test(pv.out), JSON.stringify([await dock(), pv]));
+check('refresh: its card has the lock, red, "waits for input"', await until(`(() => { const r = document.querySelector('.rail .now [data-bg^="creds:"]'); return !!r && !!r.querySelector('.who.lock .lock') && r.classList.contains('waits') && /shell, waits for input/.test(r.textContent); })()`, 4000), await ev(`document.querySelector('.rail')?.textContent || 'no panel'`));
 await shot('running');
 await pick(A2);
-check('refresh: the other session shows the same run', await until(`(document.getElementById('creds-out')?.textContent ?? '').includes('Press Enter when you are done')`, 4000), JSON.stringify(await dock()));
-check('refresh: one run for the folder', (await ev(`__synopia.creds().filter(f => f.phase === 'running').length`)) === 1);
-await typeInto('creds-in', 'ok');
-await K.enter();
+check('refresh: the other session shows the same run', await until(`/Press Enter when you are done/.test(document.querySelector('.dock .status.creds .runrow')?.textContent ?? '')`, 4000), JSON.stringify(await dock()));
+await typeRun('ok');
 check('refresh: exit 0 clears both', await until(`['${A1}', '${A2}'].every(id => /^Retrying, attempt \\d+ of 10/.test(document.querySelector('.row[data-id="' + id + '"] .r-state')?.textContent.trim() ?? ''))`, 8000), JSON.stringify([await word(A1), await word(A2)]));
-check('refresh: the dock line closed', await until(`!document.querySelector('.dock .status.creds')`, 4000), JSON.stringify(await dock()));
+check('refresh: its shell view goes with the run, and the dock line closed', await until(`__synopia.view() === null && !document.querySelector('.dock .status.creds')`, 4000), JSON.stringify([await ev('__synopia.view()'), await dock()]));
 
 // 4. a later expiry in that folder runs the saved command by itself
 await sleep(1600); // past the scripted gap after a refresh that succeeded (creds.ts againMs)
@@ -108,10 +126,9 @@ await pick(A3);
 await ev(`document.getElementById('msg').focus()`);
 await c.cdp('Input.insertText', { text: 'Rename it again.' });
 await K.enter();
-check('auto: refreshing with no Save', await until(`document.querySelector('.row[data-id="${A3}"] .r-state')?.textContent.trim() === 'Refreshing credentials…'`, 6000), JSON.stringify(await word(A3)));
-check('auto: its output shows', await until(`(document.getElementById('creds-out')?.textContent ?? '').includes('WXYZ-0001')`, 6000), JSON.stringify(await dock()));
-await typeInto('creds-in', 'done');
-await K.enter();
+check('auto: it runs with no Save', await until(`__synopia.creds().some(f => f.phase === 'running' && f.sids.includes('${A3}'))`, 6000), JSON.stringify(await ev('__synopia.creds()')));
+check('auto: its output shows', await until(`/WXYZ-0001/.test(document.querySelector('.dock .status.creds .runrow')?.textContent ?? '')`, 6000), JSON.stringify(await dock()));
+await typeRun('done');
 check('auto: exit 0 clears it', await until(`/^Retrying, attempt 1 of 10/.test(document.querySelector('.row[data-id="${A3}"] .r-state')?.textContent.trim() ?? '')`, 8000), JSON.stringify(await word(A3)));
 
 // 5. no guess: an empty field; a command that exits 1 brings the editable line back with its sentence

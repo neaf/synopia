@@ -54,7 +54,8 @@ export const OUTBOX_GRACE_MS = 5000;
 export type ShownBang = BangRun & { landed?: string };
 // The `!` runs of this session since the daemon started, newest last, as the background panel lists them
 // (R7.1, 2026-11-26): what ran, when and how it ended, without the output (bangOutput has it).
-export type BangMeta = { id: string; cmd: string; at: number; end: number | null; running: boolean; exit: number | null; interrupted: boolean; landed?: string };
+// `waiting`, `quiet`, `cardAt`: bang.ts BangRun's (it waits for input, it may, when its card shows).
+export type BangMeta = { id: string; cmd: string; at: number; end: number | null; running: boolean; exit: number | null; interrupted: boolean; waiting: boolean; quiet: boolean; cardAt: number | null; landed?: string };
 const BANGS_KEPT = 10;
 
 // The process side of a session (the header comment's states). status.ts SessionState is what the page shows.
@@ -368,7 +369,7 @@ export class Session {
     if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}). Run the command there.` };
     // one writer: a turn another process runs would get the command's context in the middle of it
     if (!this.proc && this.status.externalTurn) return { ok: false, error: 'Another Claude Code process is running this session\'s turn. Run the command once it ends.' };
-    if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
+    if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or stop it in its shell view.' };
     if (this.checkFolder() || !this.cwd) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     const bang = new Bang({
@@ -390,9 +391,17 @@ export class Session {
     return { ok: true, sid: this.id };
   }
 
-  // A line typed into the running `!` command (its input line, R5.13): Enter sends it with a newline.
+  // A line typed into the running `!` command (its shell view's box, R5.13): Enter sends it with a newline.
   bangInput(text: string): SendResult {
     if (!this.bang?.run.running || !this.bang.input(String(text ?? ''))) return { ok: false, error: 'No shell command is running in this session.' };
+    return { ok: true, sid: this.id };
+  }
+
+  // Esc, Esc in the shell view of your running `!` command (R5.13, 2026-11-26): only there, so stopping has one place.
+  stopBang(id: string): SendResult {
+    if (!this.bang?.run.running || this.bang.run.id !== id) return { ok: false, error: 'That shell command isn\'t running.' };
+    this.d.log('bang.stop', { sid: this.id });
+    this.bang.kill();
     return { ok: true, sid: this.id };
   }
 
@@ -400,7 +409,7 @@ export class Session {
   private bangList(): BangMeta[] {
     return this.bangs.map((r) => {
       const landed = this.shownBang?.id === r.id ? this.shownBang.landed : (r as ShownBang).landed;
-      return { id: r.id, cmd: r.cmd, at: r.at, end: r.end, running: r.running, exit: r.exit, interrupted: r.interrupted, ...(landed ? { landed } : {}) };
+      return { id: r.id, cmd: r.cmd, at: r.at, end: r.end, running: r.running, exit: r.exit, interrupted: r.interrupted, waiting: r.waiting, quiet: r.quiet, cardAt: r.cardAt, ...(landed ? { landed } : {}) };
     });
   }
 
@@ -675,15 +684,10 @@ export class Session {
 
   // ---------- controls ----------
 
-  // Esc, Esc: ends a running `!` command first; else stops the foreground turn, background work
-  // keeps running (perTaskStopAffordance). Messages the interrupt cancelled go back to the box. A
+  // Esc, Esc in the main view: stops the foreground turn; background work and your `!` command keep
+  // running (perTaskStopAffordance; a run stops in its shell view, R9.4, 2026-11-26). Messages the interrupt cancelled go back to the box. A
   // CLI without the cancel capability runs them afterwards, and the toast says so.
   async interrupt(by: By = null): Promise<void> {
-    if (this.bang?.run.running) {
-      this.d.log('bang.interrupt', { sid: this.id });
-      this.bang.kill();
-      return;
-    }
     const proc = this.proc;
     if (!proc || !this.status.working) return;
     this.status.interrupted();
@@ -749,6 +753,21 @@ export class Session {
     }
     this.d.log('sessions.background', { sid: this.id, moved });
     return moved ? { ok: true, sid: this.id } : { ok: false, error: 'Nothing could go to the background.' };
+  }
+
+  // Esc, Esc in the shell view of Claude's background shell or monitor (R9.4, FR-BG-06, 2026-11-26): stopTask
+  // with its task id. The task_notification that follows ends it in the panel and the transcript row.
+  async stopTask(toolUseId: string): Promise<SendResult> {
+    const proc = this.proc, b = this.d.transcripts.get(this.id)?.getBackground(toolUseId);
+    if (!b || b.status !== 'running') return { ok: false, error: 'That shell or monitor isn\'t running.' };
+    if (!proc || proc.done || !b.taskId) return { ok: false, error: 'Synopia can\'t stop it: no process of Synopia\'s runs this session.' };
+    try {
+      await proc.stopTask(b.taskId);
+    } catch (e) {
+      return { ok: false, error: `Synopia couldn't stop it: ${String((e as Error)?.message ?? e).slice(0, 200)}` };
+    }
+    this.d.log('session.stopTask', { sid: this.id });
+    return { ok: true, sid: this.id };
   }
 
   // f, f (R9.8): the queued messages go now, the draft (if any) as from the box. The route is

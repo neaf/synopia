@@ -145,7 +145,7 @@ function pvFind(text) {
   for (const tx of document.querySelectorAll("#pv-lines .tx"))
     for (const [from, to] of findIn(tx.textContent, text)) pv.hits.push(pvRange(tx, from, to));
   if (pvHL) CSS.highlights.set("pv-find", new Highlight(...pv.hits));
-  count.textContent = pv.hits.length ? "" : "No match";
+  count.textContent = pv.hits.length ? "" : "No matches"; // as the transcript's find (find.js)
   if (pv.hits.length) pvStep(1, true);
 }
 /* a Range over [from, to) of the element's text, across its spans */

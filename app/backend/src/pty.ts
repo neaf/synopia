@@ -113,3 +113,82 @@ export function plainText(s: string): string {
   return s.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[@-Z\\-_]/g, '')
     .replace(/\r+\n/g, '\n').replace(/[^\n]*\r(?!\n|$)/g, '').replace(/\r$/, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').replace(/\^D/g, '');
 }
+
+// ---------- waits for input (R5.13, R8.2; live run IN-1, 2026-11-26) ----------
+// No signal says a command blocks reading its terminal: `ps` shows the same state (S+) and wait channel (-)
+// for `read` as for `sleep`, `curl` or a timer (docs/Claude Code terminals.md, "Waits for input", IN-1).
+// Silence alone isn't one either: at any quiet time from 1 to 15 s most silent commands that don't wait
+// (a build, a slow spec, a download) read as waiting. What IN-1 found reliable is the prompt's shape: the
+// last line written, by the stream written last (Python writes input()'s prompt to stderr), is left open
+// and ends in `:`, `?` or `>` ("Password: ", "Continue? [y/N] ", "> "), or names Enter or a yes/no choice
+// ("Press Enter when done"), and nothing came for PROMPT_QUIET_MS. Then the run waits for input (needs
+// you) until output comes again. A run quiet for QUIET_HINT_MS without such a line only may wait: a quiet
+// hint, never needs you.
+export const PROMPT_QUIET_MS = 1000;
+export const QUIET_HINT_MS = 10_000;
+const TAIL_KEEP = 2048;
+
+export function looksLikePrompt(text: string): boolean {
+  const t = plainText(text);
+  const open = t !== '' && !t.endsWith('\n');
+  const last = t.replace(/\n+$/, '').split('\n').pop() ?? '';
+  if (/\b(?:press|hit) (?:enter|return|any key)\b|[[(](?:y\/n|yes\/no)[\])]/i.test(last)) return true;
+  return open && /[:?>]\s*$/.test(last);
+}
+
+export type InputState = { waiting: boolean; quiet: boolean; waitedAt: number | null };
+export type InputWatchOptions = { promptMs?: number; hintMs?: number; now?: () => number; onChange: (s: InputState) => void };
+
+// Watches one run's output for the rule above. take() each chunk as it comes; stop() at its end.
+export class InputWatch {
+  readonly state: InputState = { waiting: false, quiet: false, waitedAt: null };
+  private o: InputWatchOptions;
+  private tails = { out: '', err: '' };
+  private last: 'out' | 'err' = 'out';
+  private promptTimer: NodeJS.Timeout | null = null;
+  private hintTimer: NodeJS.Timeout | null = null;
+  private over = false;
+
+  constructor(o: InputWatchOptions) {
+    this.o = o;
+    this.arm();
+  }
+
+  take(stream: 'out' | 'err', chunk: string): void {
+    if (this.over) return;
+    this.tails[stream] = (this.tails[stream] + chunk).slice(-TAIL_KEEP);
+    this.last = stream;
+    const was = this.state.waiting || this.state.quiet;
+    this.state.waiting = false;
+    this.state.quiet = false;
+    this.arm();
+    if (was) this.o.onChange(this.state);
+  }
+
+  stop(): void {
+    this.over = true;
+    for (const t of [this.promptTimer, this.hintTimer]) if (t) clearTimeout(t);
+    this.state.waiting = false;
+    this.state.quiet = false;
+  }
+
+  private arm(): void {
+    for (const t of [this.promptTimer, this.hintTimer]) if (t) clearTimeout(t);
+    this.promptTimer = setTimeout(() => {
+      this.promptTimer = null;
+      if (this.over || !looksLikePrompt(this.tails[this.last])) return;
+      this.state.waiting = true;
+      this.state.quiet = false;
+      this.state.waitedAt ??= (this.o.now ?? Date.now)();
+      this.o.onChange(this.state);
+    }, this.o.promptMs ?? PROMPT_QUIET_MS);
+    this.hintTimer = setTimeout(() => {
+      this.hintTimer = null;
+      if (this.over || this.state.waiting) return;
+      this.state.quiet = true;
+      this.o.onChange(this.state);
+    }, this.o.hintMs ?? QUIET_HINT_MS);
+    this.promptTimer.unref?.();
+    this.hintTimer.unref?.();
+  }
+}

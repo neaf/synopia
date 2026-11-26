@@ -188,12 +188,25 @@ details.step[open] > summary .res.run { display: none; }
 .prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .bang-res { padding-left: 2ch; color: var(--ink-3); }
 .bang-res > .step-out { margin: 0; }
-/* a `!` run of yours: its command opens the shell view (bg-view.js); while it may wait for you, its input line
-   sits under the row, in the credential line's style (R5.13, 2026-11-26) */
-.prompt.bang-cmd .cmd.opens { cursor: pointer; }
-.prompt.bang-cmd .cmd.opens:hover { text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
-.log-inner > .bang-in, .bang-in { padding-left: 2ch; margin: -7px 0 11px; max-width: 150ch; }
-.bang-in input { max-width: none; }
+/* ---------- a run (runs.js, R5.6, R5.13, R7.1, 2026-11-26; prototype/shell-storyboard.html): one row for every shell
+   command, whoever started it. The whole row is the link to its shell view; hover shades it as a Past line shades. */
+.runrow { position: relative; isolation: isolate; cursor: pointer; }
+.runrow::before { content: ""; position: absolute; inset: -2px -8px; z-index: -1; border-radius: 5.5px; pointer-events: none; }
+.runrow:hover::before { background: var(--sub); }
+.bang.runrow::before { inset: 3.5px -8px -2px; }
+.runrow:hover .prompt.bang-cmd { background: var(--line-2); }
+/* the command in Claude's row stays one line: the shell view has the rest */
+.runrow .step-out .cmd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the state line: the status mark, then the words */
+.runrow .res.rst > span:last-child, .rst > span:last-child { display: inline-flex; align-items: center; gap: .6ch; }
+.rst .ind { font-size: 10px; }
+.res.waits, .status .res.waits span { color: var(--red); }
+.liveln[data-state="red"] b { color: var(--red); } /* the shell view's live line while its run waits */
+.rst .rhint { color: var(--faint); }
+.liveln[data-bg] { cursor: pointer; } /* "Working Bash(…)" opens that run's shell view */
+/* Claude's command line: a grey $ in the gutter, as the permission card's (.qbody .cmd .ps), under the step's dot
+   and in the column of your band's !; no band, no fill. One mark per gutter line: the dot on the step, $ on the command. */
+.ln.tool > .g.ps.ps { color: var(--ink-3); user-select: none; margin-top: 2px; }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
 .retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
 .opt-line { color: var(--ink-3); }
@@ -496,6 +509,14 @@ body[data-mode] .composer.asking > .g { color: var(--ink); }
 .card.ended { grid-template-columns: auto minmax(0, 1fr) auto; }
 .card.ended > .pm { grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
 .card.ended .d { color: var(--ink-3); }
+/* who started a run, as a sign before a card's or Past line's name: your `!` in bash pink, Synopia's lock (R7.1, 2026-11-26) */
+.who { font-family: var(--mono); font-weight: 700; color: var(--bash); margin-right: .5ch; }
+.who.lock { color: var(--ink-3); font-size: 10px; vertical-align: -1px; }
+.who .ind { font-size: 10px; }
+.r-agent .who { margin-right: 0; }
+/* a card whose run waits for input: the needs-you tint the Main conversation card uses */
+.card.waits { background: var(--red-bg, #FFEBE9); border-color: var(--red-line, #FFCECB); }
+.card.waits .m { color: var(--red); }
 .kid:not(:last-child) > .tg::after { content: ""; position: absolute; left: 0; top: 28px; width: 11px; border-top: 1px solid var(--guide); }
 
 /* motion only on things that are running (the marks, below); still with reduced motion */
@@ -875,4 +896,7 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
 .creds-line input:focus { border-color: #54AEFF; box-shadow: 0 0 0 2px #DDF4FF; }
 .creds-line button { border: 1px solid var(--line); border-radius: 4px; padding: 0 1ch; background: var(--panel); }
 .creds-line button:hover { border-color: var(--faint); }
-.creds-run { flex: 1 0 100%; margin: 0; max-height: 14lh; overflow-y: auto; }
+/* the refresh's run in its dock line: the status line over a run preview, which opens its shell view */
+.status.creds .runrow { flex: 1 0 100%; margin: 2px 0 0 0; }
+.status.creds .runrow::before { inset: -2px -6px; }
+.status.creds .runrow .cmd { color: var(--ink); }

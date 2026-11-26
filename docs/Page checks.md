@@ -17,7 +17,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 - Each `run.sh` run starts its own headless browser (a temp `--user-data-dir`, `--remote-debugging-port=0`, the port read from `DevToolsActivePort`) and its own backend (`--port 0`, the port read from the ready line) on a fresh state folder. A `trap` stops both on exit, Ctrl-C too, and only its own pids. So two runs, other agents' runs and an open app never share anything.
 - A run prints `N/M pass`, the failures and where its shots are. Its exit code is the result: 0 only when every check passed and at least one ran.
 - The backend under the suites runs the real Sessions, status, writer and menu code on the scripted SDK (below), over a copy of `app/backend/test/fixtures/claude/` in the run's state folder with its `sdk-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), an idle session with diffs whose process gives the menu (`#11111111`). `run.sh` passes `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`, and `--dry-run` for `preview`.
-- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps`, `scroll`, `agenttools`, `sendnow` and `mcp` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
+- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps`, `scroll`, `agenttools`, `sendnow`, `mcp` and `find` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
 - Page hooks: `?agent=<id>` opens a subagent, `&open=1` expands the last diff. `rail.mjs` and `restore.mjs` use them.
 
 ## The scripted SDK
@@ -138,6 +138,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `card(sid)` | the cursor and picks of that session's card (`{qi, oi, picks, own, notes, target, …}`; the shown session without `sid`), or null |
 | `cards()` | every card's state, keyed `"<sid>:<request id>"` |
 | `preview()` | the file preview: `{shown, path}` |
+| `find()` | the transcript's find bar (find.js): `{shown, q, at, total, count, hits, waiting}`, `count` the text it shows ("3 of 12", "No matches") |
 | `openList()` | the Open list: `{shown, filter}` |
 | `mcp()` | the MCP panel: `{shown, sid, servers, error, note, sel, action}` |
 | `marks()` | every mark kind in the marks table |

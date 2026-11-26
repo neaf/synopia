@@ -600,7 +600,7 @@ test('toolOutput: the full result read again from its line, also after the file 
   publisher.view(c, id, null);
   const item = (c.take('items')[0].upsert as Msg[]).find((i) => i.id === 'toolu_o') as Msg;
   assert.equal(item.input, 'seq 30');
-  assert.deepEqual(item.out, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true });
+  assert.deepEqual({ ...item.out, at: '' }, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true, at: '', tail: out.split('\n').slice(27, 30).join('\n') }, 'the first lines, and the last 3 for its run row');
   assert.equal(await publisher.toolOutput(c, id, null, 'toolu_o'), true);
   assert.deepEqual(c.take(), [{ t: 'toolOutput', sid: id, agent: null, toolUseId: 'toolu_o', text: out }]);
   fs.appendFileSync(file, you(4) + you(5));

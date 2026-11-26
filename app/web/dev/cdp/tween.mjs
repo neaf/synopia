@@ -39,7 +39,7 @@ await ev(`(() => {
   const S = () => __synopia.data().find(s => s.id === TWID), put = m => __synopia.inject(m), iso = () => new Date().toISOString();
   const row = () => [...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID);
   window.TW_PUT = put; window.TW_S = S;
-  window.TW_CHANGE = { bgOn: () => put({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg', kind: 'shell', status: 'running', start: iso(), description: 'tween check' }] }),
+  window.TW_CHANGE = { bgOn: () => put({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg', kind: 'shell', cardAt: 0, status: 'running', start: iso(), description: 'tween check' }] }),
     bgOff: () => put({ t: 'session', id: TWID, background: (S().background || []).filter(b => b.toolUseId !== 'tw-bg') }),
     // the backend sends a deliverable with review: true and counts it in the session's state (status.ts)
     revOn: () => { put({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-rev', toolUseId: 'tw-rev-t', description: 'For review: tween check', finished: true, review: true, start: iso() }] });
@@ -106,7 +106,7 @@ check('turning round mid-way keeps the height (no jump), then closes', turn.h1 >
 
 // a text-only change doesn't animate
 await ev(`TW_CHANGE.bgOn()`); await sleep(450);
-const textOnly = await ev(`(() => { TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg2', kind: 'monitor', status: 'running', start: new Date().toISOString(), description: 'two' }] });
+const textOnly = await ev(`(() => { TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg2', kind: 'monitor', cardAt: 0, status: 'running', start: new Date().toISOString(), description: 'two' }] });
   return document.getAnimations().filter(a => a.id === 'side-line').length; })()`);
 check('a count changing on a line does not animate', textOnly === 0, String(textOnly));
 await ev(`TW_PUT({ t: 'session', id: TWID, background: TW_S().background.filter(b => !b.toolUseId.startsWith('tw-')) })`); await sleep(450);
@@ -131,8 +131,8 @@ await reduce(false);
 // ---------- the background panel: children tween in and out like the sub-lines, guides following (R7.1) ----------
 await ev(`[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID).click()`); // its view, the panel up
 await ev(`(() => { const iso = () => new Date().toISOString();
-  TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-past', kind: 'shell', status: 'completed', start: new Date(Date.now() - 60000).toISOString(), end: iso(), description: 'the panel is up', command: 'true' }] });
-  const shell = { toolUseId: 'tw-rb', kind: 'shell', status: 'running', description: 'rail tween check', command: 'sleep 9' };
+  TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-past', kind: 'shell', cardAt: 0, status: 'completed', start: new Date(Date.now() - 60000).toISOString(), end: iso(), description: 'the panel is up', command: 'true' }] });
+  const shell = { toolUseId: 'tw-rb', kind: 'shell', cardAt: 0, status: 'running', description: 'rail tween check', command: 'sleep 9' };
   window.RW = { kid: k => document.querySelector('.rail .kid[data-line="' + k + '"]'),
     shellOn: () => { shell.start = iso(); TW_PUT({ t: 'background', sid: TWID, upsert: [shell] }); },
     shellOff: () => TW_PUT({ t: 'session', id: TWID, background: TW_S().background.filter(b => b.toolUseId !== 'tw-rb') }),

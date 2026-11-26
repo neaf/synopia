@@ -58,7 +58,7 @@ check('the page loads', await load());
 check('session 1 shows', await goTo(S1));
 await ev(`document.querySelector('#log details.fold').open = true`);
 await sleep(100);
-await ev(`[...document.querySelectorAll('#log details.step')].find(d => d.querySelector('summary').textContent.includes('List the demo folder')).querySelector('summary').click()`);
+await ev(`[...document.querySelectorAll('#log details.step')].find(d => d.querySelector('summary').textContent.includes('Grep(TODO)')).querySelector('summary').click()`);
 await ev(`document.querySelector('#log .frow .fc').click()`);
 await sleep(200);
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = Math.round((l.scrollHeight - l.clientHeight) / 2); })()`);
@@ -102,7 +102,7 @@ async function checkSession1(tag, firstLoad) {
   check(`${tag}: the draft text and cursor`, await ev(`(() => { const t = document.getElementById('msg'); return t.value === 'a draft to keep [Image #1] ' && t.selectionStart === 2 && t.selectionEnd === 7; })()`), await ev(`document.getElementById('msg').value`));
   check(`${tag}: the pasted image is back`, await wait(`__synopia.attachments().length === 1 && document.querySelectorAll('.composer .attach .thumb img').length === 1 && document.querySelector('.composer .attach .thumb img').naturalWidth === 8`));
   check(`${tag}: its bytes are back for sending`, await wait(`/^data:image\\/png;base64,/.test(__synopia.attachments()[0].data || '')`));
-  check(`${tag}: the step is open`, await stepOpen('List the demo folder'));
+  check(`${tag}: the step is open`, await stepOpen('Grep(TODO)'));
   check(`${tag}: the tool group is unfolded`, await foldOpen());
   check(`${tag}: the diff is open`, await diffOpen());
 }

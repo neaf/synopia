@@ -25,6 +25,7 @@ import type { Mcp, Action as McpAction, McpTarget } from './mcp.ts';
 import type { Creds } from './creds.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { find } from './find.ts';
 
 export const STOPPING = 'Synopia is restarting, so that wasn\'t done. Do it again in a moment.';
 export const FAILED = 'Something went wrong in Synopia, so that wasn\'t done. backend.log has the details.';
@@ -161,6 +162,12 @@ export class Router {
       },
       earlier: (client, m) => { publisher.earlier(client, sessions.resolve(m.sid as string), agent(m), m.before as string); },
       earlierOutput: (client, m) => publisher.earlierOutput(client, sessions.resolve(m.sid as string), m.bg as string, m.before as number),
+      // ⌘F (R5.12e): the view's matches, in order, with their offsets (find.ts); `seq` comes back so the page drops stale replies
+      find: async (client, m) => {
+        const sid = sessions.resolve(m.sid as string), view = str(m.view), q = m.q as string;
+        const found = find(await publisher.findSource(sid, view), q);
+        publisher.reply(client, { t: 'found', sid, view, q, seq: typeof m.seq === 'number' ? m.seq : null, ...found });
+      },
       toolOutput: async (client, m) => { await publisher.toolOutput(client, sessions.resolve(m.sid as string), agent(m), m.toolUseId as string); },
       listRecent: (client, m) => {
         const filter = str(m.filter) ?? '';
@@ -208,6 +215,9 @@ export class Router {
       }),
       bang: (client, m) => this.act(m.sid, (s) => s.runBang(m.command as string, str(m.uuid) ?? undefined, client)), // bash mode (R5.13)
       bangInput: (_client, m) => this.act(m.sid, (s) => s.bangInput(m.text as string)), // a line typed into the running `!` command
+      // Esc, Esc in a run's shell view (R9.4, 2026-11-26): your `!` command, or Claude's background shell or monitor
+      bangStop: (_client, m) => this.act(m.sid, (s) => s.stopBang(m.bg as string)),
+      stopTask: (_client, m) => this.act(m.sid, (s) => s.stopTask(m.bg as string)),
       answer: (_client, m) => this.act(m.sid, (s) => s.answer(m.requestId as string, (m.answer ?? {}) as CardAnswer)),
       interrupt: (client, m) => this.act(m.sid, (s) => s.interrupt(client)),
       background: (_client, m) => this.act(m.sid, (s) => s.background()), // b, b (R9): an error only when nothing moved

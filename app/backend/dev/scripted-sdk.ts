@@ -229,6 +229,7 @@ class ScriptedSession implements QueryLike {
   private held: { uuid: string; text: string }[] = []; // shouldQuery:false messages not yet in the transcript
   private mcpServers: Record<string, unknown> | undefined; // Synopia's tools for agents, for `call`
   private title: string; // a new session's Options.title: its custom-title record with the first prompt
+  private tasks = new Map<string, string>(); // task id -> tool use id, from the task_started messages it played
 
   constructor(env: Scripted, options: Options, prompt: AsyncIterable<SDKUserMessage>) {
     this.env = env;
@@ -289,6 +290,12 @@ class ScriptedSession implements QueryLike {
   async toggleMcpServer(name: string, enabled: boolean): Promise<void> { this.env.mcpToggle(name, enabled, Object.keys(this.mcpServers ?? {})); }
   async setModel(): Promise<void> {}
   async applyFlagSettings(): Promise<void> {}
+  // stopTask: its task_notification `stopped` at once, also between turns (docs/Agent SDK.md, CON-SDK-12).
+  async stopTask(taskId: string): Promise<void> {
+    const tid = this.tasks.get(taskId);
+    if (!tid) throw new Error(`no task ${taskId}`);
+    await this.out.deliver({ type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: tid, status: 'stopped', summary: '', output_file: '', uuid: randomUUID(), session_id: this.sid } as unknown as SDKMessage);
+  }
   // The queued messages fold into the running turn at once, in order (live runs PR-1 and PR-2).
   async backgroundTasks(): Promise<boolean> {
     this.takeIn(this.queued.filter((q) => !this.landed(q)));
@@ -399,6 +406,7 @@ class ScriptedSession implements QueryLike {
       if (m.type === 'system' && m.subtype === 'init') this.inited = true;
       if (m.type === 'system' && m.subtype === 'session_state_changed') this.running = m.state !== 'idle';
       if (m.type === 'result') this.queued = this.queued.filter((q) => !this.landed(q));
+      if (m.type === 'system' && m.subtype === 'task_started' && typeof m.task_id === 'string' && typeof m.tool_use_id === 'string') this.tasks.set(m.task_id, m.tool_use_id);
       await this.out.deliver(m as unknown as SDKMessage);
     }
     if (step.ask) {

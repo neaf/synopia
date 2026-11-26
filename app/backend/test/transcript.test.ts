@@ -128,7 +128,7 @@ test('tool steps: input and result preview, the span of the result record, and t
   t.pushAll(recs, spans);
   const bash = byId(t, 'toolu_bash1');
   assert.equal(bash.input, 'ls -la /Users/fixture/dev/demo');
-  assert.deepEqual(bash.out, { text: 'notes.md\nREADME.md', lines: 2, cut: false });
+  assert.deepEqual(bash.out, { text: 'notes.md\nREADME.md', lines: 2, cut: false, at: '2026-11-20T10:00:06.000Z' }, 'with the time of the result record');
   assert.equal(byId(t, 'toolu_grep1').input, 'pattern: TODO');
   assert.equal(byId(t, 'toolu_edit1').input, undefined, 'an edit shows its diff instead');
   const span = t.resultSpan('toolu_read1')!;
@@ -865,7 +865,7 @@ test('a subagent waiting on its own background work runs, its shells run under i
   assert.deepEqual([sh().status, sh().taskId, sh().agentId, main.getBackground('toolu_wmon')!.taskId], ['running', 'bw1', 'wwww0001', 'mw1'], 'its shell runs, the task id from its result text');
   assert.equal(byId(main, 'toolu_wag').state, 'running', 'the Agent step still runs');
   assert.ok(!main.items.some((i) => i.k === 'report'), 'the message it waits with is not its report');
-  assert.equal(status(), 'busy', 'the main turn is over: working, on a background subagent (FR-STAT-02)');
+  assert.equal(status(), 'idle', 'the main turn is over: your turn, its subagent runs in the background (FR-STAT-02, 2026-11-26)');
   // a message wakes it; it answers and waits again (that notification carries the SendMessage's tool use id)
   main.pushAll([replied('w-a3', ago(40), [{ type: 'tool_use', id: 'toolu_wsm', name: 'SendMessage', input: { to: 'wwww0001', message: 'Status?' } }]), toolResult('w-r3', ago(40), 'toolu_wsm')]);
   sub.pushAll([{ ...typed('w-s6', 'Status?', ago(40)), ...sc, isMeta: true }, { ...replied('w-s7', ago(39), [{ type: 'text', text: '34 of 372 done.' }]), ...sc }]);

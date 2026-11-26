@@ -51,12 +51,14 @@ Rules the design keeps:
 | `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background, send-now (f, f: `nowRoute`). |
 | `agent-tools.ts` | Synopia's tools for agents (R3.15), the one owner: the tool list (name, description, zod input, card words, step line, run), the server per process (through `sdk.ts` `toolServer`), the `Host` it needs from `sessions.ts`, `start_session` and its result text. A tool is one entry of `TOOLS`. |
 | `cards.ts` | Needs-you requests: park `canUseTool` FIFO per session, abort cleanup, answer mapping (questions, permission, plan), "always allow" session rules that clear on close (Q6). |
-| `bang.ts` | `!` commands: run in one pty (`pty.ts`, 2026-11-26) as their own process group, a typed line in (`input`), `quiet` once 0.8 s pass with no output, plain text capped by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. `session.ts` owns the runs: the shown one (`bang`), the last 10 for the panel (`bangs`, no output) and their output for the shell view (`bangOutput`, sent by `publisher.ts` as `output` resets). The page only reshapes `bangs` into panel shells (`state.js` `ownBg`). |
+| `bang.ts` | `!` commands: run in one pty (`pty.ts`, 2026-11-26) as their own process group, a typed line in (`input`), stopped from its shell view (`kill`, `session.ts` `stopBang`), `waiting`/`quiet`/`waitedAt` from `pty.ts` `InputWatch` and `cardAt` from `runs.ts` (2026-11-26), plain text capped by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. `session.ts` owns the runs: the shown one (`bang`), the last 10 for the panel (`bangs`, no output) and their output for the shell view (`bangOutput`, sent by `publisher.ts` as `output` resets). The page only reshapes `bangs` into panel shells (`state.js` `ownBg`). |
 | `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, the in-process tool server (`toolServer`), `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
 | `menu.ts` | Slash commands and model list per folder: cache, persisted models, backoff after a failed fill, one send per folder per connection. |
 | `mcp.ts` | `/mcp` (R5.15): per session, its MCP servers' rows, the action running on each and the last error, sent whole as `mcp` to every page. Status and control calls from the session's process (`Session.mcpControl`), else an idle probe in its folder (`sdk.ts` `mcpProbe`, closed 3 min after the last ask); a fresh source's empty first answer and `pending` rows are read again every 0.5 s. Sign-in and sign-out run the bundled CLI (`sdk.ts` `bundledCli`) as `claude mcp login <name>` or `logout` in the session's folder, no TTY, 5 min for a sign-in, then `reconnectMcpServer`. The runner and the probe are injected (tests; the scripted SDK's pretend CLI). |
+| `find.ts` | Find in the transcript (R5.12e, 2026-11-26), the one owner of what ⌘F searches: an item's search text (`itemText`, what the page renders for it), case-ignoring matches with offsets in the text, every match of a view in order, capped at 10,000. The view's source comes from `publisher.ts` `findSource` (its items, or a shell's last 4 MB of output, a monitor's events, a `!` run's output); `router.ts` answers `find` with `found`. |
 | `creds.ts` | Credential refresh (R8.2, 2026-11-26), the one owner: each folder's refresh command (`state.json` `refresh`, keyed by the git root), one run per folder for an expiry shared by its sessions, the `creds` frame (phase, command or guess, live output, failure sentence) to every page, `credsSave`/`credsInput`/`credsCancel`. The guess: `sdk.ts` `awsAuthRefreshOf`, then an executable `bin/aws-login`. The pty runner is injected (tests). |
-| `pty.ts` | A command in one pseudo-terminal for its whole run (`script(1)` behind a `cat` pipe), its output to a callback only (stderr apart on request), a line typed into it, its exit code; killed as the command's group, whose id the pty reports. `plainText`: the one place the pty's CRLF and escape sequences go. Used by `creds.ts` and `bang.ts`. |
+| `pty.ts` | A command in one pseudo-terminal for its whole run (`script(1)` behind a `cat` pipe), its output to a callback only (stderr apart on request), a line typed into it, its exit code; killed as the command's group, whose id the pty reports. `plainText`: the one place the pty's CRLF and escape sequences go. `InputWatch` and `looksLikePrompt` (2026-11-26, live run IN-1 in docs/Claude Code terminals.md): the one rule for "waits for input" (a prompt-shaped last line, 1 s quiet) and the 10 s "may wait" hint. Used by `creds.ts` and `bang.ts`. |
+| `runs.ts` | When a run gets its panel card (R7.1, 2026-11-26), the one rule for every run: `cardAt` (3 s after the start, or when it first waited; none for a run over sooner). `bang.ts`, `creds.ts` and `publisher.ts` (background entries in `bgOut`, Bash items in `dress`) send it; the page shows a card once its clock passes it. |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
@@ -86,7 +88,7 @@ Dev and test only (not loaded in production):
 |---|---|
 | `js/protocol.js` | The shared message schema: protocol version, every message type and its fields, the validator, action types that need an ack, the image limits. Imported by the page and by `router.ts`/`publisher.ts`/`sdk.ts`. DOM-free. |
 | `js/connection.js` | The WebSocket: auth, reconnect backoff, version check (another version: "Updating…", reload once for a newer one, else wait), frame validation, `send()` that returns false when down, actions with ids awaiting `ack`, `request()` for read frames, refusal toast while disconnected (Q9). |
-| `js/state.js` | The one page store: applies server messages, holds current session and view (`select`, `selectView` are the only writers), the ticker's `nowish`, exposes server-derived fields only. |
+| `js/state.js` | The one page store: applies server messages (the `creds` frames too), holds current session and view (`select`, `selectView` are the only writers), the ticker's `nowish`, exposes server-derived fields only. `bgAll`: a session's runs for the panel and the shell view, as one shape (Claude's background entries, its foreground Bash steps `stepBg`, your `!` runs `ownBg`, the refresh `credsBg`). |
 | `js/ui-state.js` | Restore of exactly what was on screen (R3.9): collect, debounce, patch, apply hello, scroll anchors; hooks `useLog`, `useBox`, `useCards` so it imports no view module. |
 | `js/main.js` | Entry: wires modules and hooks, the message dispatch, the 1 s ticker, start. |
 | `js/test-api.js` | `window.__synopia`: read-only state getters, ready signal, sent-frame spy, message injection. The page checks use only this plus the DOM. |
@@ -97,11 +99,13 @@ Dev and test only (not loaded in production):
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
 | `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
-| `js/rail.js` | Background work panel. |
-| `js/bg-view.js` | A shell's or monitor's view (R7.2): its header, its output as a terminal run, earlier output; holds the `output` the page has. |
+| `js/rail.js` | Background work panel: agents and runs as cards once due (`cardAt`), who started each by its sign, the waiting card. |
+| `js/runs.js` | Runs (R5.6, 2026-11-26): every shell command or monitor in one shape for the transcript row (`claudeRowHTML` under the grey `$`, `ownRowHTML` on the `!` band, `credsRunHTML` in the dock), its state line, the who sign; draws only what the backend sent. |
+| `js/bg-view.js` | A run's shell view (R7.2): its header, its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors, its foreground Bash (from its item), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
 | `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps, files changed, earlier link, live line, the sticky queue of queued prompts. |
 | `js/images.js` | Thumbnails and the image viewer. |
-| `js/preview.js` | File preview pane and find. |
+| `js/preview.js` | File preview pane and find (`findIn`, the page's one matcher). |
+| `js/find.js` | Find in the transcript (R5.12e, R9.9): the ⌘F bar, `find`/`found`, each match's Range from the rendered blocks (an item's block by key, a step's `data-item`), going to a match through `ui-state.js` `jumpTo`, the marks (CSS Custom Highlights `tf-find`, `tf-cur`). |
 | `js/path-links.js` | Paths in replies (R5.9, 2026-11-25): asks `resolvePaths` for the new `data-pc` code spans once per render, cached per session; ⌘ held (`cmd-held`, cleared on blur) and ⌘-click to the preview, the image viewer or `open`. |
 | `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back. |
 | `js/card.js` | Needs-you card and the status line; keeps picks until the answer is acked. |
@@ -110,7 +114,7 @@ Dev and test only (not loaded in production):
 | `js/toast.js` | The toast line. |
 | `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
 | `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
-| `js/creds-line.js` | The dock's credential line (R8.2): renders the backend's `creds` frame for the session, the live run with its input field and Cancel, or the editable command with Save. |
+| `js/creds-line.js` | The dock's credential line (R8.2): renders the backend's `creds` frame for the session (kept in `state.js`): one line over the run's preview, which opens its shell view (2026-11-26), or the editable command with Save. |
 | `js/mcp-panel.js` | The MCP panel (R5.15), a layer in `keys.js` drawn like the Open list: renders the backend's `mcp` frame, chooses a server and an action, sends `mcpAction`. |
 | `js/folder-list.js` | The folder list (New session and "Continue in a folder"): known folders, path completion on Tab, the create row, gone rows, the fixed list with no open session. |
 | `js/theme-switch.js` | The theme choice: footer switch, system listener, UI state `theme`, the localStorage copy for first paint. |
@@ -164,8 +168,8 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 - Transport: `/ws`, `auth` first within 10 s, 32 MB cap, close 4001 on auth failure, 1009 on oversize.
 - `hello` carries `v` (protocol version) and `code` (daemon code hash). A page of another version shows "Updating…", sends nothing and waits; it reloads once for a newer daemon.
-- Server to page: `started` (a session started another, R3.15: a page viewing `from` shows `sid`), `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `mcp` (R5.15, to every page: `{sid, servers: [{name, status, kind, scope, signIn, reconnect, busy}], error, note, reading}`, whole each time), `preview` (also for non-text files: `{opened:true}`), `pathState {sid, states: [{p, path, kind}]}` (2026-11-25), `restore` (texts and images, acting client only), `update`, `ack`.
-- Page to server: actions with `id` and an `ack`: `send`, `bang`, `bangInput {sid, text}` (a line typed into the running `!` command, 2026-11-26), `answer`, `interrupt`, `background`, `sendNow {sid, draft?}` (f, f, R9.8: `session.ts` `nowRoute` picks how the turn changes, from what runs and what is queued; `draft` is the box's `{text, images, uuid}`, sent as a `send` would be), `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`, `mcpAction {sid, name, action}` (R5.15: `login`, `logout`, `reconnect`, `enable`, `disable`; acked once it ran, its outcome and error in the next `mcp`; refused while that server is busy or a terminal holds the session). Requests answered by data: `mcp {sid}` (the MCP panel opened: read now), `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`, `resolvePaths {sid, paths}` (R5.9, 2026-11-25: the inline-code paths of a render). State sync: `ui {patch}` (resent on reconnect).
+- Server to page: `started` (a session started another, R3.15: a page viewing `from` shows `sid`), `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `found {sid, view, q, seq, hits: [{id, at: [[from, to]]}], total, more}` (⌘F, R5.12e, 2026-11-26: the matches of `find` in transcript order, `id` an item's or, in a shell's view, the view's, `at` offsets in that item's search text, find.ts `itemText`), `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `mcp` (R5.15, to every page: `{sid, servers: [{name, status, kind, scope, signIn, reconnect, busy}], error, note, reading}`, whole each time), `preview` (also for non-text files: `{opened:true}`), `pathState {sid, states: [{p, path, kind}]}` (2026-11-25), `restore` (texts and images, acting client only), `update`, `ack`.
+- Page to server: actions with `id` and an `ack`: `send`, `bang`, `bangInput {sid, text}` (a line typed into the running `!` command, 2026-11-26), `bangStop {sid, bg}` and `stopTask {sid, bg}` (Esc, Esc in a run's shell view: your `!` command, or Claude's background shell or monitor through the SDK's `stopTask`, 2026-11-26), `answer`, `interrupt`, `background`, `sendNow {sid, draft?}` (f, f, R9.8: `session.ts` `nowRoute` picks how the turn changes, from what runs and what is queued; `draft` is the box's `{text, images, uuid}`, sent as a `send` would be), `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`, `mcpAction {sid, name, action}` (R5.15: `login`, `logout`, `reconnect`, `enable`, `disable`; acked once it ran, its outcome and error in the next `mcp`; refused while that server is busy or a terminal holds the session). Requests answered by data: `mcp {sid}` (the MCP panel opened: read now), `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `find {sid, view, q, seq}` (⌘F, R5.12e, 2026-11-26: the whole view searched by find.ts; `view` a subagent's, shell's or monitor's id, null for the main conversation), `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`, `resolvePaths {sid, paths}` (R5.9, 2026-11-25: the inline-code paths of a render). State sync: `ui {patch}` (resent on reconnect).
 - At run time a field more is ignored both ways; a frame that doesn't fit is dropped with a log line or console warning.
 - Contract tests: golden frames in `app/backend/test/golden/`, checked strictly against the schema by `protocol-golden.test.ts`.
 
@@ -260,7 +264,8 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 | Layout | `layout.ts` | page renders the server layout, sends intents |
 | Open list | `sessions.ts` | |
 | MCP panel: servers, running action, last error | `mcp.ts` | page renders `mcp` |
-| Credential refresh: each folder's command, its run, the dock line's phase and output | `creds.ts` (`state.json` `refresh`) | page renders `creds` |
+| Credential refresh: each folder's command, its run, the dock line's phase and output, whether it waits | `creds.ts` (`state.json` `refresh`) | page renders `creds` |
+| A run waits for input; when a run's card shows | `pty.ts` `InputWatch`; `runs.ts` `cardAt` | `bang.ts`, `creds.ts`, `publisher.ts` send them; the page compares `cardAt` with its clock |
 | UI state | `ui-state.ts` (backend) | page `ui-state.js` collects and applies |
 | Theme | backend `ui.theme` | localStorage first-paint copy |
 | Reviewed marks | `store.ts` `ReviewedMarks` via router: only a subagent an open session has, the 1000 newest kept, not pruned with closed sessions (a closed session can be reopened) | page via `agents[].review` |
@@ -373,7 +378,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-02 | transcript.js, app.css, fonts |
 | FR-VIEW-03 | transcript.ts, transcript.js |
 | FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js, marks.js |
-| FR-VIEW-05 | transcript.ts, publisher.ts, transcript.js |
+| FR-VIEW-05 | transcript.ts, publisher.ts, runs.ts, transcript.js, runs.js |
 | FR-VIEW-06 | transcript.ts, transcript.js |
 | FR-VIEW-07 | transcript.ts, transcript.js |
 | FR-VIEW-08 | transcript.ts, claude-jsonl.ts, transcript.js, open.ts |
@@ -390,6 +395,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-18 | tail.ts, transcripts.ts |
 | FR-VIEW-19 | claude-jsonl.ts, transcript.ts |
 | FR-VIEW-20 | paths.ts |
+| FR-VIEW-22 | find.ts, publisher.ts, router.ts, find.js, keys.js, ui-state.js, transcript.js |
 | FR-BOX-01 | composer.js |
 | FR-BOX-02 | composer.js, protocol.js, sdk.ts (content) |
 | FR-BOX-03 | bang.ts, session.ts, composer.js |
@@ -405,15 +411,15 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-NEED-07 | cards.ts |
 | FR-NEED-08 | transcript.ts, status.ts, card.js |
 | FR-NEED-09 | status.ts, transcript.js |
-| FR-BG-01 | rail.js, tween.js |
+| FR-BG-01 | runs.ts, publisher.ts, rail.js, state.js, tween.js |
 | FR-BG-02 | transcript.ts, rail.js |
 | FR-BG-03 | rail.js |
 | FR-BG-04 | rail.js, app.css |
-| FR-BG-05 | rail.js |
-| FR-BG-06 | none (dropped, Q4) |
+| FR-BG-05 | publisher.ts, bg-view.js, rail.js |
+| FR-BG-06 | session.ts, sdk.ts, router.ts, composer.js, bg-view.js |
 | FR-BG-07 | transcript.ts, session.ts, publisher.ts |
 | FR-STAT-01 | marks.js, tween.js, app.css |
-| FR-STAT-02 | status.ts, claude-jsonl.ts |
+| FR-STAT-02 | status.ts, claude-jsonl.ts, bang.ts, pty.ts |
 | FR-STAT-03 | marks.js |
 | FR-STAT-04 | app.css, dark.css |
 | FR-STAT-05 | status.ts |

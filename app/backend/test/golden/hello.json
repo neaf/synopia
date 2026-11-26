@@ -111,7 +111,9 @@
           "start": "2026-11-20T12:00:05.000Z",
           "status": "completed",
           "summary": "Build finished with 0 errors",
-          "end": "2026-11-20T12:05:00.000Z"
+          "end": "2026-11-20T12:05:00.000Z",
+          "cardAt": 1795176008000,
+          "tail": ""
         },
         {
           "toolUseId": "toolu_mon1",
@@ -124,7 +126,10 @@
           "start": "2026-11-20T12:00:05.000Z",
           "status": "failed",
           "summary": "",
-          "end": "2026-11-20T12:06:00.000Z"
+          "end": "2026-11-20T12:06:00.000Z",
+          "cardAt": 1795176008000,
+          "tail": "",
+          "events": 0
         },
         {
           "toolUseId": "toolu_mon2",
@@ -136,7 +141,10 @@
           "start": "2026-11-20T12:00:05.000Z",
           "status": "running",
           "summary": "",
-          "end": null
+          "end": null,
+          "cardAt": 1795176008000,
+          "tail": "",
+          "events": 0
         }
       ],
       "stream": null,

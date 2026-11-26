@@ -15,6 +15,8 @@ import { folderListKeys, folderListKey, openNewSession, showFolderList } from ".
 import { previewShown, previewKey } from "./preview.js";
 import { viewer, viewerKey } from "./images.js";
 import { mcpShown, mcpKey } from "./mcp-panel.js";
+import { focusRunInput } from "./bg-view.js";
+import { findKey } from "./find.js";
 
 /* top first: while one is shown it has every key */
 const LAYERS = [
@@ -35,13 +37,15 @@ window.addEventListener("keydown", e => {
 }, true);
 
 /* mode follows the focus: the message box or a card's field is insert, leaving the box is normal */
-document.addEventListener("focusin", e => { if ((e.target.id === "msg" || e.target.id === "qa-own") && mode !== "insert") setMode("insert", false); });
-document.addEventListener("focusout", e => { if (e.target.id === "msg" && mode !== "normal") setMode("normal", false); });
+document.addEventListener("focusin", e => { if ((e.target.id === "msg" || e.target.id === "qa-own" || e.target.id === "run-in") && mode !== "insert") setMode("insert", false); });
+document.addEventListener("focusout", e => { if ((e.target.id === "msg" || e.target.id === "run-in") && mode !== "normal") setMode("normal", false); });
 
 /* the whole page, the sidebar and the conversation shown */
 export function renderAll() { renderSide(); renderConv(); paintMode(); if (mode === "insert") (document.getElementById("qa-own") || document.getElementById("msg"))?.focus(); }
 
 function sessionKey(e) {
+  /* ⌘F finds in the transcript, in insert mode too; with its bar up, ⌘G and its field's Enter and Esc (find.js, R9.9) */
+  if (findKey(e)) return;
   /* ⌘⇧[ and ⌘⇧] move to the previous or next session, like tabs in iTerm, in insert mode too */
   if (e.metaKey && e.shiftKey && (e.code === "BracketLeft" || e.code === "BracketRight")) { e.preventDefault(); stepSession(e.code === "BracketRight" ? 1 : -1); return; }
   /* Ctrl+J / Ctrl+K: the next or previous session, in insert mode too (it takes Ctrl+K from a text field) */
@@ -56,6 +60,7 @@ function sessionKey(e) {
   if (qaKeys(e)) return;
   const log = document.getElementById("log"), gone = Boolean(cur()?.gone);
   if (gone && /^[ia/]$/.test(e.key)) { e.preventDefault(); return; } // its folder is gone: no field to type in (R3.11)
+  if (!document.getElementById("msg") && /^[ia]$/.test(e.key) && focusRunInput()) { e.preventDefault(); return; } // a run's shell view: its `!` band types into it (2026-11-26)
   if (!document.getElementById("msg") && /^[ia/!]$/.test(e.key)) { e.preventDefault(); return; } // a view with no box (R5.12): normal mode stays
   switch (e.key) {
     case "n": e.preventDefault(); openNewSession(); break; // New session (R9.7)
