@@ -115,10 +115,10 @@ await ev(`${CRUMB}.click()`);
 check('the crumb goes back to Main conversation, with its message box', await until(`__synopia.view() === null && __synopia.current() === '${sid1}' && !!document.getElementById('msg')`, 3000));
 // a background run over before its card was due has no card: K and J go back from its view too
 await ev(`(() => { const s = __synopia.cur();
-  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'toolu_bgq', kind: 'shell', status: 'completed', start: '${T(30)}', end: '${T(30)}', cardAt: null, description: 'Touch the marker', command: 'touch marker', tail: '' }] });
+  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'toolu_bgq', kind: 'shell', status: 'completed', start: '${T(30)}', end: '${T(30)}', cardAt: null, description: 'Touch the marker', command: 'touch marker', tail: 'marker made' }] });
   __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 1, upsert: [{ id: 'toolu_bgq', k: 'tool', ts: '${T(30)}', name: 'Bash', verb: 'Ran', obj: 'Touch the marker', state: 'done', input: 'touch marker', out: { text: 'Command running in background', lines: 1, cut: false } }] }); })()`);
 const QROW = `document.querySelector('#log .ln.tool.runrow[data-bg="toolu_bgq"]')`;
-const openQ = async () => { await until(`!!${QROW}`, 3000); await ev(`${QROW}.querySelector('.step-out .out').click()`); return until(`__synopia.view() === 'toolu_bgq'`, 3000); };
+const openQ = async () => { if (!await until(`!!${QROW}`, 3000)) return false; await ev(`${QROW}.click()`); return until(`__synopia.view() === 'toolu_bgq'`, 3000); };
 check('a click on a short background run opens its view', await openQ());
 { const b = await crumbOf('toolu_bgq'); check('that run has no card in the panel, and its view has the crumb', !!b && !b.card && b.text === '‹ ' + b.title, JSON.stringify(b)); }
 await c.key('K', { shift: true, code: 'KeyK', vk: 75 });
