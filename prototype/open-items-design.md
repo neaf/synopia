@@ -226,6 +226,8 @@ At the end of the turn:
 
 ### The reply's block, written from the ledger
 
+> Superseded 2026-11-26 (the user's decision): replies don't carry the block. The agent keeps the ledger quietly, asks what it needs in the reply's prose, and prints the block only when the user asks what is open. The structured list lives in Synopia's panel and sidebar (R3.16, R7.1). agent-harness `73bfbe0`. The rest of this section describes the block that `ledger.py block` prints on request.
+
 The reply ends with one block, always in this shape, printed by `ledger.py block` from the ledger after it is written, never retyped from memory. For the ledger above, at 15:10, with A1 named because it changed:
 
 ```markdown
@@ -247,7 +249,7 @@ Closed this turn: Y6 (dropped: #818 was closed); Y7 (superseded by Y5).
 
 ### A new session and a handoff
 
-- **A new session** in the area reads `open-items.md` with the area README. Its first reply that touches the work ends with the block.
+- **A new session** in the area reads `open-items.md` with the area README. It shows the block only when the user asks for it (2026-11-26).
 - **A handoff** (the ai-notes skill's "Handing off to a new session") lists `open-items.md` first under "Where to read". The old session's last reply says "Handed off: Y1, Y2, Y4, Y5 and A1 are in <new session's title>". The ids stay as they are.
 
 ### Tasks and TodoWrite
