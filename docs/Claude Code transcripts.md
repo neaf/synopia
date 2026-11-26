@@ -220,6 +220,13 @@ A shell's or monitor's view (R7.2) shows what it printed. Where that is:
 
 Code: `claude-jsonl.ts` `OUTPUT_FILE`, `taskNotes` (`event`, `outputFile`); `transcript.ts` `outputOf`; `task-output.ts` (the byte windows). Test: `claude-jsonl.test.ts` "background output", `task-output.test.ts`, `publisher.test.ts` "a shell's and a monitor's view". Source: shape scan 2026-11-25 (key and tag names only).
 
+### Quirk: a background shell starts at its result
+
+- Symptom: a background shell's or monitor's time is longer than it ran: a 30 s loop read "Finished, 1m" (2026-11-26).
+- Cause: the `tool_use` record is written when Claude calls the tool, before a permission card or check lets it run. The `tool_result` ("Command running in background with ID: …", "Monitor started (task …)") comes when it starts. In a scan of 178 `run_in_background` Bash calls (2026-11-26, times only), the result came a median 1.2 s after the call, 4.9 s at the 90th percentile, and up to 47 s (7 over 10 s). Its end notification's time matched the output file's last write (100 of 100 taken in by a running turn, 34 of 34 between turns, within 6 s).
+- Workaround: a shell or monitor started in the background takes its start from its result record's time when that is later. A foreground Bash moved to the background keeps its call's time: it ran from there.
+- Code: `transcript.ts` `user` (the results loop). Test: `transcript.test.ts` "a shell or monitor started in the background runs from its result".
+
 ### Quirk: subagent shells have no task id in SDK sessions
 
 - Symptom: a subagent's shell in a Synopia-driven session has no id to stop it by.

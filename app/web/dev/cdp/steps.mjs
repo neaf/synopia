@@ -1,21 +1,22 @@
-// Tool steps (R5.6), on a copy of the fixture tree: an ordinary foreground Bash folds with the steps around it and
-// expands in place (2026-11-26); a background Bash and your `!` command are run rows (prototype/shell-storyboard.html).
+// Tool steps (R5.6), on a copy of the fixture tree: Claude's Bash steps, foreground and background, and its Monitor
+// steps fold with the steps around them and expand in place (2026-11-26, the user's decision); your `!` command is a
+// run row (prototype/shell-storyboard.html).
 // usage: node steps.mjs make <fixture-dir> <claude-dir>   copies the fixture and adds two running steps (run.sh does this)
 //        node steps.mjs <url> <state-dir> <claude-dir>
 // Checks: the fixture's Bash folds with the steps around it ("2 Bash commands, read 1 file, …") and expands in place to its
-// command and result in the output panel, a second click closes it. Three foreground Bash steps in a row fold into
-// one closed "3 Bash commands" line, a click lists them, a step expands in place. A background Bash is one row of
-// the same shape as your `!` command: ● Bash(description), the command under a grey $ in the gutter, its last lines,
-// a state line with its mark; no expansion, no field; a click opens its shell view, whose title line starts with
-// "‹ <session title>"; from a run with no card in the panel, K, J or that crumb go back to Main conversation. A step inside "Searched once, …"
-// opens to its input and result, 20 lines and "Show all 32 lines" (`toolOutput`), kept through a live update; a
-// single step opens inline. A running foreground Bash of a driven session (the SDK's tool_progress: 42 s): its own
-// line is an inline step that expands in place to its command, "Running, 42s" ticking and "Output shows when it
-// finishes"; the live line names it and opens its shell view ("Shell in Claude's turn", how to see more), as its
-// card in the panel (3 s on, without a sign, not counted as background) does; its result lands in the open shell
-// view, and the open step turns into the finished view. A session Synopia doesn't drive: the command and "Running",
-// no note. Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS, fold-bash-<theme>.png,
-// dollar-row-<theme>.png and step-<theme>.png there).
+// command and result in the output panel, a second click closes it. Three foreground Bash steps, a background one and a
+// Monitor in a row fold into one closed "4 Bash commands, started 1 monitor" line, no run row; a click lists them, each
+// expands in place, the background Bash and the Monitor too, opening no view. The background shell and the monitor have
+// their cards in the panel while they run (R7.1), counted as background work, a foreground Bash none; the card opens the
+// shell view, whose title line starts with "‹ <session title>", and that crumb goes back. A background run over at once
+// has its Past line, which opens its view. A step inside "Searched once, …" opens to its input and result, 20 lines and
+// "Show all 32 lines" (`toolOutput`), kept through a live update; a single step opens inline. A running foreground Bash
+// of a driven session (the SDK's tool_progress: 42 s): its own line is an inline step that expands in place to its
+// command, "Running, 42s" ticking and "Output shows when it finishes"; no card in the panel; the live line names it and
+// opens its shell view ("Shell in Claude's turn", how to see more), from which K and J go back (it has no card); its
+// result lands in the open shell view, and the open step turns into the finished view. A session Synopia doesn't drive:
+// the command and "Running", no note. Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS,
+// fold-bash-<theme>.png, bg-card-<theme>.png, crumb-<theme>.png and step-<theme>.png there).
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, fresh, shot, running, outPanel } from './helpers.mjs';
@@ -67,43 +68,46 @@ await click('Bash(List the demo folder)');
 await sleep(150);
 check('a second click closes it', await ev(`!${BASH}.open`));
 
-// several foreground Bash steps in a row fold into one line; a background Bash and your ! command stay run rows
+// Claude's Bash steps in a row, foreground and background, and its Monitor fold into one line; your ! command is a run row
 const T = (s) => `2026-11-20T10:05:${String(s).padStart(2, '0')}.000Z`;
 const fgBash = (n, desc, cmd, out) => ({ id: `toolu_fg${n}`, k: 'tool', ts: T(n), name: 'Bash', verb: 'Ran', obj: desc, state: 'done', input: cmd, out: { text: out, lines: out.split('\n').length, cut: false, at: T(n) } });
 await ev(`(() => { const s = __synopia.cur();
-  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'toolu_bgb', kind: 'shell', status: 'running', start: '${T(10)}', description: 'Serve the demo', command: 'npm run serve', tail: 'listening on 4000' }] });
-  __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 5, upsert: [
+  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'toolu_bgb', kind: 'shell', status: 'running', start: '${T(10)}', end: null, description: 'Serve the demo', command: 'npm run serve' },
+    { toolUseId: 'toolu_bgm', kind: 'monitor', status: 'running', start: '${T(12)}', end: null, persistent: true, description: 'Watch the server log', command: 'tail -f server.log' }] });
+  __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 6, upsert: [
     ${JSON.stringify(fgBash(1, 'Count the notes', 'ls notes | wc -l', '12'))},
     ${JSON.stringify(fgBash(2, 'Show the branch', 'git branch --show-current', 'main'))},
     ${JSON.stringify(fgBash(3, 'Check the demo builds', 'npm run build', 'built 3 modules'))},
-    { id: 'toolu_bgb', k: 'tool', ts: '${T(10)}', name: 'Bash', verb: 'Ran', obj: 'Serve the demo', state: 'done', input: 'npm run serve', out: { text: 'Command running in background', lines: 1, cut: false } },
+    { id: 'toolu_bgb', k: 'tool', ts: '${T(10)}', name: 'Bash', verb: 'Ran', obj: 'Serve the demo', state: 'done', input: 'npm run serve', out: { text: 'Command running in background with ID: bgb1.', lines: 1, cut: false } },
+    { id: 'toolu_bgm', k: 'tool', ts: '${T(12)}', name: 'Monitor', verb: 'Watched', obj: 'Watch the server log', state: 'done', input: 'command: tail -f server.log', out: { text: 'Monitor started (task bgm1).', lines: 1, cut: false } },
     { id: 'bang-shape', k: 'bang', ts: '${T(20)}', cmd: 'ls demo', sh: { out: 'notes.md\\nREADME.md\\n', err: '', cut: false, exit: 0 } }] }); })()`);
 const FOLD3 = `${step('Bash(Count the notes)')}?.closest('details.fold')`;
-check('three foreground Bash steps in a row fold into one line: "3 Bash commands"', await until(`!!${FOLD3} && /^3 Bash commands$/.test(${FOLD3}.querySelector('summary .name').textContent)`),
+check('three foreground Bash steps, a background one and a Monitor fold into one line: "4 Bash commands, started 1 monitor"', await until(`!!${FOLD3} && /^4 Bash commands, started 1 monitor$/.test(${FOLD3}.querySelector('summary .name').textContent)`),
   await ev(`[...document.querySelectorAll('details.fold > summary')].map(s => s.textContent.replace(/\\s+/g, ' ')).join(' | ')`));
-check('the fold is closed and holds all three', await ev(`!${FOLD3}.open && ${FOLD3}.querySelectorAll('.body details.step').length === 3 && ${FOLD3}.closest('.ln.tool').getBoundingClientRect().height < 30`));
+check('the fold is closed and holds all five; no run row for Claude\'s steps', await ev(`!${FOLD3}.open && ${FOLD3}.querySelectorAll('.body details.step').length === 5 && ${FOLD3}.closest('.ln.tool').getBoundingClientRect().height < 30 && !document.querySelector('#log .ln.tool.runrow, #log .g.ps')`));
 await ev(`${FOLD3}.querySelector('summary').click()`);
-check('a click expands it: the three steps, each by its description', await until(`${FOLD3}.open && [...${FOLD3}.querySelectorAll('.body details.step > summary')].map(s => s.textContent).join('|') === 'Bash(Count the notes)|Bash(Show the branch)|Bash(Check the demo builds)'`),
+check('a click expands it: the five steps, each by its description', await until(`${FOLD3}.open && [...${FOLD3}.querySelectorAll('.body details.step > summary')].map(s => s.textContent).join('|') === 'Bash(Count the notes)|Bash(Show the branch)|Bash(Check the demo builds)|Bash(Serve the demo)|Monitor(Watch the server log)'`),
   await ev(`[...${FOLD3}.querySelectorAll('.body > *')].map(s => s.textContent).join('|')`));
 await click('Bash(Show the branch)');
 check('a step in it expands in place to its command and result', await until(`(() => { const d = ${step('Bash(Show the branch)')}; return d.open && d.querySelector('.cmd')?.textContent === 'git branch --show-current' && d.querySelector('.out')?.textContent === 'main'; })()`));
-const BG = `document.querySelector('#log .ln.tool.runrow[data-bg="toolu_bgb"]')`;
-check('a background Bash is a run row of its own, not folded, opening its shell view', await until(`!!${BG} && !${BG}.closest('details.fold') && ${BG}.querySelector('.cmd')?.textContent === 'npm run serve' && /^Running.*in the background/.test(${BG}.querySelector('.res.rst')?.textContent || '')`),
-  await ev(`${BG}?.outerHTML.slice(0, 300) ?? 'none'`));
-const shape = await ev(`(() => { const r = ${BG}, ps = r.querySelector(':scope > .g.ps'); return { dot: r.querySelector(':scope > .g').textContent, head: r.children[1].textContent, ps: ps?.textContent, cmdOneLine: getComputedStyle(r.querySelector('.step-out .cmd')).whiteSpace, details: !!r.querySelector('details'), input: !!r.querySelector('input, textarea') }; })()`);
-check('its row: ● Bash(description), a grey $ in the gutter and the command on one line, no expansion, no field', shape.dot === '●' && shape.head === 'Bash(Serve the demo)' && shape.ps === '$' && shape.cmdOneLine === 'nowrap' && !shape.details && !shape.input, JSON.stringify(shape));
-check('the $ is grey, not the step dot\'s green', await ev(`getComputedStyle(${BG}.querySelector('.g.ps')).color !== getComputedStyle(${BG}.querySelector(':scope > .g')).color`));
+await click('Bash(Serve the demo)');
+check('the background Bash expands in place too, to its command and result, and opens no view', await until(`(() => { const d = ${step('Bash(Serve the demo)')}; return d.open && d.querySelector('.cmd')?.textContent === 'npm run serve' && /^Command running in background/.test(d.querySelector('.out')?.textContent || '') && __synopia.view() === null; })()`),
+  await ev(`${step('Bash(Serve the demo)')}?.outerHTML.slice(0, 400)`));
+await click('Monitor(Watch the server log)');
+check('so does the Monitor', await until(`(() => { const d = ${step('Monitor(Watch the server log)')}; return d.open && /tail -f server\\.log/.test(d.querySelector('.cmd')?.textContent || '') && __synopia.view() === null; })()`));
 check('your ! command is a run row on its ! band', await until(`(() => { const b = document.querySelector('#log .bang.runrow[data-bang="bang-shape"]'); return !!b && !b.closest('details.fold') && b.querySelector('.bang-cmd > .g').textContent === '!'; })()`));
-const same = await ev(`(() => { const a = ${BG}, b = document.querySelector('#log .bang[data-bang="bang-shape"]');
-  const sig = r => { const o = r.querySelector('.step-out .out'), st = r.querySelector('.res.rst'), so = getComputedStyle(o); return { corner: !!r.querySelector('.step-out > .res > .lcorner'), panel: [so.backgroundColor, so.borderTopWidth, so.borderRadius, so.paddingLeft].join(), mark: !!st.querySelector('.ind'), font: getComputedStyle(st).fontSize }; };
-  return { claude: sig(a), yours: sig(b), bangColor: getComputedStyle(b.querySelector('.bang-cmd > .g')).color, bandEdge: getComputedStyle(b.querySelector('.bang-cmd')).borderLeftColor }; })()`);
-check('the same row shape for your ! run and Claude\'s background Bash: output panel, guide, state line with its mark', JSON.stringify(same.claude) === JSON.stringify(same.yours) && same.bandEdge === same.bangColor, JSON.stringify(same));
 await ev(`${FOLD3}.closest('.ln.tool').scrollIntoView({ block: 'start' })`);
 await sleep(150);
-if (shots) { await ev(`${FOLD3}.closest('.ln.tool').id = 'fold3'`); await shot(c, path.join(shots, `fold-bash-${theme}.png`), await clipOf('#fold3')); await shot(c, path.join(shots, `dollar-row-${theme}.png`), await clipOf('#log .ln.tool.runrow')); }
+if (shots) { await ev(`(${FOLD3}).closest('.ln.tool').id = 'fold3'`); await shot(c, path.join(shots, `fold-bash-${theme}.png`), await clipOf('#fold3')); }
+// the panel (R7.1): the background shell and the monitor have their cards while they run, counted as background work
+const CARD = (id) => `document.querySelector('.rail .now [data-bg="${id}"]')`;
+check('the background shell and the monitor have their cards in the panel, counted', await until(`!!${CARD('toolu_bgb')} && !!${CARD('toolu_bgm')} && /^Serve the demo/.test(${CARD('toolu_bgb')}.querySelector('.n').textContent) && !${CARD('toolu_bgb')}.querySelector('.who') && /2 running in the background/.test(document.querySelector('.rail .main-row').textContent)`, 3000),
+  await ev(`document.querySelector('.rail')?.textContent.replace(/\\s+/g, ' ') ?? 'no panel'`));
+check('no card for a foreground Bash', await ev(`!document.querySelector('.rail [data-bg^="toolu_fg"]')`));
+if (shots) await shot(c, path.join(shots, `bg-card-${theme}.png`), await clipOf('.rail .now'));
 const sid1 = await ev(`__synopia.current()`);
-await ev(`${BG}.querySelector('.step-out .out').click()`);
-check('a click on the background run row opens its shell view', await until(`__synopia.view() === 'toolu_bgb' && !!document.querySelector('#log .bg-run')`, 3000));
+await ev(`${CARD('toolu_bgb')}.click()`);
+check('its card opens its shell view', await until(`__synopia.view() === 'toolu_bgb' && !!document.querySelector('#log .bg-run')`, 3000));
 // the way back (2026-11-26): "‹ <session title>" at the start of the title line, the one back link there
 const CRUMB = `document.querySelector('.c-head > .c-title > .c-crumb[data-back]')`;
 const crumbOf = (bid) => ev(`(() => { const b = ${CRUMB}, t = document.querySelector('.c-head > .c-title'); if (!b) return null; const br = b.getBoundingClientRect(), nr = t.querySelector('.c-name').getBoundingClientRect();
@@ -113,19 +117,16 @@ const crumbOf = (bid) => ev(`(() => { const b = ${CRUMB}, t = document.querySele
 if (shots) await shot(c, path.join(shots, `crumb-${theme}.png`), await clipOf('.c-head'));
 await ev(`${CRUMB}.click()`);
 check('the crumb goes back to Main conversation, with its message box', await until(`__synopia.view() === null && __synopia.current() === '${sid1}' && !!document.getElementById('msg')`, 3000));
-// a background run over before its card was due has no card: K and J go back from its view too
+// one that ended at once still has its Past line (cards from the start, R7.1), which opens its view
 await ev(`(() => { const s = __synopia.cur();
-  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'toolu_bgq', kind: 'shell', status: 'completed', start: '${T(30)}', end: '${T(30)}', cardAt: null, description: 'Touch the marker', command: 'touch marker', tail: 'marker made' }] });
+  __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'toolu_bgq', kind: 'shell', status: 'completed', start: '${T(30)}', end: '${T(30)}', description: 'Touch the marker', command: 'touch marker' }] });
   __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 1, upsert: [{ id: 'toolu_bgq', k: 'tool', ts: '${T(30)}', name: 'Bash', verb: 'Ran', obj: 'Touch the marker', state: 'done', input: 'touch marker', out: { text: 'Command running in background', lines: 1, cut: false } }] }); })()`);
-const QROW = `document.querySelector('#log .ln.tool.runrow[data-bg="toolu_bgq"]')`;
-const openQ = async () => { if (!await until(`!!${QROW}`, 3000)) return false; await ev(`${QROW}.click()`); return until(`__synopia.view() === 'toolu_bgq'`, 3000); };
-check('a click on a short background run opens its view', await openQ());
-{ const b = await crumbOf('toolu_bgq'); check('that run has no card in the panel, and its view has the crumb', !!b && !b.card && b.text === '‹ ' + b.title, JSON.stringify(b)); }
-await c.key('K', { shift: true, code: 'KeyK', vk: 75 });
-check('K from a view with no card goes back to Main conversation', await until(`__synopia.view() === null`, 3000), await ev('__synopia.view()'));
-await openQ();
-await c.key('J', { shift: true, code: 'KeyJ', vk: 74 });
-check('J from it too', await until(`__synopia.view() === null`, 3000), await ev('__synopia.view()'));
+const QPAST = `document.querySelector('.rail .past .pr[data-bg="toolu_bgq"]')`;
+check('a background run over at once has its Past line', await until(`!!${QPAST}`, 8000), await ev(`document.querySelector('.rail')?.textContent.replace(/\\s+/g, ' ') ?? 'no panel'`));
+await ev(`${QPAST}.click()`);
+check('its Past line opens its shell view, with the crumb', await until(`__synopia.view() === 'toolu_bgq'`, 3000) && (await crumbOf('toolu_bgq'))?.text?.startsWith('‹ '));
+await ev(`${CRUMB}.click()`);
+await until(`__synopia.view() === null`, 3000);
 
 // ---------- the other steps expand the same way ----------
 const FOLD = `${step('Grep(TODO)')}.closest('details.fold')`;
@@ -175,16 +176,24 @@ check('expanded: its command at once, "Running, 42s" from the SDK\'s elapsed tim
 await sleep(2100);
 const t2 = await timer();
 check('the timer ticks', t2 !== t1 && t2.startsWith('Running, '), `${t1} -> ${t2}`);
-check('its card is in the panel (3 s on), without a sign, not counted as background work', await until(`(() => { const r = document.querySelector('.rail .now [data-bg="toolu_live1"]'); return !!r && !r.querySelector('.who') && /shell, started/.test(r.textContent) && /Nothing running in the background/.test(document.querySelector('.rail .main-row').textContent); })()`, 3000), await ev(`JSON.stringify([document.querySelector('.rail')?.textContent || 'no panel', __synopia.cur().items.map(i => [i.id, i.ts, i.cardAt, i.state])])`));
+await sleep(1200);
+check('no card for it in the panel, 3 s on and more: the turn\'s own step is not background work', await ev(`!document.querySelector('.rail [data-bg="toolu_live1"]')`), await ev(`document.querySelector('.rail')?.textContent || 'no panel'`));
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight; })()`);
 await sleep(100);
 await shot(c, path.join(stateDir, 'steps-running.png'));
-await ev(`document.querySelector('.rail .now [data-bg="toolu_live1"]').click()`);
-check('its card opens its shell view', await until(`__synopia.view() === 'toolu_live1'`, 3000));
-await ev(`document.querySelector('.rail .main-row').click()`);
-await until(`__synopia.view() === null`, 3000);
 await ev(`${LIVE}.click()`);
 check('a click on the live line opens its shell view', await until(`__synopia.view() === 'toolu_live1'`, 3000));
+// a view with no card in the panel: K and J go back to Main conversation
+await c.key('K', { shift: true, code: 'KeyK', vk: 75 });
+check('K from a view with no card goes back to Main conversation', await until(`__synopia.view() === null`, 3000), await ev('__synopia.view()'));
+await until(`!!${LIVE}`, 3000);
+await ev(`${LIVE}.click()`);
+await until(`__synopia.view() === 'toolu_live1'`, 3000);
+await c.key('J', { shift: true, code: 'KeyJ', vk: 74 });
+check('J from it too', await until(`__synopia.view() === null`, 3000), await ev('__synopia.view()'));
+await until(`!!${LIVE}`, 3000);
+await ev(`${LIVE}.click()`);
+await until(`__synopia.view() === 'toolu_live1'`, 3000);
 const rv = await ev(`({ head: document.querySelector('.c-head').textContent.replace(/\\s+/g, ' '), note: document.querySelector('#log .bg-run .res.note')?.textContent, cmd: document.querySelector('#log .bg-run .cmd')?.textContent, live: document.querySelector('#log .liveln')?.textContent.trim() })`);
 check('its view: "Shell in Claude\'s turn", what it can show and how to see more, Running', /Running, .*\. Shell in Claude's turn, started/.test(rv.head) && /Claude waits for it/.test(rv.head) && /^Output shows when it finishes\. b, b sends it to the background/.test(rv.note || '') && /npm test/.test(rv.cmd || '') && /^Running/.test(rv.live || ''), JSON.stringify(rv));
 // the result lands while its view is open

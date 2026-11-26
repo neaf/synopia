@@ -533,16 +533,6 @@
   .log-inner > .liveln.rule > :not(.g) { position: relative; display: inline; background: var(--panel); padding-right: 1ch; }
   /* shell output in its own subtle panel under its command (R5.6, R7.2, 2026-11-25) */
   .res > .out { display: block; color: var(--ink-2); white-space: pre-wrap; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
-  /* a run (R5.6, 2026-11-26, shell-storyboard.html): a monitor or a background Bash is one row, the command under a grey $ in the gutter,
-     its last 3 lines, a state line; the whole row opens its shell view */
-  .runrow { position: relative; isolation: isolate; cursor: pointer; }
-  .runrow::before { content: ""; position: absolute; inset: -2px -8px; z-index: -1; border-radius: 5.5px; pointer-events: none; }
-  .runrow:hover::before { background: var(--sub); }
-  .runrow .step-out .cmd { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .rst > span:last-child { display: inline-flex; align-items: center; gap: .6ch; }
-  .rst .ind { font-size: 10px; }
-  .res.failed.rst { color: var(--red); }
-  .ln.tool > .g.ps.ps { color: var(--ink-3); user-select: none; margin-top: 2px; }
 
   .log { overflow-x: hidden; }
 
@@ -1070,16 +1060,7 @@ function took(ms) {
 const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
-/* a monitor or a background Bash is a run row (R5.6, 2026-11-26): its own row, the command under a grey $, its last 3 lines, a state line.
-   An ordinary foreground Bash is a step: it folds with the steps around it and expands in place (2026-11-26). */
-const isShell = t => t.name === "Monitor" || (t.name === "Bash" && !!(t.bg || t.background));
-function runRow(t) {
-  const out = t.out && t.out.text ? t.out.text.replace(/\n+$/, "").split("\n").slice(-3).join("\n") : "";
-  const st = t.state === "running" ? ["k_shell", "Running"] : t.state === "failed" ? ["failed", "Failed"] : t.state === "stopped" ? ["stopped", "Stopped"] : ["done", "Finished"];
-  return `<div class="ln tool runrow ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.name === "Monitor" ? "Monitor" : "Bash")}</span>${t.obj ? `(${esc(t.obj)})` : ""}</div><span class="g ps" aria-hidden="true">$</span><div class="step-out">${t.input ? `<div class="cmd">${esc(t.input.split("\n")[0])}</div>` : ""}${out ? `<div class="res"><span>⎿</span><span class="out">${esc(out)}</span></div>` : ""}<div class="res rst${t.state === "failed" ? " failed" : ""}"><span>${out ? "" : "⎿"}</span><span>${ind(st[0])}<span>${st[1]}</span></span></div></div></div>`;
-}
 function toolLine(t) {
-  if (isShell(t)) return runRow(t);
   const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
     : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
   return `<div class="ln tool ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
@@ -1330,9 +1311,7 @@ function itemsHTML(items, sessionBusy, s) {
   const flush = () => {
     if (!run.length) return;
     const agents = run.filter(t => t.name === "Agent" || t.name === "Task"), other = run.filter(t => !(t.name === "Agent" || t.name === "Task"));
-    let seg = []; const put = () => { if (seg.length) out.push(toolsHTML(seg)); seg = []; };
-    for (const t of other) { if (isShell(t)) { put(); out.push(runRow(t)); } else seg.push(t); } // a shell step is a row of its own, in its place
-    put();
+    if (other.length) out.push(toolsHTML(other));
     if (agents.length) out.push(waveHTML(agents, s));
     run = [];
   };

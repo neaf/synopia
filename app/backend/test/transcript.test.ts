@@ -200,7 +200,7 @@ test('background shell and monitors with task notifications', () => {
   ]);
   assert.deepEqual(bg[0], {
     toolUseId: 'toolu_bgsh1', taskId: 'bash_1', kind: 'shell', description: 'Build the demo', command: 'make demo-build',
-    timeout: undefined, persistent: false, start: '2026-11-20T12:00:05.000Z',
+    timeout: undefined, persistent: false, start: '2026-11-20T12:00:06.000Z',
     status: 'completed', summary: 'Build finished with 0 errors', end: '2026-11-20T12:05:00.000Z',
   });
   assert.deepEqual([bg[1].timeout, bg[1].persistent, bg[1].summary, bg[1].end], [600000, false, '', '2026-11-20T12:06:00.000Z']);
@@ -781,6 +781,25 @@ test('a foreground Bash moved to the background (backgroundTaskId) is a backgrou
   assert.equal(byId(t, 'toolu_fg').state, 'done');
   t.pushAll([{ type: 'user', uuid: 'f-n1', timestamp: ago(1), message: { role: 'user', content: '<task-notification>\n<task-id>bfg1</task-id>\n<tool-use-id>toolu_fg</tool-use-id>\n<status>completed</status>\n<summary>Tests passed</summary>\n</task-notification>' } }]);
   assert.equal(t.getBackground('toolu_fg')?.status, 'completed');
+});
+
+test('a shell or monitor started in the background runs from its result; one moved there from its tool use', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    // a permission card held the tool use 40 s before the shell started (its result)
+    replied('st-a1', ago(10), [{ type: 'tool_use', id: 'toolu_stb', name: 'Bash', input: { command: 'for i in 1 2 3; do echo tick; sleep 10; done', description: 'Print a tick', run_in_background: true } }]),
+    toolResult('st-r1', new Date(NOW - 10 * 60_000 + 40_000).toISOString(), 'toolu_stb', { content: 'Command running in background with ID: bst1. Output is being written to: /tmp/fixture/bst1.output' }),
+    replied('st-a2', ago(9), [{ type: 'tool_use', id: 'toolu_stm', name: 'Monitor', input: { command: 'tail -f x.log', description: 'Watch it', timeout_ms: 60000 } }]),
+    toolResult('st-r2', new Date(NOW - 9 * 60_000 + 5_000).toISOString(), 'toolu_stm', { content: 'Monitor started (task mst1, expires in 1m).' }),
+    replied('st-a3', ago(8), [{ type: 'tool_use', id: 'toolu_stf', name: 'Bash', input: { command: 'npm test', description: 'Run the tests' } }]),
+    { ...toolResult('st-r3', ago(7), 'toolu_stf', { content: 'Command was moved to the background with ID: bst2.' }),
+      toolUseResult: { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: 'bst2', backgroundedByUser: true } },
+  ]);
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.start]), [
+    ['toolu_stb', new Date(NOW - 10 * 60_000 + 40_000).toISOString()],
+    ['toolu_stm', new Date(NOW - 9 * 60_000 + 5_000).toISOString()],
+    ['toolu_stf', ago(8)],
+  ], 'started at their results; the moved one ran in the foreground from its tool use');
 });
 
 test('setAside (f, f, R9.8): names the running main step, and marks the cut message\'s text landed before or after', () => {

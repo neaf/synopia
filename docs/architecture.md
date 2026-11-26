@@ -58,7 +58,7 @@ Rules the design keeps:
 | `find.ts` | Find in the transcript (R5.12e, 2026-11-26), the one owner of what ⌘F searches: an item's search text (`itemText`, what the page renders for it), case-ignoring matches with offsets in the text, every match of a view in order, capped at 10,000. The view's source comes from `publisher.ts` `findSource` (its items, or a shell's last 4 MB of output, a monitor's events, a `!` run's output); `router.ts` answers `find` with `found`. |
 | `creds.ts` | Credential refresh (R8.2, 2026-11-26), the one owner: each folder's refresh command (`state.json` `refresh`, keyed by the git root), one run per folder for an expiry shared by its sessions, the `creds` frame (phase, command or guess, live output, failure sentence) to every page, `credsSave`/`credsInput`/`credsCancel`. The guess: `sdk.ts` `awsAuthRefreshOf`, then an executable `bin/aws-login`. The pty runner is injected (tests). |
 | `pty.ts` | A command in one pseudo-terminal for its whole run (`script(1)` behind a `cat` pipe), its output to a callback only (stderr apart on request), a line typed into it, its exit code; killed as the command's group, whose id the pty reports. `plainText`: the one place the pty's CRLF and escape sequences go. `InputWatch` and `looksLikePrompt` (2026-11-26, live run IN-1 in docs/Claude Code terminals.md): the one rule for "waits for input" (a prompt-shaped last line, 1 s quiet) and the 10 s "may wait" hint. Used by `creds.ts` and `bang.ts`. |
-| `runs.ts` | When a run gets its panel card (R7.1, 2026-11-26), the one rule for every run: `cardAt` (3 s after the start, or when it first waited; none for a run over sooner). `bang.ts`, `creds.ts` and `publisher.ts` (background entries in `bgOut`, Bash items in `dress`) send it; the page shows a card once its clock passes it. |
+| `runs.ts` | When your `!` run or the credential refresh gets its panel card (R7.1, 2026-11-26): `cardAt` (3 s after the start, or when it first waited; none for a run over sooner). `bang.ts` and `creds.ts` send it; the page shows a card once its clock passes it. Claude's background shells and monitors carry none: their card shows from their start (`rail.js`). |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
@@ -99,10 +99,10 @@ Dev and test only (not loaded in production):
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
 | `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
-| `js/rail.js` | Background work panel: agents and runs as cards once due (`cardAt`), who started each by its sign, the waiting card. |
- `js/runs.js` | Runs (R5.6, 2026-11-26): every background shell, monitor or `!` command in one shape for the transcript row (Claude's ordinary foreground Bash is a step instead: transcript.js folds it with the other steps) (`claudeRowHTML` under the grey `$`, `ownRowHTML` on the `!` band, `credsRunHTML` in the dock), its state line, the who sign; draws only what the backend sent. |
- `js/bg-view.js` | A run's shell view (R7.2): its header, and `titleWithCrumb`, the title line with "‹ <session title>" that every view but Main conversation uses (R5.1), its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors, its foreground Bash (from its card, its Past line or the live line), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
- `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps (a foreground Bash among them, folded; a background one or a monitor as a run row, `isRun`), files changed, earlier link, live line, the sticky queue of queued prompts. |
+| `js/rail.js` | Background work panel: agents, Claude's background shells and monitors as cards from their start, your runs and the refresh once due (`cardAt`), no card for Claude's foreground Bash; who started each by its sign, the waiting card. |
+| `js/runs.js` | Runs (R5.13, R7.1, 2026-11-26): your `!` command and the refresh in one shape (`ownRowHTML` on the `!` band in the transcript, `credsRunHTML` in the dock), their state line; `bgState` and the who sign for the panel; draws only what the backend sent. Claude's Bash and Monitor steps are steps (`transcript.js`). |
+| `js/bg-view.js` | A run's shell view (R7.2): its header, and `titleWithCrumb`, the title line with "‹ <session title>" that every view but Main conversation uses (R5.1), its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors (from their card or Past line), its foreground Bash (from the live line), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
+ `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps (Claude's Bash and Monitor among them, foreground and background, folded and expanded in place), files changed, earlier link, live line, the sticky queue of queued prompts. |
 | `js/images.js` | Thumbnails and the image viewer. |
 | `js/preview.js` | File preview pane and find (`findIn`, the page's one matcher). |
 | `js/find.js` | Find in the transcript (R5.12e, R9.9): the ⌘F bar, `find`/`found`, each match's Range from the rendered blocks (an item's block by key, a step's `data-item`), going to a match through `ui-state.js` `jumpTo`, the marks (CSS Custom Highlights `tf-find`, `tf-cur`). |
@@ -266,7 +266,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 | Open list | `sessions.ts` | |
 | MCP panel: servers, running action, last error | `mcp.ts` | page renders `mcp` |
 | Credential refresh: each folder's command, its run, the dock line's phase and output, whether it waits | `creds.ts` (`state.json` `refresh`) | page renders `creds` |
-| A run waits for input; when a run's card shows | `pty.ts` `InputWatch`; `runs.ts` `cardAt` | `bang.ts`, `creds.ts`, `publisher.ts` send them; the page compares `cardAt` with its clock |
+| A run waits for input; when a run's card shows | `pty.ts` `InputWatch`; `runs.ts` `cardAt` (your runs and the refresh) | `bang.ts`, `creds.ts` send them; the page compares `cardAt` with its clock |
 | UI state | `ui-state.ts` (backend) | page `ui-state.js` collects and applies |
 | Theme | backend `ui.theme` | localStorage first-paint copy |
 | Reviewed marks | `store.ts` `ReviewedMarks` via router: only a subagent an open session has, the 1000 newest kept, not pruned with closed sessions (a closed session can be reopened) | page via `agents[].review` |
@@ -379,7 +379,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-02 | transcript.js, app.css, fonts |
 | FR-VIEW-03 | transcript.ts, transcript.js |
 | FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js, marks.js |
-| FR-VIEW-05 | transcript.ts, publisher.ts, runs.ts, transcript.js, runs.js |
+| FR-VIEW-05 | transcript.ts, publisher.ts, transcript.js |
 | FR-VIEW-06 | transcript.ts, transcript.js |
 | FR-VIEW-07 | transcript.ts, transcript.js |
 | FR-VIEW-08 | transcript.ts, claude-jsonl.ts, transcript.js, open.ts |

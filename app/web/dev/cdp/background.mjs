@@ -125,7 +125,7 @@ const where = () => ev(`(() => { const g = document.querySelector('#log details.
   sleep: !!document.querySelector('#log .ln.tool[data-fg]:not(.liveln)') && /sleep 40/.test(document.querySelector('#log .ln.tool[data-fg]:not(.liveln)').textContent), agent: !!document.querySelector('#log .wgrid [data-fg]'),
   n: document.querySelectorAll('#log [data-fg]').length }; })()`);
 const w0 = await where();
-check('live line names the foreground Bash: the mark is on the live line, not its own run row', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 3, JSON.stringify(w0));
+check('live line names the foreground Bash: the mark is on the live line, not its own step line', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 3, JSON.stringify(w0));
 await K.b();
 check('first b: the prompt, the live line ringed', (await asking()) === PROMPT && (await ev(`(cs => /0px 0px 0px 4px/.test(cs.boxShadow))(getComputedStyle(document.querySelector('#log .liveln')))`)) === true);
 const m2 = await marked();
@@ -177,7 +177,7 @@ await ev('document.getElementById("msg").value = ""'); await K.esc();
 
 // the main turn over, a background subagent and shell running: no live line at all (2026-11-26); the panel and
 // the sidebar show them, and the transcript ends with the turn's "Worked for" line
-const bgShell = { toolUseId: 'toolu_bgsh', taskId: 'bgsh1', kind: 'shell', description: 'Serve the demo', command: 'npm run dev', timeout: 0, persistent: false, start: iso, status: 'running', summary: '', end: null, cardAt: Date.parse(iso) + 3000, tail: '' };
+const bgShell = { toolUseId: 'toolu_bgsh', taskId: 'bgsh1', kind: 'shell', description: 'Serve the demo', command: 'npm run dev', timeout: 0, persistent: false, start: iso, status: 'running', summary: '', end: null };
 const bgAgent = { id: 'abbg1', type: 'general-purpose', fork: false, description: 'Draft the notes', toolUseId: 'toolu_bbg', model: null, depth: 0, finished: false, running: true, review: false, stopped: false, start: iso, end: null, total: 0 };
 await ev(`(s => __synopia.inject({ t: 'session', id: '${A}', agents: [...(s.agents || []).filter(a => a.toolUseId !== 'toolu_bbg'), ${JSON.stringify(bgAgent)}].map(a => a.toolUseId === 'toolu_bbg' || a.finished ? a : { ...a, finished: true, running: false }), background: [${JSON.stringify(bgShell)}],
   state: { ...s.state, status: 'idle', light: 'amber', tone: 'amber', word: 'Your turn', mark: 'stopped', since: Date.now() } }))(__synopia.cur())`);

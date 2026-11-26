@@ -108,12 +108,10 @@
           "description": "Build the demo",
           "command": "make demo-build",
           "persistent": false,
-          "start": "2026-11-20T12:00:05.000Z",
+          "start": "2026-11-20T12:00:06.000Z",
           "status": "completed",
           "summary": "Build finished with 0 errors",
-          "end": "2026-11-20T12:05:00.000Z",
-          "cardAt": 1795176008000,
-          "tail": ""
+          "end": "2026-11-20T12:05:00.000Z"
         },
         {
           "toolUseId": "toolu_mon1",
@@ -123,13 +121,10 @@
           "command": "tail -f /tmp/demo.log",
           "timeout": 600000,
           "persistent": false,
-          "start": "2026-11-20T12:00:05.000Z",
+          "start": "2026-11-20T12:00:06.000Z",
           "status": "failed",
           "summary": "",
-          "end": "2026-11-20T12:06:00.000Z",
-          "cardAt": 1795176008000,
-          "tail": "",
-          "events": 0
+          "end": "2026-11-20T12:06:00.000Z"
         },
         {
           "toolUseId": "toolu_mon2",
@@ -138,13 +133,10 @@
           "description": "Watch the other log",
           "command": "tail -f /tmp/other.log",
           "persistent": true,
-          "start": "2026-11-20T12:00:05.000Z",
+          "start": "2026-11-20T12:00:06.000Z",
           "status": "running",
           "summary": "",
-          "end": null,
-          "cardAt": 1795176008000,
-          "tail": "",
-          "events": 0
+          "end": null
         }
       ],
       "stream": null,

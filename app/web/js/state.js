@@ -41,14 +41,14 @@ export function ownBg(s) {
     summary: !r.running && !r.interrupted && r.exit ? `Exit code ${r.exit}` : "", waiting: !!r.waiting, quiet: !!r.quiet, cardAt: r.cardAt ?? null })));
   return out;
 }
-/* Claude's foreground Bash steps of the main conversation (R7.1, R7.2, 2026-11-26) as runs of the panel and the shell
-   view, marked `step`: the turn's own step, not background work. One that runs in the background is its entry. */
+/* Claude's foreground Bash steps of the main conversation (R7.2, 2026-11-26) as runs of the shell view, marked `step`:
+   the turn's own step, not background work, so no panel card (R7.1). One that runs in the background is its entry. */
 export function stepBg(s) {
   const items = s?.items; if (!items?.length) return [];
   const bg = new Set((s.background || []).map(b => b.toolUseId)), out = [];
   for (const t of items) if (t.k === "tool" && t.name === "Bash" && !t.bg && !bg.has(t.id))
     out.push({ toolUseId: t.id, step: true, kind: "shell", description: t.obj || "", command: t.input || "", timeout: 0, persistent: false, start: t.since || t.ts,
-      end: t.state === "running" ? null : t.out?.at || t.ts, status: t.state === "running" ? "running" : t.state === "failed" ? "failed" : t.state === "stopped" ? "stopped" : "completed", summary: "", cardAt: t.cardAt });
+      end: t.state === "running" ? null : t.out?.at || t.ts, status: t.state === "running" ? "running" : t.state === "failed" ? "failed" : t.state === "stopped" ? "stopped" : "completed", summary: "" });
   return out;
 }
 /* the folder's credential refresh while it runs (creds.ts, 2026-11-26), as a run Synopia started, marked `creds` */
@@ -60,7 +60,7 @@ export function credsBg(s) {
 /* Claude's own background work (not a step of its turn, nor yours or Synopia's): what "N running in the background" counts */
 export const isClaudeBg = b => !b.own && !b.step && !b.creds;
 /* a session's runs for the panel and the shell view: Claude's background shells and monitors, its foreground Bash
-   steps, your `!` runs, then the credential refresh */
+   steps (the shell view only), your `!` runs, then the credential refresh */
 export const bgAll = s => [...(s?.background || []), ...stepBg(s), ...ownBg(s), ...credsBg(s)];
 /* a session's background shell or monitor, by its tool use id (a `!` run by its id) */
 export const bgById = (s, id) => bgAll(s).find(b => b.toolUseId === id);

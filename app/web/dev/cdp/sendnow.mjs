@@ -5,7 +5,7 @@
 // queued bands (selection tint, 1px blue ring) and turns the box into the prompt; another key keeps them queued
 // and sends nothing; Esc and f replace each other's prompt; with a draft, f, f sends one `sendNow` with it and
 // the box empties; the backend's route (a foreground Bash: backgroundTasks) takes the queue in, and the bands
-// land, and the Bash row keeps b, b's "in the background" mark, not struck through; insert mode types f; a
+// land, and the Bash stays a step whose shell runs on in the background with its card, not struck through; insert mode types f; a
 // session Synopia doesn't drive asks nothing. The interrupt route (2026-11-26, Claude only writing): the live
 // line stays as a still record, struck through and greyed, "set aside for your messages", the reply it cut
 // short greyed above it, and the queued message lands below it. Writes sendnow-asking-<theme>.png and
@@ -105,10 +105,10 @@ check('the queued messages land as your prompts', await c.until(`(s => [${JSON.s
 check('their bands leave the queue; the draft waits as a queued band', await c.until(`(b => b.length === 1 && b[0].textContent.trim() === ${JSON.stringify(DRAFT)})([...document.querySelectorAll('${Q}')])`),
   JSON.stringify(await ev(`[...document.querySelectorAll('${Q}')].map(e => e.textContent.trim())`)));
 
-// the background route: the Bash row keeps b, b's mark, not struck through, and nothing is set aside
-const BUILD = `#log .runrow`;
-check('background route: the Bash row reads "in the background", as b, b leaves it', await c.until(`[...document.querySelectorAll('${BUILD}')].some(e => /Build the demo/.test(e.textContent) && /Running, .*in the background|Running in the background/.test(e.querySelector('.rst')?.textContent || ''))`),
-  JSON.stringify(await ev(`[...document.querySelectorAll('${BUILD}')].map(e => e.querySelector('.rst')?.textContent)`)));
+// the background route: the Bash stays a step, its shell runs on in the background with its card, not struck through,
+// and nothing is set aside
+check('background route: the Bash stays a step and its shell runs on in the background, with its card in the panel', await c.until(`!document.querySelector('#log .ln.tool.runrow') && [...document.querySelectorAll('#log .ln.tool')].some(e => /Bash\\(Build the demo\\)/.test(e.textContent)) && /Build the demo/.test(document.querySelector('.rail .now [data-bg="toolu_nbuild"]')?.textContent || '')`),
+  JSON.stringify(await ev(`[document.querySelector('.rail')?.textContent.replace(/\\s+/g, ' ') ?? 'no panel', [...document.querySelectorAll('#log .ln.tool')].map(e => e.textContent.slice(0, 80))]`)));
 check('background route: no set-aside line, nothing struck through', (await ev(`document.querySelectorAll('#log .asideln').length`)) === 0
   && (await ev(`[...document.querySelectorAll('#log *')].every(e => !/line-through/.test(getComputedStyle(e).textDecorationLine))`)));
 

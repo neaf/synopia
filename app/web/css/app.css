@@ -195,15 +195,14 @@ details.step[open] > summary .res.run { display: none; }
 .prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .bang-res { padding-left: 2ch; color: var(--ink-3); }
 .bang-res > .step-out { margin: 0; }
-/* ---------- a run (runs.js, R5.6, R5.13, R7.1, 2026-11-26; prototype/shell-storyboard.html): one row for every shell
-   command, whoever started it. The whole row is the link to its shell view; hover shades it as a Past line shades. */
+/* ---------- a run (runs.js, R5.13, R7.1, 2026-11-26; prototype/shell-storyboard.html): one row for a shell command you
+   or Synopia started (Claude's are steps, R5.6). The whole row is the link to its shell view; hover shades it as a
+   Past line shades. */
 .runrow { position: relative; isolation: isolate; cursor: pointer; }
 .runrow::before { content: ""; position: absolute; inset: -2px -8px; z-index: -1; border-radius: 5.5px; pointer-events: none; }
 .runrow:hover::before { background: var(--sub); }
 .bang.runrow::before { inset: 3.5px -8px -2px; }
 .runrow:hover .prompt.bang-cmd { background: var(--line-2); }
-/* the command in Claude's row stays one line: the shell view has the rest */
-.runrow .step-out .cmd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* the state line: the status mark, then the words */
 .runrow .res.rst > span:last-child, .rst > span:last-child { display: inline-flex; align-items: center; gap: .6ch; }
 .rst .ind { font-size: 10px; }
@@ -211,8 +210,9 @@ details.step[open] > summary .res.run { display: none; }
 .liveln[data-state="red"] b { color: var(--red); } /* the shell view's live line while its run waits */
 .rst .rhint { color: var(--faint); }
 .liveln[data-bg] { cursor: pointer; } /* "Working Bash(…)" opens that run's shell view */
-/* Claude's command line: a grey $ in the gutter, as the permission card's (.qbody .cmd .ps), under the step's dot
-   and in the column of your band's !; no band, no fill. One mark per gutter line: the dot on the step, $ on the command. */
+/* Claude's command line in its shell view (bg-view.js): a grey $ in the gutter, as the permission card's (.qbody .cmd .ps),
+   under the step's dot and in the column of your band's !; no band, no fill. One mark per gutter line: the dot on the
+   step, $ on the command. */
 .ln.tool > .g.ps.ps { color: var(--ink-3); user-select: none; margin-top: 2px; }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
 .retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */

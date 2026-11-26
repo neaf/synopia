@@ -19,7 +19,7 @@ function mainBody() {
   for (let i = 0; i < N; i++) {
     if (i === N - 10) {
       for (const [n, text] of [[1, 'build ok'], [2, 'counted 1 quokka on the trail'], [3, 'tests ok']]) {
-        out += R.tool(SID, `t${n}`, i, `toolu_q${n}`, 'Grep', { pattern: `step ${n}` }); // searches: a Bash step is a run row of its own, never in a group (R5.6, 2026-11-26)
+        out += R.tool(SID, `t${n}`, i, `toolu_q${n}`, 'Grep', { pattern: `step ${n}` }); // three steps in one group
         out += R.rec(SID, { type: 'user', uuid: `r${n}`, timestamp: ts(i), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_q${n}`, content: text }] } });
       }
       continue;

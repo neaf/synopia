@@ -1,22 +1,27 @@
 /* Rail: the background work panel (requirements R7.1, R7.2): Main conversation, the running forks,
    subagents, shells and monitors as a tree, To review, and Past. Rebuilt whole on each render; its cards
    tween in and out (tween.js). Every row opens its item in the pane: a subagent or fork its transcript, a
-   shell or monitor its output (bg-view.js). Runs (runs.js, R7.1, 2026-11-26): a card once it is due (3 s, or
-   waiting for input), with who started it by its sign; a run over sooner gets no card and no Past line. */
+   shell or monitor its output (bg-view.js). Claude's background shells and monitors have their card from their
+   start; its foreground Bash, the turn's own step, has none (R7.1, 2026-11-26, the user's decision). Your runs and
+   the refresh (runs.js): a card once it is due (3 s, or waiting for input), with who started it by its sign; one
+   over sooner gets no card and no Past line. */
 import { store, cur, view, mounted, nowish, agentsOf, agentById, bgById, bgAll, agentMs, isClaudeBg } from "./state.js";
 import { bgState, cardDue, whoHTML } from "./runs.js";
 import { esc, live, took, hhmm } from "./format.js";
 import { ind, kind, KG, kindKey, bgMarkKey, sessionMark } from "./marks.js";
 import { lineTweens, graceScan, inGrace } from "./tween.js";
 
-export const bgOf = bgAll; // Claude's shells and monitors and foreground Bash steps, your `!` runs, the refresh (state.js)
+export const bgOf = bgAll; // Claude's shells and monitors and foreground Bash steps, your `!` runs, the refresh (state.js); the steps get no card
 export { bgState };
 const whoOf = b => b.own ? "you" : b.creds ? "synopia" : "claude";
-/* a run with a card now or once (its Past line): due, and not a step of the turn that ended before it was due */
-const carded = b => b.cardAt !== null && b.cardAt !== undefined;
-const hasBackground = s => agentsOf(s).length || bgOf(s).some(b => carded(b) && (bgState(b) !== "running" || cardDue(b)));
+/* a run with a card now or once (its Past line): Claude's background work always, yours and the refresh once due
+   (runs.ts cardAt), never Claude's foreground Bash */
+const timed = b => !isClaudeBg(b) && !b.step && b.cardAt !== null && b.cardAt !== undefined;
+const carded = b => isClaudeBg(b) || timed(b);
+const due = b => isClaudeBg(b) || cardDue(b);
+const hasBackground = s => agentsOf(s).length || bgOf(s).some(b => carded(b) && (bgState(b) !== "running" || due(b)));
 /* a run's card came due since `from` (main.js's tick renders the panel then) */
-export const cardsDue = (s, from, to) => bgOf(s).some(b => carded(b) && b.cardAt > from && b.cardAt <= to);
+export const cardsDue = (s, from, to) => bgOf(s).some(b => timed(b) && b.cardAt > from && b.cardAt <= to);
 const bgMs = b => (b.end ? new Date(b.end) : (bgState(b) === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : nowish)) - new Date(b.start);
 /* every subagent, shell and monitor the panels show, with whether it runs, for the finish grace (tween.js) */
 export function scanGrace() {
@@ -35,7 +40,7 @@ export function railHTML(s, A, B = null) { // exported for the escape test
     ...agentsOf(s).map(a => ({ key: a.id, agent: a, name: a.description, kind: a.fork ? "fork" : (a.type || "subagent"), start: a.start, end: a.finished ? a.end : null, running: !a.finished, waiting: !!a.waiting, failed: false, st: a.stopped ? "stopped" : "done", ms: agentMs(a) })),
     ...bgOf(s).filter(carded).map(b => { const st = bgState(b); return { key: b.toolUseId, bg: b, name: b.own || b.creds ? b.command : b.description || b.command, kind: b.kind, start: b.start,
       end: st === "running" ? null : (b.end || new Date(new Date(b.start).getTime() + (b.timeout || 0)).toISOString()), running: st === "running", failed: st === "failed", st, ms: bgMs(b),
-      who: whoOf(b), waits: st === "running" && !!b.waiting, due: cardDue(b) }; })
+      who: whoOf(b), waits: st === "running" && !!b.waiting, due: due(b) }; })
   ];
   /* one that just finished stays in the tree for its grace; a run shows once its card is due */
   for (const x of all) x.shown = x.bg ? (x.running ? x.due : inGrace(s.id, x.key)) : x.running || inGrace(s.id, x.key);

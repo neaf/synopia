@@ -23,7 +23,7 @@ const read = (id, f, w, h, type = 'image/png') => [id, 'Read', { file_path: `/tm
 const RUN = [
   ['toolu_e1', 'Edit', { file_path: '/tmp/synopia-images/app.css', old_string: 'a', new_string: 'b' }, 'The file has been updated.'],
   read('toolu_r1', 'home.png', 800, 400),
-  ['toolu_b1', 'Glob', { pattern: '/tmp/synopia-images/*.png' }, 'home.png'], // not a Bash: a Bash step is a run row of its own (R5.6, 2026-11-26)
+  ['toolu_b1', 'Bash', { command: 'ls /tmp/synopia-images', description: 'List the screens' }, 'home.png'],
   read('toolu_r2', 'settings.png', 2400, 1600),
   read('toolu_r3', 'icon.png', 30, 24),
   ['toolu_s1', 'mcp__browser__screenshot', {}, [{ type: 'text', text: 'Screenshot taken' }, img('image/png', png(1600, 200)), img('image/png', png(500, 500))]],
@@ -39,7 +39,7 @@ if (process.argv[2] === 'make') {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${SID}.jsonl`),
     line({ ...base, type: 'user', uuid: 'u1', timestamp: ts(0), message: { role: 'user', content: [img('image/png', png(400, 100)), img('image/png', png(20, 20)), img('image/png', png(3000, 100)), { type: 'text', text: 'Three made-up images: a wide one, a tiny one and a panorama. What do they show?' }] } })
-    + tool('a1', 2, 'toolu_ls', 'Glob', { pattern: '/tmp/synopia-images/*' })
+    + tool('a1', 2, 'toolu_ls', 'Bash', { command: 'ls /tmp/synopia-images', description: 'List the images' })
     + result('r1', 3, 'toolu_ls', 'chart.png')
     + tool('a2', 4, 'toolu_read', 'Read', { file_path: '/tmp/synopia-images/chart.png' })
     + result('r2', 5, 'toolu_read', [img('image/png', png(240, 160))])
