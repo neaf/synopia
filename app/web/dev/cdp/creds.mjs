@@ -10,19 +10,28 @@
 // lock in the gutter), where i and a typed line reach it in the box's ! band, and its exit 0 clears both (back to
 // retrying) and closes the view; a later expiry in that folder runs the
 // saved command by itself; a folder with no guess has an empty field, and a command that exits 1 brings the
-// editable line back with its sentence. Writes creds-*.png.
+// editable line back with its sentence; a turn whose credential retries ran out is resumed once the refresh exits 0
+// (2026-11-26): the quiet "Resumed after the credential refresh" line, not your prompt band, and a new turn. Writes creds-*.png.
 // usage: node creds.mjs make <claude-dir>   writes the fixture (run.sh does this first)
 //        node creds.mjs <url> <state-dir> <claude-dir>
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, keyTable, shot as shotTo } from './helpers.mjs';
 
-const X = '/tmp/synopia-creds-check/repo', Y = '/tmp/synopia-creds-check/other', Z = '/tmp/synopia-creds-check/third';
+const X = '/tmp/synopia-creds-check/repo', Y = '/tmp/synopia-creds-check/other', Z = '/tmp/synopia-creds-check/third', W = '/tmp/synopia-creds-check/fourth';
 const A1 = 'cdcdcdcd-0000-4000-8000-0000000000a1', A2 = 'cdcdcdcd-0000-4000-8000-0000000000a2', A3 = 'cdcdcdcd-0000-4000-8000-0000000000a3';
-const B1 = 'cdcdcdcd-0000-4000-8000-0000000000b1', R1 = 'cdcdcdcd-0000-4000-8000-0000000000c1';
+const B1 = 'cdcdcdcd-0000-4000-8000-0000000000b1', R1 = 'cdcdcdcd-0000-4000-8000-0000000000c1', F1 = 'cdcdcdcd-0000-4000-8000-0000000000d1';
 const EXPIRED = 'The security token included in the request is expired';
 const running = (ago = 0) => ({ ago, message: { type: 'system', subtype: 'session_state_changed', state: 'running' } });
 const expired = (attempt) => ({ retry: { attempt, max: 10, delayMs: 3000, status: 403, error: 'unknown', text: EXPIRED } });
+const NO_CREDS = 'Could not load credentials from any providers';
+const credRetry = (attempt) => ({ after: 200, retry: { attempt, max: 2, delayMs: 1000, status: null, error: 'cloud_credential_error', text: NO_CREDS, credential: true } });
+const reply = (id, text, extra = {}) => ({ append: [{ type: 'assistant', ...extra, message: { id, role: 'assistant', content: [{ type: 'text', text }] } }] });
+const ended = (isError, result) => [{ after: 200, message: { type: 'result', subtype: 'success', is_error: isError, result, num_turns: 1 } }, { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } }];
+// F1's turn fails on its credentials (both retries, then the error reply and result, docs/Agent SDK.md AR-1); the resume's turn works
+const failedOnCreds = [running(6000), credRetry(1), credRetry(2), reply('msg-f1-err', NO_CREDS, { isApiErrorMessage: true }),
+  { message: { type: 'assistant', error: 'cloud_credential_error', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: NO_CREDS }] } } }, ...ended(true, NO_CREDS)];
+const resumedTurn = [running(), { after: 600, ...reply('msg-f1-ok', 'Picking up the changelog where it stopped.') }, { after: 1500, message: { type: 'result', subtype: 'success', is_error: false, result: '', num_turns: 1 } }, { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } }];
 
 if (process.argv[2] === 'make') {
   const claude = process.argv[3];
@@ -37,6 +46,7 @@ if (process.argv[2] === 'make') {
   write(X, A3, 'Rename the helper.', 'Done.');
   write(Y, B1, 'Translate the readme.', 'Starting.');
   write(Z, R1, 'Summarise the meeting notes.', 'On it.');
+  write(W, F1, 'Sort the changelog.', 'Sorting it.');
   fs.writeFileSync(path.join(claude, 'sdk-script.json'), JSON.stringify({
     about: 'creds.mjs: made up',
     sessions: {
@@ -44,10 +54,13 @@ if (process.argv[2] === 'make') {
       [A2]: { start: true, steps: [running(15000), expired(2)] },
       [A3]: { start: true, state: { status: 'idle', ago: 60000 }, onSend: [running(), expired(1)] },
       [B1]: { start: true, steps: [running(10000), { retry: { attempt: 1, max: 2, delayMs: 1000, status: null, error: 'cloud_credential_error', text: 'Could not load credentials from any providers', credential: true } }] },
+      [F1]: { start: true, steps: failedOnCreds, onSend: resumedTurn },
       [R1]: { start: true, steps: [running(8000), { retry: { attempt: 4, max: 10, delayMs: 600000, status: 503, error: 'server_error', text: 'Service Unavailable' } }] },
     },
   }));
-  for (const d of [X, Y, Z]) fs.mkdirSync(d, { recursive: true });
+  for (const d of [X, Y, Z, W]) fs.mkdirSync(d, { recursive: true });
+  fs.mkdirSync(path.join(W, 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(W, 'bin/aws-login'), '#!/bin/sh\necho "Signed in to the invented profile."\nexit 0\n', { mode: 0o755 });
   fs.mkdirSync(path.join(X, '.git'), { recursive: true });
   fs.mkdirSync(path.join(X, 'bin'), { recursive: true });
   fs.writeFileSync(path.join(X, 'bin/aws-login'), '#!/bin/sh\necho "Open the browser and enter the code WXYZ-0001"\nprintf "Press Enter when you are done: "\nread line\necho "Signed in ($line)."\nexit 0\n', { mode: 0o755 });
@@ -142,5 +155,18 @@ check('fail: the sentence', await until(`(document.querySelector('.dock .status.
 check('fail: the command editable again', (await field('creds-cmd')) === 'bin/fail-login', JSON.stringify(await field('creds-cmd')));
 check('fail: needs you again', /^Needs you, sign-in expired, /.test(await word(B1)), JSON.stringify(await word(B1)));
 await shot('failed');
+
+// 6. a turn whose credential retries ran out: once the refresh exits 0 Synopia resumes it, once, with its own quiet line
+const logText = () => ev(`document.getElementById('log')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`);
+check('resume: the turn failed on the credentials, needs you', await until(`/^Needs you, sign-in expired, /.test(document.querySelector('.row[data-id="${F1}"] .r-state')?.textContent.trim() ?? '')`, 8000), JSON.stringify(await word(F1)));
+await pick(F1);
+check('resume: the failure is in the transcript', await until(`(document.getElementById('log')?.textContent ?? '').includes(${JSON.stringify(NO_CREDS)})`, 6000), JSON.stringify((await logText()).slice(-300)));
+check('resume: the dock line has the guessed command', await until(`document.getElementById('creds-cmd')?.value === 'bin/aws-login'`, 4000), JSON.stringify(await dock()));
+await ev(`document.querySelector('[data-creds="save"]').click()`);
+check('resume: the quiet "Resumed after the credential refresh" line', await until(`document.querySelector('#log .retitle.resumed')?.textContent.trim() === 'Resumed after the credential refresh'`, 8000), JSON.stringify((await logText()).slice(-300)));
+check('resume: no prompt band of yours, and not your prompt sent again', await ev(`(() => { const bands = [...document.querySelectorAll('#log .prompt')].map(b => b.textContent); return bands.length === 1 && /Sort the changelog/.test(bands[0]) && !document.getElementById('log').textContent.includes('Continue: the model'); })()`), JSON.stringify(await ev(`[...document.querySelectorAll('#log .prompt')].map(b => b.textContent)`)));
+check('resume: a new turn starts: working, then Claude\'s reply under the line', await until(`(() => { const l = document.querySelector('#log .retitle.resumed'), r = [...document.querySelectorAll('#log .ln.claude')].find(x => /Picking up the changelog/.test(x.textContent)); return !!l && !!r && !!(l.compareDocumentPosition(r) & Node.DOCUMENT_POSITION_FOLLOWING); })()`, 6000) && /^Working/.test(await word(F1)), JSON.stringify(await word(F1)));
+await shot('resumed');
+check('resume: the turn ends as your turn, the line stays once', await until(`/^Your turn/.test(document.querySelector('.row[data-id="${F1}"] .r-state')?.textContent.trim() ?? '') && document.querySelectorAll('#log .retitle.resumed').length === 1`, 6000), JSON.stringify(await word(F1)));
 c.print();
 c.close();

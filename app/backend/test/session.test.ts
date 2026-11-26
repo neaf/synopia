@@ -191,3 +191,96 @@ test('session: a retried request shows its attempt; an expired sign-in needs you
   assert.deepEqual([t.last()?.state.status, t.last()?.state.detail.error], ['failed', 'API Error: 503 Service Unavailable']);
   t.sessions.stop();
 });
+
+// Resumed after the credential refresh (R8.2, 2026-11-26): a turn whose credential retries ran out.
+const CRED_RETRY = (n: number) => ({ type: 'system', subtype: 'api_retry', attempt: n, max_retries: 2, retry_delay_ms: 1000, error_status: null, error: 'cloud_credential_error', session_id: SID, uuid: `r${n}` });
+const CRED_FAILED = { ...RESULT, is_error: true, result: 'Could not load credentials from any providers' };
+const textsOf = (call: { inputs: { message: { content: unknown } }[] }) => call.inputs.map((m) => (typeof m.message.content === 'string' ? m.message.content : JSON.stringify(m.message.content)));
+async function failOnCredentials(t: ReturnType<typeof setup>, call = t.q.calls.at(-1)!) {
+  emit(call, { type: 'system', subtype: 'init', session_id: SID });
+  emit(call, CRED_RETRY(1));
+  emit(call, CRED_RETRY(2));
+  emit(call, { type: 'assistant', error: 'cloud_credential_error', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: 'Could not load credentials from any providers' }] }, session_id: SID, uuid: 'a1' });
+  emit(call, CRED_FAILED);
+  await tick();
+}
+
+test('session: a refresh that succeeds after the turn failed on the credentials resumes it once, with Synopia\'s fixed text', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  await failOnCredentials(t);
+  assert.equal(t.last()?.state.status, 'signedout');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.deepEqual(textsOf(call), ['Draft the notes.', 'Continue: the model\'s credentials were refreshed.'], 'one resume, not your prompt again');
+  assert.equal(t.last()?.state.status, 'busy', 'a new turn runs');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 2, 'once only');
+  t.sessions.stop();
+});
+
+test('session: a refresh that ends while the turn still retries sends nothing; the next retry goes through', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  emit(call, { type: 'system', subtype: 'init', session_id: SID });
+  emit(call, CRED_RETRY(1));
+  await tick();
+  assert.equal(t.last()?.state.status, 'signedout');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 1);
+  assert.equal(t.last()?.state.status, 'retrying');
+  t.sessions.stop();
+});
+
+test('session: the resumed turn failing on the credentials again doesn\'t resume again (no loop): needs you, sign-in expired', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  await failOnCredentials(t);
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 2);
+  await failOnCredentials(t);
+  assert.equal(t.last()?.state.status, 'signedout');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 2, 'no second resume');
+  assert.equal(t.last()?.state.status, 'failed');
+  t.sessions.stop();
+});
+
+test('session: a message of yours since the failure means no resume', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  await failOnCredentials(t);
+  t.s().send('Try again.');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.deepEqual(textsOf(call), ['Draft the notes.', 'Try again.']);
+  t.sessions.stop();
+});
+
+test('session: two sessions of one folder whose last turns failed on the credentials each resume once', async () => {
+  const t = setup({ open: [SID, OTHER] });
+  t.sessions.get(SID)!.send('one');
+  t.sessions.get(OTHER)!.send('two');
+  const [a, b] = t.q.calls;
+  await failOnCredentials(t, a);
+  emit(b, { type: 'system', subtype: 'init', session_id: OTHER });
+  emit(b, { ...CRED_RETRY(1), session_id: OTHER });
+  emit(b, { ...CRED_FAILED });
+  await tick();
+  t.sessions.refreshed([SID, OTHER]);
+  await tick();
+  const resume = 'Continue: the model\'s credentials were refreshed.';
+  assert.deepEqual([textsOf(a), textsOf(b)], [['one', resume], ['two', resume]]);
+  t.sessions.refreshed([SID, OTHER]);
+  await tick();
+  assert.deepEqual([a.inputs.length, b.inputs.length], [2, 2]);
+  t.sessions.stop();
+});

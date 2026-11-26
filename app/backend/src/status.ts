@@ -304,10 +304,14 @@ export class SessionStatus {
   }
 
   // The folder's credential refresh command succeeded: the CLI's next retry takes the new credentials.
-  credentialsRefreshed(): void {
-    if (!this.signedOut) return;
+  // True when the latest main turn had already ended failed on them (its retries ran out): session.ts
+  // resumes it once (R8.2, 2026-11-26). A turn still retrying gives false: its next retry goes through.
+  credentialsRefreshed(): boolean {
+    if (!this.signedOut) return false;
+    const failed = !this.running && this.outcome === 'failed';
     this.signedOut = false;
     this.update();
+    return failed;
   }
 
   // Signed out (needs you, sign-in expired, or refreshing): creds.ts runs the folder's command for it.
@@ -500,7 +504,7 @@ export function blockedLast(items: Item[]): boolean {
   let from = items.length;
   while (from > 0) {
     const it = items[from - 1];
-    if ((it.k === 'you' && !it.turnedDown && !it.interrupted) || it.k === 'bang') break;
+    if ((it.k === 'you' && !it.turnedDown && !it.interrupted) || it.k === 'bang' || it.k === 'resumed') break;
     from--;
   }
   const steps = items.slice(from).filter((it) => it.k === 'tool');

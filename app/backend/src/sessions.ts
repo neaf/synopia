@@ -287,8 +287,9 @@ export class Sessions {
     for (const sid of sids) this.live.get(sid)?.status.setRefreshing(on);
   }
 
+  // Succeeded: each of them whose last turn failed on the credentials resumes once (session.ts).
   refreshed(sids: string[]): void {
-    for (const sid of sids) this.live.get(sid)?.status.credentialsRefreshed();
+    for (const sid of sids) this.live.get(sid)?.credentialsRefreshed();
   }
 
   runningChanged(sid: string, r: Running): void {
