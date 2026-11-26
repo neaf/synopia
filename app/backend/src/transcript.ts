@@ -288,6 +288,8 @@ class ReadState {
   // after a marker opens it again: Claude carried on.
   turnOpen = false;
   afterMarker = false;
+  // The request the CLI retries now: the main thread's latest record is a system/api_error (status.ts).
+  apiError: { text: string; status: number | null; credential: boolean } | null = null;
   // The tool uses of the latest assistant message: every record of its `message.id` (one block per
   // record), or the one record when it has no id.
   message: { key: string; uses: ToolUseRef[] } = { key: '', uses: [] };
@@ -385,6 +387,7 @@ export class Transcript {
   get effort(): unknown { return this.r.effort; }
   get firstTs(): string | null { return this.r.firstTs; }
   get lastTs(): string | null { return this.r.lastTs; }
+  get apiError(): { text: string; status: number | null; credential: boolean } | null { return this.r.apiError; }
 
   get title(): string | null {
     return this.r.customTitle || this.r.aiTitle;
@@ -468,6 +471,7 @@ export class Transcript {
     }
     // A subagent's record inside the main file (sidechain) is the subagent's, not this thread's.
     const foreign = rec.sidechain && !this.sidechain;
+    if (!foreign && (rec.kind === 'user' || rec.kind === 'assistant' || rec.kind === 'turn-end' || rec.kind === 'queued')) r.apiError = null; // the retry is over
     switch (rec.kind) {
       case 'ai-title':
         r.aiTitle = rec.title || null;
@@ -507,6 +511,9 @@ export class Transcript {
         return;
       case 'assistant':
         if (!foreign) this.assistant(rec, rec.uuid || `assistant@${r.seq}`);
+        return;
+      case 'api-error':
+        if (!foreign) r.apiError = { text: rec.text, status: rec.status, credential: rec.credential };
         return;
       case 'other':
         return;

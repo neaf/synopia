@@ -213,12 +213,12 @@ export class Transcripts {
 
   // What runs now by the transcript (nothing when it isn't open): subagents and forks still running
   // by its rule (shells and monitors aren't counted), its main turn (quiet after QUIET_MS), and a
-  // card it waits on (none after ASK_STALE_MS of quiet).
+  // card it waits on (none after ASK_STALE_MS of quiet), and the request the CLI retries.
   running(id: string): Running {
     const s = this.live.get(id);
     if (!s) return { agents: 0, turn: false, lastAt: 0, ask: null };
     const t = s.t, now = Date.now();
-    return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(now, QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk(now, ASK_STALE_MS, () => mtimeOf(s.path)) };
+    return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(now, QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk(now, ASK_STALE_MS, () => mtimeOf(s.path)), apiError: t.apiError };
   }
 
   // When the transcript last changed: its last record, else the file's mtime.

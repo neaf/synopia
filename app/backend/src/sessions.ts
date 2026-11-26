@@ -56,6 +56,9 @@ export type SessionsOptions = {
   onWaiting?: (sid: string) => void;
   // A running process pushed a new command list (commands_changed).
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
+  // A session's model sign-in expired, or works again (creds.ts); a session closed or took another id.
+  onSignedOut?: (sid: string, cwd: string, signedOut: boolean) => void;
+  onGone?: (sid: string) => void;
   // The terminals that hold sessions (cli-terminals.ts); none without it.
   terminals?: TerminalSource;
   folders?: Folders; // the disk side of the folder list (tests count its reads); else the real one
@@ -267,6 +270,7 @@ export class Sessions {
     pruneUi(this.store, id); // its scroll, draft and the rest of the page's state for it (R3.9)
     this.layout.sync(); // a placeholder's id goes; a stored one keeps its place, hidden
     this.transcripts.close(id); // the pages get `removed` (publisher.ts)
+    this.opts.onGone?.(id);
     this.log('sessions.close', { sid: id, running });
     return { ok: true, sid: id };
   }
@@ -278,6 +282,15 @@ export class Sessions {
   }
 
   // From the transcripts: what runs by the transcript changed, and an assistant record landed.
+  // The folder's credential refresh runs, or no longer, or succeeded (creds.ts).
+  refreshing(sids: string[], on: boolean): void {
+    for (const sid of sids) this.live.get(sid)?.status.setRefreshing(on);
+  }
+
+  refreshed(sids: string[]): void {
+    for (const sid of sids) this.live.get(sid)?.status.credentialsRefreshed();
+  }
+
   runningChanged(sid: string, r: Running): void {
     this.live.get(sid)?.runningChanged(r);
   }
@@ -331,6 +344,7 @@ export class Sessions {
       now: this.now, timer: this.opts.timer, idleMs: this.opts.idleMs ?? IDLE_MS, tilde: (p) => this.tilde(p),
       isDir: (p) => Boolean(this.opts.pretendFolder?.(p)) || isDir(p),
       onTurnEnded: this.opts.onTurnEnded, onWaiting: this.opts.onWaiting, onCommands: this.opts.onCommands,
+      onSignedOut: (x, on) => this.opts.onSignedOut?.(x.id, x.cwd, on),
       rekey: (x, newId, why) => this.rekey(x, newId, why),
       tools: (caller) => toolServer(this.toolHost, caller),
     });
@@ -352,6 +366,7 @@ export class Sessions {
       return;
     }
     const st = this.store.state;
+    this.opts.onGone?.(old);
     this.aliases.set(old, newId);
     this.live.delete(old);
     s.id = newId;

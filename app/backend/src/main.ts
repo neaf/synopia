@@ -15,7 +15,9 @@ import { Transcripts } from './transcripts.ts';
 import { Publisher } from './publisher.ts';
 import { Sessions } from './sessions.ts';
 import { CliTerminals, realEnd } from './cli-terminals.ts';
-import { realSdk, mcpProbe } from './sdk.ts';
+import { realSdk, mcpProbe, awsAuthRefreshOf } from './sdk.ts';
+import { Creds, gitRoot, guessCommand } from './creds.ts';
+import { shellPty } from './pty.ts';
 import { Mcp, cliRunner } from './mcp.ts';
 import { loadBat } from './preview.ts';
 import { Router } from './router.ts';
@@ -167,6 +169,18 @@ const sessions = new Sessions({
     const folder = publisher.meta(sid)?.cwd;
     if (folder) menus.commandsChanged(folder, commands);
   },
+  onSignedOut: (sid, cwd, on) => void creds.signedOut(sid, cwd, on),
+  onGone: (sid) => creds.forget(sid),
+});
+
+// The credential refresh of a session's folder when its model sign-in expires (creds.ts): the folder's saved
+// command in a pseudo-terminal, `zsh -lc` (`sh -lc` under the script, so a check reads no profile of yours).
+const creds = new Creds({
+  start: shellPty, commands: store.state.refresh, saved: () => store.changed(),
+  prefill: (cwd, root) => guessCommand(cwd, root, scripted ? async () => '' : awsAuthRefreshOf),
+  rootOf: gitRoot, send: (msg) => publisher.broadcast(msg),
+  refreshing: (sids, on) => sessions.refreshing(sids, on), refreshed: (sids) => sessions.refreshed(sids),
+  log, shell: scripted ? '/bin/sh' : undefined, againMs: scripted ? 1500 : undefined,
 });
 
 // Something runs that the idle exit must not end: a turn, a subagent, a background shell or
@@ -181,7 +195,7 @@ const mcp = new Mcp({ runner: scripted?.mcpRunner ?? cliRunner, probe: (cwd) => 
 
 // Page frames (router.ts): checked, one module acts, actions acked.
 const fileRefs = new FileRefs({ home });
-const router = new Router({ sessions, transcripts, publisher, menus, mcp, store, marks, bat, home, log, dryRun, fileRefs });
+const router = new Router({ sessions, transcripts, publisher, menus, mcp, creds, store, marks, bat, home, log, dryRun, fileRefs });
 
 try {
   server = await startServer({
@@ -189,7 +203,10 @@ try {
     token,
     webRoot: fileURLToPath(new URL('../../web/', import.meta.url)),
     log,
-    onAuthed: (client) => publisher.hello(client, { code: CODE, layout: sessions.layout.get(), menu: menus.all(), ui: store.state.ui, update: daemon.updatePending }),
+    onAuthed: (client) => {
+      publisher.hello(client, { code: CODE, layout: sessions.layout.get(), menu: menus.all(), ui: store.state.ui, update: daemon.updatePending });
+      for (const f of creds.frames()) publisher.reply(client, f); // a refresh that needs you or runs
+    },
     quitCheck: () => quitSummary(sessions.quitCheck()),
     badge: () => badge.count,
     ping: () => ({ code: CODE, v: PROTOCOL }),
@@ -217,6 +234,7 @@ await daemon.ready({
     writer.stop();
     menus.stop();
     mcp.stop();
+    creds.stop();
     terminals.stop();
     sessions.stop();
     publisher.stop();

@@ -49,6 +49,9 @@ export type State = {
   // `history`: the titles the writer gave, oldest first (at most 50), for the transcript's title items.
   written: Record<string, { title?: string; now?: string; at: number; history?: { title: string; at: number }[] }>;
   settings: Settings;
+  // The credential refresh command of each folder (creds.ts, 2026-11-26), keyed by its absolute path (the
+  // session's git root, else its folder). creds.ts is its one owner.
+  refresh: Record<string, string>;
   // The page's UI state, restored after a reload, a crash or a quit (ui-state.ts).
   ui: UiState;
 };
@@ -68,6 +71,7 @@ export function defaultState(): State {
     ended: {},
     endedFailed: {},
     settings: { writerModel: 'haiku' },
+    refresh: {},
     ui: { sessions: {} },
   };
 }
@@ -112,6 +116,7 @@ export function normalize(raw: unknown): State {
   s.plans = newest(entries(raw.plans, (v) => (typeof v === 'string' ? v : undefined)), PLANS_MAX);
   s.status = entries(raw.status, (v) => (isObj(v) && typeof v.status === 'string' && isNum(v.at) ? { status: v.status, at: v.at } : undefined));
   s.ended = entries(raw.ended, (v) => (isNum(v) ? v : undefined));
+  s.refresh = entries(raw.refresh, (v) => (typeof v === 'string' && v.trim() ? v : undefined));
   s.endedFailed = entries(raw.endedFailed, (v) => (typeof v === 'boolean' ? v : undefined));
   s.written = entries(raw.written, (v) => {
     if (!isObj(v) || !isNum(v.at)) return undefined;

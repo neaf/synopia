@@ -6,17 +6,20 @@
 //   stopped    stopped by you: idle after a turn that ended by interrupt
 //   failed     a `result` that is an error and not an interrupt, or the process failed
 // The states of requirements R8.2 that come from one typed message each (sdk.d.ts):
-//   signedout  signed out: an `assistant` message whose `error` is authentication_failed or
-//              cloud_credential_error, a `system/api_retry` with one of those errors, or an
-//              `auth_status` with an `error`. Clears when a turn starts (system/init or a send),
-//              on a main-thread reply without an error (assistant or stream_event), or on an
-//              `auth_status` that ends without one. Wins over everything but needs you.
+//   signedout  needs you, sign-in expired (2026-11-26): an `assistant` message whose `error` is
+//              authentication_failed or cloud_credential_error, a `system/api_retry` that is an
+//              authentication failure (isAuthFailure), or an `auth_status` with an `error`. Clears when
+//              a turn starts (system/init or a send), on a main-thread reply without an error
+//              (assistant or stream_event), on an `auth_status` that ends without one, or when the
+//              folder's credential refresh command succeeded (creds.ts). Wins over everything but a card.
+//   refreshing signed out while the folder's credential refresh command runs (creds.ts setRefreshing).
 //   stale      no updates: a turn runs, no card waits, and no SDK message of any kind came for
 //              STALE_MS (plus the delay of a retry it announced). `keep_alive` is control traffic,
 //              not an SDKMessage, so query() never yields it. Clears on the next message.
-//   retrying   rate limited: `system/api_retry` with error `rate_limit` or HTTP 429 (Bedrock's
-//              throttling). Clears on the next reply (assistant or stream_event), a `system/status`,
-//              a retry for another error, or the turn's end.
+//   retrying   `system/api_retry`, whatever its error (2026-11-26): its attempt, cap and delay, and the
+//              CLI's sentence for it (the transcript's system/api_error, Running.apiError), else one worded
+//              from the documented `error` and `error_status` (retrySentence). Clears on the next reply
+//              (assistant or stream_event), a `system/status`, or the turn's end.
 //   compacting `system/status` with status `compacting`. Clears on a `system/status` with any
 //              other status, a `system/compact_boundary`, or the turn's end.
 // Background subagents and forks (requirements R8.2, 2026-11-23): with the main turn over, a
@@ -44,14 +47,17 @@
 import type { SDKAssistantMessageError, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { Item, PendingAsk } from './transcript.ts';
 
-export type Status = 'busy' | 'idle' | 'waiting' | 'stopped' | 'failed' | 'signedout' | 'stale' | 'retrying' | 'compacting';
+export type Status = 'busy' | 'idle' | 'waiting' | 'stopped' | 'failed' | 'signedout' | 'refreshing' | 'stale' | 'retrying' | 'compacting';
 type Outcome = 'idle' | 'stopped' | 'failed';
-export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string };
-// queued: messages waiting for the running turn. retry: the attempt, its cap and when it goes (ms).
+// text: the result's `result` string, the failure's sentence when it is an error.
+export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string; text?: string };
+// queued: messages waiting for the running turn. retry: the attempt, its cap, when it goes (ms) and why.
+// error: the sentence of a failed turn, or of the expired sign-in.
 export type Takeover = 'waiting' | 'taking';
 // external: the status is another process's, read from the transcript (its main turn, or its question
 // or plan), not Synopia's own process's: publisher.ts sends the session as not `driven`.
-export type StatusDetail = { queued?: number; retry?: { attempt: number; max: number; at: number }; terminal?: number; takeover?: Takeover; external?: true };
+export type Retry = { attempt: number; max: number; at: number; text: string };
+export type StatusDetail = { queued?: number; retry?: Retry; error?: string; terminal?: number; takeover?: Takeover; external?: true };
 export type StatusEntry = { status: Status; at: number; detail?: StatusDetail };
 
 // 15 min: longer than the Bash tool's longest timeout (10 min), the longest a foreground tool
@@ -65,8 +71,38 @@ export const QUIET_MS = 30 * 60_000;
 export const ASK_STALE_MS = 12 * 60 * 60_000;
 // What runs by the transcript: subagents and forks, the main turn, and when it last changed (ms),
 // and the question or plan it waits on (null or absent: none).
-export type Running = { agents: number; turn: boolean; lastAt: number; ask?: PendingAsk | null };
+// apiError: the request the CLI retries now, by the transcript (its system/api_error), or none.
+export type ApiError = { text: string; status: number | null; credential: boolean };
+export type Running = { agents: number; turn: boolean; lastAt: number; ask?: PendingAsk | null; apiError?: ApiError | null };
 export const AUTH_ERRORS: readonly SDKAssistantMessageError[] = ['authentication_failed', 'cloud_credential_error'];
+
+// Whether a retried request failed on its sign-in or credentials (2026-11-26), the one place that decides:
+// the documented `error` (authentication_failed, cloud_credential_error) or `error_status` (401, 403) of the
+// `system/api_retry` first; then the transcript's `isCloudCredentialError`; the sentence only as a fallback,
+// when the error says nothing more (`unknown`, no HTTP status).
+const AUTH_TEXT = /\b(security token|token|credentials?|sign-?in|session)\b[^.]*\b(expired|invalid|not valid|could not be (loaded|found|resolved))\b|\bexpired\b[^.]*\b(token|credentials?)\b|\bcould not load (aws )?credentials\b/i;
+export function isAuthFailure(error: unknown, status: unknown, api?: ApiError | null): boolean {
+  if (AUTH_ERRORS.includes(error as SDKAssistantMessageError)) return true;
+  if (status === 401 || status === 403) return true;
+  if (api?.credential || api?.status === 401 || api?.status === 403) return true;
+  return (error === 'unknown' || error == null) && (status == null) && Boolean(api?.text && AUTH_TEXT.test(api.text));
+}
+
+// The sentence of a retry when the transcript has none (yet): from the documented fields alone.
+const RETRY_WHY: Partial<Record<SDKAssistantMessageError, string>> = {
+  rate_limit: 'Rate limited', overloaded: 'The API is overloaded', server_error: 'The API had a server error',
+  authentication_failed: 'The sign-in was refused', cloud_credential_error: 'The model\'s credentials failed',
+  billing_error: 'A billing error', model_not_found: 'The model wasn\'t found', invalid_request: 'The request was refused',
+};
+export function retrySentence(error: unknown, status: unknown): string {
+  const why = RETRY_WHY[error as SDKAssistantMessageError] ?? (status == null ? 'The connection failed' : 'The request failed');
+  return typeof status === 'number' ? `${why} (HTTP ${status})` : why;
+}
+
+// One sentence of a result's text, for the failed status (at most 300 characters).
+export function failureSentence(text: unknown): string {
+  return typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+}
 export type Timer = (fn: () => void, ms: number) => () => void;
 const realTimer: Timer = (fn, ms) => {
   const t = setTimeout(fn, ms);
@@ -81,6 +117,7 @@ export function restored(stored: { status?: unknown; at?: unknown } | undefined)
   if (!stored || typeof stored.at !== 'number') return null;
   const st = stored.status;
   if (st === 'stopped' || st === 'failed' || st === 'idle' || st === 'signedout') return { status: st, at: stored.at };
+  if (st === 'refreshing') return { status: 'signedout', at: stored.at }; // its refresh ended with the old process
   return { status: 'idle', at: stored.at };
 }
 
@@ -107,7 +144,10 @@ export class SessionStatus {
   private hurrying = false; // f, f interrupted the turn so its queued messages run now: no Stop
   private signedOut: boolean;
   private compacting = false;
-  private retry: { attempt: number; max: number; at: number } | null = null;
+  private retry: { attempt: number; max: number; at: number; error: unknown; status: unknown } | null = null;
+  private apiError: ApiError | null = null; // the transcript's sentence for the request the CLI retries
+  private refreshing = false; // the folder's credential refresh command runs (creds.ts)
+  private errorText = ''; // the sentence of the failed turn or the expired sign-in
   private queued: string[] = []; // uuids pushed during a turn, not yet listed by a reply
   private last: number; // when the last SDK message came (or the turn started, or a card was answered)
   private staleMs: number;
@@ -148,6 +188,7 @@ export class SessionStatus {
     this.running = true;
     this.resulted = false;
     this.signedOut = false;
+    this.errorText = '';
     this.last = this.now();
     this.update();
   }
@@ -167,15 +208,14 @@ export class SessionStatus {
     if (seen.length) this.queued = this.queued.filter((q) => !seen.includes(q));
     if (m.type === 'assistant' || m.type === 'stream_event') {
       const err = m.error as SDKAssistantMessageError | undefined;
-      if (err && AUTH_ERRORS.includes(err)) this.signedOut = true;
-      else if (m.parent_tool_use_id == null) this.signedOut = false;
+      if (err && AUTH_ERRORS.includes(err)) {
+        if (!this.signedOut || !this.errorText) this.errorText = this.retryText();
+        this.signedOut = true;
+      } else if (m.parent_tool_use_id == null) this.signedOut = false;
       this.retry = null;
     } else if (m.type === 'system' && m.subtype === 'api_retry') {
-      const err = m.error as SDKAssistantMessageError;
-      if (AUTH_ERRORS.includes(err)) this.signedOut = true;
-      this.retry = err === 'rate_limit' || m.error_status === 429
-        ? { attempt: num(m.attempt), max: num(m.max_retries), at: this.last + num(m.retry_delay_ms) }
-        : null;
+      this.retry = { attempt: num(m.attempt), max: num(m.max_retries), at: this.last + num(m.retry_delay_ms), error: m.error, status: m.error_status };
+      if (isAuthFailure(m.error, m.error_status, this.apiError)) this.signedOut = true;
     } else if (m.type === 'system' && m.subtype === 'status') {
       this.compacting = m.status === 'compacting';
       this.retry = null;
@@ -228,6 +268,7 @@ export class SessionStatus {
 
   result(r: ResultLike): void {
     this.outcome = this.stopping ? 'stopped' : this.hurrying ? 'idle' : outcomeOf(r);
+    if (this.outcome === 'failed' && r.text) this.errorText = failureSentence(r.text) || this.errorText;
     this.stopping = false;
     this.hurrying = false;
     this.resulted = true;
@@ -239,6 +280,9 @@ export class SessionStatus {
   // a running main turn there is another process's. One starting makes the old outcome history.
   setRunning(r: Running, external: boolean): void {
     this.agents = r.agents;
+    this.apiError = r.apiError ?? null;
+    // the sentence can tell an authentication failure the retry's fields didn't (isAuthFailure's fallback)
+    if (this.retry && this.running && isAuthFailure(this.retry.error, this.retry.status, this.apiError)) this.signedOut = true;
     const turn = external && r.turn;
     if (turn && !this.external) {
       this.outcome = 'idle';
@@ -253,6 +297,24 @@ export class SessionStatus {
     this.pending = n;
     this.last = this.now(); // waiting on you is no silence
     this.update();
+  }
+
+  // The folder's credential refresh command runs, or no longer (creds.ts).
+  setRefreshing(on: boolean): void {
+    this.refreshing = on;
+    this.update();
+  }
+
+  // The folder's credential refresh command succeeded: the CLI's next retry takes the new credentials.
+  credentialsRefreshed(): void {
+    if (!this.signedOut) return;
+    this.signedOut = false;
+    this.update();
+  }
+
+  // Signed out (needs you, sign-in expired, or refreshing): creds.ts runs the folder's command for it.
+  get signedOutNow(): boolean {
+    return this.signedOut;
   }
 
   // A terminal's CLI holds the session (its pid), or no longer (0).
@@ -280,6 +342,12 @@ export class SessionStatus {
     this.processEnded(true);
   }
 
+  // The retry's sentence: the CLI's own (the transcript), else one from the documented fields.
+  private retryText(): string {
+    if (!this.retry) return this.apiError?.text ?? '';
+    return this.apiError?.text || retrySentence(this.retry.error, this.retry.status);
+  }
+
   private turnOver(): void {
     this.running = false;
     this.compacting = false;
@@ -294,12 +362,14 @@ export class SessionStatus {
     const silentFor = this.staleMs + (this.retry ? Math.max(0, this.retry.at - this.last) : 0);
     const stale = this.running && this.pending === 0 && now - this.last >= silentFor;
     const next: Status = this.pending > 0 || this.ask ? 'waiting'
-      : this.signedOut ? 'signedout'
+      : this.signedOut ? (this.refreshing ? 'refreshing' : 'signedout')
         : !this.running ? (this.agents > 0 || this.external ? 'busy' : this.outcome)
           : stale ? 'stale' : this.retry ? 'retrying' : this.compacting ? 'compacting' : 'busy';
     const detail: StatusDetail = {};
     if (next === 'busy' && this.queued.length) detail.queued = this.queued.length;
-    if (next === 'retrying' && this.retry) detail.retry = { ...this.retry };
+    if (next === 'retrying' && this.retry) detail.retry = { attempt: this.retry.attempt, max: this.retry.max, at: this.retry.at, text: this.retryText() };
+    const why = this.signedOut && this.retry ? this.retryText() : this.errorText;
+    if ((next === 'signedout' || next === 'refreshing' || next === 'failed') && why) detail.error = why;
     if (this.terminal) detail.terminal = this.terminal;
     if (this.takeover) detail.takeover = this.takeover;
     if (!this.running && this.pending === 0 && (this.ask || this.external)) detail.external = true;
@@ -317,7 +387,7 @@ export class SessionStatus {
   // One timer while a turn runs and messages may stop: it checks again when the silence would
   // reach the threshold; a message that came meanwhile only moves the next check on.
   private armStale(next: Status, left: number): void {
-    const watch = this.running && this.pending === 0 && next !== 'stale' && next !== 'signedout';
+    const watch = this.running && this.pending === 0 && next !== 'stale' && next !== 'signedout' && next !== 'refreshing';
     if (!watch) {
       this.cancelStale?.();
       this.cancelStale = null;
@@ -353,18 +423,19 @@ function uuidsOf(m: Loose): string[] {
 }
 
 function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
-  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.external === b.external && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at;
+  return a.queued === b.queued && a.terminal === b.terminal && a.takeover === b.takeover && a.external === b.external && a.error === b.error && a.retry?.attempt === b.retry?.attempt && a.retry?.max === b.retry?.max && a.retry?.at === b.retry?.at && a.retry?.text === b.retry?.text;
 }
 
 // ---------- what the page shows: the one derivation ----------
 // The page renders `session.state` and decides nothing about status itself.
-//   light    red: needs you. green: a turn runs, interruptible (working, compacting, rate limited,
-//            no updates). amber: your turn (idle, stopped, failed, signed out).
-//   tone     the state word's colour: red for needs you and signed out, amber for rate limited,
-//            grey for no updates, else the light.
+//   light    red: needs you (signed out too). green: a turn runs, interruptible (working, compacting,
+//            retrying, no updates), or the credentials are being refreshed. amber: your turn (idle,
+//            stopped, failed).
+//   tone     the state word's colour: red for needs you, amber for retrying, grey for no updates, else the light.
 //   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
-//            ("Signed out", "No updates", "Rate limited", "Compacting"). "Needs you, blocked": your
-//            turn after a main turn with a step denied and not retried (blockedLast).
+//            ("No updates", "Retrying, attempt 4 of 10", "Compacting", "Refreshing credentials…").
+//            "Needs you, blocked": your turn after a main turn with a step denied and not retried
+//            (blockedLast). "Needs you, sign-in expired": signed out (2026-11-26).
 //   mark     the session mark's key (marks.js).
 //   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
 //            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
@@ -375,7 +446,7 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
 //            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
 export type Light = 'red' | 'amber' | 'green';
-export type Needs = 'question' | 'permission' | 'plan' | 'blocked';
+export type Needs = 'question' | 'permission' | 'plan' | 'blocked' | 'signin';
 export type SessionState = {
   status: Status; since: number; detail: StatusDetail;
   light: Light; tone: Light | 'grey'; word: string; mark: string;
@@ -391,27 +462,30 @@ export type StateFacts = {
 };
 
 const LIGHT: Record<Status, Light> = {
-  waiting: 'red', busy: 'green', compacting: 'green', retrying: 'green', stale: 'green',
-  idle: 'amber', stopped: 'amber', failed: 'amber', signedout: 'amber',
+  waiting: 'red', signedout: 'red', busy: 'green', compacting: 'green', retrying: 'green', stale: 'green', refreshing: 'green',
+  idle: 'amber', stopped: 'amber', failed: 'amber',
 };
 const PHASE: Partial<Record<Status, { word: string; mark: string }>> = {
-  signedout: { word: 'Signed out', mark: 'creds' },
   stale: { word: 'No updates', mark: 'stale' },
-  retrying: { word: 'Rate limited', mark: 'ratelimit' },
+  retrying: { word: 'Retrying', mark: 'ratelimit' },
   compacting: { word: 'Compacting', mark: 'compact' },
+  refreshing: { word: 'Refreshing credentials…', mark: 'work' },
 };
+const NEEDS_WORD: Partial<Record<Needs, string>> = { blocked: 'Needs you, blocked', signin: 'Needs you, sign-in expired' };
+// "Retrying, attempt 4 of 10"
+const retryWord = (r: Retry | undefined): string => !r || !r.attempt ? 'Retrying' : `Retrying, attempt ${r.attempt}${r.max ? ` of ${r.max}` : ''}`;
 
 export function sessionState(e: { status: Status; at: number; detail?: StatusDetail }, f: StateFacts): SessionState {
   const status = e.status, detail = e.detail ?? {};
   // your turn after a turn whose step was blocked or denied: Claude can't go on without you
   const blocked = status === 'idle' && f.blocked && !f.interrupted;
-  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : blocked ? 'blocked' : null);
+  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : status === 'signedout' ? 'signin' : blocked ? 'blocked' : null);
   const light: Light = needsYou ? 'red' : LIGHT[status];
   const phase = light === 'red' ? undefined : PHASE[status];
   const stopped = light === 'amber' && !phase && status !== 'failed' && (status === 'stopped' || f.interrupted);
-  const word = phase ? phase.word : light === 'red' ? (needsYou === 'blocked' ? 'Needs you, blocked' : 'Needs you') : light === 'green' ? 'Working'
+  const word = phase ? (status === 'retrying' ? retryWord(detail.retry) : phase.word) : light === 'red' ? (NEEDS_WORD[needsYou as Needs] ?? 'Needs you') : light === 'green' ? 'Working'
     : status === 'failed' ? 'Failed' : stopped ? 'Stopped' : 'Your turn';
-  const tone: Light | 'grey' = light === 'red' || status === 'signedout' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' ? 'grey' : light;
+  const tone: Light | 'grey' = light === 'red' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' ? 'grey' : light;
   // your turn shows the grey square, whether or not background work runs
   const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (detail.queued ? 'queued' : 'work')
     : status === 'failed' ? 'failed' : 'stopped';
@@ -434,7 +508,7 @@ export function blockedLast(items: Item[]): boolean {
 }
 
 // What a session adds to the Dock badge (R2.6): 1 while it needs you, plus its deliverables to review.
-// Signed out, no updates, rate limited, compacting and working don't count.
+// No updates, retrying, compacting, refreshing and working don't count; signed out needs you (2026-11-26).
 export const badgeOf = (s: SessionState): number => (s.needsYou ? 1 : 0) + s.review;
 
 // The Dock badge's count, kept as sessions change: the shell polls it every 2 s and nothing is rebuilt

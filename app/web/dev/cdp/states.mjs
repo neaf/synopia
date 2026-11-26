@@ -1,6 +1,6 @@
-// The session states of R8.2 that status.ts wires (queued, compacting, rate limited, signed out,
+// The session states of R8.2 that status.ts wires (queued, compacting, retrying, sign-in expired,
 // no updates), on the states fixture's SDK script, and needs you after a step auto mode blocked: the sidebar's word and mark per row, the
-// transcript's last line, and the signed-out status line. Writes states-<n>.png in the state folder.
+// transcript's last line, and the sign-in expired status line (creds.mjs has the refresh). Writes states-<n>.png in the state folder.
 // usage: run.sh states (or node states.mjs <url> <state-dir>)
 import { connect, sleep } from './cdp.mjs';
 import { writeFileSync } from 'node:fs';
@@ -14,8 +14,8 @@ const row = (p) => ev(`(() => { const r = document.querySelector('.row[data-id^=
 const want = [
   ['a1a1', 'green', /^Working, 1 message queued$/, 'mk-0550AE', 'Your message is queued'],
   ['b2b2', 'green', /^Compacting context$/, 'class="cr"', 'Summing up the conversation'],
-  ['c3c3', 'amber', /^Rate limited, retrying in \d+s$/, 'class="rl"', 'attempt 3 of 10'],
-  ['d4d4', 'red', /^Signed out, \d+ min$/, 'class="lock"', null],
+  ['c3c3', 'amber', /^Retrying, attempt 3 of 10, in \d+s$/, 'class="rl"', 'Rate limited (HTTP 429) · retrying in'],
+  ['d4d4', 'red', /^Needs you, sign-in expired, \d+ min$/, 'class="bars"', null],
   ['e5e5', 'grey', /^No updates for 1[56] min$/, 'arc frozen', 'the session may be gone'],
   // a session Synopia doesn't drive: the main turn is over and background subagents run, so it is working (R8.2)
   ['f6f6', 'green', /^Working$/, 'class="rot"', 'Working'],
@@ -35,7 +35,7 @@ for (const [p, state, word, mark, line] of want) {
     check(`${p}: transcript line`, live.includes(line), JSON.stringify(live));
   } else {
     const st = await ev(`document.querySelector('.dock .status')?.textContent.replace(/\\s+/g, ' ').trim() ?? ''`);
-    check(`${p}: signed-out status line above the box`, st.startsWith('Signed out') && !(await ev(`!!document.querySelector('.liveln')`)), JSON.stringify(st));
+    check(`${p}: sign-in expired status line above the box`, st.startsWith('Needs you, sign-in expired') && st.includes('Run to refresh credentials:') && !(await ev(`!!document.querySelector('.liveln')`)), JSON.stringify(st));
   }
   const shot = await c.cdp('Page.captureScreenshot', { format: 'png' });
   writeFileSync(`${stateDir}/states-${++n}.png`, Buffer.from(shot.result.data, 'base64'));

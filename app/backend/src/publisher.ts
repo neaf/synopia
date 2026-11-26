@@ -493,7 +493,7 @@ export class Publisher {
     this.trimSince(p, t, ch);
     // What runs by the transcript first: the status it sets is in this flush's meta.
     const ran = this.transcripts.running(sid);
-    const ranKey = `${ran.agents}:${ran.turn}:${ran.ask?.toolUseId ?? ''}`;
+    const ranKey = `${ran.agents}:${ran.turn}:${ran.ask?.toolUseId ?? ''}:${ran.apiError?.text ?? ''}`;
     if (ranKey !== p.ran) {
       p.ran = ranKey;
       this.opts.onRunning?.(sid, ran);

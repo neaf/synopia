@@ -183,3 +183,11 @@ test('inputEditOf: an Edit or Write from its input, for a subagent result with n
   assert.equal(inputEditOf('Read', { file_path: '/x/a' }), null);
   assert.equal(inputEditOf('Edit', { old_string: 'a', new_string: 'b' }), null);
 });
+
+test('classify: a retried request (system/api_error): the sentence the CLI shows (formatted, else message), its HTTP status, a credential error', () => {
+  const r = classify({ type: 'system', subtype: 'api_error', level: 'error', source: 'request_retry', uuid: 'e1', timestamp: ts, retryInMs: 3000, retryAttempt: 4, maxRetries: 10,
+    error: { message: 'Request failed.', formatted: 'The security token included in the request is expired', status: 403, connection: null, isNetworkDown: false, rateLimits: {}, noResponse: null } });
+  assert.deepEqual(r, { uuid: 'e1', ts, sidechain: false, kind: 'api-error', text: 'The security token included in the request is expired', status: 403, credential: false });
+  const c = classify({ type: 'system', subtype: 'api_error', error: { message: 'Failed to resolve AWS credentials.', isCloudCredentialError: true } });
+  assert.deepEqual(c, { uuid: '', ts: null, sidechain: false, kind: 'api-error', text: 'Failed to resolve AWS credentials.', status: null, credential: true });
+});

@@ -8,6 +8,7 @@ import { md } from "./md.js";
 import { ind } from "./marks.js";
 import { mode, setMode, paintMode } from "./mode.js";
 import * as ui from "./ui-state.js";
+import { credsHTML, wireCreds } from "./creds-line.js";
 
 /* ask key "<sid>:<request id>" -> { qi, oi, picks: {qi: [labels]}, own: {qi: text}, notes, target: qi|null, noteRow };
    kept with the UI state (ui-state.js), so a half-answered card comes back after a reload */
@@ -194,12 +195,22 @@ export function qaKeys(e) {
   e.preventDefault(); renderCard(); paintMode(); document.getElementById("qa-own")?.focus();
   return true;
 }
-/* The dock's line when Claude needs you without a card: signed out, or a red state whose request isn't
-   here. Working and your turn have no status line (R5.5). */
+/* The dock's line when Claude needs you without a card: the sign-in expired or its credentials are being
+   refreshed (creds-line.js), a red state whose request isn't here, or a turn that failed with a sentence.
+   Working and your turn have no status line (R5.5). */
+const credsState = s => s.state.status === "signedout" || s.state.status === "refreshing"; // status.ts: a card wins over both
 function statusLine(s) {
-  if (s.state.status === "signedout" && s.state.light !== "red") return `<div class="status" data-state="red"><b>${ind("creds")} Signed out</b><span>Your sign-in expired. Sign in again (aws sso login on Bedrock), then send a message</span></div>`;
+  if (credsState(s)) return credsHTML(s);
+  if (s.state.status === "failed" && s.state.light !== "red") return `<div class="status" data-state="amber"><b>${ind("failed")} Failed</b><span>${esc(s.state.detail.error)}</span></div>`;
   const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something", blocked: "A step was blocked or denied and Claude needs you to continue" }[s.state.needsYou] || "Claude is waiting for a permission";
   return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
+}
+/* The credential line's fields (creds-line.js) across a redraw (its output grows while you type): what you
+   typed, the caret and the focus come back on the field with the same id. */
+function keepFields(dock) {
+  const was = [...dock.querySelectorAll("#creds-cmd, #creds-in")].map(el => ({ id: el.id, value: el.value, focus: document.activeElement === el, a: el.selectionStart, b: el.selectionEnd, typed: el.dataset.typed === "1" }));
+  return () => { for (const w of was) { const el = document.getElementById(w.id); if (!el || !w.typed && !w.focus) continue;
+    el.value = w.value; el.dataset.typed = "1"; if (w.focus) { el.focus(); el.setSelectionRange(w.a, w.b); } } };
 }
 /* The dock above the composer: the card for the oldest pending request, or the status line when Claude
    needs you without one. Redrawn only when its HTML changed, so a half-typed answer stays. */
@@ -210,13 +221,14 @@ export function renderCard() {
   const s = cur(); if (!s || !mounted) return;
   const A = view && (agentById(s, view) || bgById(s, view)); // a subagent, shell or monitor view shows no card
   const pa = !A && pendingAsk(s), ea = !A && !pa && extAsk(s);
-  const html = pa ? qaHTML(s, pa) : ea ? extHTML(s, ea) : !A && (s.state.light === "red" || s.state.status === "signedout") ? statusLine(s) : "";
+  const html = pa ? qaHTML(s, pa) : ea ? extHTML(s, ea) : !A && (s.state.light === "red" || credsState(s) || (s.state.status === "failed" && s.state.detail?.error)) ? statusLine(s) : "";
   if (still(html) === lastCard) return;
   lastCard = still(html);
   const conv = document.getElementById("conv"), dock = conv.querySelector(".dock-inner"), composer = dock.querySelector(".composer");
+  const kept = keepFields(dock);
   [...dock.children].forEach(el => { if (el !== composer) el.remove(); });
   if (html) composer.insertAdjacentHTML("beforebegin", html);
-  if (!pa) return;
+  if (!pa) { kept(); if (credsState(s)) wireCreds(s); return; }
   const st = qs(s, pa);
   conv.querySelectorAll(".acc[data-qi]").forEach(b => b.onclick = () => { st.qi = +b.dataset.qi; st.oi = 0; renderCard(); });
   conv.querySelectorAll(".qa-card .o").forEach(b => b.onclick = () => { st.oi = +b.dataset.oi; qaPick(s, pa); if (mode !== "insert") renderCard(); });

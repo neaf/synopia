@@ -128,6 +128,8 @@ export type SessionDeps = {
   onTurnEnded?: (sid: string) => void;
   onWaiting?: (sid: string) => void;
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
+  // Its sign-in expired, or works again (status.ts signed out): creds.ts refreshes the folder's credentials.
+  onSignedOut?: (s: Session, signedOut: boolean) => void;
   // The process reports another id (init of a new session, a reset): sessions.ts moves the record.
   rekey: (s: Session, newId: string, why: 'init' | 'reset' | 'moved') => void;
   // Synopia's tools for agents (agent-tools.ts): a fresh server for each process, given the
@@ -156,6 +158,7 @@ export class Session {
   private interrupting = false; // an interrupt is on its way: held messages go back to the box
   private contextOnly = false; // the process took only bash mode's context: its init starts no turn
   private bang: Bang | null = null; // the `!` command that runs or ran last: one at a time
+  private wasSignedOut = false; // what onSignedOut last said
   private ownEnd = 0; // when a process of ours last ended (0: none yet), for feedRunning
   private askId = ''; // the tool use id of the question or plan another process asks (R6.8)
   private closed = false;
@@ -585,7 +588,7 @@ export class Session {
       if (this.stream.event(m as { event: unknown; parent_tool_use_id: string | null })) this.pushStream(false);
     } else if (m.type === 'result') {
       this.clearStream();
-      this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined });
+      this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined, text: typeof m.result === 'string' ? m.result : undefined });
       this.d.onTurnEnded?.(this.id);
       this.releaseHeld(); // held behind a card that is gone: they are the next turn
     }
@@ -609,6 +612,11 @@ export class Session {
   private statusChanged(e: StatusEntry): void {
     const { publisher, store } = this.d;
     publisher.setStatus(this.id, e.status, e.at, e.detail);
+    const out = this.status.signedOutNow;
+    if (out !== this.wasSignedOut) {
+      this.wasSignedOut = out;
+      this.d.onSignedOut?.(this, out);
+    }
     // the turn stopped with messages still queued: they go once they've had time to land
     if (!queuesBehind(e.status) && this.outbox.some((o) => !o.landed)) this.laterOutbox(OUTBOX_GRACE_MS);
     const kept = store.state.status[this.id];

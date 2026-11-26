@@ -158,6 +158,62 @@ test('status: signed out on a credential error, over failed; cleared by the next
   assert.equal(s.status, 'busy');
 });
 
+test('status: an authentication retry is signed out, by its error, its HTTP status, or its sentence as the fallback', () => {
+  const bedrock = { type: 'system', subtype: 'api_retry', attempt: 4, max_retries: 10, retry_delay_ms: 3000, error_status: 403, error: 'unknown' };
+  const { s, msg } = clocked();
+  s.stateChanged('running');
+  msg(bedrock);
+  assert.equal(s.status, 'signedout', 'HTTP 403');
+  s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'The security token included in the request is expired', status: 403, credential: false } }, false);
+  assert.equal(s.detail.error, 'The security token included in the request is expired', "the CLI's sentence");
+  const b = clocked();
+  b.s.stateChanged('running');
+  b.msg({ ...bedrock, error_status: null });
+  assert.equal(b.s.status, 'retrying', 'an unknown error with no status');
+  b.s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'The security token included in the request is expired', status: null, credential: false } }, false);
+  assert.equal(b.s.status, 'signedout', 'the sentence decides when the fields say nothing');
+  const c = clocked();
+  c.s.stateChanged('running');
+  c.msg({ ...bedrock, error_status: null, error: 'cloud_credential_error' });
+  assert.equal(c.s.status, 'signedout', 'the documented error (live run AR-1)');
+  assert.equal(c.s.detail.error, "The model's credentials failed");
+  const d = clocked();
+  d.s.stateChanged('running');
+  d.msg({ ...bedrock, error_status: 529, error: 'overloaded' });
+  d.s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'Overloaded; the token budget expired', status: 529, credential: false } }, false);
+  assert.equal(d.s.status, 'retrying', 'the sentence is no fallback once the fields say what failed');
+});
+
+test('status: refreshing while the folder\'s refresh command runs; its success clears signed out', () => {
+  const { s, msg } = clocked();
+  s.stateChanged('running');
+  msg({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 3000, error_status: 401, error: 'authentication_failed' });
+  assert.equal(s.signedOutNow, true);
+  s.setRefreshing(true);
+  assert.equal(s.status, 'refreshing');
+  s.setRefreshing(false);
+  assert.equal(s.status, 'signedout', 'it failed');
+  s.setRefreshing(true);
+  s.setRefreshing(false);
+  s.credentialsRefreshed();
+  assert.equal(s.status, 'retrying', 'back to the turn: the CLI retries with the new credentials');
+  msg(reply);
+  assert.equal(s.status, 'busy');
+});
+
+test('status: retries that ran out fail the turn with its sentence', () => {
+  const { s, msg } = clocked();
+  s.stateChanged('running');
+  msg({ type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, retry_delay_ms: 3000, error_status: 503, error: 'server_error' });
+  msg({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: 503 Service Unavailable' });
+  s.result({ subtype: 'success', is_error: true, text: 'API Error: 503 Service Unavailable' });
+  s.stateChanged('idle');
+  assert.equal(s.status, 'failed');
+  assert.deepEqual(s.detail, { error: 'API Error: 503 Service Unavailable' });
+  s.turnStarted();
+  assert.deepEqual(s.detail, {}, 'a new turn drops it');
+});
+
 test('status: needs you wins over signed out and every turn state', () => {
   const { s, msg } = clocked();
   s.stateChanged('running');
@@ -184,14 +240,20 @@ test('status: a restart keeps signed out, and the next turn clears it', () => {
   assert.equal(s.status, 'busy');
 });
 
-test('status: rate limited on a throttled retry, with its countdown; cleared by the next reply', () => {
+test('status: retrying on every retried request, with its attempt, countdown and sentence; cleared by the next reply', () => {
   const { s, seen, clock, msg } = clocked();
   s.stateChanged('running');
   msg(throttled);
   assert.equal(s.status, 'retrying');
-  assert.deepEqual(seen.at(-1)?.detail, { retry: { attempt: 3, max: 10, at: clock.t + 38_000 } });
+  assert.deepEqual(seen.at(-1)?.detail, { retry: { attempt: 3, max: 10, at: clock.t + 38_000, text: 'Rate limited (HTTP 429)' } });
   msg({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 500, error: 'server_error' });
-  assert.equal(s.status, 'busy', 'a server error retry is not rate limited');
+  assert.equal(s.status, 'retrying', 'a server error is retried too (2026-11-26)');
+  assert.equal(s.detail.retry?.text, 'The API had a server error (HTTP 500)');
+  s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'Internal server error', status: 500, credential: false } }, false);
+  assert.equal(s.detail.retry?.text, 'Internal server error', "the CLI's own sentence, from the transcript");
+  msg({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 500, error_status: null, error: 'unknown' });
+  s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
+  assert.equal(s.detail.retry?.text, 'The connection failed', 'no HTTP status, no sentence yet');
   msg(throttled);
   msg({ type: 'assistant', parent_tool_use_id: null, message: { content: [] } });
   assert.equal(s.status, 'busy');
@@ -351,9 +413,11 @@ test('state: each status has its light, tone, word and mark (R8.2)', () => {
   assert.deepEqual(show('busy'), ['green', 'green', 'Working', 'work']);
   assert.deepEqual(show('busy', {}, { queued: 2 }), ['green', 'green', 'Working', 'queued']);
   assert.deepEqual(show('compacting'), ['green', 'green', 'Compacting', 'compact']);
-  assert.deepEqual(show('retrying'), ['green', 'amber', 'Rate limited', 'ratelimit']);
+  assert.deepEqual(show('retrying'), ['green', 'amber', 'Retrying', 'ratelimit']);
+  assert.deepEqual(show('retrying', {}, { retry: { attempt: 4, max: 10, at: 0, text: 'x' } }), ['green', 'amber', 'Retrying, attempt 4 of 10', 'ratelimit']);
   assert.deepEqual(show('stale'), ['green', 'grey', 'No updates', 'stale']);
-  assert.deepEqual(show('signedout'), ['amber', 'red', 'Signed out', 'creds']);
+  assert.deepEqual(show('signedout'), ['red', 'red', 'Needs you, sign-in expired', 'pause']);
+  assert.deepEqual(show('refreshing'), ['green', 'green', 'Refreshing credentials…', 'work']);
   assert.deepEqual(show('idle'), ['amber', 'amber', 'Your turn', 'stopped']);
   assert.deepEqual(show('stopped'), ['amber', 'amber', 'Stopped', 'stopped']);
   assert.deepEqual(show('failed'), ['amber', 'amber', 'Failed', 'failed']);
@@ -379,7 +443,7 @@ test('state: stopped by you is the stop marker on your turn, not a turned-down t
   assert.equal(sessionState({ status: 'idle', at: 0 }, facts()).stopped, false);
   assert.deepEqual(show('failed', { interrupted: true }), ['amber', 'amber', 'Failed', 'failed'], 'a failed turn says so');
   assert.deepEqual(show('busy', { interrupted: true }), ['green', 'green', 'Working', 'work'], 'a new turn runs');
-  assert.deepEqual(show('signedout', { interrupted: true }), ['amber', 'red', 'Signed out', 'creds']);
+  assert.deepEqual(show('signedout', { interrupted: true }), ['red', 'red', 'Needs you, sign-in expired', 'pause']);
 });
 
 test('state: your turn after a blocked step is needs you, blocked (R8.2)', () => {
@@ -408,7 +472,7 @@ test('blockedLast: a denied step in the latest turn, not retried, blocks it; you
 
 test('state: the badge share is needs you plus the deliverables to review (R2.6)', () => {
   const of = (status: Status, f: Partial<StateFacts> = {}) => badgeOf(sessionState({ status, at: 0 }, facts(f)));
-  assert.deepEqual((['waiting', 'signedout', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle', 'stopped'] as Status[]).map((s) => of(s)), [1, 0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual((['waiting', 'signedout', 'refreshing', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle', 'stopped'] as Status[]).map((s) => of(s)), [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
   assert.equal(of('signedout', { pending: ['question'] }), 1);
   assert.equal(of('busy', { review: 2 }), 2);
   assert.equal(of('waiting', { review: 1 }), 2);

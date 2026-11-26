@@ -19,6 +19,7 @@ import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-lis
 import { applyFolders, applyCompletion, applyFolderState, foldersAgain } from "./folder-list.js";
 import { renderAll } from "./keys.js";
 import { applyMcp, mcpAgain } from "./mcp-panel.js";
+import { applyCreds } from "./creds-line.js";
 import { setMode } from "./mode.js";
 import { toast } from "./toast.js";
 import { onThemeChange } from "./theme-switch.js";
@@ -126,6 +127,7 @@ function onMessage(m) {
     case "toolOutput": transcript.applyToolOutput(m); break;
     case "recent": applyRecent(m); break;
     case "mcp": applyMcp(m); break;
+    case "creds": applyCreds(m); render("card"); break; // the dock's credential line (creds-line.js)
     case "folders": applyFolders(m); break;
     case "completion": applyCompletion(m); break;
     case "folderState": applyFolderState(m); applyOpenFolderState(m); break;

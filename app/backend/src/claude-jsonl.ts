@@ -217,6 +217,9 @@ export type ClaudeRecord =
   | (Base & { kind: 'pr-link'; pr: unknown })
   | (Base & { kind: 'permission-mode'; mode: string })
   | (Base & { kind: 'turn-end'; by: 'turn_duration' | 'stop_hook_summary'; durationMs: number | null })
+  // A request the CLI retries (system/api_error): its sentence, as the CLI's spinner shows it (`error.formatted`,
+  // else `error.message`), the HTTP status, and whether the CLI calls it a cloud credential error.
+  | (Base & { kind: 'api-error'; text: string; status: number | null; credential: boolean })
   // A `queued_command` attachment: a message, notification or hand-back taken in by a running turn.
   // `user`: what shows of it (a typed prompt, a notification or a report), null for the rest.
   | (Base & { kind: 'queued'; user: UserRecord | null })
@@ -304,6 +307,12 @@ export function classify(d: JsonRecord): ClaudeRecord {
   if (t === 'permission-mode') return { ...base, kind: 'permission-mode', mode: str(d.permissionMode) };
   if (t === 'system' && (d.subtype === 'turn_duration' || d.subtype === 'stop_hook_summary')) {
     return { ...base, kind: 'turn-end', by: d.subtype, durationMs: typeof d.durationMs === 'number' ? d.durationMs : null };
+  }
+  if (t === 'system' && d.subtype === 'api_error') {
+    // docs/Claude Code transcripts.md#retried-requests
+    const e = obj(d.error);
+    const text = (str(e.formatted) || str(e.message)).replace(/\s+/g, ' ').trim().slice(0, 300);
+    return { ...base, kind: 'api-error', text, status: typeof e.status === 'number' ? e.status : null, credential: e.isCloudCredentialError === true };
   }
   if (t === 'attachment') {
     // A message sent during a turn lands here, not as a user record (docs/Claude Code
