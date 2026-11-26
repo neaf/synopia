@@ -9,7 +9,7 @@ import { BANG_CAP } from './bang.ts';
 import { stepOf, sessionOf } from './agent-tools.ts';
 import type { BashOutput } from './bang.ts';
 import { classify, agentMetaOf } from './claude-jsonl.ts';
-import { isLedgerPath } from './ledger.ts';
+import { isLedgerPath, ledgerPathOf, ledgerPathIn, ownedIds } from './ledger.ts';
 import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, Denial, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
 
 export type { Question } from './claude-jsonl.ts';
@@ -73,6 +73,10 @@ export type Agent = {
 export type PendingAsk = { kind: 'question' | 'plan'; toolUseId: string; agentId: string | null; since: number; qs?: Question[]; plan?: string };
 // A title Synopia's writer gave the session, and when (ms): state.json `written[sid].history`.
 export type WrittenTitle = { title: string; at: number };
+// The session's ledger by its transcript (FR-ITEM-01): the last `.ai-notes/<area>/open-items.md` the main
+// conversation named in a Read, Write or Edit, or in a Bash command; `at` that tool use's time, `results` how many
+// results of such tool uses have landed (a new one: read the file again).
+export type LedgerFact = { path: string; at: string | null; toolUseId: string; results: number };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
 // One event of a monitor (its notification's `<event>`): `n` counts its events from 0, so a reader's
 // place survives the oldest ones being dropped past MAX_EVENTS.
@@ -353,6 +357,11 @@ class ReadState {
   prompted = false;
   writtenAt = -Infinity;
   // f, f's interrupt route (R9.8): the claude items of each message, and the aside that cut a message short.
+  // the main conversation's open-items facts (FR-ITEM-01, FR-ITEM-04); a subagent's Transcript keeps none
+  ledger: Omit<LedgerFact, 'results'> | null = null;
+  ledgerUses = new Set<string>(); // tool uses that named a ledger
+  ledgerResults = 0;
+  owns = new Map<string, string[]>(); // an Agent tool use id -> the ids its brief's `Open items:` line names
   textsOf = new Map<string, string[]>();
   asideOf = new Map<string, string>();
 
@@ -410,6 +419,16 @@ export class Transcript {
   get firstTs(): string | null { return this.r.firstTs; }
   get lastTs(): string | null { return this.r.lastTs; }
   get apiError(): { text: string; status: number | null; credential: boolean } | null { return this.r.apiError; }
+
+  // The session's ledger by this transcript (main conversation only), or null.
+  get ledger(): LedgerFact | null {
+    return this.r.ledger ? { ...this.r.ledger, results: this.r.ledgerResults } : null;
+  }
+
+  // The ids an Agent tool use's brief owns (its `Open items:` line), [] when none.
+  ownsOf(toolUseId: string): string[] {
+    return this.r.owns.get(toolUseId) ?? [];
+  }
 
   get title(): string | null {
     return this.r.customTitle || this.r.aiTitle;
@@ -600,6 +619,7 @@ export class Transcript {
       const errors: string[] = [];
       for (const res of u.results) {
         const tid = res.toolUseId;
+        if (!r.results.has(tid) && r.ledgerUses.has(tid)) r.ledgerResults++;
         r.results.set(tid, res.isError);
         if (res.outputFile) r.outFiles.set(tid, res.outputFile);
         // A shell or monitor started in the background runs from its result, not its tool use: a permission card
@@ -771,6 +791,26 @@ export class Transcript {
       const tid = b.id || `${uuid}:${b.index}`;
       r.message.uses.push({ id: tid, ts, name: b.name });
       this.toolUse(b, tid, ts);
+      if (!this.sidechain) this.openItemFacts(b, tid, ts, a.cwd);
+    }
+  }
+
+  // FR-ITEM-01, FR-ITEM-04: a tool use naming a ledger, and an Agent brief's owned ids. Only the brief's
+  // ids are kept, not its prompt.
+  private openItemFacts(b: ToolUse, tid: string, ts: string | null, cwd: string): void {
+    const r = this.r, name = b.name;
+    const p = typeof b.input.file_path === 'string' ? b.input.file_path : '';
+    const led = name === 'Read' || name === 'Write' || name === 'Edit' ? (p ? ledgerPathOf(p, cwd, this.home) : null)
+      : name === 'Bash' ? ledgerPathIn(b.command, cwd, this.home) : null;
+    if (led) {
+      r.ledger = { path: led, at: ts, toolUseId: tid };
+      r.ledgerUses.add(tid);
+      if (r.results.has(tid)) r.ledgerResults++; // its result came first
+    }
+    if ((name === 'Agent' || name === 'Task') && typeof b.input.prompt === 'string') {
+      const ids = ownedIds(b.input.prompt);
+      if (ids.length) r.owns.set(tid, ids);
+      else r.owns.delete(tid);
     }
   }
 

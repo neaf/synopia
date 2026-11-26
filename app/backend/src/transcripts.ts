@@ -10,7 +10,7 @@ import path from 'node:path';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord, Span } from './tail.ts';
 import { Transcript, sessionDirOf, SERVED_IMAGE_TYPES } from './transcript.ts';
-import type { BgOutput } from './transcript.ts';
+import type { BgOutput, LedgerFact } from './transcript.ts';
 import { landedBlocks, cwdOfRecords, resultTextIn, imageIn } from './claude-jsonl.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
@@ -209,6 +209,16 @@ export class Transcripts {
       modeBeforePlan: t.lastNonPlanMode,
       working: runningWork.length > 0, // a subagent or background shell or monitor still running
     };
+  }
+
+  // The session's ledger by its main conversation (FR-ITEM-01), null when it named none or isn't open.
+  ledgerOf(id: string): LedgerFact | null {
+    return this.live.get(id)?.t.ledger ?? null;
+  }
+
+  // The open-item ids an Agent tool use's brief owns (FR-ITEM-04).
+  ownsOf(id: string, toolUseId: string): string[] {
+    return this.live.get(id)?.t.ownsOf(toolUseId) ?? [];
   }
 
   // What runs now by the transcript (nothing when it isn't open): subagents and forks still running

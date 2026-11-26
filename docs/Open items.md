@@ -6,7 +6,7 @@ The one reader is `app/backend/src/ledger.ts`. It is pure: the caller reads the 
 
 ## Where a ledger is
 
-`isLedgerPath(abs)`: an absolute path, after `path.normalize`, ending in `/.ai-notes/<area>/open-items.md`, where `<area>` is one folder. `.ai-notes/open-items.md` and `.ai-notes/a/b/open-items.md` are not ledgers. It is the only path rule: `transcript.ts` uses it to flag a ledger's patches (`ledger: true`), which Files changed leaves out (R5.9; test: `transcript.test.ts` "the open-items ledger: its patches carry `ledger`…", page check `files`).
+`isLedgerPath(abs)`: an absolute path, after `path.normalize`, ending in `/.ai-notes/<area>/open-items.md`, where `<area>` is one folder. `.ai-notes/open-items.md` and `.ai-notes/a/b/open-items.md` are not ledgers. A path a tool names goes through `ledgerPathOf(p, cwd, home)` (relative to the record's `cwd`, `~/` to home); a Bash command through `ledgerPathIn(command, cwd, home)`, which tries each word ending in `open-items.md` (cut at spaces, quotes, `=` and shell operators) and keeps the last ledger. `transcript.ts` uses these for the session's ledger (FR-ITEM-01): the last one the main conversation's Read, Write or Edit or Bash named; a subagent's steps don't count. A ledger edited only by a Bash command that doesn't name it (a heredoc into a variable) is found only once something names it (test: "a ledger a tool names: …"). It is the only path rule: `transcript.ts` uses it to flag a ledger's patches (`ledger: true`), which Files changed leaves out (R5.9; test: `transcript.test.ts` "the open-items ledger: its patches carry `ledger`…", page check `files`).
 
 ## The grammar
 
@@ -58,7 +58,9 @@ A subagent brief names the ids the subagent owns, with their text: `Open items: 
 - `ownedIds(prompt)` reads every line that starts with `Open items:` (after spaces, a `- ` or `* ` bullet and `**` bold). An id is a `Y<n>` or `A<n>` token that starts the list, follows `), `, or follows a bare id and `, ` (`Open items: Y2, Y3`). The text in parentheses may hold commas and parentheses. `Open items: none` gives no ids.
 - `ownerOf(item, agents)`, over the session's subagents with a brief: the one whose brief names the item's id, while it runs. An item no brief names falls back to the running subagent whose name equals its `subagent` field. Else none (FR-ITEM-04). The brief comes first because it names one agent id, and a name can repeat.
 
-Test: "ownedIds: ...", "ownerOf: ...".
+- `transcript.ts` reads the line once, when the Agent (or Task) tool use lands in the main conversation, and keeps only the ids (`ownsOf(toolUseId)`), never the prompt.
+
+Test: "ownedIds: ...", "ownerOf: ..."; `transcript.test.ts` "open items: the last ledger the main conversation named, and the ids each Agent brief owns".
 
 ## Quirks
 

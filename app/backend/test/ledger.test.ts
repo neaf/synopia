@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, blockOf, nextId, optionsOf, fromOf, stampTime, isLedgerPath, ownedIds, ownerOf } from '../src/ledger.ts';
+import { parse, blockOf, nextId, optionsOf, fromOf, stampTime, isLedgerPath, ledgerPathOf, ledgerPathIn, ownedIds, ownerOf } from '../src/ledger.ts';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ledger');
 const fixture = (name: string) => fs.readFileSync(path.join(dir, name), 'utf8');
@@ -153,6 +153,18 @@ test('the path rule: .ai-notes/<area>/open-items.md, absolute', () => {
     '/tmp/shop/.ai-notes/checkout-m2/open-items.md.bak',
     '/tmp/shop/.ai-notes/checkout-m2/README.md',
   ]) assert.ok(!isLedgerPath(p), p);
+});
+
+test('a ledger a tool names: relative to the cwd, ~ to home, the last one a Bash command names', () => {
+  const cwd = '/tmp/shop', home = '/Users/fixture';
+  assert.equal(ledgerPathOf('.ai-notes/m2/open-items.md', cwd, home), '/tmp/shop/.ai-notes/m2/open-items.md');
+  assert.equal(ledgerPathOf('~/dev/x/.ai-notes/m2/open-items.md', cwd, home), '/Users/fixture/dev/x/.ai-notes/m2/open-items.md');
+  assert.equal(ledgerPathOf('.ai-notes/m2/open-items.md', '', home), null, 'relative with no cwd');
+  assert.equal(ledgerPathOf('/tmp/shop/.ai-notes/m2/plan.md', cwd, home), null);
+  assert.equal(ledgerPathIn('python3 ledger.py check .ai-notes/m2/open-items.md', cwd, home), '/tmp/shop/.ai-notes/m2/open-items.md');
+  assert.equal(ledgerPathIn(`cat "/tmp/a/.ai-notes/x/open-items.md"; sed -n 1p '.ai-notes/y/open-items.md'`, cwd, home), '/tmp/shop/.ai-notes/y/open-items.md');
+  assert.equal(ledgerPathIn('ledger.py block --file=.ai-notes/z/open-items.md|head', cwd, home), '/tmp/shop/.ai-notes/z/open-items.md');
+  assert.equal(ledgerPathIn('cat .ai-notes/open-items.md .ai-notes/z/open-items.md.bak', cwd, home), null);
 });
 
 test('ownedIds: the ids a brief\'s Open items line names, with commas and parentheses in the text', () => {

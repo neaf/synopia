@@ -1132,3 +1132,41 @@ test("a subagent's edit with no toolUseResult takes its patch from the input, ou
   t.push(result('toolu_e2', 3, { is_error: true }));
   assert.equal(byId(t, 'toolu_e2').patch, undefined, 'a failed edit changed nothing');
 });
+
+// FR-ITEM-01, FR-ITEM-04 (invented records): the session's last ledger and each brief's owned ids.
+test('open items: the last ledger the main conversation named, and the ids each Agent brief owns', () => {
+  const CWD = '/Users/fixture/dev/shop', LED = `${CWD}/.ai-notes/checkout-m2/open-items.md`, OTHER = `${CWD}/.ai-notes/rates/open-items.md`;
+  const use = (uuid: string, s: number, tid: string, name: string, input: object, extra: object = {}): JsonRecord =>
+    ({ type: 'assistant', uuid, cwd: CWD, timestamp: at(s), message: { id: `m-${uuid}`, role: 'assistant', content: [{ type: 'tool_use', id: tid, name, input }] }, ...extra });
+  const t = new Transcript({ home: HOME });
+  assert.equal(t.ledger, null);
+  t.push(use('a1', 1, 'tr', 'Read', { file_path: LED }));
+  assert.deepEqual(t.ledger, { path: LED, at: at(1), toolUseId: 'tr', results: 0 });
+  t.push(toolResult('u1', at(2), 'tr'));
+  assert.equal(t.ledger!.results, 1);
+  // an Edit by a path relative to the record's cwd
+  t.push(use('a2', 3, 'te', 'Edit', { file_path: '.ai-notes/rates/open-items.md', old_string: 'a', new_string: 'b' }));
+  assert.deepEqual([t.ledger!.path, t.ledger!.toolUseId], [OTHER, 'te']);
+  // a Bash command naming the path
+  t.push(use('a3', 4, 'tb', 'Bash', { command: `python3 ~/.claude/skills/open-items/scripts/ledger.py check '${LED}' && echo ok` }));
+  assert.deepEqual([t.ledger!.path, t.ledger!.at], [LED, at(4)]);
+  t.push(toolResult('u3', at(5), 'tb'));
+  assert.equal(t.ledger!.results, 2); // the Edit's result never came
+  // a subagent's Read, in the main file (sidechain) or in its own Transcript, doesn't count
+  t.push(use('a4', 6, 'ts', 'Read', { file_path: OTHER }, { isSidechain: true }));
+  assert.equal(t.ledger!.path, LED);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.push(use('s1', 6, 'ts2', 'Read', { file_path: OTHER }, { isSidechain: true }));
+  assert.equal(sub.ledger, null);
+  // other .ai-notes files and other names aren't ledgers
+  t.push(use('a5', 7, 'tp', 'Read', { file_path: `${CWD}/.ai-notes/checkout-m2/plan.md` }));
+  t.push(use('a6', 8, 'tq', 'Bash', { command: 'cat .ai-notes/open-items.md' }));
+  assert.equal(t.ledger!.toolUseId, 'tb');
+  // the brief's `Open items:` line
+  const prompt = 'Merge the rates branch.\n\nOpen items: Y5 (keep main\'s Norway rates, answered "Main\'s"), A2 (re-run the tax specs on PR 818)\n\nNo review.';
+  t.push(use('a7', 9, 'tA', 'Agent', { description: 'Merge rates', prompt }));
+  t.push(use('a8', 10, 'tB', 'Agent', { description: 'Look around', prompt: 'Open items: none' }));
+  assert.deepEqual(t.ownsOf('tA'), ['Y5', 'A2']);
+  assert.deepEqual(t.ownsOf('tB'), []);
+  assert.deepEqual(t.ownsOf('unknown'), []);
+});

@@ -194,6 +194,21 @@ export function isLedgerPath(abs: string): boolean {
   return n >= 4 && parts[n - 1] === 'open-items.md' && parts[n - 3] === '.ai-notes' && parts[n - 2] !== '';
 }
 
+// A path a tool named, as an absolute ledger path, or null: relative to the record's `cwd`, `~/` to `home`.
+export function ledgerPathOf(p: string, cwd: string, home: string): string | null {
+  const abs = p.startsWith('~/') ? path.join(home, p.slice(2)) : path.isAbsolute(p) ? p : cwd ? path.resolve(cwd, p) : '';
+  return abs && isLedgerPath(abs) ? path.normalize(abs) : null;
+}
+
+// The last ledger a Bash command names (`python3 ledger.py check .ai-notes/m2/open-items.md`), or null. A
+// word is cut at spaces, quotes and shell operators; only a word ending in `open-items.md` is tried.
+const COMMAND_PATH = /[^\s'"`;|&<>()=]*open-items\.md(?![^\s'"`;|&<>()])/g;
+export function ledgerPathIn(command: string, cwd: string, home: string): string | null {
+  let last: string | null = null;
+  for (const m of command.matchAll(COMMAND_PATH)) last = ledgerPathOf(m[0], cwd, home) ?? last;
+  return last;
+}
+
 // The ids a subagent's brief owns, from its `Open items: Y5 (…), A2 (…)` line. An id starts the list,
 // follows `), `, or follows a bare id and `, `. The text in parentheses may hold commas and parentheses.
 const BRIEF_LINE = /^\s*(?:[-*] )?(?:\*\*)?Open items:(?:\*\*)?\s*(.*)$/;
