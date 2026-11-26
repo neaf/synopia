@@ -29,7 +29,7 @@ export function railHTML(s, A, B = null) { // exported for the escape test
   if (!hasBackground(s)) return "";
   scanGrace();
   const all = [
-    ...agentsOf(s).map(a => ({ key: a.id, agent: a, name: a.description, kind: a.fork ? "fork" : (a.type || "subagent"), start: a.start, end: a.finished ? a.end : null, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done", ms: agentMs(a) })),
+    ...agentsOf(s).map(a => ({ key: a.id, agent: a, name: a.description, kind: a.fork ? "fork" : (a.type || "subagent"), start: a.start, end: a.finished ? a.end : null, running: !a.finished, waiting: !!a.waiting, failed: false, st: a.stopped ? "stopped" : "done", ms: agentMs(a) })),
     ...bgOf(s).map(b => { const st = bgState(b); return { key: b.toolUseId, bg: b, name: b.description || b.command, kind: b.kind, start: b.start,
       end: st === "running" ? null : (b.end || new Date(new Date(b.start).getTime() + (b.timeout || 0)).toISOString()), running: st === "running", failed: st === "failed", st, ms: bgMs(b) }; })
   ];
@@ -37,7 +37,9 @@ export function railHTML(s, A, B = null) { // exported for the escape test
   const past = all.filter(x => !x.shown).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
   const running = all.filter(x => x.shown).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  /* a subagent's own shells and monitors hang under its card; the main thread's (or an orphan's) under Main conversation */
+  /* a subagent's own shells and monitors hang under its card; the main thread's (or an orphan's) under Main conversation.
+     A subagent waiting on its own background work runs: its card stays here with the still kind mark and says so,
+     its shells move under it (docs/Claude Code transcripts.md, "A subagent waiting on its own background work") */
   const parentOf = x => x.bg && x.bg.agentId && running.some(y => y.agent && y.agent.id === x.bg.agentId) ? x.bg.agentId : null;
   const now = running.filter(x => !parentOf(x)), kidsOf = x => x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
   const nameOfAgent = id => agentsOf(s).find(a => a.id === id)?.description || "a subagent";
@@ -45,7 +47,7 @@ export function railHTML(s, A, B = null) { // exported for the escape test
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
       <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running).length)}</span><span class="w">${esc(s.state.word)}</span></button>
-      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}" ${attrs(x)}>${x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${x.bg && x.bg.own ? "by you " : ""}${hhmm(x.start)}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
+      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}${x.waiting ? " waiting" : ""}" ${attrs(x)}>${x.waiting ? ind("s_" + kindKey(x)) : x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${x.bg && x.bg.own ? "by you " : ""}${hhmm(x.start)}${x.waiting ? ", waiting on its background work" : ""}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>

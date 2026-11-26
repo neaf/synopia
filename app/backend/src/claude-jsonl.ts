@@ -150,15 +150,19 @@ const AUTO_MODE_BLOCKED = 'Permission for this action was denied by the Claude C
 // A tool_result block. `text`: what Claude got (images aren't text). `cutShort`: an error result
 // the CLI wrote for an interrupt. `denial`: an error result for a call a permission check denied.
 // `outputFile`: where a background shell's output goes, as its result text names it ("Output is being
-// written to: <path>"; docs/Claude Code transcripts.md#background-output), else ''.
-export type ToolResult = { index: number; toolUseId: string; isError: boolean; text: string; cutShort: boolean; denial: Denial | null; images: ImageBlock[]; outputFile: string };
+// written to: <path>"; docs/Claude Code transcripts.md#background-output), else ''. `taskId`: the task id a
+// background shell's or monitor's result text names ("Command running in background with ID: <id>",
+// "Monitor started (task <id>"), else ''; a subagent's records have no toolUseResult to carry it
+// (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work).
+export type ToolResult = { index: number; toolUseId: string; isError: boolean; text: string; cutShort: boolean; denial: Denial | null; images: ImageBlock[]; outputFile: string; taskId: string };
 const OUTPUT_FILE = /Output is being written to: (\/\S+?\.output)(?=\s|$)/;
+const TASK_ID = /^(?:Command running in background with ID: |Command was manually backgrounded by user with ID: |Command was moved to the background \(ID: |Monitor started \(task )([A-Za-z0-9]+)/;
 
 function toolResultOf(b: JsonRecord, index: number, denialKind: unknown): ToolResult {
   const text = textOf(b.content);
   const isError = Boolean(b.is_error);
   const denial = !isError ? null : DENIAL_KINDS.get(str(denialKind)) ?? (text.trimStart().startsWith(AUTO_MODE_BLOCKED) ? 'auto' : null);
-  return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), denial, images: imageBlocks(b.content), outputFile: OUTPUT_FILE.exec(text)?.[1] ?? '' };
+  return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), denial, images: imageBlocks(b.content), outputFile: OUTPUT_FILE.exec(text)?.[1] ?? '', taskId: isError ? '' : TASK_ID.exec(text.trimStart())?.[1] ?? '' };
 }
 
 // A user record's `toolUseResult`, for its first tool_result. `taskId`: the id that stops it
@@ -170,18 +174,22 @@ export type ToolUseResult = {
 
 // One `<task-notification>` (docs/Claude Code transcripts.md#background-work). A monitor's event has
 // no tool-use id; a subagent woken again has its task id only. `event`: the monitor output lines it
-// carries; `outputFile`: the task's output file, named at its end.
+// carries; `outputFile`: the task's output file, named at its end. `waiting`: a background subagent that
+// ended its turn with its own shells or monitors still running: status `completed`, summary `Agent "<description>"
+// is waiting on its own background work`. Not its end: it wakes when that work ends, and notifies again
+// (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work).
 export type TaskNote = {
   taskId: string | null; toolUseId: string | null; status: string | null; summary: string | null; result: string | null;
-  event: string | null; outputFile: string | null;
+  event: string | null; outputFile: string | null; waiting: boolean;
 };
+const WAITING = /\bis waiting on its own background work\s*$/;
 
 export function taskNotes(text: string): TaskNote[] {
   const out: TaskNote[] = [];
   for (const tn of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
     const tag = (name: string) => new RegExp(`<${name}>([^<]+)`).exec(tn[1])?.[1] ?? null;
     out.push({ taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary'), result: /<result>([\s\S]*?)<\/result>/.exec(tn[1])?.[1] ?? null,
-      event: /<event>([\s\S]*?)<\/event>/.exec(tn[1])?.[1] ?? null, outputFile: tag('output-file') });
+      event: /<event>([\s\S]*?)<\/event>/.exec(tn[1])?.[1] ?? null, outputFile: tag('output-file'), waiting: WAITING.test(tag('summary') ?? '') });
   }
   return out;
 }

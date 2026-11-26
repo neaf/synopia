@@ -55,6 +55,9 @@ export type Background = {
 export type Agent = {
   id: string; type: string; fork: boolean; description: string; toolUseId: string | null;
   model: unknown; depth: unknown; finished: boolean; running: boolean; review: boolean; stopped: boolean;
+  // running, but idle: its turn ended with its own shells or monitors still running, and it wakes when they end
+  // (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work)
+  waiting: boolean;
   start: string | null; end: string | null; total: number;
 };
 // A question or plan card waiting in the transcript: an AskUserQuestion or ExitPlanMode tool_use of
@@ -267,7 +270,8 @@ export function parseRef(ref: string): { recordId: string; path: number[] } | nu
 }
 
 type ToolUseRef = { id: string; ts: string | null; name: string };
-type Note = { status: string; summary: string; end: string | null };
+// `waiting`: a subagent's "waiting on its own background work" (claude-jsonl.ts TaskNote), not its end
+type Note = { status: string; summary: string; end: string | null; waiting?: boolean };
 type AgentLink = { meta: AgentMeta | null; sub: Transcript | null };
 
 // What a file's records built: a new one when the file is rewritten (Transcript.reset), so a reset
@@ -575,6 +579,7 @@ export class Transcript {
         const tid = res.toolUseId;
         r.results.set(tid, res.isError);
         if (res.outputFile) r.outFiles.set(tid, res.outputFile);
+        if (res.taskId && !r.taskIds.has(tid)) this.setTask(tid, res.taskId); // a subagent's shell or monitor: only its text names it
         r.fgBash.delete(tid);
         // no toolUseResult (a subagent's edit in an SDK-driven session): the change comes from its input
         const fromInput = r.inputEdits.get(tid);
@@ -679,8 +684,9 @@ export class Transcript {
   // One task notification: the task it ends, and a subagent's last message as its report.
   private note(n: TaskNote, ts: string | null): void {
     const r = this.r;
-    // A subagent woken again after its first end notifies by task id only.
-    const tid = n.toolUseId ?? (n.taskId ? this.toolOfAgent(n.taskId) : null);
+    // A subagent woken again after its first end notifies by task id only, or with the tool use id of
+    // what woke it (a SendMessage): its own Agent tool use wins.
+    const tid = (n.taskId ? this.toolOfAgent(n.taskId) : null) ?? n.toolUseId;
     if (n.event !== null && n.taskId) { // a monitor's output lines, by its task id (its view shows them, R7.2)
       const list = r.events.get(n.taskId) ?? [];
       list.push({ n: (list.at(-1)?.n ?? -1) + 1, ts, text: clip(n.event, 4000) });
@@ -690,10 +696,11 @@ export class Transcript {
     if (tid && n.outputFile) r.outFiles.set(tid, n.outputFile);
     if (!tid) return; // a monitor's event: it keeps running
     if (n.taskId) this.setTask(tid, n.taskId);
-    r.notes.set(tid, { status: n.status ?? 'completed', summary: n.summary ?? '', end: ts });
-    // A subagent's last message comes back as <result>: its report, unless it sent one itself.
+    r.notes.set(tid, { status: n.status ?? 'completed', summary: n.summary ?? '', end: ts, ...(n.waiting ? { waiting: true } : {}) });
+    // A subagent's last message comes back as <result>: its report, unless it sent one itself. While it
+    // waits on its own background work that message isn't its report yet.
     const tool = r.byId.get(tid);
-    if (n.result !== null && n.taskId && tool && (tool.name === 'Agent' || tool.name === 'Task') && !r.reportKind.has(n.taskId)) {
+    if (n.result !== null && !n.waiting && n.taskId && tool && (tool.name === 'Agent' || tool.name === 'Task') && !r.reportKind.has(n.taskId)) {
       r.reportKind.set(n.taskId, 'result');
       this.put({ id: `report:${n.taskId}`, k: 'report', ts, agent: n.taskId, text: clip(n.result.trim(), 3000) });
     }
@@ -931,7 +938,7 @@ export class Transcript {
       const answer = res !== undefined ? this.answerOf(tid) : undefined;
       const denial = res ? r.denials.get(tid) : undefined;
       if ((it.name === 'Agent' || it.name === 'Task') && res === false) {
-        state = note || !r.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
+        state = (note && !note.waiting) || !r.bgTool.get(tid) || this.endedBefore(it.ts) ? 'done' : 'running';
       } else if (res !== undefined) {
         // You denied it, or sent the plan back: your answer above says so, it didn't fail. Auto mode
         // blocked it, or you turned it down at a terminal: denied too, before the marker that follows.
@@ -1057,15 +1064,42 @@ export class Transcript {
   }
 
   // A shell or monitor a subagent started lives in that subagent's file. Its notification can
-  // land there (already in `b`) or in this file. With none, it runs while its subagent runs; once
-  // the subagent is over it reads as stopped, ended with its subagent.
+  // land there (already in `b`) or in this file. With none, it runs while its subagent runs (a
+  // subagent waiting on it runs). Once the subagent is over it ended with it: a background subagent
+  // that notified "finished" had none of its own work running (the CLI says "waiting" then), so it
+  // had ended; otherwise (a foreground subagent, stopped, failed, or the process ended) it was stopped.
   private subBackground(aid: string, sub: Transcript, b0: Background): Background {
     const b: Background = { ...b0, taskId: b0.taskId ?? this.r.taskIds.get(b0.toolUseId) ?? null, agentId: aid };
     if (b.status !== 'running') return b;
     const note = this.noteOf(b.toolUseId);
     if (note) return Object.assign(b, note);
-    if (!this.agentRunning(aid)) Object.assign(b, { status: 'stopped', summary: 'Ended with its subagent', end: sub.lastTs ?? this.ended });
+    if (this.agentRunning(aid)) return b;
+    const tid = this.agentMeta.get(aid)?.meta?.toolUseId ?? '', fin = this.noteOf(tid);
+    const finished = Boolean(fin && !fin.waiting && fin.status === 'completed' && this.r.bgTool.get(tid) && !this.endedAgent(aid));
+    if (finished) Object.assign(b, { status: 'completed', summary: 'Ended before its subagent finished', end: sub.lastTs ?? fin?.end ?? null });
+    else Object.assign(b, { status: 'stopped', summary: 'Ended with its subagent', end: sub.lastTs ?? this.ended });
     return b;
+  }
+
+  // A subagent's own shells or monitors with no end yet (a notification in either file, or the SDK's).
+  private ownRunning(aid: string): boolean {
+    const sub = this.agentMeta.get(aid)?.sub;
+    return Boolean(sub && sub.background().some((b) => b.status === 'running' && !this.noteOf(b.toolUseId)));
+  }
+
+  // The subagent's file has records after `at`: it woke (its own work ended, or a message came).
+  private wokeAfter(aid: string, at: string | null): boolean {
+    const last = msOf(this.agentMeta.get(aid)?.sub?.lastTs), from = msOf(at);
+    return last !== null && from !== null && last > from;
+  }
+
+  // Its turn ended with its own background work running: its latest notification says it waits and it
+  // hasn't woken since, or (that notification not here yet) a background subagent's meta says finished.
+  private idleWaiting(aid: string): boolean {
+    const a = this.agentMeta.get(aid);
+    const tid = a?.meta?.toolUseId ?? '', note = this.noteOf(tid);
+    if (note) return Boolean(note.waiting) && !this.wokeAfter(aid, note.end);
+    return Boolean(a?.meta?.finished && tid && this.r.bgTool.get(tid)) && this.ownRunning(aid);
   }
 
   // This (subagent's) conversation's background ids that changed since last asked.
@@ -1134,13 +1168,17 @@ export class Transcript {
 
   // Running when `finished` isn't true, its Agent tool has no (final) result and no task
   // notification arrived. A background Agent's launch result isn't final: it ends with the notification.
+  // A subagent waiting on its own background work runs too (the CLI marks it `finished` and notifies
+  // "waiting"): while that work runs, or once it woke after the notification, until a later one ends it.
   agentRunning(id: string): boolean {
     const a = this.agentMeta.get(id);
     if (!a) return false;
-    if (a.meta?.finished) return false;
     const tid = a.meta?.toolUseId ?? '';
-    if (this.noteOf(tid)) return false;
+    const note = this.noteOf(tid);
+    if (note && !note.waiting) return false;
     if (this.endedAgent(id)) return false;
+    if (note) return this.ownRunning(id) || this.wokeAfter(id, note.end);
+    if (a.meta?.finished) return this.idleWaiting(id);
     if (!tid) return true;
     const res = this.r.results.get(tid);
     if (res === undefined) return true;
@@ -1150,10 +1188,12 @@ export class Transcript {
   // A subagent that had not finished when the session's process ended (it started before then).
   private endedAgent(id: string): boolean {
     const a = this.agentMeta.get(id);
-    if (!a || this.endedMs === null || a.meta?.finished) return false;
+    if (!a || this.endedMs === null) return false;
     const r = this.r;
     const tid = a.meta?.toolUseId ?? '';
-    if (tid && r.notes.has(tid)) return false;
+    const note = r.notes.get(tid);
+    if (note && !note.waiting) return false;
+    if (a.meta?.finished && !note && !this.idleWaiting(id)) return false;
     if (tid && r.results.get(tid) !== undefined && !(r.results.get(tid) === false && r.bgTool.get(tid))) return false; // its result came: finished
     return this.endedBefore((tid && r.byId.get(tid)?.ts) || a.sub?.firstTs);
   }
@@ -1164,12 +1204,14 @@ export class Transcript {
     const meta = a.meta;
     const description = meta?.description ?? '';
     const running = this.agentRunning(id);
-    const status = this.noteOf(meta?.toolUseId ?? '')?.status ?? '';
+    const note = this.noteOf(meta?.toolUseId ?? '');
+    const status = note && !note.waiting ? note.status : '';
     return {
       id, type: meta?.agentType || 'subagent', fork: meta?.isFork ?? false, description,
       toolUseId: meta?.toolUseId || null, model: meta?.model ?? null, depth: meta?.spawnDepth ?? 1,
       finished: !running, running, review: /^for review:/i.test(description),
-      stopped: meta?.stoppedByUser === true || status === 'stopped' || status === 'killed' || (!status && !meta?.finished && this.endedAgent(id)),
+      stopped: meta?.stoppedByUser === true || status === 'stopped' || status === 'killed' || (!status && this.endedAgent(id)),
+      waiting: running && this.idleWaiting(id),
       start: a.sub?.firstTs ?? null, end: a.sub?.lastTs ?? null, total: a.sub?.total ?? 0,
     };
   }
