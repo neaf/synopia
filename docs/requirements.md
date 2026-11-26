@@ -174,6 +174,7 @@ The conversation pane is one panel from the title down (2026-11-25, prototype/co
 - R5.8 Subagent reports: "Report from <name>, 8m", folded, click to read, plus "Open its transcript".
 - R5.9 Files changed:
   - Each turn ends with a list of the files changed, grouped by repo or worktree, with aligned `+add −del` counts. Files changed by shell commands count too.
+  - The open-items ledger (R3.16) is left out: a turn that only changed the ledger has no Files changed row, and the panel and the sidebar show what changed in the list instead; other `.ai-notes/` files, such as plans and handoffs, stay listed (2026-11-26).
   - Clicking the path of a text or source file opens a read-only, syntax-highlighted preview over the main area, not an external app. It has the path, the language and the line count, an "Open in app" button that opens the file with its default app, and Close. It always opens at the top. Lines the turn changed get quiet gutter marks only: a green bar beside added lines and a red mark where lines were removed; the diff is where the change shows. Keys while it is shown: Esc closes it (before any other Esc), j/k scroll a line, g/G go to the top and bottom, ⌘F or `/` finds, Enter or n go to the next match. A click outside closes it.
   - HTML files keep opening in the browser, because the user often opens HTML artifacts. Alt-click on an HTML path shows its source in the preview.
   - Images, PDFs, binaries and other files open as before: with their default app, or revealed in Finder.

@@ -259,7 +259,13 @@ export function itemsHTML(items, sessionBusy, s) {
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0), lastTs)]); } turnPatches = []; };
+  /* the open-items ledger is left out (R5.9, the backend's `ledger` flag): a turn that only edited it has no row */
+  const flushFiles = () => {
+    flush();
+    const patches = turnPatches.flatMap(t => t.patches || [t.patch]).filter(p => !p.ledger), more = turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0);
+    if (patches.length || more) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(patches, key, more, lastTs)]); }
+    turnPatches = [];
+  };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g"${markAt(lastTs)}>${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   /* `mid`: a message the running turn took in from its queue (R5.5): the turn goes on through it, so no
      "Worked for" line before it */

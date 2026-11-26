@@ -6,7 +6,7 @@ The one reader is `app/backend/src/ledger.ts`. It is pure: the caller reads the 
 
 ## Where a ledger is
 
-`isLedgerPath(abs)`: an absolute path, after `path.normalize`, ending in `/.ai-notes/<area>/open-items.md`, where `<area>` is one folder. `.ai-notes/open-items.md` and `.ai-notes/a/b/open-items.md` are not ledgers.
+`isLedgerPath(abs)`: an absolute path, after `path.normalize`, ending in `/.ai-notes/<area>/open-items.md`, where `<area>` is one folder. `.ai-notes/open-items.md` and `.ai-notes/a/b/open-items.md` are not ledgers. It is the only path rule: `transcript.ts` uses it to flag a ledger's patches (`ledger: true`), which Files changed leaves out (R5.9; test: `transcript.test.ts` "the open-items ledger: its patches carry `ledger`…", page check `files`).
 
 ## The grammar
 

@@ -106,6 +106,21 @@ test('bashEditDiff: the 400-line cut, and the result before its tool use', () =>
   assert.equal(it.moreFiles, undefined);
 });
 
+test('the open-items ledger: its patches carry `ledger`, which Files changed leaves out (R5.9); other .ai-notes files do not', () => {
+  const LED = '/Users/fixture/dev/demo/.ai-notes/checkout-m2/open-items.md', PLAN = '/Users/fixture/dev/demo/.ai-notes/checkout-m2/plan.md';
+  const t = new Transcript({ home: HOME });
+  const hunk = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] };
+  t.push({ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'tool_use', id: 'te', name: 'Edit', input: { file_path: LED, old_string: 'a', new_string: 'b' } }] } });
+  t.push({ type: 'user', uuid: 'u1', toolUseResult: { filePath: LED, structuredPatch: [hunk] }, message: { content: [{ type: 'tool_result', tool_use_id: 'te', content: 'ok' }] } });
+  t.push({ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'tool_use', id: 'tp', name: 'Edit', input: { file_path: PLAN, old_string: 'a', new_string: 'b' } }] } });
+  t.push({ type: 'user', uuid: 'u2', toolUseResult: { filePath: PLAN, structuredPatch: [hunk] }, message: { content: [{ type: 'tool_result', tool_use_id: 'tp', content: 'ok' }] } });
+  t.push({ type: 'assistant', uuid: 'a3', message: { content: [{ type: 'tool_use', id: 'tb', name: 'Bash', input: { command: 'ledger.py close Y1' } }] } });
+  t.push({ type: 'user', uuid: 'u3', cwd: '/Users/fixture/dev/demo', toolUseResult: { stdout: '', bashEditDiff: { files: [], moreFiles: 0, changedFiles: [LED] } }, message: { content: [{ type: 'tool_result', tool_use_id: 'tb', content: '' }] } });
+  assert.equal(byId(t, 'te').patch!.ledger, true);
+  assert.equal(byId(t, 'tp').patch!.ledger, undefined);
+  assert.deepEqual(byId(t, 'tb').patches!.map((p) => [p.bare, p.ledger]), [[true, true]]);
+});
+
 test('previewOf: 20 lines, 4 KB at most, the count of all lines', () => {
   assert.deepEqual(previewOf(''), { text: '', lines: 0, cut: false });
   assert.deepEqual(previewOf('one\ntwo\n'), { text: 'one\ntwo', lines: 2, cut: false });

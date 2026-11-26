@@ -386,7 +386,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-05 | transcript.ts, publisher.ts, transcript.js |
 | FR-VIEW-06 | transcript.ts, transcript.js |
 | FR-VIEW-07 | transcript.ts, transcript.js |
-| FR-VIEW-08 | transcript.ts, claude-jsonl.ts, transcript.js, open.ts |
+| FR-VIEW-08 | transcript.ts, claude-jsonl.ts, ledger.ts (`isLedgerPath`), transcript.js, open.ts |
 | FR-VIEW-09 | preview.ts, preview.js |
 | FR-VIEW-10 | open.ts |
 | FR-VIEW-10a | md.js, path-links.js, file-refs.ts |

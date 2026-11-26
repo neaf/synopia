@@ -9,14 +9,16 @@ import { BANG_CAP } from './bang.ts';
 import { stepOf, sessionOf } from './agent-tools.ts';
 import type { BashOutput } from './bang.ts';
 import { classify, agentMetaOf } from './claude-jsonl.ts';
+import { isLedgerPath } from './ledger.ts';
 import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, Denial, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
 
 export type { Question } from './claude-jsonl.ts';
 export type Hunk = { o: number; n: number; lines: string[] };
 // `bare`: a file a shell command changed with no diff in the record (bashEditDiff.changedFiles).
 // `unnumbered`: a diff from the tool's input, with no line numbers (claude-jsonl.ts inputEditOf).
+// `ledger`: the file is an open-items ledger (ledger.ts isLedgerPath), which Files changed leaves out (R5.9).
 export type Patch = {
-  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean; unnumbered?: true;
+  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean; unnumbered?: true; ledger?: true;
 };
 // A tool result's preview: its first PREVIEW_LINES lines, PREVIEW_BYTES at most; `lines` counts all
 // of them, `cut` says the preview isn't all (the page asks for the rest with `toolOutput`).
@@ -145,7 +147,8 @@ export function bashPatchesOf(edit: BashEdit, home: string): { patches: Patch[];
   const patches = edit.files.map((f) => patchFrom(f.hunks, f.filePath, f.created, home));
   for (const file of edit.changedFiles) {
     if (!patches.some((x) => x.abs === file)) {
-      patches.push({ file: tilde(file, home), abs: file, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true });
+      const bare: Patch = { file: tilde(file, home), abs: file, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true };
+      patches.push(isLedgerPath(file) ? { ...bare, ledger: true } : bare);
     }
   }
   return { patches, more: edit.moreFiles };
@@ -168,7 +171,8 @@ function patchFrom(hunks: RawHunk[], abs: string, created: boolean, home: string
     out.push({ o: h.oldStart, n: h.newStart, lines });
     if (budget <= 0) break;
   }
-  return { file: tilde(abs, home), abs, add, del, created, cut: budget <= 0, hunks: out };
+  const p: Patch = { file: tilde(abs, home), abs, add, del, created, cut: budget <= 0, hunks: out };
+  return isLedgerPath(abs) ? { ...p, ledger: true } : p;
 }
 
 export const PREVIEW_LINES = 20;
