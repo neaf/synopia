@@ -638,7 +638,7 @@ export class Session {
       if (this.stream.event(m as { event: unknown; parent_tool_use_id: string | null })) this.pushStream(false);
     } else if (m.type === 'result') {
       this.clearStream();
-      this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined, text: typeof m.result === 'string' ? m.result : undefined });
+      this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined, text: typeof m.result === 'string' ? m.result : undefined, queued: typeof m.queued_turn_count === 'number' ? m.queued_turn_count : undefined });
       if (!this.status.signedOutNow) this.resumed = false; // the turn didn't fail on the credentials
       this.d.onTurnEnded?.(this.id);
       this.releaseHeld(); // held behind a card that is gone: they are the next turn

@@ -427,10 +427,10 @@ test('sessions: statuses go working, then your turn; a failed process is failed 
   await tick();
   emit(q.calls[0], RESULT);
   await tick();
-  assert.equal(take('session').at(-1)?.state.status, 'busy');
+  assert.equal(take('session').at(-1)?.state.status, 'idle', 'the result ends the main turn');
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
   await tick();
-  assert.equal(take('session').at(-1)?.state.status, 'idle');
+  assert.ok(take('session').every((m) => m.state.status === 'idle'));
 
   q.calls[0].out.end(new Error('boom'));
   await tick();

@@ -36,6 +36,14 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 - Values: `running`, `requires_action` (waiting on `canUseTool`), `idle`.
 - Code: `sdk.ts` `STATE_FLAG`, `buildOptions`; `session.ts` `onMessage`. Source: SDK spike row 11 (removed from the repo).
 
+## Session state and background tasks
+
+- Symptom: the main turn ended, a background subagent still ran, and the session showed Working instead of Your turn.
+- Cause: `session_state_changed` describes the whole CLI run, not the main turn. With a background task running, `idle` doesn't follow the main turn's `result`. The state stays `running`. When the task ends, its `task_notification` starts a new turn with `system/init`, and `idle` comes only after that turn's `result`.
+- Order seen (one main turn that starts a background Agent and then replies): `session_state_changed: running`, `system/init`, `assistant` (Agent `tool_use`), `background_tasks_changed` (1), `task_started` (`local_agent`, `is_backgrounded: true`), `user` (`tool_result`), `assistant` (text), `result/success`. Then nothing on the main thread while the subagent runs: its own `assistant`, `user` and `task_progress` messages, but no state event. Then `task_updated`, `task_notification` (`completed`), `background_tasks_changed` (0), `system/init`, `assistant`, `result/success` (`origin.kind: task-notification`), and only then `session_state_changed: idle`.
+- Workaround: `status.ts` ends the main turn at its `result`, with or without the flag. A `running` or `requires_action` after the result and before `idle` opens no turn; `system/init` or a send does. A result whose documented `queued_turn_count` is above 0 keeps the turn running, because more of your turns follow.
+- Code: `status.ts` `SessionStatus.result`, `stateChanged`; `session.ts` `onMessage`. Test: `status.test.ts` ("a background task keeps the state running past the result"). Source: one scripted check (SDK 0.3.330, 2026-11-26).
+
 ## Streaming input and control calls
 
 - `interrupt`, `supportedCommands`, `supportedModels`, `setModel`, `setPermissionMode`, `backgroundTasks` and `applyFlagSettings` work only when `prompt` is an AsyncIterable. Code: `sdk.ts` `QueryLike`, `InputQueue`.
@@ -423,7 +431,7 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 
 `app/backend/dev/scripted-sdk.ts` implements the `Sdk` pair (`query`, `listSessions`) that `sdk.ts` consumes, from a script instead of a CLI. `main.ts --sdk-script <file>` passes it to `Sessions`, `Menus` and `Writer`; the page checks and `dev.sh --script` run on it, so they reach the real Sessions, status, writer and menu code with no model call. It reproduces these SDK facts:
 - A query is told apart by its options: `canUseTool` set is a session's process, `persistSession: false` the writer's call, neither the idle menu probe.
-- A turn starts with `system/init` (with `capabilities: ["interrupt_cancel_queued_v1"]`) and `session_state_changed: running`, and ends with `result`, then `session_state_changed: idle` ("State events need an undocumented flag").
+- A turn starts with `system/init` (with `capabilities: ["interrupt_cancel_queued_v1"]`) and `session_state_changed: running`, and ends with `result`, then `session_state_changed: idle` ("State events need an undocumented flag"; with a background task the real CLI sends `idle` later, see "Session state and background tasks").
 - A user message sent during a turn is queued. `interrupt({cancelQueued: true})` lists under `cancelled` the queued uuids not yet in the transcript, and the turn ends `result/error_during_execution` with `terminal_reason: aborted_streaming`.
 - For f, f ("Sending queued messages now"): `backgroundTasks(id)` (f, f's call) sends `background_tasks_changed` with that step's task, then takes the queued messages into the running turn as `queued_command` attachments, in order (`backgroundTasks()`, b, b's call, takes them in but moves no step, so `background.mjs` keeps its steps in the foreground); an interrupt while `stream_event` steps were writing a reply appends that reply's partial `assistant` record first, as the CLI does (2026-11-26); a plain `interrupt()` ends the turn the same way, then runs them next as one turn; a message with `priority: 'now'` during a turn is taken in at once.
 - A `shouldQuery: false` message joins the transcript and starts no turn ("Streaming input and control calls"). A message that starts a turn is written to the transcript as the CLI writes a prompt.

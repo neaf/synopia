@@ -40,8 +40,12 @@
 // for it (`waiting`: it runs a turn or waits on you) or is taking it back (`taking`).
 // Plus `detail.queued` while working: messages pushed during a turn whose uuid no reply has listed
 // yet in `user_message_uuid(s)`, trimmed to a result's `queued_turn_count`, emptied at the end.
-// Without CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS (no `session_state_changed` seen yet), a turn
-// runs from the send to its `result`. With it, `idle` is the authoritative end of a turn.
+// A main turn runs from the send (or its `system/init`) to its `result`. The state flag
+// (CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS) doesn't move that end: the CLI stays `running` and sends `idle`
+// only once its background tasks ended too (docs/Agent SDK.md, "Session state and background tasks"), so
+// after the result a `running` or `requires_action` of that same run opens no turn; `system/init` or a
+// send does. Only a result whose `queued_turn_count` says more of your messages follow keeps the turn
+// running, with the flag, till their turns end or `idle` comes.
 // `at` is the backend's clock when the status last changed (for stale: when the last message
 // came); the caller stores it.
 import type { SDKAssistantMessageError, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
@@ -50,7 +54,8 @@ import type { Item, PendingAsk } from './transcript.ts';
 export type Status = 'busy' | 'idle' | 'waiting' | 'stopped' | 'failed' | 'signedout' | 'refreshing' | 'stale' | 'retrying' | 'compacting';
 type Outcome = 'idle' | 'stopped' | 'failed';
 // text: the result's `result` string, the failure's sentence when it is an error.
-export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string; text?: string };
+// queued: its `queued_turn_count`, your sends that still run as turns after it.
+export type ResultLike = { subtype: string; is_error?: boolean; terminal_reason?: string; text?: string; queued?: number };
 // queued: messages waiting for the running turn. retry: the attempt, its cap, when it goes (ms) and why.
 // error: the sentence of a failed turn, or of the expired sign-in.
 export type Takeover = 'waiting' | 'taking';
@@ -152,7 +157,7 @@ export class SessionStatus {
   private staleMs: number;
   private timer: Timer;
   private cancelStale: (() => void) | null = null;
-  private resulted = false; // the running turn's result came (with the state flag, idle follows it)
+  private resulted = false; // the main turn's result came and no turn started since (idle may come much later)
   private terminal = 0; // the pid of a terminal's CLI that holds the session, 0 for none
   private takeover: Takeover | null = null;
 
@@ -235,10 +240,10 @@ export class SessionStatus {
   stateChanged(state: string): void {
     this.flag = true;
     if (state === 'running' || state === 'requires_action') {
-      if (!this.running) this.resulted = false;
-      this.running = true;
+      if (!this.resulted) this.running = true; // after the result it is background work, not the main turn
     } else if (state === 'idle') {
       this.turnOver();
+      this.resulted = false;
       this.stopping = false; // an interrupt after the turn's result had nothing to stop
       this.hurrying = false;
     }
@@ -271,7 +276,7 @@ export class SessionStatus {
     this.stopping = false;
     this.hurrying = false;
     this.resulted = true;
-    if (!this.flag) this.turnOver();
+    if (!this.flag || !(r.queued && r.queued > 0)) this.turnOver();
     this.update();
   }
 
@@ -334,6 +339,7 @@ export class SessionStatus {
   // The process ended: on purpose (idle timeout, close, quit) or not (failed).
   processEnded(failed: boolean): void {
     this.turnOver();
+    this.resulted = false;
     this.pending = 0;
     if (failed) this.outcome = 'failed';
     this.update();

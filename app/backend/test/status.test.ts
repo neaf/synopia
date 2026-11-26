@@ -21,15 +21,52 @@ const ok = { subtype: 'success', is_error: false, terminal_reason: 'completed' }
 const aborted = { subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' };
 const apiError = { subtype: 'error_during_execution', is_error: true, terminal_reason: 'api_error' };
 
-test('status: working from the state flag, your turn on idle after a normal result', () => {
+test('status: working from the state flag, your turn at a normal result; idle changes nothing', () => {
   const { s, seen } = tracker();
   s.stateChanged('running');
   assert.equal(s.status, 'busy');
   s.result(ok);
-  assert.equal(s.status, 'busy', 'with the flag, idle ends the turn, not result');
+  assert.equal(s.status, 'idle', 'the result ends the main turn, with the flag too');
   s.stateChanged('idle');
   assert.equal(s.status, 'idle');
   assert.deepEqual(seen, ['busy', 'idle']);
+});
+
+// docs/Agent SDK.md, "Session state and background tasks": with a background task running the CLI sends
+// no idle after the main turn's result, only once the task and the turn its notification starts ended.
+test('status: a background task keeps the state running past the result: still your turn', () => {
+  const { s, seen } = tracker();
+  s.stateChanged('running');
+  s.turnStarted(); // system/init
+  s.result(ok);
+  assert.equal(s.status, 'idle', 'the main turn is over while the background subagent runs');
+  assert.equal(s.working, false, 'nothing to interrupt');
+  s.stateChanged('running');
+  s.stateChanged('requires_action');
+  assert.equal(s.status, 'idle', 'a state event of the same run opens no turn');
+  s.turnStarted(); // the task's notification starts a turn: system/init
+  assert.equal(s.status, 'busy');
+  s.result(ok);
+  assert.equal(s.status, 'idle');
+  s.stateChanged('idle');
+  s.stateChanged('running');
+  assert.equal(s.status, 'busy', 'after idle, running is the next turn');
+  assert.deepEqual(seen, ['busy', 'idle', 'busy', 'idle', 'busy']);
+});
+
+test('status: a result with your messages still queued keeps working until their turn ends', () => {
+  const { s } = tracker();
+  s.stateChanged('running');
+  s.turnStarted();
+  s.result({ ...ok, queued: 1 });
+  assert.equal(s.status, 'busy', 'one more turn of yours follows');
+  s.turnStarted();
+  s.result({ ...ok, queued: 0 });
+  assert.equal(s.status, 'idle');
+  const n = tracker().s;
+  n.turnStarted();
+  n.result({ ...ok, queued: 1 });
+  assert.equal(n.status, 'idle', 'without the flag no idle would end it: the result does');
 });
 
 test('status: a turn our process starts is working', () => {
