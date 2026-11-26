@@ -113,6 +113,7 @@ Dev and test only (not loaded in production):
 | `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, folder list, sidebar drag), then the session keys (n, o among them); `renderAll`. |
 | `js/mode.js` | Normal and insert mode (`setMode`, `paintMode`); the box is the only indicator. |
 | `js/toast.js` | The toast line. |
+| `js/mark-time.js` | The marks in the transcript's bullet column: no click, and on hover the tip with the time their row appeared (`data-at`). |
 | `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
 | `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
 | `js/creds-line.js` | The dock's credential line (R8.2): renders the backend's `creds` frame for the session (kept in `state.js`): one line over the run's preview, which opens its shell view (2026-11-26), or the editable command with Save. |

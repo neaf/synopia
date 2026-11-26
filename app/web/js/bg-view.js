@@ -10,7 +10,7 @@
 import { store, cur, view, bgById, agentById, nowish, credsOf } from "./state.js";
 import { request, act } from "./connection.js";
 import { toast } from "./toast.js";
-import { esc, lineHTML, live, took, hhmm } from "./format.js";
+import { esc, lineHTML, markAt, live, took, hhmm } from "./format.js";
 import { ind } from "./marks.js";
 import { bgState } from "./runs.js";
 
@@ -126,7 +126,7 @@ export function bgLogEntries(s, b, runView) {
   const tool = b.kind === "monitor" ? "Monitor" : "Bash";
   const run = runView({ input: b.command, out: !o || lost || (running && !text) ? null : text, stopped: false });
   const lostRow = lost ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${esc(lost)}</span></div>` : "";
-  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}" data-end="${o ? +o.to || 0 : 0}"><span class="g">●</span><div>${lineHTML(`<span class="name">${tool}</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div>`]);
+  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}" data-end="${o ? +o.to || 0 : 0}"><span class="g"${markAt(b.start)}>●</span><div>${lineHTML(`<span class="name">${tool}</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div>`]);
   out.push(running ? ["live", liveRun(b, b.kind === "monitor" && o ? `, ${+o.total} event${o.total === 1 ? "" : "s"}` : "")] : ["end", endLine(b, st)]);
   return out;
 }
@@ -135,10 +135,10 @@ export function bgLogEntries(s, b, runView) {
 const PS = `<span class="g ps" aria-hidden="true">$</span>`;
 /* the live line while it runs: Running, or Waits for input in red with the pause mark of needs you */
 const liveRun = (b, extra = "") => b.waiting
-  ? `<div class="ln liveln" data-state="red"><span class="g">${ind("pause")}</span><div><b>Waits for input</b> <span class="dim">${live(b.start, msOf(b, "running"))}</span></div></div>`
-  : `<div class="ln liveln" data-state="green"><span class="g">${ind(b.kind === "monitor" ? "k_mon" : "k_shell")}</span><div><b>Running</b> <span class="dim">${live(b.start, msOf(b, "running"))}${extra}</span></div></div>`;
+  ? `<div class="ln liveln" data-state="red"><span class="g"${markAt(b.start)}>${ind("pause")}</span><div><b>Waits for input</b> <span class="dim">${live(b.start, msOf(b, "running"))}</span></div></div>`
+  : `<div class="ln liveln" data-state="green"><span class="g"${markAt(b.start)}>${ind(b.kind === "monitor" ? "k_mon" : "k_shell")}</span><div><b>Running</b> <span class="dim">${live(b.start, msOf(b, "running"))}${extra}</span></div></div>`;
 const endLine = (b, st) => { const [word, mark] = endOf(st), sum = (b.summary || "").trim();
-  return `<div class="ln doneln bg-end${st === "failed" ? " failed" : ""}"><span class="g">${ind(mark)}</span><div>${word} after ${took(msOf(b, st))}${b.end ? `, ${hhmm(b.end)}` : ""}${sum ? `. ${esc(sum)}` : ""}</div></div>`; };
+  return `<div class="ln doneln bg-end${st === "failed" ? " failed" : ""}"><span class="g"${markAt(b.end || b.start)}>${ind(mark)}</span><div>${word} after ${took(msOf(b, st))}${b.end ? `, ${hhmm(b.end)}` : ""}${sum ? `. ${esc(sum)}` : ""}</div></div>`; };
 
 /* Claude's foreground Bash (a step of its turn): the command, then its result once it has one. The SDK reports only
    its elapsed time while it runs, so the view says what it can show and how to see more; a cut result is read
@@ -154,7 +154,7 @@ function stepLogEntries(s, b, runView) {
   const note = s.state.driven ? "Output shows when it finishes. b, b sends it to the background, where its output shows as it comes." : "";
   const run = running ? `<div class="step-out"><div class="cmd">${esc(b.command)}</div>${note ? `<div class="res note"><span class="lcorner" aria-hidden="true"></span><span class="note">${esc(note)}</span></div>` : ""}</div>`
     : st === "failed" ? runView({ input: b.command, err: text }) : runView({ input: b.command, out: text });
-  const out = [["run", `<div class="ln tool bg-run ${running ? "running" : st === "failed" ? "failed" : "done"}"><span class="g">●</span><div>${lineHTML(`<span class="name">Bash</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run}</div>`]];
+  const out = [["run", `<div class="ln tool bg-run ${running ? "running" : st === "failed" ? "failed" : "done"}"><span class="g"${markAt(b.start)}>●</span><div>${lineHTML(`<span class="name">Bash</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run}</div>`]];
   out.push(running ? ["live", liveRun(b)] : ["end", endLine(b, st)]);
   return out;
 }
@@ -163,7 +163,7 @@ function stepLogEntries(s, b, runView) {
 function credsLogEntries(s, b, runView) {
   const f = credsOf(s.id), text = f?.output || "";
   const run = runView({ input: b.command, out: text ? text.replace(/\n$/, "") : null });
-  return [["run", `<div class="ln tool bg-run running"><span class="g">${ind("creds")}</span><div><span class="name">Refresh credentials</span>${run}</div></div>`], ["live", liveRun(b)]];
+  return [["run", `<div class="ln tool bg-run running"><span class="g"${markAt(b.start)}>${ind("creds")}</span><div><span class="name">Refresh credentials</span>${run}</div></div>`], ["live", liveRun(b)]];
 }
 
 /* A `!` run of yours: the command on the prompt band as in the transcript, its whole output, then the live
@@ -172,7 +172,7 @@ function ownLogEntries(s, b, runView) {
   const o = outs.get(`${s.id}|${b.toolUseId}`), st = bgState(b), running = st === "running", out = [];
   const text = o ? plain(o.text) : "", err = o ? plain(o.err || "") : "";
   const res = runView({ out: !o || (running && !text) ? null : text.replace(/\n$/, ""), err: err.replace(/\n$/, "") });
-  out.push(["run", `<div class="bang bg-run ${running ? "running" : "done"}" data-bang="${esc(b.toolUseId)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(b.command)}</div></div><div class="bang-res">${res}</div></div>`]);
+  out.push(["run", `<div class="bang bg-run ${running ? "running" : "done"}" data-bang="${esc(b.toolUseId)}"><div class="prompt bang-cmd"><span class="g"${markAt(b.start)}>!</span><div class="cmd">${esc(b.command)}</div></div><div class="bang-res">${res}</div></div>`]);
   out.push(running ? ["live", liveRun(b)] : ["end", endLine(b, st)]);
   return out;
 }

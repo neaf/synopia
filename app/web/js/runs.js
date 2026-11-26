@@ -6,7 +6,7 @@
    sign of the panel's cards are here too. The backend owns every fact here (when a run's card shows, whether it
    waits for input); this module only words and draws them. */
 import { nowish } from "./state.js";
-import { esc, live, took } from "./format.js";
+import { esc, markAt, live, took } from "./format.js";
 import { ind } from "./marks.js";
 import { linkText } from "./md.js";
 
@@ -58,10 +58,10 @@ function preview(r) {
 }
 
 /* your run: the command on the `!` band, the preview under it; a run over at once with nothing to say is the band alone */
-export function ownRowHTML(r, { open = null, attrs = "" } = {}) {
+export function ownRowHTML(r, { open = null, attrs = "", at = null } = {}) {
   const link = open ? ` data-bg="${esc(open)}" title="Open its shell view"` : "";
   const alone = !r.running && r.end === "done" && !r.tail && !r.err && !(r.extra || []).length;
-  return `<div class="bang runrow${r.running ? " running" : ""}"${link}${attrs}><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(r.cmd)}</div></div>`
+  return `<div class="bang runrow${r.running ? " running" : ""}"${link}${attrs}><div class="prompt bang-cmd"><span class="g"${markAt(at)}>!</span><div class="cmd">${esc(r.cmd)}</div></div>`
     + `${alone ? "" : `<div class="bang-res">${preview(r)}</div>`}</div>`;
 }
 

@@ -26,6 +26,7 @@ import { onThemeChange } from "./theme-switch.js";
 import { onGraceEnd } from "./tween.js";
 import { installTestApi } from "./test-api.js";
 import { applyFound } from "./find.js";
+import { installMarkTimes } from "./mark-time.js";
 
 /* render(part): side, header, log, card, rail, or conv (all of the view) */
 function render(...parts) {
@@ -176,6 +177,7 @@ transcript.onSession(sid => {
   if (act({ t: "openSession", sid }, { done: ok => { if (!ok && want.open === sid) want.open = null; } })) want.open = sid;
 });
 onThemeChange(preview.previewRetheme); // bat's colours come from the backend
+installMarkTimes(); // the time a transcript row appeared, over its mark
 onGraceEnd(() => render("side", "rail")); // a finished line's grace is over: it leaves
 installTestApi({ inject: onMessage, render });
 

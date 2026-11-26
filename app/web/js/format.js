@@ -50,6 +50,16 @@ export const still = html => html.replace(/(<span data-(?:live|age|until)="[^"]*
 const hourOpts = () => typeof globalThis.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: globalThis.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {};
 export const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...hourOpts() });
 export const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+/* when a transcript row appeared, for the tip over its mark (2026-11-26): "16:34:12" today, "25 Nov, 16:34:12" on another
+   day, with the year when it isn't this one; "" for no time */
+export function markTime(ts, now = Date.now()) {
+  const d = new Date(ts), n = new Date(now); if (ts === null || ts === undefined || ts === "" || isNaN(d)) return "";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", ...hourOpts() });
+  if (d.toDateString() === n.toDateString()) return time;
+  return `${d.getDate()} ${d.toLocaleDateString([], { month: "short" })}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ""}, ${time}`;
+}
+/* the attribute a row's mark carries its time in (mark-time.js shows it); a time in ms becomes ISO */
+export const markAt = ts => ts === null || ts === undefined || ts === "" ? "" : ` data-at="${esc(typeof ts === "number" ? new Date(ts).toISOString() : ts)}"`;
 
 /* ---------- the model ---------- */
 /* A model id as a name, until the folder's menu names it: "eu.anthropic.claude-opus-5-5[1m]" reads

@@ -13,13 +13,14 @@
 // "Show all 32 lines" (`toolOutput`), kept through a live update; a single step folds too ("Searched once"), and opens from the list.
 // A step's line is one line at any width (2026-11-26): a Bash with a long command of several lines, at 2000 and 640 px, folded
 // and listed, and on the live line: Bash(, the command cut with an ellipsis, the closing bracket in view; the full command in
-// its expanded step. A running foreground Bash
+// its expanded step. The gutter marks (2026-11-26): a dot and a spinner alike, the default cursor, not selectable, not
+// copied, a click doing nothing, and on hover a small tip with the row's time ("20 Nov, …" for an earlier day). A running foreground Bash
 // of a driven session (the SDK's tool_progress: 42 s): its own line is a step, folded, that expands in place to its
 // command, "Running, 42s" ticking and "Output shows when it finishes"; no card in the panel; the live line names it and
 // opens its shell view ("Shell in Claude's turn", how to see more), from which K and J go back (it has no card); its
 // result lands in the open shell view, and the open step turns into the finished view. A session Synopia doesn't drive:
 // the command and "Running", no note. Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS,
-// fold-bash-<theme>.png, bg-card-<theme>.png, crumb-<theme>.png, step-<theme>.png and one-line-<width>-<theme>.png there).
+// fold-bash-<theme>.png, bg-card-<theme>.png, crumb-<theme>.png, step-<theme>.png, one-line-<width>-<theme>.png and mark-time-<theme>.png there).
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, fresh, shot, running, outPanel } from './helpers.mjs';
@@ -192,6 +193,20 @@ await c.cdp('Emulation.clearDeviceMetricsOverride', {});
 await click('Bash(cd ~');
 check('the full command stays in its expanded step, line breaks kept', await until(`${LSTEP}.open && ${LSTEP}.querySelector('.step-out .cmd')?.textContent === ${JSON.stringify(LONG)}`), await ev(`${LSTEP}.querySelector('.step-out .cmd')?.textContent`));
 
+// ---------- the marks in the bullet column (2026-11-26): not text, no click, the row's time on hover ----------
+const away = () => c.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 1, y: 1, button: 'none', buttons: 0 });
+const hover = async (sel) => {
+  await ev(`${sel}.scrollIntoView({ block: 'center' })`); await sleep(100);
+  const p = await ev(`(() => { const r = ${sel}.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+  await away(); await c.cdp('Input.dispatchMouseEvent', { type: 'mouseMoved', x: p.x, y: p.y, button: 'none', buttons: 0 }); await sleep(500);
+  return ev(`(() => { const t = document.querySelector('.mark-time'), g = ${sel}, cs = getComputedStyle(g); return { tip: t && !t.hidden ? t.textContent : null, at: g.dataset.at || null, cursor: cs.cursor, select: cs.userSelect }; })()`);
+};
+const CL = `[...document.querySelectorAll('#log .ln.claude > .g')].find(g => g.dataset.at)`;
+const old = await hover(CL);
+check('a mark of an earlier day: the tip gives the day, the month and the time to the second, from its row\'s time', !!old.tip && /^20 \S+, \d{1,2}.\d{2}.\d{2}( ?[AP]M)?$/.test(old.tip) && old.at === await ev(`__synopia.cur().items.find(i => i.ts === ${CL}.dataset.at)?.ts ?? null`) && old.cursor === 'default' && old.select === 'none', JSON.stringify(old));
+await away(); await sleep(100);
+check('the tip goes when the pointer leaves the mark', await ev(`!document.querySelector('.mark-time') || document.querySelector('.mark-time').hidden`));
+
 // ---------- a running foreground Bash step (R5.5, R5.6, R7.1, R7.2) ----------
 const reload = async (u, extra) => { await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200); return c.load(u, extra); };
 const LIVE = `document.querySelector('#log .liveln')`;
@@ -199,6 +214,21 @@ const OWN = `document.querySelector('#log details.step[data-step="toolu_live1"]:
 await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
 check('the live line names the running step', (await ev(`${LIVE}?.textContent.replace(/\\s+/g, ' ').trim()`)) === `Working Bash(${DESC})`, await ev(`${LIVE}?.outerHTML`));
 check('its own line is a step in a fold, not a run row: Bash(description), Running', await until(`!!${OWN} && !document.querySelector('#log .runrow') && ${OWN}.closest('.ln.tool').classList.contains('running') && ${OWN}.querySelector('summary').textContent.startsWith('Bash(${DESC})')`), await ev(`document.getElementById('log').innerHTML.slice(-800)`));
+{ // a dot and a spinner: the same, not text, no click; the tip says when the row started, today's to the second
+  const DOT = `${OWN}.closest('.ln.tool').querySelector(':scope > .g')`, SPIN = `${LIVE}.querySelector(':scope > .g')`;
+  const d = await hover(DOT), sp = await hover(SPIN);
+  if (shots) await shot(c, path.join(shots, `mark-time-${theme}.png`), await ev(`(() => { const r = ${SPIN}.getBoundingClientRect(); return { x: Math.max(0, r.left - 16), y: Math.max(0, r.top - 40), width: 420, height: 70, scale: 2 }; })()`));
+  const want = await ev(`(() => { const t = __synopia.cur().items.find(i => i.id === 'toolu_live1'); return { dot: t.ts, spin: t.since || t.ts }; })()`);
+  const today = /^\d{1,2}.\d{2}.\d{2}( ?[AP]M)?$/;
+  check('a dot and a spinner read alike: the default cursor, not selectable', d.cursor === 'default' && sp.cursor === 'default' && d.select === 'none' && sp.select === 'none' && !!(await ev(`${SPIN}.querySelector('.ind svg')`)), JSON.stringify([d, sp]));
+  check('hovering the dot shows its row\'s time to the second (its first step\'s), the spinner when the running step started', today.test(d.tip || '') && d.at === want.dot && today.test(sp.tip || '') && +new Date(sp.at) === +new Date(want.spin), JSON.stringify([d, sp, want]));
+  check('the tip is the app\'s small tip, not the native title', await ev(`!${DOT}.title && !${SPIN}.title && getComputedStyle(document.querySelector('.mark-time')).position === 'fixed'`));
+  await away();
+  const sel = await ev(`(() => { const r = document.createRange(); r.selectNodeContents(document.querySelector('#log .log-inner')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); const t = s.toString(); s.removeAllRanges(); return t; })()`);
+  check('copying the transcript picks up no mark', !/[●❯]/.test(sel) && sel.includes(DESC), sel.slice(0, 200));
+  await ev(`${DOT}.click(); ${SPIN}.click()`); await sleep(200);
+  check('a click on a mark does nothing: the fold stays closed, the live line opens no view', await ev(`!${OWN}.closest('details.fold').open && __synopia.view() === null`));
+}
 await ev(`${OWN}.closest('details.fold').open = true`);
 await ev(`${OWN}.querySelector('summary').click()`);
 const timer = () => ev(`${OWN}?.querySelector('.step-out .res.running')?.textContent ?? ''`);

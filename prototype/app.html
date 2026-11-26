@@ -107,7 +107,7 @@
   /* transcript: mono, gutter glyphs like the CLI */
   .log, .composer textarea, .status { font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
   .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
-  .ln > .g { user-select: none; }
+  .ln > .g, .log .prompt > .g { -webkit-user-select: none; user-select: none; cursor: default; } /* marks are not text (2026-11-26) */
   .ln.claude > .g { color: var(--ink); }
   .ln.tool > .g, .ln.agent > .g { color: var(--dot-green); }
   .ln.tool.failed > .g { color: var(--red); }
@@ -730,6 +730,8 @@
 
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6.5px 11.5px; border-radius: 5.5px; font-weight: 500; display: none; z-index: 10; }
   .toast.show { display: block; }
+  .mark-time { position: fixed; z-index: 11; pointer-events: none; background: var(--ink); color: var(--panel); font: 500 11.5px/1.35 var(--sans); padding: 2.5px 6.5px; border-radius: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .mark-time[hidden] { display: none; }
 
   @media (max-width: 990px) {
     .conv { grid-template-columns: minmax(0, 1fr); }
@@ -1063,6 +1065,30 @@ function took(ms) {
 }
 const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+/* the marks in the bullet column are not text: no selection, no click; hover shows when the row appeared (2026-11-26) */
+function markTime(ts, now = Date.now()) {
+  const d = new Date(ts), n = new Date(now); if (!ts || isNaN(d)) return "";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  if (d.toDateString() === n.toDateString()) return time;
+  return `${d.getDate()} ${d.toLocaleDateString([], { month: "short" })}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ""}, ${time}`;
+}
+const markAt = ts => ts ? ` data-at="${esc(typeof ts === "number" ? new Date(ts).toISOString() : ts)}"` : "";
+{
+  const MARK = ".log .ln > .g, .log .prompt > .g"; let tip = null, on = null, timer = 0;
+  const hide = () => { clearTimeout(timer); on = null; if (tip) tip.hidden = true; };
+  document.addEventListener("mouseover", e => {
+    const g = e.target.closest?.(MARK); if (g === on) return; hide(); if (!g || !g.dataset.at) return;
+    on = g; timer = setTimeout(() => {
+      const text = markTime(g.dataset.at); if (!text) return;
+      if (!tip) { tip = document.createElement("div"); tip.className = "mark-time"; tip.setAttribute("role", "tooltip"); document.body.append(tip); }
+      tip.textContent = text; tip.hidden = false;
+      const r = g.getBoundingClientRect(), t = tip.getBoundingClientRect(), above = r.top - t.height - 4;
+      tip.style.left = `${Math.max(4, Math.min(r.left - 2, innerWidth - t.width - 4))}px`; tip.style.top = `${above >= 4 ? above : r.bottom + 4}px`;
+    }, 300);
+  });
+  document.addEventListener("scroll", hide, true);
+  document.addEventListener("click", e => { if (e.target.closest?.(MARK)) { e.stopPropagation(); e.preventDefault(); } }, true);
+}
 
 /* a step's line: head and tail stay whole, the target (mid) gives way with an ellipsis */
 const lineHTML = (head, mid = "", tail = "") => `<span class="oneln">${head ? `<span>${head}</span>` : ""}${mid ? `<span class="oneln-t">${mid}</span>` : ""}${tail ? `<span>${tail}</span>` : ""}</span>`;
@@ -1076,7 +1102,7 @@ function toolsHTML(run) {
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = run.length === 1 ? run[0].state : fails ? "failed" : "";
-  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
+  return `<div class="ln tool ${cls}"><span class="g"${markAt(run[0].ts)}>●</span><details class="fold"><summary>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
     <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? "(" : ""}`, esc(t.obj), `${t.obj ? ")" : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}`)}</div>`).join("")}</div></details></div>`;
 }
 
@@ -1251,7 +1277,7 @@ function waveHTML(tools, s) {
   const time = a => a ? (a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
-    return `<div class="ln agent one"><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
+    return `<div class="ln agent one"><span class="g"${markAt(t.ts)}>${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
   }
   const ms = rows.map(r => r.a ? agentMs(r.a) : 0);
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));
@@ -1317,28 +1343,28 @@ function itemsHTML(items, sessionBusy, s) {
     run = [];
   };
   const flushFiles = () => { flush(); out.push(filesHTML(turnPatches)); turnPatches = []; };
-  const endTurn = () => { flushFiles(); if (turnStart && lastTs && new Date(lastTs) > new Date(turnStart)) out.push(`<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`); };
+  const endTurn = () => { flushFiles(); if (turnStart && lastTs && new Date(lastTs) > new Date(turnStart)) out.push(`<div class="ln doneln"><span class="g"${markAt(lastTs)}>${ind("s_agent")}</span><div>Worked for ${took(new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`); };
   const prompt = (html, ts) => {
     flush(); endTurn();
     if (ts && day(ts) !== lastDay) { out.push(`<div class="done">${day(ts)}</div>`); lastDay = day(ts); }
-    out.push(`<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`); turnStart = ts;
+    out.push(`<div class="prompt"><span class="g"${markAt(ts)}>❯</span><div class="md">${html}</div></div>`); turnStart = ts;
   };
   for (const it of items) {
     if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it.patch); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts); lastTs = it.ts; continue; }
     flush();
-    if (it.k === "claude") out.push(`<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`);
+    if (it.k === "claude") out.push(`<div class="ln claude"><span class="g"${markAt(it.ts)}>●</span><div class="md">${md(it.text)}</div></div>`);
     else if (it.k === "report") {
       const first = (it.text.split("\n").find(l => l.trim()) || "Report").replace(/[#*`]/g, "").slice(0, 160);
       const a = s && agentById(s, it.agent);
-      out.push(`<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`);
+      out.push(`<div class="ln agent"><span class="g"${markAt(it.ts)}>${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`);
     } else if (it.k === "ask" && it.state === "pending") {
       flushFiles();
-      out.push(`<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`);
+      out.push(`<div class="ln waitln"><span class="g"${markAt(it.ts)}>${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`);
       waiting = true; continue;
     } else if (it.k === "ask") {
       const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
-      out.push(`<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
+      out.push(`<div class="ln ask"><span class="g"${markAt(it.ts)}>●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`);
       if (it.state === "answered") {
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}</p>`).join("") : md(it.answer);
@@ -1353,7 +1379,7 @@ function itemsHTML(items, sessionBusy, s) {
 }
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
-  const line = (mark, t) => `<div class="ln liveln rule"><span class="g">${ind(mark)}</span><div>${lineHTML(`<b>Working</b>${t ? ` <span class="dim">${esc(t.verb)}${t.obj ? "(" : ""}</span>` : ""}`, t && t.obj ? `<span class="dim">${esc(t.obj)}</span>` : "", t && t.obj ? `<span class="dim">)</span>` : "")}</div></div>`;
+  const line = (mark, t) => `<div class="ln liveln rule"><span class="g"${markAt(t && t.ts)}>${ind(mark)}</span><div>${lineHTML(`<b>Working</b>${t ? ` <span class="dim">${esc(t.verb)}${t.obj ? "(" : ""}</span>` : ""}`, t && t.obj ? `<span class="dim">${esc(t.obj)}</span>` : "", t && t.obj ? `<span class="dim">)</span>` : "")}</div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", A.items.filter(x => x.k === "tool").pop());
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
@@ -1395,8 +1421,8 @@ function renderConv() {
     </header>
     <div class="log" id="log"><div class="log-inner">
       ${hidden > 0 ? `<p class="earlier">… ${hidden} earlier items not shown in this prototype</p>` : ""}
-      ${B ? `<div class="ln tool"><span class="g">●</span><div><span class="name">${B.kind === "monitor" ? "Monitor" : "Bash"}</span>(${esc(B.description || B.command)})<div class="mono" style="white-space:pre-wrap;color:var(--ink)">${esc(B.command)}</div><div class="res"><span class="lcorner" aria-hidden="true"></span><span class="mono out">its output, whole, as the terminal printed it (the app reads it)</span></div></div></div>
-        <div class="ln ${bst === "running" ? "liveln" : "doneln"}"><span class="g">${ind(bst === "running" ? (B.kind === "monitor" ? "k_mon" : "k_shell") : bst === "failed" ? "failed" : "done")}</span><div>${bst === "running" ? "<b>Running</b>" : `${bst === "failed" ? "Failed" : "Finished"} after ${took(bgMs(B))}. ${esc(B.summary || "")}`}</div></div>`
+      ${B ? `<div class="ln tool"><span class="g"${markAt(B.start)}>●</span><div><span class="name">${B.kind === "monitor" ? "Monitor" : "Bash"}</span>(${esc(B.description || B.command)})<div class="mono" style="white-space:pre-wrap;color:var(--ink)">${esc(B.command)}</div><div class="res"><span class="lcorner" aria-hidden="true"></span><span class="mono out">its output, whole, as the terminal printed it (the app reads it)</span></div></div></div>
+        <div class="ln ${bst === "running" ? "liveln" : "doneln"}"><span class="g"${markAt(B.start)}>${ind(bst === "running" ? (B.kind === "monitor" ? "k_mon" : "k_shell") : bst === "failed" ? "failed" : "done")}</span><div>${bst === "running" ? "<b>Running</b>" : `${bst === "failed" ? "Failed" : "Finished"} after ${took(bgMs(B))}. ${esc(B.summary || "")}`}</div></div>`
       : view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
       ${B ? "" : liveLine(s, A)}
     </div></div>

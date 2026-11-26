@@ -6,7 +6,7 @@ import { store, current, view, cur, isViewed, selectView, requestsOf, waitingOf,
 import { request, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
-import { esc, lineHTML, took, hhmm, day, live, age, until, still } from "./format.js";
+import { esc, lineHTML, markAt, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes, linkText } from "./md.js";
 import { ind, kind } from "./marks.js";
 import { bgOf, bgState, renderRail } from "./rail.js";
@@ -131,7 +131,7 @@ function toolsHTML(run) {
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
   const cls = run.length === 1 ? esc(run[0].state) : fails ? "failed" : ""; // one step's dot reads its state, as the step's own
-  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
+  return `<div class="ln tool ${cls}"><span class="g"${markAt(run[0].ts)}>●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
     <div class="body">${run.map(t => {
       const o = objOf(t), row = `<span class="lcorner" aria-hidden="true"></span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${o ? "(" : ""}`, o, `${o ? ")" : ""}${editCounts(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}`)}`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)} data-item="${esc(t.id)}">${row}</div>`;
@@ -189,7 +189,7 @@ const absOf = f => f.list.find(p => p.abs)?.abs || "";
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
 /* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
    shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
-export function filesHTML(patches, key, more = 0) { // key: stable diff ids, so an open diff stays open when the block is redrawn
+export function filesHTML(patches, key, more = 0, ts = null) { // key: stable diff ids, so an open diff stays open when the block is redrawn
   let fileSeq = 0;
   more = Math.max(0, +more || 0);
   if (!patches.length && !more) return "";
@@ -213,7 +213,7 @@ export function filesHTML(patches, key, more = 0) { // key: stable diff ids, so 
     body += `</div>`;
   }
   if (more) body += `<div class="root">and ${more} more file${more > 1 ? "s" : ""}</div>`;
-  return `<div class="ln tool files"><span class="g">●</span><div><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}, click one to see the diff</span>${body}</div></div>`;
+  return `<div class="ln tool files"><span class="g"${markAt(ts)}>●</span><div><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}, click one to see the diff</span>${body}</div></div>`;
 }
 
 /* ---------- subagents ---------- */
@@ -231,7 +231,7 @@ function waveHTML(tools, s) {
   const time = a => a ? (busy(a) ? live(a.start, a.finished ? nowish - new Date(a.start) : agentMs(a)) : took(agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
-    return `<div class="ln agent one"${fgMark(t)}><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a, "")} <span class="adur">${time(a)}</span></div></div>`;
+    return `<div class="ln agent one"${fgMark(t)}><span class="g"${markAt(t.ts)}>${ind(markOf(a))}</span><div>${nameOf(t, a, "")} <span class="adur">${time(a)}</span></div></div>`;
   }
   // No duration bars (author, 2026-11-24): each row is its mark, its name and its time.
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));
@@ -259,21 +259,21 @@ export function itemsHTML(items, sessionBusy, s) {
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0))]); } turnPatches = []; };
-  const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
+  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0), lastTs)]); } turnPatches = []; };
+  const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g"${markAt(lastTs)}>${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   /* `mid`: a message the running turn took in from its queue (R5.5): the turn goes on through it, so no
      "Worked for" line before it */
   const prompt = (html, ts, key, whole, mid = false) => {
     flush(); if (!mid) endTurn(); putTitles();
     if (ts && day(ts) !== lastDay) { out.push([`day:${key}`, `<div class="done">${day(ts)}</div>`]); lastDay = day(ts); }
-    out.push(whole ? [`bang:${key}`, whole] : [`you:${key}`, band(html)]);
+    out.push(whole ? [`bang:${key}`, whole] : [`you:${key}`, band(html, ts)]);
     if (!mid) { turnStart = ts; turnKey = key; turnMs = null; }
   };
   for (const it of items) {
     /* your answer to a permission or plan card shows as your turn, before the tool it let run (R6.7) */
     if (it.k === "tool" && it.answer) { prompt(esc(it.answer), it.ts, `ans:${it.id}`); lastTs = it.ts; }
     /* a plan whose process ended before you answered reads "Not answered (Synopia quit)", as a question does */
-    if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered()]); continue; }
+    if (it.k === "tool" && it.name === "ExitPlanMode" && it.state === "running" && !sessionBusy) { flush(); out.push([`na:${it.id}`, notAnswered(it.ts)]); continue; }
     if (it.k === "tool") { run.push(it); if (it.patch || it.patches) turnPatches.push(it); if (it.ts) lastTs = it.ts; continue; }
     /* Synopia resumed a turn the credentials failed (R8.2, 2026-11-26): a quiet line, not your band, that opens Claude's turn */
     if (it.k === "resumed") { prompt(null, it.ts, it.id, `<div class="done retitle resumed">Resumed after the credential refresh</div>`); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
@@ -282,11 +282,11 @@ export function itemsHTML(items, sessionBusy, s) {
     if (it.k === "bang") {
       const b = it.live && s?.bang;
       if (b) { // the run Synopia shows until its records land (placeBangs put it where it started)
-        prompt(null, it.ts, it.id, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b, !!ownOf(s, b.id)));
+        prompt(null, it.ts, it.id, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b, !!ownOf(s, b.id), it.ts));
         lastTs = it.ts; continue;
       }
       if (!it.sh && bangLiveOf(s)?.id === it.id) continue; // its output isn't in yet: the live run shows it
-      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null, !!ownOf(s, it.id))); lastTs = it.ts; continue;
+      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null, !!ownOf(s, it.id), it.ts)); lastTs = it.ts; continue;
     }
     /* the shown title changed (R5.x): a quiet line in place, like a day separator */
     if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }
@@ -296,20 +296,20 @@ export function itemsHTML(items, sessionBusy, s) {
     if (it.k === "moved") { out.push([it.id, `<div class="done retitle moved">Continued in <span class="t">${esc(it.cwd || "another folder")}</span></div>`]); continue; }
     /* f, f set the turn aside for your messages (R9.8, 2026-11-26): its live line, as it was, still and struck through */
     if (it.k === "aside") { out.push([it.id, asideHTML(it, s, items)]); continue; }
-    if (it.k === "claude") out.push([it.id, `<div class="ln claude${it.aside ? " aside" : ""}"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
+    if (it.k === "claude") out.push([it.id, `<div class="ln claude${it.aside ? " aside" : ""}"><span class="g"${markAt(it.ts)}>●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
-      out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(a.review ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
+      out.push([it.id, `<div class="ln agent"><span class="g"${markAt(it.ts)}>${a ? ind(a.review ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
     } else if (it.k === "ask" && it.state === "pending" && (it.request || sessionBusy)) {
       flushFiles();
-      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.own ? `permission to ${esc(it.request.own.wants)}` : it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
+      out.push([`wait:${it.id}`, `<div class="ln waitln"><span class="g"${markAt(it.ts)}>${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? (it.request.own ? `permission to ${esc(it.request.own.wants)}` : it.request.toolName === "Bash" ? `permission to run ${esc(it.cmd || "a command")}` : `permission to use ${esc(it.request.toolName)} on ${esc(it.cmd)}`) : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, ${it.ext ? "asked in another process" : "in the message panel"}</span></div></div>`]);
       waiting = true; continue;
     } else if (it.k === "ask") {
       /* the transcript's question (a card's ask is always pending with its request, above) */
       const picked = parseAnswers(it.answer);
-      out.push([it.id, `<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
+      out.push([it.id, `<div class="ln ask"><span class="g"${markAt(it.ts)}>●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`]);
-      if (it.state === "pending") { out.push([`na:${it.id}`, notAnswered()]); continue; }
+      if (it.state === "pending") { out.push([`na:${it.id}`, notAnswered(it.ts)]); continue; }
       if (it.state === "answered") {
         const notes = parseNotes(it.answer); // your note on an answer stays visible (R6.4)
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}${notes[i] ? `<span class="dim">, note: ${esc(notes[i])}</span>` : ""}</p>`).join("") : md(it.answer);
@@ -329,9 +329,9 @@ export function itemsHTML(items, sessionBusy, s) {
    it runs and until its records land: the session's `bang`) or recorded by the CLI. A click on the row opens its
    shell view (bg-view.js), the only place for its whole output, its input and its stop. `opens`: a run the
    session lists (state.js ownBg); one the CLI recorded has its row only. */
-function bangHTML(id, cmd, sh, run, opens = false) {
+function bangHTML(id, cmd, sh, run, opens = false, ts = null) {
   const s = rowOf(), meta = run || (s?.bangs || []).find(r => r.id === id || r.landed === id) || null;
-  return ownRowHTML(ownRun(cmd, meta, sh || (run ? null : { out: "", err: "", cut: false, exit: null })), { open: opens ? (run?.id || meta?.id || id) : null, attrs: ` data-bang="${esc(id)}" data-item="${esc(id)}"` });
+  return ownRowHTML(ownRun(cmd, meta, sh || (run ? null : { out: "", err: "", cut: false, exit: null })), { open: opens ? (run?.id || meta?.id || id) : null, attrs: ` data-bang="${esc(id)}" data-item="${esc(id)}"`, at: ts });
 }
 /* the panel's run for a bash item: by the run's id, or the item it landed as */
 const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed === id) : null;
@@ -339,7 +339,7 @@ const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed =
    through, and why. Not a running mark: it doesn't move. */
 function asideHTML(it, s, items) {
   const t = it.step ? items.find(x => x.k === "tool" && x.id === it.step) : null;
-  return `<div class="ln asideln"><span class="g">${ind("s_agent")}</span><div><s><b>Working</b>${t ? ` ${liveName(s, t)}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
+  return `<div class="ln asideln"><span class="g"${markAt(it.ts)}>${ind("s_agent")}</span><div><s><b>Working</b>${t ? ` ${liveName(s, t).join("")}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
 }
 /* the reply an aside cut short goes above it, greyed with it, though its partial record lands after */
 function placeAsides(items) {
@@ -368,14 +368,14 @@ function placeBangs(items, s) {
 }
 /* the command that runs or just ran, until its records are in the transcript */
 const bangLiveOf = s => { const b = s.bang; return b && !s.items.some(i => i.id === (b.landed || b.id) && i.k === "bang" && i.sh) ? b : null; };
-const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
+const notAnswered = ts => `<div class="ln"><span class="g dim"${markAt(ts)}>○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
 export const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
 /* Your message on the prompt band (R5.5, R5.13), one way for all: a posted prompt item, or a sent one
    (the outbox) until its record lands. Its text, then its images as thumbnails (an outbox message's
    from the backend, `queued:<id>:<n>`), or a count when the transcript holds none of them. A queued one
    is the same band with a still clock in place of `❯` and lighter text: it waits, it doesn't run. */
-const band = body => `<div class="prompt"><span class="g">❯</span><div class="md">${body}</div></div>`;
+const band = (body, ts = null) => `<div class="prompt"><span class="g"${markAt(ts)}>❯</span><div class="md">${body}</div></div>`;
 const youBody = (m, agent) => `${m.images && !m.imgs?.length ? `<p class="img">[${m.images} pasted image${m.images > 1 ? "s" : ""}]</p>` : ""}${md(m.text || "")}${thumbsHTML(m.imgs, current, agent, "your message")}`;
 /* messages you sent while the turn runs, oldest first, below the live line (what's working began before
    it), as the CLI shows queued input. Once its prompt item is in, that shows instead, above the live line. */
@@ -411,7 +411,7 @@ function liveLine(s, A) {
        place; a step with no view (a subagent's own Bash, any other tool) expands from here as from its line */
     const opens = !A && !extra && t && isShell(t) && bgById(s, t.id) ? ` data-bg="${esc(t.id)}" title="Open its shell view"` : "";
     const body = !extra && liveStep(t) && !opens ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
-    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g">${ind(mark)}</span>${body}</div>`;
+    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g"${markAt(t ? t.since || t.ts : A ? A.start : s.state.since)}>${ind(mark)}</span>${body}</div>`;
   };
   // a subagent waiting on its own background work: still, it runs nothing itself (its shells move in the panel)
   if (A) return A.finished ? "" : A.waiting ? line(A.fork ? "s_fork" : "s_sub", null, "Waiting", "on its own background work") : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));

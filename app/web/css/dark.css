@@ -80,6 +80,7 @@
 :root[data-theme="dark"] .viewer { background: rgba(42, 48, 56, .94); }
 :root[data-theme="dark"] .viewer img { box-shadow: var(--shadow); }
 :root[data-theme="dark"] .toast { background: #444C58; color: var(--ink); box-shadow: inset 0 0 0 1px #5B6573; }
+:root[data-theme="dark"] .mark-time { background: #444C58; color: var(--ink); box-shadow: inset 0 0 0 1px #5B6573; }
 :root[data-theme="dark"] .ghost { box-shadow: 0 3px 10px rgba(0, 0, 0, .4); }
 
 /* ---------- the background panel ---------- */
