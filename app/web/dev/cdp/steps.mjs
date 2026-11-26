@@ -10,13 +10,16 @@
 // their cards in the panel while they run (R7.1), counted as background work, a foreground Bash none; the card opens the
 // shell view, whose title line starts with "‹ <session title>", and that crumb goes back. A background run over at once
 // has its Past line, which opens its view. A step inside "Searched once, …" opens to its input and result, 20 lines and
-// "Show all 32 lines" (`toolOutput`), kept through a live update; a single step opens inline. A running foreground Bash
-// of a driven session (the SDK's tool_progress: 42 s): its own line is an inline step that expands in place to its
+// "Show all 32 lines" (`toolOutput`), kept through a live update; a single step folds too ("Searched once"), and opens from the list.
+// A step's line is one line at any width (2026-11-26): a Bash with a long command of several lines, at 2000 and 640 px, folded
+// and listed, and on the live line: Bash(, the command cut with an ellipsis, the closing bracket in view; the full command in
+// its expanded step. A running foreground Bash
+// of a driven session (the SDK's tool_progress: 42 s): its own line is a step, folded, that expands in place to its
 // command, "Running, 42s" ticking and "Output shows when it finishes"; no card in the panel; the live line names it and
 // opens its shell view ("Shell in Claude's turn", how to see more), from which K and J go back (it has no card); its
 // result lands in the open shell view, and the open step turns into the finished view. A session Synopia doesn't drive:
 // the command and "Running", no note. Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS,
-// fold-bash-<theme>.png, bg-card-<theme>.png, crumb-<theme>.png and step-<theme>.png there).
+// fold-bash-<theme>.png, bg-card-<theme>.png, crumb-<theme>.png, step-<theme>.png and one-line-<width>-<theme>.png there).
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, fresh, shot, running, outPanel } from './helpers.mjs';
@@ -155,10 +158,39 @@ await click('Grep(TODO)');
 await sleep(150);
 check('a click closes it', await ev(`!${step('Grep(TODO)')}.open`));
 await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'toolu_one', k: 'tool', ts: '2026-11-20T10:04:00.000Z', name: 'Grep', verb: 'Searched', obj: 'hello', state: 'done', input: 'pattern: hello', out: { text: 'hello.md', lines: 1, cut: false } }], total: s.total + 2 }); })()`);
-check('a single step is inline', await until(`(() => { const d = ${step('Grep(hello)')}; return d && d.parentElement.matches('.ln.tool'); })()`));
+const ONE = `${step('Grep(hello)')}?.closest('details.fold')`;
+check('a single step folds too: one closed line, "Searched once"', await until(`!!${ONE} && !${ONE}.open && ${ONE}.querySelector('summary .name').textContent === 'Searched once' && ${ONE}.querySelectorAll('.body details.step').length === 1`),
+  await ev(`${step('Grep(hello)')}?.parentElement.outerHTML.slice(0, 300)`));
+await ev(`${ONE}.querySelector('summary').click()`);
 await click('Grep(hello)');
 await sleep(150);
-check('a single step opens', await ev(`${step('Grep(hello)')}.open && ${step('Grep(hello)')}.querySelector('.step-out').innerText.includes('pattern: hello')`));
+check('a click lists it, and a click on it opens it to its input', await ev(`${ONE}.open && ${step('Grep(hello)')}.open && ${step('Grep(hello)')}.querySelector('.step-out').innerText.includes('pattern: hello')`));
+
+// ---------- a step's line is one line at any width (R5.6, 2026-11-26) ----------
+// a Bash with a long command of several lines and no description: its fold line and its own line are each one line high at a
+// wide and a narrow window; the command gives way with an ellipsis, Bash( and the closing bracket stay in view
+const LONG = "cd ~/.claude/projects/-Users-fixture-dev-demo/memory && cat > commit-reports.md <<'EOF'\n---\nname: Don't mention signing\ndescription: a made-up note\n---\n" + 'Every line of it is made up for the check. '.repeat(6);
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 2, upsert: [{ id: 'mt-long-c', k: 'claude', ts: '2026-11-20T10:06:00.000Z', text: 'One more.' },
+  { id: 'toolu_long', k: 'tool', ts: '2026-11-20T10:06:01.000Z', name: 'Bash', verb: 'Ran', obj: ${JSON.stringify(LONG)}, state: 'done', input: ${JSON.stringify(LONG)}, out: { text: 'done', lines: 1, cut: false } }] }); })()`);
+const LSTEP = `document.querySelector('#log details.step[data-step="toolu_long"]')`, LFOLD = `${LSTEP}.closest('details.fold')`;
+check('the long Bash folds into "1 Bash command"', await until(`!!${LSTEP} && ${LFOLD}.querySelector('summary .name').textContent === '1 Bash command'`));
+await ev(`${LFOLD}.open = true`);
+const oneLine = (sel) => ev(`(() => { const el = ${sel}, lh = parseFloat(getComputedStyle(document.getElementById('log')).lineHeight); if (!el) return null;
+  const l = el.querySelector('.oneln'), t = l.querySelector('.oneln-t'), lr = l.getBoundingClientRect(), last = l.lastElementChild.getBoundingClientRect();
+  return { h: +el.getBoundingClientRect().height.toFixed(2), lh, cut: t.scrollWidth > t.clientWidth + 1, ellipsis: getComputedStyle(t).textOverflow, end: l.lastElementChild.textContent, endShown: last.width > 0 && last.right <= lr.right + 0.5, w: Math.round(lr.width) }; })()`);
+for (const width of [2000, 640]) {
+  await c.cdp('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 1, mobile: false });
+  await sleep(200);
+  await ev(`${LSTEP}.scrollIntoView({ block: 'center' })`);
+  const f = await oneLine(`${LFOLD}.querySelector(':scope > summary')`), st = await oneLine(`${LSTEP}.querySelector(':scope > summary')`);
+  check(`${width}px: the fold line is one line`, !!f && Math.abs(f.h - f.lh) < 0.5, JSON.stringify(f));
+  check(`${width}px: the step's line is one line: Bash(, the command cut with an ellipsis, the closing bracket in view`, !!st && Math.abs(st.h - st.lh) < 0.5 && st.cut && st.ellipsis === 'ellipsis' && st.end === ')' && st.endShown
+    && (await ev(`${LSTEP}.querySelector(':scope > summary .oneln').firstElementChild.textContent`)) === 'Bash(', JSON.stringify(st));
+  if (shots) await shot(c, path.join(shots, `one-line-${width}-${theme}.png`)); // the whole window: at 640 px the page stacks
+}
+await c.cdp('Emulation.clearDeviceMetricsOverride', {});
+await click('Bash(cd ~');
+check('the full command stays in its expanded step, line breaks kept', await until(`${LSTEP}.open && ${LSTEP}.querySelector('.step-out .cmd')?.textContent === ${JSON.stringify(LONG)}`), await ev(`${LSTEP}.querySelector('.step-out .cmd')?.textContent`));
 
 // ---------- a running foreground Bash step (R5.5, R5.6, R7.1, R7.2) ----------
 const reload = async (u, extra) => { await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200); return c.load(u, extra); };
@@ -166,7 +198,8 @@ const LIVE = `document.querySelector('#log .liveln')`;
 const OWN = `document.querySelector('#log details.step[data-step="toolu_live1"]:not(.live)')`;
 await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
 check('the live line names the running step', (await ev(`${LIVE}?.textContent.replace(/\\s+/g, ' ').trim()`)) === `Working Bash(${DESC})`, await ev(`${LIVE}?.outerHTML`));
-check('its own line is a step, inline, not a run row: Bash(description), Running', await until(`!!${OWN} && !document.querySelector('#log .runrow') && ${OWN}.closest('.ln.tool').classList.contains('running') && ${OWN}.querySelector('summary').textContent.startsWith('Bash(${DESC})')`), await ev(`document.getElementById('log').innerHTML.slice(-800)`));
+check('its own line is a step in a fold, not a run row: Bash(description), Running', await until(`!!${OWN} && !document.querySelector('#log .runrow') && ${OWN}.closest('.ln.tool').classList.contains('running') && ${OWN}.querySelector('summary').textContent.startsWith('Bash(${DESC})')`), await ev(`document.getElementById('log').innerHTML.slice(-800)`));
+await ev(`${OWN}.closest('details.fold').open = true`);
 await ev(`${OWN}.querySelector('summary').click()`);
 const timer = () => ev(`${OWN}?.querySelector('.step-out .res.running')?.textContent ?? ''`);
 check('a click expands it in place, no view opens', await until(`${OWN}.open && __synopia.view() === null`, 2000));
@@ -212,5 +245,13 @@ const EXT = `document.querySelector('#log details.step[data-step="toolu_ext1"]:n
 await until(`!!${EXT}`, 3000);
 await ev(`${EXT}.querySelector('summary').click()`);
 check('not driven: expanded, the command and "Running", no note', await until(`${EXT}.open && ${EXT}.querySelector('.step-out .cmd').textContent === 'sleep 30; echo built' && /^Running/.test(${EXT}.querySelector('.step-out .res.running')?.textContent || '') && !${EXT}.querySelector('.step-out .res.note')`, 3000), await ev(`${EXT}?.textContent`));
+await ev(`(() => { const s = __synopia.cur(), it = s.items.find(i => i.id === 'toolu_ext1'); __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total, upsert: [{ ...it, obj: ${JSON.stringify(LONG)} }] }); })()`);
+for (const width of [2000, 640]) {
+  await c.cdp('Emulation.setDeviceMetricsOverride', { width, height: 820, deviceScaleFactor: 1, mobile: false });
+  await sleep(200);
+  const l = await oneLine(`${LIVE}?.querySelector('summary, .lh')`);
+  check(`${width}px: the live line naming it is one line, its closing bracket in view`, !!l && Math.abs(l.h - l.lh) < 0.5 && l.cut && l.endShown && /^\)/.test(l.end), JSON.stringify(l));
+}
+await c.cdp('Emulation.clearDeviceMetricsOverride', {});
 c.print();
 c.close();

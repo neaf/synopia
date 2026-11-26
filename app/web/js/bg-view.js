@@ -10,7 +10,7 @@
 import { store, cur, view, bgById, agentById, nowish, credsOf } from "./state.js";
 import { request, act } from "./connection.js";
 import { toast } from "./toast.js";
-import { esc, live, took, hhmm } from "./format.js";
+import { esc, lineHTML, live, took, hhmm } from "./format.js";
 import { ind } from "./marks.js";
 import { bgState } from "./runs.js";
 
@@ -126,7 +126,7 @@ export function bgLogEntries(s, b, runView) {
   const tool = b.kind === "monitor" ? "Monitor" : "Bash";
   const run = runView({ input: b.command, out: !o || lost || (running && !text) ? null : text, stopped: false });
   const lostRow = lost ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${esc(lost)}</span></div>` : "";
-  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}" data-end="${o ? +o.to || 0 : 0}"><span class="g">●</span><div><span class="name">${tool}</span>(${esc(b.description || b.command.split("\n")[0])})</div>${PS}${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div>`]);
+  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}" data-end="${o ? +o.to || 0 : 0}"><span class="g">●</span><div>${lineHTML(`<span class="name">${tool}</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div>`]);
   out.push(running ? ["live", liveRun(b, b.kind === "monitor" && o ? `, ${+o.total} event${o.total === 1 ? "" : "s"}` : "")] : ["end", endLine(b, st)]);
   return out;
 }
@@ -154,7 +154,7 @@ function stepLogEntries(s, b, runView) {
   const note = s.state.driven ? "Output shows when it finishes. b, b sends it to the background, where its output shows as it comes." : "";
   const run = running ? `<div class="step-out"><div class="cmd">${esc(b.command)}</div>${note ? `<div class="res note"><span class="lcorner" aria-hidden="true"></span><span class="note">${esc(note)}</span></div>` : ""}</div>`
     : st === "failed" ? runView({ input: b.command, err: text }) : runView({ input: b.command, out: text });
-  const out = [["run", `<div class="ln tool bg-run ${running ? "running" : st === "failed" ? "failed" : "done"}"><span class="g">●</span><div><span class="name">Bash</span>(${esc(b.description || b.command.split("\n")[0])})</div>${PS}${run}</div>`]];
+  const out = [["run", `<div class="ln tool bg-run ${running ? "running" : st === "failed" ? "failed" : "done"}"><span class="g">●</span><div>${lineHTML(`<span class="name">Bash</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run}</div>`]];
   out.push(running ? ["live", liveRun(b)] : ["end", endLine(b, st)]);
   return out;
 }

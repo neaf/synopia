@@ -87,7 +87,7 @@ await shot('new-session-sidebar');
 // 3. the caller's step: Start session(<title>), its result line a link to the new session
 await pick(A);
 const step = `[...document.querySelectorAll('#log .ln.tool')].find(l => l.textContent.includes('Start session'))`;
-check('step: Start session(CSV export, part 2)', await until(`(${step})?.querySelector('.name')?.textContent === 'Start session' && (${step}).textContent.includes('Start session(CSV export, part 2)')`, 8000), await ev(`(${step})?.textContent ?? ''`));
+check('step: Start session(CSV export, part 2)', await until(`(${step})?.querySelector('.body .name')?.textContent === 'Start session' && (${step}).textContent.includes('Start session(CSV export, part 2)')`, 8000), await ev(`(${step})?.textContent ?? ''`));
 check('step: the result line links to the new session', await until(`(${step})?.querySelector('.res button.alink[data-session="${N1}"]')?.textContent === 'CSV export, part 2'`));
 check('step: the card is gone', await until(`!document.querySelector('.qa-card')`));
 

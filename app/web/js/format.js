@@ -1,6 +1,11 @@
 /* Format: escaping, clocks, durations and the model label. DOM-free (app/web/test/format.test.js runs it
    in Node). Every string that goes into HTML, as text or as an attribute, passes through esc. */
 export const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+/* A step's line (R5.6, 2026-11-26): one line at any width. `head` and `tail` (HTML) stay whole; `mid` (HTML, the step's
+   target) gives way with an ellipsis, so `Bash(cd ~/… long command…)` keeps its name and its closing bracket. A line
+   break in it reads as a space (app.css .oneln). */
+export const lineHTML = (head, mid = "", tail = "") =>
+  `<span class="oneln">${head ? `<span>${head}</span>` : ""}${mid ? `<span class="oneln-t">${mid}</span>` : ""}${tail ? `<span>${tail}</span>` : ""}</span>`;
 
 /* ---------- durations ---------- */
 /* a step's or a turn's length, as the CLI writes it: "5s", "8m", "1h 12m" */

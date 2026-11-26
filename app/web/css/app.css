@@ -152,10 +152,15 @@ details.step > summary::-webkit-details-marker { display: none; }
 .step-out .desc { color: var(--ink-3); }
 .step-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; } /* shape as well as colour: a 1px rule at its edge */
 .step-out .res.note { color: var(--faint); }
-details.step[open] > summary .res.run { display: none; }
 /* an edit step's diff (R5.6): the Files changed view, under the guide instead of under its row */
 .step-out .res > .diff { grid-column: auto; margin: 2px 0 3.5px; color: var(--ink); }
 .dc { font-variant-numeric: tabular-nums; }
+/* a step's line (R5.6, 2026-11-26): one line at any width, a folded run's, a step's in it, the live line, a shell view's.
+   Its target gives way with an ellipsis; the name, the closing bracket and what follows stay. A line break in the target
+   reads as a space (format.js lineHTML). */
+.oneln { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
+.oneln > span { flex: none; white-space: pre; }
+.oneln > .oneln-t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* the band runs from the panel's inner edge (-16px, the log's padding), so its 2.5px edge shows whole */
 .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
 .prompt > .g { color: var(--link); }
@@ -672,9 +677,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--log-font) * var(--log-lh) / 2 - .5px); height: 1px; background: var(--line); }
 .log-inner > .liveln.rule > .g { background: var(--rule-bg); box-shadow: -5px 0 0 var(--rule-bg); }
 .log-inner > .liveln.rule > :not(.g) { position: relative; }
-/* the line is a grid, so its children are blocks: the break is the words' own inline box (summary, .lh), not the column */
-.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div > .lh { display: inline; background: var(--rule-bg); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
-.log-inner > .liveln.rule > details { display: inline; }
+/* the break is the words' own box (summary, .lh), as wide as they are and never wider than the column: one line (.oneln) */
+.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div > .lh { display: block; width: fit-content; max-width: 100%; box-sizing: border-box; background: var(--rule-bg); padding-right: 1ch; }
 .log.bg-asking .liveln.rule[data-fg] { --rule-bg: #DDF4FF; }
 
 .log { overflow-x: hidden; }

@@ -75,24 +75,24 @@ const ruleClear = async (what) => {
 };
 await ruleClear('a subagent named');
 check('the background subagent is flagged as background work', await ev(`__synopia.cur().items.some(i => i.id === 'toolu_bbg' && i.bg === true && i.state === 'running') && !__synopia.cur().items.find(i => i.id === 'toolu_bfg').bg`));
-check('the steps that can go carry the mark, the background Agent not', (await ev(`document.querySelectorAll('#log [data-fg]').length`)) === 2
-  && (await ev(`!!document.querySelector('#log .ln.tool[data-fg]') && !!document.querySelector('#log .liveln[data-fg]')`)), await ev(`document.querySelectorAll('#log [data-fg]').length`));
+check('the steps that can go carry the mark, the background Agent not: the Bash fold line, the step in it, the live line', (await ev(`document.querySelectorAll('#log [data-fg]').length`)) === 3
+  && (await ev(`!!document.querySelector('#log .ln.tool > details.fold > summary[data-fg]') && !!document.querySelector('#log .liveln[data-fg]')`)), await ev(`document.querySelectorAll('#log [data-fg]').length`));
 check('no highlight before b', (await marked()).length === 0);
 
 await K.b();
 check('first b: the prompt in the message box', (await asking()) === PROMPT, await asking());
 const m = await marked();
-check('first b: the Bash line and the foreground subagent are highlighted', m.length === 2 && /Bash/.test(m[0]) && /Look around/.test(m[1]), JSON.stringify(m));
-const look = await ev(`(() => { const el = document.querySelector('#log .ln.tool[data-fg]'), cs = getComputedStyle(el); return { bg: cs.backgroundColor, sh: cs.boxShadow, anim: el.getAnimations().length, h: el.getBoundingClientRect().height }; })()`);
+check('first b: the Bash fold line (and its step in it) and the foreground subagent are highlighted', m.length === 3 && /^1 Bash command/.test(m[0]) && /^Bash\(/.test(m[1]) && /Look around/.test(m[2]), JSON.stringify(m));
+const look = await ev(`(() => { const el = document.querySelector('#log .ln.tool > details.fold > summary[data-fg]'), cs = getComputedStyle(el); return { bg: cs.backgroundColor, sh: cs.boxShadow, anim: el.getAnimations().length, h: el.getBoundingClientRect().height }; })()`);
 const dark = process.env.SYNOPIA_CDP_THEME === 'dark'; // the tint and ring of the theme the check runs in
 check('the highlight: selection tint and a 1px blue ring, no animation of its own', look.bg === (dark ? 'rgb(31, 59, 92)' : 'rgb(221, 244, 255)') && (dark ? /rgb\(68, 147, 248\) 0px 0px 0px 4px/ : /rgb\(84, 174, 255\) 0px 0px 0px 4px/).test(look.sh) && look.anim === 0, JSON.stringify(look));
 check('the background Agent is not highlighted', !(await ev(`[...document.querySelectorAll('#log .wgrid [data-fg]')].some(el => /Draft the notes/.test(el.textContent))`)));
 await c.cdp('Page.captureScreenshot', { format: 'png' }).then((r) => fs.writeFileSync(path.join(stateDir, 'background-asking.png'), Buffer.from(r.result.data, 'base64')));
-const before = await ev(`document.querySelector('#log .ln.tool[data-fg]').getBoundingClientRect().top`);
+const before = await ev(`document.querySelector('#log .ln.tool > details.fold > summary[data-fg]').getBoundingClientRect().top`);
 
 await K.l();
 check('another key: the prompt and the highlight go, nothing sent', (await asking()) === null && (await marked()).length === 0 && (await sent()).length === 0);
-check('the highlight moved nothing', (await ev(`document.querySelector('#log .ln.tool[data-fg]').getBoundingClientRect().top`)) === before);
+check('the highlight moved nothing', (await ev(`document.querySelector('#log .ln.tool > details.fold > summary[data-fg]').getBoundingClientRect().top`)) === before);
 check('that key did nothing else (still normal, box empty)', (await ev('document.body.dataset.mode')) === 'normal' && (await ev('document.getElementById("msg").value')) === '');
 
 await K.b(); await K.b();
@@ -108,7 +108,7 @@ check('a click cancels it', (await asking()) === null && (await marked()).length
 await K.b(); await K.esc();
 check('Esc under it: "Interrupt?" replaces it, the highlight goes', /^Interrupt\?/.test(await asking() || '') && (await marked()).length === 0);
 await K.b();
-check('b under "Interrupt?": the background prompt replaces it', (await asking()) === PROMPT && (await marked()).length === 2);
+check('b under "Interrupt?": the background prompt replaces it', (await asking()) === PROMPT && (await marked()).length === 3);
 await K.j();
 check('j cancels it, nothing sent', (await asking()) === null && (await sent()).length === 1);
 await K.esc(); await K.l();
@@ -122,21 +122,21 @@ await addLive();
 await c.until(`!!document.querySelector('#log .liveln') && /Bash\\(npm run build\\)/.test(document.querySelector('#log .liveln').textContent)`);
 const where = () => ev(`(() => { const g = document.querySelector('#log details.step[data-step="toolu_blive"]:not(.live)')?.closest('.ln.tool'); return {
   live: document.querySelector('#log .liveln')?.hasAttribute('data-fg'), group: !g || g.hasAttribute('data-fg') || !!g.querySelector('[data-fg]'),
-  sleep: !!document.querySelector('#log .ln.tool[data-fg]:not(.liveln)') && /sleep 40/.test(document.querySelector('#log .ln.tool[data-fg]:not(.liveln)').textContent), agent: !!document.querySelector('#log .wgrid [data-fg]'),
+  sleep: !!document.querySelector('#log .ln.tool > details.fold > summary[data-fg]:not(.liveln)') && /sleep 40/.test(document.querySelector('#log .ln.tool > details.fold > summary[data-fg]:not(.liveln)').closest('.ln.tool').textContent), agent: !!document.querySelector('#log .wgrid [data-fg]'),
   n: document.querySelectorAll('#log [data-fg]').length }; })()`);
 const w0 = await where();
-check('live line names the foreground Bash: the mark is on the live line, not its own step line', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 3, JSON.stringify(w0));
+check('live line names the foreground Bash: the mark is on the live line, not its own step line (the earlier Bash: its fold line and its step)', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 4, JSON.stringify(w0));
 await K.b();
 check('first b: the prompt, the live line ringed', (await asking()) === PROMPT && (await ev(`(cs => /0px 0px 0px 4px/.test(cs.boxShadow))(getComputedStyle(document.querySelector('#log .liveln')))`)) === true);
 const m2 = await marked();
-check('first b: three steps marked once each, the live line one of them', m2.length === 3 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Working/.test(m2[2]), JSON.stringify(m2));
+check('first b: three steps marked, the live line one of them, the earlier Bash on its fold line and its step', m2.length === 4 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Working/.test(m2[3]), JSON.stringify(m2));
 await ev(`__synopia.redraw()`);
 const w1 = await where();
 check('after a redraw: its step line is not marked, the live line still is', w1.live === true && w1.group === false, JSON.stringify(w1));
 await addLive({ obj: 'npm run build:all' }); // the live line re-renders under the prompt
 await c.until(`/build:all/.test(document.querySelector('#log .liveln')?.textContent || '')`);
 const w2 = await where();
-check('the live line re-rendered under the prompt: it keeps the mark, the prompt stays', w2.live === true && w2.group === false && (await asking()) === PROMPT && (await marked()).length === 3, JSON.stringify(w2));
+check('the live line re-rendered under the prompt: it keeps the mark, the prompt stays', w2.live === true && w2.group === false && (await asking()) === PROMPT && (await marked()).length === 4, JSON.stringify(w2));
 await shot(c, path.join(stateDir, 'background-live.png'));
 await K.l();
 check('another key: the live line loses its ring too', (await asking()) === null && (await marked()).length === 0 && (await ev(`getComputedStyle(document.querySelector('#log .liveln')).boxShadow`)) === 'none');

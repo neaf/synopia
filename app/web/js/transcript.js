@@ -6,7 +6,7 @@ import { store, current, view, cur, isViewed, selectView, requestsOf, waitingOf,
 import { request, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
-import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
+import { esc, lineHTML, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes, linkText } from "./md.js";
 import { ind, kind } from "./marks.js";
 import { bgOf, bgState, renderRail } from "./rail.js";
@@ -39,15 +39,6 @@ export function onSession(fn) { showSession = fn; } // main.js: selects it, or o
    The live line naming a Bash opens its shell view (R5.5). */
 const isShell = t => t.name === "Bash" || t.name === "Monitor";
 let rowOf = () => null; // the session the `!` rows are drawn for: its runs (set by itemsHTML)
-function toolLine(t) {
-  const res = t.session ? `<div class="res"><span class="lcorner" aria-hidden="true"></span>${startedHTML(t)}</div>` : deniedWord(t) ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${deniedWord(t)}</span></div>`
-    : t.state === "failed" ? `<div class="res failed"><span class="lcorner" aria-hidden="true"></span><span>Failed</span></div>`
-    : t.state === "stopped" ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>Stopped</span></div>`
-    : t.state === "running" ? `<div class="res run"><span class="lcorner" aria-hidden="true"></span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  const line = `<span class="name">${esc(toolName(t))}</span>${objOf(t)}${editCounts(t)}${res}`;
-  /* the images of its result show under it, open or not (R5.13) */
-  return `<div class="ln tool ${esc(t.state)}"${fgMark(t)} data-item="${esc(t.id)}"><span class="g">●</span>${hasStep(t) ? `<details class="step"${stepOpen(t)}><summary>${line}</summary>${stepHTML(t)}</details>` : `<div>${line}</div>`}${thumbsHTML(t.imgs, current, view, imgFrom(t))}</div>`;
-}
 /* the source the viewer names for a step's images: a Read's file path, otherwise the step as its line reads */
 const imgFrom = t => t.name === "Read" && t.obj ? t.obj : `${toolName(t)}${t.obj ? `(${t.obj})` : ""}`;
 
@@ -129,8 +120,9 @@ export function applyToolOutput(m) {
   fullOut.set(key, String(m.text ?? ""));
   if (isViewed(m.sid, m.agent)) renderLog();
 }
+/* Steps fold into one line, a single step too ("1 Bash command", R5.6, 2026-11-26, the user's decision); a click lists
+   them, each on its own line, which expands to its command and result. Every such line is one line (lineHTML). */
 function toolsHTML(run) {
-  if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
   const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `${n} Bash commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
     Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills`, Watched: n => `started ${n} monitors`, "Start session": n => `started ${n} sessions` };
@@ -138,24 +130,24 @@ function toolsHTML(run) {
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
-  const cls = fails ? "failed" : "";
-  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
+  const cls = run.length === 1 ? esc(run[0].state) : fails ? "failed" : ""; // one step's dot reads its state, as the step's own
+  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
     <div class="body">${run.map(t => {
-      const row = `<span class="lcorner" aria-hidden="true"></span><span><span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${objOf(t)}${editCounts(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}</span>`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
+      const o = objOf(t), row = `<span class="lcorner" aria-hidden="true"></span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${o ? "(" : ""}`, o, `${o ? ")" : ""}${editCounts(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}`)}`, cls = `res ${t.state === "failed" ? "failed" : ""}`;
       return hasStep(t) ? `<details class="step"${stepOpen(t)}><summary class="${cls}"${fgMark(t)}>${row}</summary>${stepHTML(t)}</details>` : `<div class="${cls}"${fgMark(t)} data-item="${esc(t.id)}">${row}</div>`;
     }).join("")}</div></details>${thumbsHTML(run.flatMap(t => (t.imgs || []).map(m => ({ ...m, from: imgFrom(t) }))), current, view)}</div>`; // one row for the run's images (R5.12b)
 }
 
 /* a step's display name: the tool's Claude Code CLI name, as in the terminal; MCP tools read "server tool" */
 function toolName(t) { return t.name && !t.name.startsWith("mcp__") ? (t.name === "Task" ? "Agent" : t.name) : t.verb; }
-/* a step's target in brackets. SendMessage names whom it went to (the subagent's name, from its id) and
+/* a step's target, the part of its line in brackets. SendMessage names whom it went to (the subagent's name, from its id) and
    its summary, so it reads as a message to that subagent */
 function objOf(t) {
   if (t.name === "SendMessage" && t.to) {
     const a = cur() && agentById(cur(), t.to), who = a ? a.description : t.to;
-    return `(to “${esc(who)}”${t.obj ? `: ${esc(t.obj)}` : ""})`;
+    return `to “${esc(who)}”${t.obj ? `: ${esc(t.obj)}` : ""}`;
   }
-  return t.obj ? `(${esc(t.obj)})` : "";
+  return t.obj ? esc(t.obj) : "";
 }
 /* ---------- files changed ---------- */
 function splitPath(f) {
@@ -410,10 +402,11 @@ const runningStep = items => { const last = [...(items || [])].reverse().find(x 
 const liveFg = s => { const t = s.state.light === "green" && !phaseText(s) ? runningStep(s.items) : null; return t && isFg(t) ? t.id : null; };
 /* what the live line names: a subagent or fork by the panel's kind tag and its name; any other tool by its
    CLI name, Bash(…) */
-const liveName = (s, t) => { if (!isAgent(t)) return `${esc(toolName(t))}${objOf(t)}`; const a = agentByTool(s, t.toolUseId); return `${kind(a?.fork ? "fork" : "sub")} ${esc(a ? a.description : t.obj || "")}`; };
+const liveName = (s, t) => { if (!isAgent(t)) { const o = objOf(t); return [`${esc(toolName(t))}${o ? "(" : ""}`, o, o ? ")" : ""]; } const a = agentByTool(s, t.toolUseId); return [`${kind(a?.fork ? "fork" : "sub")} `, esc(a ? a.description : t.obj || ""), ""]; };
 function liveLine(s, A) {
   const line = (mark, t, word = "Working", extra = "", state = A ? "green" : s.state.tone) => {
-    const head = `<b>${esc(word)}</b> <span class="dim">${extra || (t ? liveName(s, t) : "")}</span>`;
+    const [pre, mid, post] = extra ? ["", extra, ""] : t ? liveName(s, t) : ["", "", ""];
+    const head = lineHTML(`<b>${esc(word)}</b>${pre || mid ? " " : ""}<span class="dim">${pre}</span>`, mid && `<span class="dim">${mid}</span>`, post && `<span class="dim">${post}</span>`); // one line (R5.6)
     /* a Bash step named here opens its shell view (R5.5, 2026-11-26), even while its own line folds and expands in
        place; a step with no view (a subagent's own Bash, any other tool) expands from here as from its line */
     const opens = !A && !extra && t && isShell(t) && bgById(s, t.id) ? ` data-bg="${esc(t.id)}" title="Open its shell view"` : "";

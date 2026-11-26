@@ -121,6 +121,10 @@
   details.fold > summary .hint { color: var(--faint); }
   details.fold[open] > summary .hint { display: none; }
   details.fold .body { margin-top: 5.5px; }
+  /* a step's line is one line at any width (R5.6, 2026-11-26): its target gives way with an ellipsis, the name and the closing bracket stay */
+  .oneln { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .oneln > span { flex: none; white-space: pre; }
+  .oneln > .oneln-t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* from the panel's inner edge (-16px, the log's padding), so the 2.5px edge shows whole */
   .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
   /* a queued message: the same band, a still clock in place of ❯, lighter text; one sticky block at the log's end */
@@ -530,7 +534,7 @@
   .log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 16px; max-width: none; }
   .log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(12px * 1.45 / 2 - .5px); height: 1px; background: var(--line); }
   .log-inner > .liveln.rule > .g { background: var(--panel); box-shadow: -5px 0 0 var(--panel); }
-  .log-inner > .liveln.rule > :not(.g) { position: relative; display: inline; background: var(--panel); padding-right: 1ch; }
+  .log-inner > .liveln.rule > :not(.g) { position: relative; display: block; width: fit-content; max-width: 100%; box-sizing: border-box; background: var(--panel); padding-right: 1ch; }
   /* shell output in its own subtle panel under its command (R5.6, R7.2, 2026-11-25) */
   .res > .out { display: block; color: var(--ink-2); white-space: pre-wrap; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
 
@@ -1060,13 +1064,10 @@ function took(ms) {
 const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
 
-function toolLine(t) {
-  const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
-    : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  return `<div class="ln tool ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
-}
+/* a step's line: head and tail stay whole, the target (mid) gives way with an ellipsis */
+const lineHTML = (head, mid = "", tail = "") => `<span class="oneln">${head ? `<span>${head}</span>` : ""}${mid ? `<span class="oneln-t">${mid}</span>` : ""}${tail ? `<span>${tail}</span>` : ""}</span>`;
+/* steps fold into one line, a single step too ("Ran 1 command", R5.6, 2026-11-26) */
 function toolsHTML(run) {
-  if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
   const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `ran ${n} commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
     Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills` };
@@ -1074,9 +1075,9 @@ function toolsHTML(run) {
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
-  const cls = fails ? "failed" : "";
-  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
-    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}</span></div>`).join("")}</div></details></div>`;
+  const cls = run.length === 1 ? run[0].state : fails ? "failed" : "";
+  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
+    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? "(" : ""}`, esc(t.obj), `${t.obj ? ")" : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}`)}</div>`).join("")}</div></details></div>`;
 }
 
 /* ---------- files changed ---------- */
@@ -1352,7 +1353,7 @@ function itemsHTML(items, sessionBusy, s) {
 }
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
-  const line = (mark, t) => `<div class="ln liveln rule"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
+  const line = (mark, t) => `<div class="ln liveln rule"><span class="g">${ind(mark)}</span><div>${lineHTML(`<b>Working</b>${t ? ` <span class="dim">${esc(t.verb)}${t.obj ? "(" : ""}</span>` : ""}`, t && t.obj ? `<span class="dim">${esc(t.obj)}</span>` : "", t && t.obj ? `<span class="dim">)</span>` : "")}</div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", A.items.filter(x => x.k === "tool").pop());
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
