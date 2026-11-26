@@ -207,6 +207,7 @@ export class Router {
         return s.send(str(m.text) ?? '', images, str(m.uuid) ?? undefined, client);
       }),
       bang: (client, m) => this.act(m.sid, (s) => s.runBang(m.command as string, str(m.uuid) ?? undefined, client)), // bash mode (R5.13)
+      bangInput: (_client, m) => this.act(m.sid, (s) => s.bangInput(m.text as string)), // a line typed into the running `!` command
       answer: (_client, m) => this.act(m.sid, (s) => s.answer(m.requestId as string, (m.answer ?? {}) as CardAnswer)),
       interrupt: (client, m) => this.act(m.sid, (s) => s.interrupt(client)),
       background: (_client, m) => this.act(m.sid, (s) => s.background()), // b, b (R9): an error only when nothing moved

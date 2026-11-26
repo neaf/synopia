@@ -33,6 +33,7 @@
       "effort": "high",
       "outbox": [],
       "bang": null,
+      "bangs": [],
       "gone": false,
       "agents": [],
       "background": [],
@@ -64,6 +65,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
       "gone": false,
       "agents": [],
       "background": [],
@@ -95,6 +97,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
       "gone": false,
       "agents": [],
       "background": [
@@ -164,6 +167,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
       "gone": false,
       "agents": [
         {
@@ -292,6 +296,7 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
       "gone": false,
       "agents": [],
       "background": [],

@@ -188,6 +188,12 @@ details.step[open] > summary .res.run { display: none; }
 .prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .bang-res { padding-left: 2ch; color: var(--ink-3); }
 .bang-res > .step-out { margin: 0; }
+/* a `!` run of yours: its command opens the shell view (bg-view.js); while it may wait for you, its input line
+   sits under the row, in the credential line's style (R5.13, 2026-11-26) */
+.prompt.bang-cmd .cmd.opens { cursor: pointer; }
+.prompt.bang-cmd .cmd.opens:hover { text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
+.log-inner > .bang-in, .bang-in { padding-left: 2ch; margin: -7px 0 11px; max-width: 150ch; }
+.bang-in input { max-width: none; }
 .done { color: var(--ink-3); margin: 0 0 14.5px; }
 .retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
 .opt-line { color: var(--ink-3); }

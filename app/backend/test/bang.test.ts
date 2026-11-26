@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, splitBash, BANG_CAP } from '../src/bang.ts';
 import type { BangRun, BangOptions } from '../src/bang.ts';
+import { plainText } from '../src/pty.ts';
 import { Transcript } from '../src/transcript.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
@@ -123,6 +124,62 @@ test('delivery: a command that cannot spawn toasts, and the daemon goes on', asy
   assert.match(String(got.find((m) => m.t === 'toast')?.text), /couldn't start/);
   assert.equal(sessions.get(SID)!.runBang('echo again').ok, true, 'the next command runs');
   await until(() => last()?.bang?.running === false);
+  sessions.stop();
+});
+
+// A terminal for the run (R5.13, 2026-11-26): pty.ts, one pseudo-terminal from start to end.
+test('bang: runs in a terminal: stdin and stdout are TTYs, stderr apart, a typed line and an empty Enter reach it, CRLF normalised', async () => {
+  let bang!: Bang;
+  const typed: string[] = [];
+  const r = await new Promise<BangRun>((resolve) => {
+    bang = new Bang({ id: ID, cmd: `[ -t 0 ] && echo tty0; [ -t 1 ] && echo tty1; echo err >&2; printf 'Name: '; read a; echo "got [$a]"; printf 'Press Enter: '; read b; echo "then [$b]"`, cwd: tmp(), shell: '/bin/sh', tickMs: 5,
+      onUpdate: (run) => {
+        if (run.out.includes('Name: ') && !typed.length) { typed.push('demo'); assert.equal(bang.input('demo'), true); }
+        if (run.out.includes('Press Enter: ') && typed.length === 1) { typed.push(''); assert.equal(bang.input(''), true); }
+      },
+      onDone: (run) => resolve({ ...run }) });
+  });
+  assert.equal(r.exit, 0);
+  assert.equal(r.err, 'err\n', 'stderr on its own pipe');
+  assert.match(r.out, /^tty0\ntty1\n/);
+  assert.match(r.out, /got \[demo\]\n/);
+  assert.match(r.out, /then \[\]\n$/);
+  assert.doesNotMatch(r.out, /\r/, 'the CRLF of the pty is LF');
+  assert.equal(bang.input('late'), false, 'nothing to type into once it ended');
+});
+
+test('bang: Esc, Esc ends a command that waits for Enter (TERM to its group)', async () => {
+  let bang!: Bang;
+  const done = new Promise<BangRun>((resolve) => {
+    bang = new Bang({ id: ID, cmd: `printf 'Press Enter: '; read x; echo never`, cwd: tmp(), shell: '/bin/sh', tickMs: 5, onUpdate: () => {}, onDone: (r) => resolve({ ...r }) });
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  bang.kill();
+  const r = await done;
+  assert.equal(r.interrupted, true);
+  assert.equal(r.exit, 143);
+  assert.doesNotMatch(r.out, /never/);
+});
+
+test('bang: quiet once it goes a while with no output, so the page offers the input line', async () => {
+  const seen: boolean[] = [];
+  const r = await new Promise<BangRun>((resolve) => {
+    new Bang({ id: ID, cmd: 'echo a; sleep 0.4; echo b', cwd: tmp(), shell: '/bin/sh', tickMs: 5, quietMs: 150, onUpdate: (run) => seen.push(run.quiet), onDone: (run) => resolve({ ...run }) });
+  });
+  assert.equal(seen.includes(true), true);
+  assert.equal(r.quiet, true, 'it stays set');
+  assert.equal(r.out, 'a\nb\n');
+});
+
+test('pty plainText: CRLF as LF, escapes out, a rewritten line as it ended', () => {
+  assert.equal(plainText('a\r\nb\x1b[31mc\x1b[0m\r\nprog 10%\rprog 99%\r\n\x1b]0;title\x07d'), 'a\nbc\nprog 99%\nd');
+  assert.equal(plainText('half\r'), 'half', 'a CR at the end waits for what comes');
+});
+
+test('delivery: a line typed with no command running is refused', async () => {
+  const { sessions, SID } = setup();
+  const r = sessions.get(SID)!.bangInput('x');
+  assert.equal(r.ok, false);
   sessions.stop();
 });
 
@@ -243,7 +300,7 @@ test('delivery: the command and its output go as shouldQuery:false user messages
     ['<bash-stdout>hi\n</bash-stdout><bash-stderr>err\nExit code 3</bash-stderr>', false, null],
   ]);
   assert.equal(inputs[0].uuid, ID, 'the input record carries the run id, so it lands in place');
-  assert.deepEqual({ ...last()?.bang, at: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0 });
+  assert.deepEqual({ ...last()?.bang, at: 0, end: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0, end: 0, quiet: false });
   // A process started only for this: its init starts no turn.
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
   await new Promise((r) => setTimeout(r, 20));

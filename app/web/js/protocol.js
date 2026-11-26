@@ -59,6 +59,7 @@ export const PAGE = {
      clears it), a line typed into the running command, or stop it; what follows comes as `creds` */
   credsSave: { id: "str?", sid: "str", command: "str" },
   credsInput: { id: "str?", sid: "str", text: "str" },
+  bangInput: { id: "str?", sid: "str", text: "str" },
   credsCancel: { id: "str?", sid: "str" },
 };
 
@@ -70,7 +71,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel"]);
+export const ACTIONS = new Set(["send", "bang", "bangInput", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel"]);
 
 /* backend to page */
 export const SERVER = {
@@ -79,7 +80,7 @@ export const SERVER = {
      alone for the messages held behind a card. hello's sessions also carry agents, background and stream. */
   session: {
     id: "str", replaces: "str?", title: "str?", name: "str?", now: "str?", cwd: "str?", prs: "arr?", state: "obj?",
-    model: "any", effort: "any", ask: "obj?", outbox: "arr?", bang: "obj?", held: "arr?",
+    model: "any", effort: "any", ask: "obj?", outbox: "arr?", bang: "obj?", bangs: "arr?", held: "arr?",
     agents: "arr?", background: "arr?", stream: "str?", layout: "obj?", gone: "bool?",
   },
   /* a session started another (Synopia's start_session tool, R3.15): a page viewing `from` shows `sid` */
@@ -98,7 +99,7 @@ export const SERVER = {
   /* a shown shell's or monitor's output (R7.2): a part [from, to) of total, in bytes for a shell, in events for a
      monitor; a reset, the part before what the page has (prepend), else what came after it. lost: "unnamed" (no
      output file named) or "gone" (it can't be read) */
-  output: { sid: "str", bg: "str", text: "str", from: "num", to: "num", total: "num", reset: "bool?", prepend: "bool?", lost: "str?" },
+  output: { sid: "str", bg: "str", text: "str", err: "str?", from: "num", to: "num", total: "num", reset: "bool?", prepend: "bool?", lost: "str?" },
   /* the Open list: at most 50 rows, and the totals: past sessions, their folders, how many match the filter */
   recent: { filter: "str", sessions: "arr", total: "num?", folders: "num?", matched: "num?", error: "bool?" },
   /* the known folders ({path, sessions, lastUsed}), newest first */

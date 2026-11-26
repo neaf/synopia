@@ -15,6 +15,7 @@ import { access, stat } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PtyRun, PtyStart } from './pty.ts';
+import { plainText } from './pty.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { sentence } from './mcp.ts';
@@ -73,7 +74,7 @@ export async function guessCommand(cwd: string, root: string, awsAuthRefresh: (c
 
 // What the page shows of a run's output: no escape sequences, no carriage returns, the last 16 KB.
 export function screenText(s: string): string {
-  const t = s.replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\r+\n/g, '\n').replace(/[^\n]*\r(?!\n)/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').replace(/\^D/g, '');
+  const t = plainText(s);
   return t.length > OUT_CAP ? t.slice(-OUT_CAP) : t;
 }
 
@@ -216,7 +217,7 @@ export class Creds {
     f.run = run;
     this.d.refreshing([...f.sids], true);
     this.publish(f);
-    void run.done.then(({ code, timedOut }) => {
+    void run.done.then(({ code, timedOut, killed }) => {
       f.run = null;
       const sids = [...f.sids];
       this.d.refreshing(sids, false);
@@ -233,7 +234,7 @@ export class Creds {
       this.log('creds.done', { ok: false, code: code ?? 'none', timedOut });
       const last = sentence(f.output).replace(/\.$/, '');
       f.error = timedOut ? `The refresh command didn't finish within ${Math.round((this.d.timeoutMs ?? RUN_TIMEOUT_MS) / 60_000)} minutes.`
-        : code === null ? 'The refresh command was stopped.'
+        : code === null || killed ? 'The refresh command was stopped.'
           : `The refresh command ended with exit code ${code}${last ? `: ${last}` : ''}.`;
       f.phase = f.sids.size ? 'failed' : 'idle';
       f.output = '';

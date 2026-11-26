@@ -2,9 +2,12 @@
    subagent does, in the same pane. The header says what it is and how it runs; the log is its output as a
    terminal run, the whole of it from the start (earlier output loads on asking, as earlier items do),
    growing while it runs, then how it ended. The backend sends the output (`output` frames, publisher.ts);
-   this module holds what the page has of it, per shell or monitor. */
+   this module holds what the page has of it, per shell or monitor. A `!` command of yours (state.js ownBg, R5.13)
+   opens here the same way, with its whole output (stdout, then stderr apart) and, while it runs, an input line
+   that types into its terminal (bangInputHTML). */
 import { store, cur, view, bgById, agentById, nowish } from "./state.js";
-import { request } from "./connection.js";
+import { request, act } from "./connection.js";
+import { toast } from "./toast.js";
 import { esc, live, took, hhmm } from "./format.js";
 import { ind } from "./marks.js";
 import { bgState } from "./rail.js";
@@ -48,7 +51,7 @@ export function applyOutput(m) {
   const key = `${m.sid}|${m.bg}`, o = outs.get(key);
   const mon = bgById(store.sessions.get(m.sid), m.bg)?.kind === "monitor";
   const join = (a, b) => mon && a && b ? `${a}\n${b}` : a + b; // a monitor's events are lines
-  if (m.reset || !o) outs.set(key, { text: m.text, from: m.from, to: m.to, total: m.total, lost: m.lost || null });
+  if (m.reset || !o) outs.set(key, { text: m.text, err: m.err || "", from: m.from, to: m.to, total: m.total, lost: m.lost || null });
   else if (m.prepend) {
     earlierAsked = null;
     if (m.to !== o.from) return false;
@@ -81,7 +84,7 @@ export function plain(text) {
 }
 
 const kb = n => n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
-const kindWord = b => b.kind === "monitor" ? (b.persistent ? "Monitor, until the session ends" : "Monitor") : "Background shell";
+const kindWord = b => b.own ? "Your shell command" : b.kind === "monitor" ? (b.persistent ? "Monitor, until the session ends" : "Monitor") : "Background shell";
 /* how it ended, as the panel words it (rail.js bgState): the word, its status mark */
 const ENDS = { done: ["Finished", "done"], failed: ["Failed", "failed"], stopped: ["Stopped", "stopped"], killed: ["Stopped", "stopped"], "timed out": ["Timed out", "timeout"] };
 const endOf = st => ENDS[st] || ["Finished", "done"];
@@ -93,7 +96,7 @@ export function bgHeaderHTML(s, b, modelLabel) {
   const now = st === "running" ? `Running, ${live(b.start, ms)}` : `${endOf(st)[0]}, ${took(ms)}`;
   const back = `<button class="link" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button>`;
   const whose = owner ? `of the subagent <button class="link" data-agent="${esc(owner.id)}" title="Open its transcript">${esc(owner.description)}</button> in ${back}` : `in ${back}`;
-  const hears = b.kind === "monitor" ? "Claude hears each event." : "Claude hears when it ends.";
+  const hears = b.own ? "Claude gets the command and its output when it ends." : b.kind === "monitor" ? "Claude hears each event." : "Claude hears when it ends.";
   return `<h2 class="c-title" title="${esc(b.description || b.command)}">${esc(b.description || b.command)}</h2>
         <p class="c-now">${now}. ${kindWord(b)}, started ${hhmm(b.start)}.</p>
         <p class="c-meta">${hears} ${b.kind === "monitor" ? "Monitor" : "Shell"} ${whose}</p>
@@ -103,6 +106,7 @@ export function bgHeaderHTML(s, b, modelLabel) {
 /* The log's blocks, [key, html] as transcript.js patches them: earlier output, the run (its command, then
    its output under the drawn guide, runView's), and the live line while it runs or how it ended. */
 export function bgLogEntries(s, b, runView) {
+  if (b.own) return ownLogEntries(s, b, runView);
   const o = outs.get(`${s.id}|${b.toolUseId}`), st = bgState(b), running = st === "running", out = [];
   if (o && o.from > 0) out.push(["earlier", `<p class="earlier"><button data-earlier>Show earlier output</button> (${b.kind === "monitor" ? `${+o.from} more events` : `${kb(o.from)} more`})</p>`]);
   const lost = o && o.lost ? (o.lost === "gone" ? "Its output file is gone: macOS clears temporary files." : "The transcript names no output file for it.") : "";
@@ -118,3 +122,33 @@ export function bgLogEntries(s, b, runView) {
   }
   return out;
 }
+
+/* A `!` run of yours: the command on the prompt band as in the transcript, its whole output, then the live
+   line with the input line under it while it runs, or how it ended. */
+function ownLogEntries(s, b, runView) {
+  const o = outs.get(`${s.id}|${b.toolUseId}`), st = bgState(b), running = st === "running", out = [];
+  const text = o ? plain(o.text) : "", err = o ? plain(o.err || "") : "";
+  const res = runView({ out: !o || (running && !text) ? null : text.replace(/\n$/, ""), err: err.replace(/\n$/, "") });
+  out.push(["run", `<div class="bang bg-run ${running ? "running" : "done"}" data-bang="${esc(b.toolUseId)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(b.command)}</div></div><div class="bang-res">${res}</div></div>`]);
+  if (running) {
+    out.push(["live", `<div class="ln liveln" data-state="green"><span class="g">${ind("k_shell")}</span><div><b>Running</b> <span class="dim">${live(b.start, msOf(b, st))}, Esc, Esc to end it</span></div></div>`]);
+    out.push(["input", bangInputHTML(b.toolUseId)]);
+  } else {
+    const [word, mark] = endOf(st), sum = (b.summary || "").trim();
+    out.push(["end", `<div class="ln doneln bg-end${st === "failed" ? " failed" : ""}"><span class="g">${ind(mark)}</span><div>${word} after ${took(msOf(b, st))}${b.end ? `, ${hhmm(b.end)}` : ""}${sum ? `. ${esc(sum)}` : ""}</div></div>`]);
+  }
+  return out;
+}
+
+/* The input line of a running `!` command (R5.13, 2026-11-26), in the credential line's style (creds-line.js):
+   Enter sends the line with a newline, an empty Enter just the newline ("Press Enter"); Esc leaves the field.
+   The same markup each render, so the log keeps the element, its text and its focus while output comes. */
+export const bangInputHTML = id => `<div class="creds-line bang-in" data-bang-in="${esc(id)}"><span class="g">❯</span><input spellcheck="false" autocomplete="off" placeholder="Type to the command, Enter sends" aria-label="Input to the shell command"></div>`;
+document.addEventListener("keydown", e => {
+  const inp = e.target, line = inp?.closest?.(".bang-in"); if (!line || inp.tagName !== "INPUT") return;
+  if (e.key === "Enter") {
+    e.preventDefault();
+    const s = cur(); if (!s) return;
+    if (act({ t: "bangInput", sid: s.id, text: inp.value }, { done: (ok, error) => { if (!ok && error) toast(error); } })) inp.value = "";
+  } else if (e.key === "Escape") { e.preventDefault(); inp.blur(); }
+});

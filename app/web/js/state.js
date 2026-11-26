@@ -23,8 +23,22 @@ const syncData = () => { data = [...store.sessions.values()]; };
 /* a session's subagents and forks */
 export const agentsOf = s => s?.agents || [];
 export const agentById = (s, id) => agentsOf(s).find(a => a.id === id);
-/* a session's background shell or monitor, by its tool use id */
-export const bgById = (s, id) => (s?.background || []).find(b => b.toolUseId === id);
+/* A session's `!` runs (session.ts bangs, R5.13 and R7.1, 2026-11-26) as background shells of the panel, marked
+   `own` (you started it): the backend owns them, this is only their shape for the panel and the shell view. */
+const ownMemo = new WeakMap();
+export function ownBg(s) {
+  const runs = s?.bangs; if (!runs || !runs.length) return [];
+  let out = ownMemo.get(runs);
+  if (!out) ownMemo.set(runs, out = runs.map(r => ({ toolUseId: r.id, own: true, kind: "shell", description: "", command: r.cmd, timeout: 0, persistent: false,
+    start: new Date(r.at).toISOString(), end: r.end ? new Date(r.end).toISOString() : null, landed: r.landed || null,
+    status: r.running ? "running" : r.interrupted ? "killed" : r.exit === 0 ? "completed" : "failed",
+    summary: !r.running && !r.interrupted && r.exit ? `Exit code ${r.exit}` : "" })));
+  return out;
+}
+/* a session's background shells and monitors: Claude's, then your `!` runs */
+export const bgAll = s => { const own = ownBg(s); return own.length ? [...(s?.background || []), ...own] : (s?.background || []); };
+/* a session's background shell or monitor, by its tool use id (a `!` run by its id) */
+export const bgById = (s, id) => bgAll(s).find(b => b.toolUseId === id);
 /* what a view id names in the session: a subagent or a shell or monitor */
 const viewable = (s, id) => !!id && !!(agentById(s, id) || bgById(s, id));
 /* how long a subagent ran, or runs (to the ticker's time) */

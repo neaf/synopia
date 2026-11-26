@@ -52,6 +52,10 @@ export const OUTBOX_GRACE_MS = 5000;
 // Bash mode (R5.13): the `!` command that runs, or ran, shown at the end of the transcript until
 // its records land. `landed`: the id of the bash item it became; the page shows that item instead.
 export type ShownBang = BangRun & { landed?: string };
+// The `!` runs of this session since the daemon started, newest last, as the background panel lists them
+// (R7.1, 2026-11-26): what ran, when and how it ended, without the output (bangOutput has it).
+export type BangMeta = { id: string; cmd: string; at: number; end: number | null; running: boolean; exit: number | null; interrupted: boolean; landed?: string };
+const BANGS_KEPT = 10;
 
 // The process side of a session (the header comment's states). status.ts SessionState is what the page shows.
 export type Phase = 'idle' | 'starting' | 'running' | 'ending' | 'yielded' | 'takingOver';
@@ -165,6 +169,7 @@ export class Session {
   private outbox: Outbox[] = []; // the messages the page shows queued (R5.5), until they land
   private outboxTimer: NodeJS.Timeout | null = null;
   private shownBang: ShownBang | null = null; // the `!` run the page shows, until its records land
+  private bangs: ShownBang[] = []; // the runs the panel lists (the last BANGS_KEPT), the shown one last while it is there
   private bangBy: By = null; // the page that ran it
   private forkNext = false; // the next process forks it into `cwd` (continueIn)
 
@@ -196,7 +201,7 @@ export class Session {
   open(): void {
     const { transcripts, publisher, store } = this.d;
     transcripts.open(this.id, { cwd: this.cwd });
-    publisher.attach(this.id, { outbox: () => this.shownOutbox(), bang: () => this.shownBang, landed: (items) => this.landedItems(items) });
+    publisher.attach(this.id, { outbox: () => this.shownOutbox(), bang: () => this.shownBang, bangs: () => this.bangList(), bangOutput: (id) => this.bangOutput(id), landed: (items) => this.landedItems(items) });
     this.terminal = this.placeholder ? null : this.d.terminals?.holder(this.id) ?? null;
     if (this.terminal) {
       this.state = 'yielded';
@@ -379,9 +384,29 @@ export class Session {
     });
     this.bang = bang;
     this.bangBy = by;
+    this.bangs = [...this.bangs, bang.run].slice(-BANGS_KEPT);
     this.d.log('bang.start', { sid: this.id });
     this.setBang(bang.run);
     return { ok: true, sid: this.id };
+  }
+
+  // A line typed into the running `!` command (its input line, R5.13): Enter sends it with a newline.
+  bangInput(text: string): SendResult {
+    if (!this.bang?.run.running || !this.bang.input(String(text ?? ''))) return { ok: false, error: 'No shell command is running in this session.' };
+    return { ok: true, sid: this.id };
+  }
+
+  // The panel's list of `!` runs, and one run's output for its shell view (publisher.ts viewOutput).
+  private bangList(): BangMeta[] {
+    return this.bangs.map((r) => {
+      const landed = this.shownBang?.id === r.id ? this.shownBang.landed : (r as ShownBang).landed;
+      return { id: r.id, cmd: r.cmd, at: r.at, end: r.end, running: r.running, exit: r.exit, interrupted: r.interrupted, ...(landed ? { landed } : {}) };
+    });
+  }
+
+  private bangOutput(id: string): { cmd: string; out: string; err: string; running: boolean } | null {
+    const r = this.bangs.find((b) => b.id === id);
+    return r ? { cmd: r.cmd, out: r.out, err: r.err, running: r.running } : null;
   }
 
   // The command and its output go to Claude in the CLI's format, as two user messages that start
@@ -1024,7 +1049,12 @@ export class Session {
     for (const it of items) {
       if (it.k !== 'bang' || !it.sh) continue;
       const ts = it.ts ? Date.parse(it.ts) : NaN;
-      if (it.id === b.id || (it.cmd === b.cmd && !(ts < b.at - 2000))) { b.landed = it.id; return; }
+      if (it.id === b.id || (it.cmd === b.cmd && !(ts < b.at - 2000))) {
+        b.landed = it.id;
+        const r = this.bangs.find((x) => x.id === b.id) as ShownBang | undefined;
+        if (r) r.landed = it.id; // the panel's row keeps it after the shown run goes
+        return;
+      }
     }
   }
 
