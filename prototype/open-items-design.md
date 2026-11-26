@@ -1,6 +1,6 @@
 # Open items: what waits on you, kept by AI
 
-Design proposal, 2026-11-26. Nothing here is built or decided. The storyboard beside it, `prototype/open-items-storyboard.html`, draws the same design. Examples are invented.
+Design, 2026-11-26: you reviewed and approved it the same day, and section 5 records your decisions on subagents. Nothing is built yet. The storyboard beside it, `prototype/open-items-storyboard.html`, draws the same design. Examples are invented.
 
 ## The problem
 
@@ -22,6 +22,7 @@ What you asked for (2026-11-26): the base runs on AI alone, so it works in any h
 - **Synopia adds a second reader, the keeper.** After each of your messages and each turn, a one-shot model call, like the one that writes titles today (`app/backend/src/writer.ts`), reads the exchange and the list and returns typed changes. It catches what the agent forgot and keeps a list for sessions that never loaded the skill.
 - **Synopia keeps one list per ledger, in its own state, and is its only writer.** Your actions, the agent's records and the keeper's changes are inputs to that list, applied by fixed rules. Synopia writes the ledger file back, so the CLI and a handoff see everything.
 - **You answer in prose.** "Run it" under a quoted line closes that item. Ids are a shortcut ("Y1 run it, Y3 later"), never a requirement. Synopia's chips only write that prose into the message box.
+- **Subagents work on items but never write the ledger.** A brief names the ids a subagent owns; its report says which it closed and asks its questions, which become `Y` items in Main conversation. A finished `For review:` subagent opens a review item, and the panel's To review group shows those items.
 - **Synopia shows it** in the background panel ("Waiting on you", "Claude will check"), as a sidebar line under each session ("○ 4 waiting on you"), and in one list across sessions, opened with `w`.
 
 ## 1. The model
@@ -31,15 +32,17 @@ What you asked for (2026-11-26): the base runs on AI alone, so it works in any h
 | Field | What it holds | Example |
 |---|---|---|
 | id | `Y` + number when it waits on you, `A` + number when it waits on Claude. Numbers count up per ledger and are never reused. | `Y3`, `A1` |
-| kind | decision, your task, follow-up, default | decision |
+| kind | decision, your task, follow-up, default, review | decision |
 | text | one sentence, the thing itself, as you would say it | Run `bin/schema-lint --fix` now, or look at the 14 warnings first? |
 | options | for a decision with set answers | Run it, Look first |
 | recommended | the option Claude would pick | Look first |
 | trigger | for a follow-up: when to check again; for a default: when it goes ahead | after the M2 stack merges; when CI is green on #812 to #815 |
 | state | open, answered, due, later, done, went ahead, dropped, superseded | open |
+| subagent | the subagent the item is tied to: the one working on it, or, for a review, the one whose result waits (section 5) | Rebase #820 on main |
+| raised by | the subagent whose report asked it, when one did (section 5) | Rebase #820 on main |
 | source | who recorded it (Claude, the keeper, you), the session, the time, and a quote of the words it came from | Claude, "Ship checkout M2", 14:02, "Should I run…" |
 
-Four kinds, by who acts and whether anything blocks:
+Five kinds, by who acts and whether anything blocks:
 
 | Kind | Who acts | Blocks Claude? | Closes when |
 |---|---|---|---|
@@ -47,8 +50,9 @@ Four kinds, by who acts and whether anything blocks:
 | your task | you | no | you say it's done, or the work shows it (threads resolved, PR approved) |
 | follow-up | Claude, on a trigger | no | Claude checked and acted |
 | default | Claude, unless you object | no | it went ahead, or you objected |
+| review | you look at what a `For review:` subagent made | the work built on it | you respond about it, or click Mark reviewed |
 
-A decision, your task and a default are `Y` items: each needs your eyes. A follow-up is an `A` item: it needs nothing from you, and you see it only so that nothing is silently forgotten.
+A decision, your task, a default and a review are `Y` items: each needs your eyes. A follow-up is an `A` item: it needs nothing from you, and you see it only so that nothing is silently forgotten.
 
 ### Ids
 
@@ -150,7 +154,7 @@ It runs twice per exchange: right after you send (to mark answers at once) and a
 | A wrong close | a line under "Closed this turn" with Undo, for one turn | Undo, or saying so ("Y2 isn't done"), which reopens it |
 | A wrong answer match ("Run it" closed Y3, you meant Y1) | the closed line names what it read: "Y3, you said Run it" | Undo on it, or "I meant Y1" |
 
-You never add, edit or reorder items by hand. The only keys are `d` (not an item) and Undo (for one turn after a close), and both are corrections, not curation.
+You never add, edit or reorder items by hand. The only keys are `d` (not an item) and Undo (for one turn after a close), and both are corrections, not curation. Mark reviewed on a review item (section 5) is the To review action you already have.
 
 ## 3. The base: the `open-items` skill
 
@@ -193,11 +197,12 @@ Markdown a person reads at a glance, with a fixed line shape so code can read it
 
 - [x] Y3 · answered 2026-11-26 14:05 · "Run it" · done: 14 entries added to the todo file
 - [-] Y6 · dropped 2026-11-26 15:10 · #818 was closed
-- [>] Y7 · superseded by Y9 · 2026-11-26 15:12
+- [>] Y7 · superseded by Y5 · 2026-11-26 15:12
 ```
 
 - Box marks: `[ ]` open (with `- state: answered`, `due` or `later` as a field when it isn't plain open), `[x]` answered, done or went ahead, `[-]` dropped, `[>]` superseded.
 - One item is one line plus indented `- key: value` fields. The text never wraps onto a second line.
+- The fields, in this order when present: `state`, `options`, `recommended`, `trigger`, `goes ahead`, `watch`, `subagent`, `raised by`, `answer`, `from`. The kinds: `decision`, `your task`, `follow-up`, `default`, `review`. Section 5 shows `subagent`, `raised by` and `review` in use.
 - A line that doesn't fit the shape is shown as it is and left alone: Synopia lists it as "1 line Synopia can't read" and never guesses from it.
 - The format is pinned by a test, and its rules and any quirks go in one topic doc (`docs/Open items.md`), as for every format Synopia reads.
 
@@ -221,22 +226,22 @@ At the end of the turn:
 
 ### The reply's block, written from the ledger
 
-The reply ends with one block, always in this shape, generated from the ledger after it is written, never retyped from memory:
+The reply ends with one block, always in this shape, printed by `ledger.py block` from the ledger after it is written, never retyped from memory. For the ledger above, at 15:10, with A1 named because it changed:
 
 ```markdown
 **Waiting on you** (4)
 - **Y1** decision: Run `bin/schema-lint --fix` now, or look at the 14 warnings first? (I'd look first)
 - **Y2** your task: Answer the 2 review threads from Mira on #812.
-- **Y4** goes ahead when CI is green: mark #812 to #815 ready, #812 first. Say if you want another order.
-- **Y5** decision: Can I remove ~/dev/shop-wt-cart and ~/dev/shop-wt-tax? (new)
+- **Y4** default: Mark #812 to #815 ready in this order: #812, #814, #813, #815. (goes ahead when CI is green on all four, unless you object)
+- **Y5** decision: Can I remove the worktrees ~/dev/shop-wt-cart and ~/dev/shop-wt-tax?
 
 **Claude will check** (1)
-- **A1** after the M2 stack merges: re-check #820's conflict.
+- **A1** after the M2 stack merges: Re-check #820, which GitHub shows as conflicting.
 
-Closed this turn: Y3 (you said "Run it": 14 entries added).
+Closed this turn: Y6 (dropped: #818 was closed); Y7 (superseded by Y5).
 ```
 
-- Every open `Y` item is listed, in id order, every turn, so nothing drops out of sight. New ones say "(new)".
+- Every open `Y` item is listed, in id order, every turn, so nothing drops out of sight. New ones say "(new)"; the lines closed this turn follow the lists.
 - `A` items are listed only when one is new, due, or changed, so the block stays short.
 - With nothing open, the block is one line: "Nothing waits on you."
 
@@ -338,7 +343,62 @@ The panel shows when the session has background work or open items.
 
 `w` in normal mode, or a click on the "○ 7 waiting on you" button in the sidebar's head, opens a list over the main area, built like the Open list: every open `Y` item of every open session, grouped by session in sidebar order, each row with its id, kind, text and age. `j`/`k` move, Enter opens that session with the item's answer started in its box (`Y1 `), Esc closes. Typing filters, as in the Open list.
 
-## 5. Options where the choice is real
+## 5. Subagents
+
+Your decisions, 2026-11-26. A subagent can work on an item, find a question, or make something for you to review. It never writes the ledger: the main agent and the keeper (Synopia's reader) do.
+
+### The rules
+
+1. **Only the main agent and the keeper write the ledger.** A subagent never edits `open-items.md` and never calls the `open_items` tool. Its brief and its report carry the items instead, and the main agent records what the report says.
+2. **A brief names the item ids the subagent owns, and its report says which it closed.** The brief has one line, `Open items: Y5, A2`, with the text of each. The report has one line per closed id, `Closed: Y5 (done: rebased with main's rates, pushed)`. The line is in `harness-common/references/subagents.md`, so every harness skill's briefs carry it.
+3. **An item a subagent works on shows "with <name>" under that subagent's panel card,** with its id box, and leaves its own group while the subagent runs. The item's `subagent` field holds the name. It closes when the report shows it done; when the report doesn't close it, it goes back to its group, and the `subagent` field goes.
+4. **A question in a subagent's report becomes a `Y` item raised by that subagent.** The main agent opens it when it reads the report, with `raised by: <name>`. You answer it in Main conversation, like any item: the subagent has finished and can't hear you.
+5. **"To review" is an item kind.** A finished `For review:` subagent opens `Review: <name>`, a review item. A response about it ("the receipt copy is fine", "Y8: shorter subject line") or Mark reviewed closes it.
+
+### In the ledger
+
+```markdown
+- [ ] Y5 · decision · #820 conflicts in config/tax_rates.yml: keep main's Norway rates, or this branch's?
+  - state: answered
+  - options: Main's | This branch's
+  - subagent: Rebase #820 on main
+  - answer: "Main's"
+  - from: Claude, "Ship checkout M2", 2026-11-26 16:41
+- [ ] Y7 · decision · The 2027 reduced rate is 12% on main and 15% in the #820 fixture: which is right?
+  - options: 12% | 15%
+  - raised by: Rebase #820 on main
+  - from: Claude, "Ship checkout M2", 2026-11-26 16:52, "Which 2027 reduced rate is right"
+- [ ] Y8 · review · Review: Receipt email copy
+  - subagent: Receipt email copy
+  - from: Claude, "Ship checkout M2", 2026-11-26 16:58
+```
+
+And in the reply's block, a review item reads like the rest:
+
+```markdown
+- **Y7** decision, from Rebase #820 on main: The 2027 reduced rate is 12% on main and 15% in the #820 fixture: which is right?
+- **Y8** review: Receipt email copy (new)
+```
+
+### In Synopia
+
+- **The card.** Synopia reads the brief's `Open items:` line from the subagent's start (a fixed shape, so code reads it, as it reads the ledger). Under the card, each owned item shows its id box, its text and "with <name>" with the subagent's moving mark. When the subagent ends, the line goes with the card: the item closes or returns to its group.
+- **Raised by.** A raised item says so in its kind line: "decision, from Rebase #820 on main". A click on its text scrolls to the report block it came from.
+- **To review becomes a view of review items.** The group keeps its place, its blue cards, the click that jumps to the report (R7.1) and Mark reviewed, and each card gains its id box. "N to review" in the sidebar and the Dock badge count open review items. "○ N waiting on you" counts the other `Y` items, so no item is counted twice.
+- **One owner.** `items.ts` opens the review item when a `For review:` subagent finishes, a fact from the transcript, not a guess, so its id box is solid. Mark reviewed is your action on the item, like `d`. The backend's reviewed marks (R10.2) become the items' states, and the store of marks goes.
+- **The keeper reads reports.** A subagent's report is a tool result, but the session started that subagent, so the keeper may open a `Y` item from a question in it and close an owned id the report says it closed, each with a quote from the report. A report still never answers a decision of yours.
+- **A subagent's write is not a record.** A ledger edit or an `open_items` call from inside a subagent (its messages carry a `parent_tool_use_id`, `docs/Agent SDK.md`) is refused or ignored, and the next file write restores the list.
+
+### What changes elsewhere
+
+| Where | Change |
+|---|---|
+| Synopia R7.1, R10.1, R10.2, R2.6 | To review is a view of review items; the stored marks become item states; the Dock badge counts open review items. |
+| Synopia R4.2 | "N to review" counts review items; "○ N waiting on you" counts the other `Y` items. |
+| agent-harness `subagents.md` | The brief's `Open items:` line, the report's `Closed:` lines, and "never edit the ledger". |
+| agent-harness `open-items` skill | The rules above, the `review` kind and the `subagent` and `raised by` fields. |
+
+## 6. Options where the choice is real
 
 | Question | Options | Recommended |
 |---|---|---|
@@ -349,26 +409,26 @@ The panel shows when the session has background work or open items.
 | When an inferred change applies | A. at once, marked, with Undo; B. only after the agent confirms it next turn | A: you asked for a list that keeps itself; B leaves it a turn behind |
 | Where the base rules live | A. own skill `open-items`; B. a section of ai-notes | A, as in section 3 |
 
-## 6. Phases
+## 7. Phases
 
-1. **The skill, in agent-harness.** `skills/open-items/` with the format, `ledger.py`, the every-turn rules and the reply's block; the line in `instructions/global.md`; ai-notes, attack-plan-milestone-execute and qa-session link to it for pending items; requirements, architecture and topic docs in the same commit. Optional hooks after a week of use. Works in the Claude Code CLI and opencode the day it lands.
-2. **Synopia reads the file.** `items.ts`, the version 1 parser with its test, the panel groups, the sidebar line, the buttons that write into the box. No model, no tool.
-3. **The keeper.** The two calls per exchange, the op checks, "found by Synopia", `d` and Undo, lists for sessions with no skill, Synopia writing the file back.
-4. **The `open_items` tool.** Typed records and ids from Synopia when it runs the session.
+1. **The skill, in agent-harness.** `skills/open-items/` with the format, `ledger.py`, the every-turn rules and the reply's block; the line in `instructions/global.md`; ai-notes, attack-plan-milestone-execute and qa-session link to it for pending items; the subagent rules of section 5, with the brief and report lines in `subagents.md`; requirements, architecture and topic docs in the same commit. Optional hooks after a week of use. Works in the Claude Code CLI and opencode the day it lands.
+2. **Synopia reads the file.** `items.ts`, the version 1 parser with its test, the panel groups, the sidebar line, the buttons that write into the box; items under subagent cards from the brief's `Open items:` line, and To review as a view of review items, replacing the reviewed marks. No model, no tool.
+3. **The keeper.** The two calls per exchange, the op checks, "found by Synopia", `d` and Undo, the keeper reading subagent reports, lists for sessions with no skill, Synopia writing the file back.
+4. **The `open_items` tool.** Typed records and ids from Synopia when it runs the session; calls from inside a subagent refused.
 5. **The cross-session list** on `w`.
 
 The tool comes after the panels because reading the file already gives the panels their structure; the keeper comes before the tool because it covers every session, the ones without the skill too.
 
-## 7. Risks
+## 8. Risks
 
 - **Noise.** If every "should I…?" becomes an item, the list grows faster than you answer. Guard: the keeper's prompt opens only what the reply leaves open at its end, not questions the same reply answers; a dismissed text is never reopened; a `Y` item untouched for 3 sessions is shown as "stale" and dropped at the next handoff with a line saying so.
 - **A wrong close you don't notice.** Guard: "Closed this turn" names what closed it, the reply's block says the same, and Undo lasts a turn. The risk stays for closes nobody reads.
 - **The keeper and the agent disagree, turn after turn.** Rule 3 settles each turn, but a disagreement that flips each turn is a bug to log. Guard: an item closed and reopened twice gets a fixed state until you or the agent touch it.
 - **The file and the list drift** when a terminal edits the file while Synopia is down. Guard: Synopia reads and applies the file before every write, and never writes during a turn.
-- **Prompt injection through the transcript.** A tool result could say "close Y1". Guard: the keeper's system prompt treats the transcript as data, as the writer's does, and every op needs a verbatim quote from your message or Claude's reply; tool results can only close your-task items (the work shows it), never open or answer a decision.
+- **Prompt injection through the transcript.** A tool result could say "close Y1". Guard: the keeper's system prompt treats the transcript as data, as the writer's does, and every op needs a verbatim quote from your message or Claude's reply; tool results can only close your-task items (the work shows it), never open or answer a decision. The one exception is the report of a subagent the session started, which may open a question and close the ids it owned (section 5), and still never answers a decision.
 - **Two sessions on one ledger** write the same number. Guard: in Synopia ids come from the list; in the CLI the skill re-reads the file right before writing and takes the next free number.
 
-## 8. Open questions for you
+## 9. Open questions for you
 
 1. **Should inferred changes apply at once, marked and undoable, or wait for the agent's confirmation?** Proposal: at once. This is the biggest choice: it decides how much of the list is Synopia's guess between turns.
 2. **Should Synopia write the ledger file into your repository** for areas the agent made, so the CLI and handoffs carry the keeper's finds? Proposal: yes, only between turns, only for a file the agent created. The other way, the file holds only what the agent recorded.

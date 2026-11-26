@@ -101,7 +101,7 @@ Dev and test only (not loaded in production):
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
 | `js/rail.js` | Background work panel: agents and runs as cards once due (`cardAt`), who started each by its sign, the waiting card. |
 | `js/runs.js` | Runs (R5.6, 2026-11-26): every shell command or monitor in one shape for the transcript row (`claudeRowHTML` under the grey `$`, `ownRowHTML` on the `!` band, `credsRunHTML` in the dock), its state line, the who sign; draws only what the backend sent. |
-| `js/bg-view.js` | A run's shell view (R7.2): its header, its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors, its foreground Bash (from its item), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
+| `js/bg-view.js` | A run's shell view (R7.2): its header, and `titleWithCrumb`, the title line with "‹ <session title>" that every view but Main conversation uses (R5.1), its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors, its foreground Bash (from its item), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
 | `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps, files changed, earlier link, live line, the sticky queue of queued prompts. |
 | `js/images.js` | Thumbnails and the image viewer. |
 | `js/preview.js` | File preview pane and find (`findIn`, the page's one matcher). |

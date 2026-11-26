@@ -4,7 +4,8 @@
 //        node steps.mjs <url> <state-dir> <claude-dir>
 // Checks: a Bash step is one row of the same shape as your `!` command: ● Bash(description), the command under a grey $
 // in the gutter (no band), the last 3 lines in the output panel, a state line with its mark; no expansion, no input
-// field. A click on it opens its shell view (the command, its whole result, how it ended). A step inside "Searched
+// field. A click on it opens its shell view (the command, its whole result, how it ended); with no card in the
+// panel, "‹ <session title>" at the start of the title line, K, J or that crumb go back to Main conversation. A step inside "Searched
 // once, …" opens to its input and result, 20 lines and "Show all 32 lines" (`toolOutput`), kept through a live
 // update; a single non-shell step opens inline. A running Bash step of a driven session (the SDK's tool_progress:
 // 42 s): its row says "Output shows when it finishes" and "Running, 42s" ticking; the live line names it and opens
@@ -76,8 +77,22 @@ await ev(`${ROW}.querySelector('.step-out .out').click()`);
 check('a click on the row opens its shell view', await until(`__synopia.view() === '${bid}' && !!document.querySelector('#log .bg-run')`, 3000));
 const view = await ev(`(() => { const r = document.querySelector('#log .bg-run'); return { ps: r.querySelector(':scope > .g.ps')?.textContent, cmd: r.querySelector('.step-out .cmd')?.textContent, out: r.querySelector('.step-out .out')?.textContent, end: document.querySelector('#log .bg-end')?.textContent.trim(), head: document.querySelector('.c-head').textContent.replace(/\\s+/g, ' '), box: !!document.getElementById('run-in') || !!document.getElementById('msg') }; })()`);
 check('its shell view: the $ and the command, its whole result, how it ended, no box', view.ps === '$' && view.cmd === 'ls -la /Users/fixture/dev/demo' && /notes\.md/.test(view.out || '') && /^Finished after/.test(view.end || '') && /Shell in Claude's turn/.test(view.head) && !view.box, JSON.stringify(view));
-await ev(`document.querySelector('[data-back]').click()`);
-await until(`__synopia.view() === null && __synopia.current() === '${sid1}'`, 3000);
+// the way back (2026-11-26): a run this short has no card in the panel, so the crumb at the title is the way
+const CRUMB = `document.querySelector('.c-head > .c-title > .c-crumb[data-back]')`;
+const back = await ev(`(() => { const b = ${CRUMB}, t = document.querySelector('.c-head > .c-title'); if (!b) return null; const br = b.getBoundingClientRect(), nr = t.querySelector('.c-name').getBoundingClientRect();
+  return { text: b.textContent, first: t.firstElementChild === b, sameLine: br.top >= t.getBoundingClientRect().top - 0.5 && br.bottom <= t.getBoundingClientRect().bottom + 0.5 && br.right <= nr.left, color: getComputedStyle(b).color, link: getComputedStyle(document.body).getPropertyValue('--link').trim(),
+    card: !!document.querySelector('.rail [data-bg="${bid}"]'), backs: document.querySelectorAll('.c-head [data-back]').length, title: __synopia.cur().title }; })()`);
+check('the run has no card in the panel', !!back && !back.card, JSON.stringify(back));
+check('its header starts with "‹ <session title>" on the title line, the one back link there', !!back && back.first && back.sameLine && back.text === '‹ ' + back.title && back.backs === 1, JSON.stringify(back));
+if (shots) await shot(c, path.join(shots, `crumb-${theme}.png`), await clipOf('.c-head'));
+await c.key('K', { shift: true, code: 'KeyK', vk: 75 });
+check('K from a view with no card goes back to Main conversation', await until(`__synopia.view() === null`, 3000), await ev('__synopia.view()'));
+await until(`!!${ROW}`, 3000); await ev(`${ROW}.click()`); await until(`__synopia.view() === '${bid}'`, 3000);
+await c.key('J', { shift: true, code: 'KeyJ', vk: 74 });
+check('J from it too', await until(`__synopia.view() === null`, 3000), await ev('__synopia.view()'));
+await until(`!!${ROW}`, 3000); await ev(`${ROW}.click()`); await until(`__synopia.view() === '${bid}'`, 3000);
+await ev(`${CRUMB}.click()`);
+check('the crumb goes back to Main conversation, with its message box', await until(`__synopia.view() === null && __synopia.current() === '${sid1}' && !!document.getElementById('msg')`, 3000));
 
 // ---------- the other steps still expand ----------
 check('the search group shows', await until(`!!document.querySelector('details.fold .body details.step')`));

@@ -92,17 +92,22 @@ const ENDS = { done: ["Finished", "done"], failed: ["Failed", "failed"], stopped
 const endOf = st => ENDS[st] || ["Finished", "done"];
 const msOf = (b, st) => (b.end ? new Date(b.end) : st === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : nowish) - new Date(b.start);
 
+/* The title line of every view but the main conversation (R5.12, R7.2, 2026-11-26): "‹ <session title>", the
+   one way back to Main conversation in the header, then the view's own title. It sits on the title's line, so
+   the header keeps the main conversation's three lines (R5.1). */
+export const titleWithCrumb = (s, title, shown = title) => `<h2 class="c-title"><button class="link c-crumb" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button><span class="c-name" title="${esc(title)}">${esc(shown)}</span></h2>`;
+
 /* The header: its name, how it runs, and whose it is, on the lines a subagent's header uses (R5.1). */
 export function bgHeaderHTML(s, b, modelLabel) {
   const st = bgState(b), ms = msOf(b, st), owner = b.agentId && agentById(s, b.agentId);
   const now = st === "running" ? `${b.waiting ? "Waits for input" : "Running"}, ${live(b.start, ms)}` : `${endOf(st)[0]}, ${took(ms)}`;
-  const back = `<button class="link" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button>`;
+  const back = `“${esc(s.title)}”`;
   const whose = owner ? `of the subagent <button class="link" data-agent="${esc(owner.id)}" title="Open its transcript">${esc(owner.description)}</button> in ${back}` : `in ${back}`;
   const f = b.creds ? credsOf(s.id) : null, n = f ? f.sids.length : 0;
   const hears = b.own ? "Claude gets the command and its output when it ends." : b.creds ? `Synopia runs it for ${n === 1 ? "this session" : `the ${n} sessions`} in ${esc(b.creds)} when their sign-in expires.`
     : b.step ? (st === "running" ? "Claude waits for it." : "Claude read its result.") : b.kind === "monitor" ? "Claude hears each event." : "Claude hears when it ends.";
   const title = b.own || b.creds ? b.command : b.description || b.command;
-  return `<h2 class="c-title" title="${esc(title)}">${esc(b.creds ? "Refresh credentials" : title)}</h2>
+  return `${titleWithCrumb(s, title, b.creds ? "Refresh credentials" : title)}
         <p class="c-now">${now}. ${kindWord(b)}, started ${b.creds ? "by Synopia " : ""}${hhmm(b.start)}.</p>
         <p class="c-meta">${hears} ${b.kind === "monitor" ? "Monitor" : "Shell"} ${whose}</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelLabel)}</button></div>`;

@@ -10,7 +10,7 @@ import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes, linkText } from "./md.js";
 import { ind, kind } from "./marks.js";
 import { bgOf, bgState, renderRail } from "./rail.js";
-import { shownBg, bgHeaderHTML, bgLogEntries, loadEarlierOutput, syncRunDock, runDockHTML, typesTo, applyStepOutput } from "./bg-view.js";
+import { shownBg, bgHeaderHTML, titleWithCrumb, bgLogEntries, loadEarlierOutput, syncRunDock, runDockHTML, typesTo, applyStepOutput } from "./bg-view.js";
 import { claudeRowHTML, ownRowHTML, stepRun, ownRun } from "./runs.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
@@ -494,9 +494,9 @@ export function renderHeader() {
   const A = view && agentById(s, view), B = !A && shownBg();
   conv.querySelector(".c-head").innerHTML = B ? bgHeaderHTML(s, B, modelName()) // a shell or monitor (bg-view.js)
     : A
-    ? `<h2 class="c-title" title="${esc(A.description)}">${esc(A.description)}</h2>
+    ? `${titleWithCrumb(s, A.description)}
         <p class="c-now">${A.finished ? `${A.stopped ? "Stopped" : "Finished"}, ${took(agentMs(A))}` : `Running, ${live(A.start, agentMs(A))}`}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
-        <p class="c-meta">Subagent of <button class="link" data-back title="Back to the main conversation">‹ ${esc(s.title)}</button>. Its report goes back to that session.</p>
+        <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)">${esc(modelName())}</button></div>`
     : `<h2 class="c-title" title="${esc(s.title)}">${esc(s.title)}</h2>
         <p class="c-now"${s.now ? ` title="${esc(s.now)}"` : ""}>${isEmpty(s) || !s.now ? "&nbsp;" : `Now: ${esc(s.now)}`}</p>
