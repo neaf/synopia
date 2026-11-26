@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Check the bank importer",
+  "toolUseId": "toolu_ra2",
+  "spawnDepth": 1,
+  "requestShape": "background",
+  "finished": true
+}

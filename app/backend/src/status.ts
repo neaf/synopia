@@ -437,7 +437,7 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
 //            ("No updates", "Retrying, attempt 4 of 10", "Compacting", "Refreshing credentials…").
 //            "Needs you, blocked": your turn after a main turn with a step denied and not retried
-//            (blockedLast). "Needs you, sign-in expired": signed out (2026-11-26). "Needs you, a command waits
+//            (blockedLast), or after a subagent run with one (blockedSubagent). "Needs you, sign-in expired": signed out (2026-11-26). "Needs you, a command waits
 //            for input": your `!` command waits for input (bang.ts, pty.ts InputWatch; R8.2, 2026-11-26).
 //   mark     the session mark's key (marks.js).
 //   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
@@ -459,7 +459,7 @@ export type StateFacts = {
   pending: Needs[]; // the session's requests' kinds, oldest first
   ask: { kind: 'question' | 'plan' } | null; // a card another process waits on
   interrupted: boolean; // the latest item (titles aside) is a `stop` interrupt marker
-  blocked: boolean; // the latest main turn has a denied step it didn't retry (blockedLast)
+  blocked: boolean; // the latest main turn, or a subagent run that ended since your last message, has a denied step not redone (blockedLast, blockedSubagent)
   input?: boolean; // your running `!` command waits for input (bang.ts BangRun.waiting)
   review: number;
   driven: boolean;
@@ -501,15 +501,52 @@ export function sessionState(e: { status: Status; at: number; detail?: StatusDet
 // step of the same tool and input that ran. Read once the turn is over: sessionState applies it to your
 // turn only, so it shows for sessions Synopia runs and terminal ones alike, and a new message clears it.
 export function blockedLast(items: Item[]): boolean {
+  const from = turnFrom(items);
+  return unredone(items.slice(from).filter((it) => it.k === 'tool')).length > 0;
+}
+
+// Where the latest main turn starts in `items`: your last message, a `!` command or a resumed turn.
+function turnFrom(items: Item[]): number {
   let from = items.length;
   while (from > 0) {
     const it = items[from - 1];
     if ((it.k === 'you' && !it.turnedDown && !it.interrupted) || it.k === 'bang' || it.k === 'resumed') break;
     from--;
   }
-  const steps = items.slice(from).filter((it) => it.k === 'tool');
-  return steps.some((d, i) => d.state === 'denied' && !steps.slice(i + 1).some((it) => it.state === 'done' && it.name === d.name && it.input === d.input));
+  return from;
 }
+
+// When the latest main turn started (turnFrom), in ms; null when no message opened one.
+export function turnStartMs(items: Item[]): number | null {
+  const from = turnFrom(items);
+  return from > 0 ? msOf(items[from - 1].ts) : null;
+}
+
+// The denied steps (auto mode blocked them, or a permission was denied) that no later step of the same
+// tool and input redid.
+function unredone(steps: Item[]): Item[] {
+  return steps.filter((d, i) => d.state === 'denied' && !steps.slice(i + 1).some((it) => it.state === 'done' && it.name === d.name && it.input === d.input));
+}
+
+// Blocked in a subagent (R8.2, FR-STAT-02, 2026-11-26): the same rule for a subagent's thread. `steps`:
+// its transcript's items; `ends`: when each of its runs ended and whether it was stopped (Transcript
+// runEnds); `since`: when your last message opened the main turn (turnStartMs). A step denied after
+// `since` that no later step of its thread redid, in a run that ended (not stopped), blocks: Claude
+// can't go on without you. Your next message clears it; so does that subagent, resumed, redoing it.
+export function blockedSubagent(steps: Item[], ends: { at: number; stopped: boolean }[], since: number | null): boolean {
+  if (!ends.some((e) => since === null || e.at > since)) return false;
+  const tools = steps.filter((it) => it.k === 'tool' && (since === null || (msOf(it.ts) ?? -Infinity) > since));
+  return unredone(tools).some((d) => {
+    const at = msOf(d.ts) ?? -Infinity;
+    const end = ends.find((e) => e.at >= at);
+    return end !== undefined && !end.stopped;
+  });
+}
+
+const msOf = (ts: string | null | undefined): number | null => {
+  const ms = ts ? Date.parse(ts) : NaN;
+  return Number.isNaN(ms) ? null : ms;
+};
 
 // What a session adds to the Dock badge (R2.6): 1 while it needs you, plus its deliverables to review.
 // No updates, retrying, compacting, refreshing and working don't count; signed out needs you (2026-11-26).

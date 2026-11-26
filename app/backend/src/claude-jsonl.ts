@@ -167,8 +167,10 @@ function toolResultOf(b: JsonRecord, index: number, denialKind: unknown): ToolRe
 
 // A user record's `toolUseResult`, for its first tool_result. `taskId`: the id that stops it
 // (a moved or background shell's `backgroundTaskId`, a monitor's `taskId`, an async Agent's `agentId`).
+// `resumedAgentId`: the subagent a SendMessage woke after it had ended (docs/Claude Code
+// transcripts.md#a-subagent-resumed-by-sendmessage), else ''.
 export type ToolUseResult = {
-  toolUseId: string; asyncLaunched: boolean; backgroundTaskId: string; taskId: string; interrupted: boolean;
+  toolUseId: string; asyncLaunched: boolean; backgroundTaskId: string; taskId: string; interrupted: boolean; resumedAgentId: string;
   edit: FileEdit | null; bashEdit: BashEdit | null;
 };
 
@@ -301,7 +303,7 @@ function userOf(d: JsonRecord, base: Base, content: unknown): UserRecord {
     toolUse = {
       toolUseId: results[0].toolUseId, asyncLaunched: async, backgroundTaskId: str(tur.backgroundTaskId),
       taskId: str(tur.backgroundTaskId) || str(tur.taskId) || (async ? str(tur.agentId) : ''),
-      interrupted: tur.interrupted === true, edit: fileEditOf(tur),
+      interrupted: tur.interrupted === true, resumedAgentId: str(tur.resumedAgentId), edit: fileEditOf(tur),
       bashEdit: diff && typeof diff === 'object' && !Array.isArray(diff) ? bashEditOf(diff as JsonRecord, str(d.cwd)) : null,
     };
   }

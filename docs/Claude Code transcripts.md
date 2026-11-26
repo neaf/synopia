@@ -183,7 +183,7 @@ A tool call a permission check said no to never runs. The CLI writes its `tool_r
 
 - Allowed calls carry `permissionDecision` with `decision: "accept"` and no `toolDenialKind`.
 - Synopia reads `automode-blocked` (or the content prefix alone) and `user-rejected` as the tool state `denied`, with `denied: "auto"` or `"you"`. The row reads "Blocked by auto mode" or "Denied", not "Failed". A hook or rule block stays failed: Claude reads its reason and carries on.
-- After the turn ends, a denied step that no later step of the same tool and input redid makes the session "Needs you, blocked" (R8.2).
+- After the turn ends, a denied step that no later step of the same tool and input redid makes the session "Needs you, blocked" (R8.2). The same holds for a subagent's step once that subagent ended (2026-11-26, see "A subagent resumed by SendMessage"). The auto-mode text is the same in a subagent's file, with `toolDenialKind: automode-blocked`.
 - Code: `claude-jsonl.ts` `Denial`, `toolResultOf`; `transcript.ts` `refreshTool`; `status.ts` `blockedLast`. Test: `claude-jsonl.test.ts` "a call auto mode blocked …", `transcript.test.ts` "a step auto mode blocked …", `status.test.ts` "blockedLast …". Source: shape scan of local transcripts 2026-11-25 (13 auto-mode blocks, 10 terminal denials, 52 hook or rule blocks).
 
 ## Background work
@@ -243,6 +243,25 @@ Rules Synopia uses:
 - A subagent's shell or monitor has ended when a notification with its tool use id lands in either file, or the SDK's `task_notification` says so; its task id comes from its result text. With none, it runs while its subagent runs. When the subagent is over: stopped ("Ended with its subagent") after a foreground subagent, a stopped or failed one, or the process's end; after a background subagent's "finished" it had ended ("Ended before its subagent finished", status `completed`), because the CLI says "waiting" while any of its own work runs.
 
 Code: `claude-jsonl.ts` `taskNotes` (`waiting`), `toolResultOf` (`taskId`); `transcript.ts` `note`, `agentRunning`, `idleWaiting`, `ownRunning`, `subBackground`. Test: `claude-jsonl.test.ts` "a subagent waiting on its own background work", `transcript.test.ts` "a subagent waiting on its own background work …" (three), page check `rail` (the waiting part).
+
+### A subagent resumed by SendMessage
+
+Seen 2026-11-26 in a live terminal session (shape scan of keys, record types and order, no content): the main agent sent SendMessage to two background subagents that had ended, one stopped and one finished, three times in all.
+
+- The SendMessage's `tool_result` record has `toolUseResult: {success: true, message: "Resuming agent …", resumedAgentId, revivedAgentId, pin: {id, name, ref}}`; both ids are the agent id. Its content is one text block. It lands when the subagent starts its new run, which can be a minute or more after the `tool_use`.
+- The message reaches the subagent's own file as a user record with string content, `isMeta: true` and `origin: {kind: "coordinator"}`, a few ms before that result. Synopia skips it like any meta record, so a subagent's view has no "you" item where a run starts.
+- The meta keeps `finished: true` through the resume and the new run (one meta had no `finished` at all). The flag can't tell a resumed subagent from an ended one.
+- The new run ends with a `<task-notification>` as the first did: `<task-id>` the agent id, `<tool-use-id>` the SendMessage's, status `completed` with `Agent "<description>" finished`, or `killed` when it is stopped.
+- A run's last record in the subagent's file comes 4 to 30 ms before its end notification in the main file (7 ends seen).
+- A stopped subagent's step that was in flight gets an error result with `toolDenialKind: user-rejected`.
+
+Rules Synopia uses:
+
+- A subagent runs again when a SendMessage result names it (`resumedAgentId`) after its latest end, or when its file has records more than 2 s after that end. It is counted in "N running in the background" and in the sidebar. It ends at its next notification (the JSONL's, or the SDK's `task_notification` matched by its `task_id`) or at the process's end (stopped). The end before says nothing about the new run.
+- A shell or monitor of its own with no notification, started in a run before the resume, stays ended with that run.
+- Blocked in a subagent (R8.2): a step auto mode blocked or a permission denied after your last message, in a run that ended and wasn't stopped, with no later step of the same tool and input that ran, makes the session "Needs you, blocked" once the main turn is over.
+
+Code: `claude-jsonl.ts` `ToolUseResult.resumedAgentId`; `transcript.ts` `resumedAt`, `agentRunning`, `endedRunOf`, `runEnds`, `taskEnded`; `status.ts` `blockedSubagent`; `publisher.ts` `blocked`. Test: `claude-jsonl.test.ts` "toolUseResult …", `status.test.ts` "blockedSubagent …", `subagent-status.test.ts` (fixture `claude-resume`, invented data).
 
 ## Shell edits (`bashEditDiff`)
 

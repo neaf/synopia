@@ -1,0 +1,8 @@
+{
+  "agentType": "general-purpose",
+  "description": "Check the CSV importer",
+  "toolUseId": "toolu_ra1",
+  "spawnDepth": 1,
+  "requestShape": "background",
+  "finished": true
+}
