@@ -51,6 +51,9 @@ export type Step = {
   // canUseTool (the next step waits for the answer), the tool from the session's mcpServers, its
   // tool_result record (docs/Agent SDK.md, "Synopia's tools for agents")
   call?: { tool: string; input: Record<string, unknown>; toolUseId?: string };
+  // a request the CLI retries, as it reports one: the `system/api_error` record with its sentence in the
+  // transcript, then the `system/api_retry` message (docs/Agent SDK.md, "Retried requests")
+  retry?: { attempt: number; max: number; delayMs: number; status: number | null; error: string; text: string; credential?: boolean };
 };
 export type SessionScript = {
   // seeded into a fresh state folder: the status and its age, the open entry's folder, and how long
@@ -382,6 +385,15 @@ class ScriptedSession implements QueryLike {
     if (t.cancelled || this.out.closed) return { answer: null };
     if (step.append) this.env.append(this.sid, this.cwd, step.append);
     if (step.send !== undefined) this.env.send(this.sid, step.send);
+    if (step.retry) {
+      const r = step.retry;
+      this.env.append(this.sid, this.cwd, [{
+        type: 'system', subtype: 'api_error', level: 'error', source: 'request_retry', isSidechain: false, uuid: randomUUID(),
+        error: { message: r.text, formatted: r.text, ...(r.status === null ? {} : { status: r.status }), ...(r.credential ? { isCloudCredentialError: true } : {}) },
+        retryInMs: r.delayMs, retryAttempt: r.attempt, maxRetries: r.max,
+      }]);
+      await this.out.deliver({ type: 'system', subtype: 'api_retry', attempt: r.attempt, max_retries: r.max, retry_delay_ms: r.delayMs, error_status: r.status, error: r.error, uuid: randomUUID(), session_id: this.sid } as unknown as SDKMessage);
+    }
     if (step.message) {
       const m = { uuid: randomUUID(), session_id: this.sid, ...step.message };
       if (m.type === 'system' && m.subtype === 'init') this.inited = true;

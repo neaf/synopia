@@ -22,6 +22,7 @@ import type { FileRefs } from './file-refs.ts';
 import { patchUi } from './ui-state.ts';
 import { displayPath } from './paths.ts';
 import type { Mcp, Action as McpAction, McpTarget } from './mcp.ts';
+import type { Creds } from './creds.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 
@@ -30,6 +31,7 @@ export const FAILED = 'Something went wrong in Synopia, so that wasn\'t done. ba
 export const UNREADABLE = 'Synopia couldn\'t read that message from the page.';
 const GONE: SendResult = { ok: false, error: "That session isn't open any more." };
 const NO_AGENT = "That subagent isn't in an open session any more.";
+const NO_CREDS: SendResult = { ok: false, error: 'Credentials can\'t be refreshed here.' };
 
 export type RouterOptions = {
   sessions: Sessions;
@@ -37,6 +39,7 @@ export type RouterOptions = {
   publisher: Publisher;
   menus: Menus;
   mcp?: Mcp; // /mcp (R5.15)
+  creds?: Creds; // the credential refresh of a session's folder (2026-11-26)
   store: Store;
   marks: ReviewedMarks;
   bat: Promise<Bat>;
@@ -236,6 +239,10 @@ export class Router {
       newGroup: (_client, m) => sessions.layout.newGroup(sessions.resolve(m.sid as string), sessions.resolve(m.onto as string), m.group as string, str(m.name) ?? undefined),
       mcpAction: (_client, m) => this.act(m.sid, (s) => this.o.mcp?.act(mcpTarget(s), m.name as string, m.action as McpAction | 'cancel') ?? { ok: false, error: 'MCP servers can\'t be managed here.' }),
       renameGroup: (_client, m) => sessions.layout.renameGroup(m.group as string, m.name as string),
+      // the credential refresh of the session's folder (creds.ts)
+      credsSave: (_client, m) => this.act(m.sid, (s) => this.o.creds?.save(s.id, s.cwd, m.command as string) ?? NO_CREDS),
+      credsInput: (_client, m) => this.act(m.sid, (s) => this.o.creds?.input(s.id, m.text as string) ?? NO_CREDS),
+      credsCancel: (_client, m) => this.act(m.sid, (s) => this.o.creds?.cancel(s.id) ?? NO_CREDS),
     };
   }
 }

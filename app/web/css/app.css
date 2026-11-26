@@ -857,3 +857,16 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
   .c-head { grid-template-columns: 1fr; }
   .c-acts { grid-row: auto; grid-column: 1; }
 }
+/* the credential refresh line (creds-line.js, R8.2 2026-11-26): the status line, wrapped, with the command on one
+   editable line and Save; while the command runs its output in the shell output panel and one field typed into it */
+.status.creds { flex-wrap: wrap; row-gap: 3.5px; }
+.status.creds > span { white-space: normal; flex: 1 1 40ch; }
+.status.creds[data-state="green"] b { color: var(--green); }
+.status.creds code { color: var(--ink); }
+.creds-line { flex: 1 0 100%; display: flex; align-items: baseline; gap: 1ch; min-width: 0; }
+.creds-line label, .creds-line .g { color: var(--ink-3); white-space: nowrap; }
+.creds-line input { flex: 1 1 auto; min-width: 12ch; max-width: 90ch; font: inherit; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; background: var(--panel); color: var(--ink); outline: none; }
+.creds-line input:focus { border-color: #54AEFF; box-shadow: 0 0 0 2px #DDF4FF; }
+.creds-line button { border: 1px solid var(--line); border-radius: 4px; padding: 0 1ch; background: var(--panel); }
+.creds-line button:hover { border-color: var(--faint); }
+.creds-run { flex: 1 0 100%; margin: 0; max-height: 14lh; overflow-y: auto; }

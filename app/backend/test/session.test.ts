@@ -24,7 +24,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const term = (pid = 777): Terminal => ({ pid, sessionId: SID, procStart: 'Tue Nov 24 10:02:03 2026', cwd: '/tmp/x', status: 'busy', statusUpdatedAt: 1 });
 
 // `confirm`: the start check's answer, resolved by the test.
-function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) {
+function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean; onSignedOut?: (sid: string, cwd: string, on: boolean) => void } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-session-'));
   const claudeDir = path.join(root, 'claude');
   const cwd = path.join(root, 'scratch');
@@ -46,10 +46,10 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
     end: async () => true,
     ...(o.confirm ? { confirm: () => new Promise<Terminal | null>((r) => checks.push(r)) } : {}),
   };
-  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, terminals, log: (e) => logs.push(e) });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, terminals, log: (e) => logs.push(e), onSignedOut: o.onSignedOut });
   sessions.start();
   const take = (t: string) => { const out = got.filter((m) => m.t === t); for (const m of out) got.splice(got.indexOf(m), 1); return out; };
-  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;
+  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; word: string; detail: Record<string, unknown> } } | undefined;
   return { sessions, store, transcripts, publisher, q, logs, checks, take, last, s: () => sessions.get(SID)! };
 }
 
@@ -162,4 +162,32 @@ test('close: the session rules go, so a reopened session asks again (Q6)', async
   assert.deepEqual(t.q.calls[0].options.allowedTools, ['Read(//tmp/**)'], 'for this session');
   t.sessions.close(SID);
   assert.equal(SID in t.store.state.rules, false);
+});
+
+test('session: a retried request shows its attempt; an expired sign-in needs you and asks for a refresh; retries that ran out fail with the sentence', async () => {
+  const signed: boolean[] = [];
+  const t = setup({ onSignedOut: (sid, cwd, on) => { assert.equal(sid, SID); assert.ok(cwd.endsWith('scratch')); signed.push(on); } });
+  t.s().send('one');
+  const call = t.q.calls[0];
+  emit(call, { type: 'system', subtype: 'init', session_id: SID });
+  emit(call, { type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 3000, error_status: 503, error: 'server_error', session_id: SID, uuid: 'u1' });
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.word], ['retrying', 'Retrying, attempt 2 of 10']);
+  emit(call, { type: 'system', subtype: 'api_retry', attempt: 4, max_retries: 10, retry_delay_ms: 3000, error_status: 403, error: 'unknown', session_id: SID, uuid: 'u2' });
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.word], ['signedout', 'Needs you, sign-in expired']);
+  assert.deepEqual(signed, [true], 'creds.ts is told once');
+  t.sessions.refreshing([SID], true);
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.word], ['refreshing', 'Refreshing credentials…']);
+  t.sessions.refreshing([SID], false);
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.deepEqual(signed, [true, false]);
+  assert.equal(t.last()?.state.status, 'retrying', 'the CLI retries with the new credentials');
+  emit(call, { type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, retry_delay_ms: 3000, error_status: 503, error: 'server_error', session_id: SID, uuid: 'u3' });
+  emit(call, { ...RESULT, is_error: true, result: 'API Error: 503 Service Unavailable' });
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.detail.error], ['failed', 'API Error: 503 Service Unavailable']);
+  t.sessions.stop();
 });

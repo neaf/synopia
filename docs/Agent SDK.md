@@ -125,7 +125,7 @@ Source: capture by a spike script (removed from the repo; `prototype/menu.js` ke
 | `system/session_state_changed` | `running`, `requires_action`, `idle` (flag needed) | `session.ts` `onMessage` |
 | `system/status` | `permissionMode` after an approval; `status: 'compacting' \| 'requesting' \| null` | `session.ts` `onMessage`, `status.ts` |
 | `system/compact_boundary` | compaction done | `status.ts` |
-| `system/api_retry` | `error_status: number \| null`, `error`; `rate_limit` or 429 is throttling | `status.ts` 17 |
+| `system/api_retry` | a request the CLI retries: `attempt`, `max_retries`, `retry_delay_ms`, `error_status: number \| null`, `error` (`SDKAssistantMessageError`), optional `no_response`; no sentence (see "Retried requests") | `status.ts` |
 | `system/task_started` | `task_id`, `tool_use_id`, `task_type` (`local_bash`, `local_agent`), `is_backgrounded`, `parent_task_id`, `owned_by_subagent`, `run_id` | `session.ts` `onMessage` |
 | `system/task_updated` | a task's status changed | |
 | `system/task_notification` | a task ended: `status`, `tool_use_id`, `summary`, `output_file`, `usage` | `session.ts` `onMessage` |
@@ -363,9 +363,22 @@ Code: `sdk.ts` `writerOptions`, `oneShot`; `writer.ts` `write`. Test: `sdk.test.
 
 ## Errors and Bedrock
 
-- `assistant.error` and `api_retry.error` carry `SDKAssistantMessageError` (13 values, including `authentication_failed`, `cloud_credential_error`). Synopia reads `authentication_failed` and `cloud_credential_error` as signed out. Code: `status.ts` `AUTH_ERRORS` (67).
-- Which value an expired Bedrock SSO login gives is `unverified`; the mapping is typings-based. Throttling and compaction shapes are typings-based too, never seen live. One live run failed every call with expired AWS credentials (the image-tag run).
+- `assistant.error` and `api_retry.error` carry `SDKAssistantMessageError` (13 values, including `authentication_failed`, `cloud_credential_error`). Synopia reads `authentication_failed` and `cloud_credential_error`, and on a retry also HTTP 401 or 403, as the sign-in expired. Code: `status.ts` `AUTH_ERRORS`, `isAuthFailure`.
+- Credentials that don't load give `cloud_credential_error` with no HTTP status (live run AR-1). An expired Bedrock token was reported by the user as "The security token included in the request is expired · retrying in 3s · attempt 4/10"; its `error` value is `unverified`, its 403 covers it either way. Throttling and compaction shapes are typings-based too, never seen live. One live run failed every call with expired AWS credentials (the image-tag run).
 - Plan rate limits (five-hour, weekly) are documented as unavailable on Bedrock.
+
+## Retried requests
+
+Documented shape (sdk.d.ts `SDKAPIRetryMessage`): `attempt`, `max_retries`, `retry_delay_ms`, `error_status` (null for a connection error with no HTTP response), `error` (one of the 13 `SDKAssistantMessageError` values), `no_response` only for the first-byte timeout. It has no error text. The CLI's sentence ("The security token included in the request is expired") is in the transcript's `system/api_error` record, written just before (docs/Claude Code transcripts.md, "Retried requests"). A turn whose retries ran out ends with an `assistant` message carrying `error` and a `result` with `is_error: true` whose `result` string is the failure's sentence.
+
+What Synopia does (2026-11-26): every `api_retry` is "Retrying, attempt N of M" with the sentence and the countdown, not only throttling. The sentence comes from the transcript, else from `error` and `error_status` (`status.ts` `retrySentence`). One function decides whether it is an authentication failure (`status.ts` `isAuthFailure`). It checks `authentication_failed` or `cloud_credential_error`, then HTTP 401 or 403, then the record's `isCloudCredentialError`, and the sentence only when the error is `unknown` with no status. Such a retry makes the session "Needs you, sign-in expired", and `creds.ts` runs the folder's saved refresh command. A failed result shows its `result` sentence. Code: `status.ts`, `creds.ts`, `pty.ts`. Test: `status.test.ts`, `session.test.ts`, `creds.test.ts`, page check `creds`.
+
+### Live run AR-1
+
+One scripted check, 2026-11-26 (same SDK and CLI; `/tmp/synopia-ar1b/check.mjs`, outside the repo). A throwaway `query()` on Bedrock with invented AWS credentials, a throwaway HOME, `CLAUDE_CONFIG_DIR` and AWS config files, `settingSources: ['project']`, and a `settings` file whose `awsAuthRefresh` was a script that only appends to a marker file. Shapes only:
+- The credentials didn't load: two `api_retry` with `error: 'cloud_credential_error'`, `error_status: null`, `max_retries: 2` (a credential error has a short budget, about 1 s apart), then an `assistant` with `error: 'cloud_credential_error'` and `result/success` with `is_error: true`.
+- The transcript had one `system/api_error` per retry: `error.message` and `error.formatted` (different strings), `isCloudCredentialError: true`, `retryAttempt`, `maxRetries`, `retryInMs`. The final assistant record had `isApiErrorMessage: true`, and its text equals the result's `result`.
+- `awsAuthRefresh` didn't run: no marker. The SDK-run CLI didn't run it for credentials that don't load. Whether it runs for an expired SSO token under the SDK is `unverified`. The user reports it is unreliable in the terminal CLI too. So Synopia doesn't depend on it, and doesn't turn it off. It reads it only to prefill its own per-folder command (`sdk.ts` `awsAuthRefreshOf`, through the documented `resolveSettings()` over the user, project and local sources).
 
 ## Process cost
 
@@ -387,6 +400,7 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 - `resume` with `forkSession: true` gives a new id and copies the transcript into the new cwd's project folder with the new id and folder ("Resume and fork in another folder"); a process that took only `shouldQuery: false` context sends `system/init` and no turn.
 - A `call` step calls one of Synopia's own tools as the CLI does ("Synopia's tools for agents"): the `tool_use` record, `canUseTool` with no suggestions, the tool from the session's `mcpServers` (`agent-tools.ts` `callServed`), then the `tool_result` record, text blocks when it ran, a string with `is_error` when it refused or was denied. A new session's `Options.title` becomes a `custom-title` record with its first prompt.
 - MCP: every query answers `mcpServerStatus`, `reconnectMcpServer` and `toggleMcpServer` from the script's `mcp.servers`, a session's own `mcpServers` as `source: sdk` (no reconnect, as MC-1), a disabled one refusing a reconnect; `Scripted.mcpRunner` is a pretend `claude mcp login|logout`: a sign-in takes `mcp.loginMs`, and the next reconnect connects; a login asked with no pty fails as the CLI's does (MC-2), and an abort (Cancel) ends it ("MCP servers: status, sign-in").
+- A `retry` step reports a retried request as the CLI does ("Retried requests"): the transcript's `system/api_error` record with the sentence, then `system/api_retry`. Under the script the credential refresh runs its command with `sh -lc`, guesses no `awsAuthRefresh`, and runs again after 1.5 s instead of 60 s (`main.ts`).
 - `listSessions()` gives one `SDKSessionInfo` per fixture transcript: `cwd` and `firstPrompt` from its records, `customTitle` and `summary` from its `custom-title` and `ai-title` records, `lastModified` from its mtime.
 
 The script format and what it seeds are in docs/Page checks.md, "The scripted SDK". Test: `app/backend/test/scripted-sdk.test.ts`.

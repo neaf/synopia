@@ -55,6 +55,11 @@ export const PAGE = {
   renameGroup: { id: "str?", group: "str", name: "str" },
   /* /mcp (R5.15): one server's action: login, logout, reconnect, enable, disable, or cancel (kills a running sign-in) (mcp.ts); its outcome comes as `mcp` */
   mcpAction: { id: "str?", sid: "str", name: "str", action: "str" },
+  /* the credential refresh of the session's folder (creds.ts, 2026-11-26): save its command and run it now (empty
+     clears it), a line typed into the running command, or stop it; what follows comes as `creds` */
+  credsSave: { id: "str?", sid: "str", command: "str" },
+  credsInput: { id: "str?", sid: "str", text: "str" },
+  credsCancel: { id: "str?", sid: "str" },
 };
 
 /* a send's images (FR-SES-14): PNG or JPEG, 5 MB each and 20 MB together, decoded. Base64 makes 20 MB about
@@ -65,7 +70,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction"]);
+export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel"]);
 
 /* backend to page */
 export const SERVER = {
@@ -112,6 +117,10 @@ export const SERVER = {
   /* /mcp (R5.15), to every page, whole: the session's servers ({name, status, kind, scope, signIn, reconnect, busy}),
      the last action's error (one sentence), a note instead of the list (a terminal holds it), and `reading` while asked */
   mcp: { sid: "str", servers: "arr", error: "str?", note: "str?", reading: "bool?" },
+  /* the credential refresh of a folder (creds.ts, 2026-11-26), to every page, whole: the sessions whose sign-in
+     expired there, `phase` (ask: no command saved; running; failed; idle: nothing to show), the command saved
+     (or the guess to confirm), the running command's output so far (16 KB at most), the last failure's sentence */
+  creds: { root: "str", sids: "arr", phase: "str", command: "str", output: "str", error: "str" },
   ack: { id: "str", ok: "bool", error: "str?" },
 };
 

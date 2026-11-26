@@ -10,8 +10,9 @@
 // - Synopia's in-process tool server for its sessions (agent-tools.ts defines the tools).
 // - The MCP control calls (mcpServerStatus, reconnectMcpServer, toggleMcpServer) of a process or of an
 //   idle probe, and the path of the bundled CLI that mcp.ts runs `claude mcp login|logout` with.
+// - A folder's `awsAuthRefresh` setting (resolveSettings), creds.ts's first guess at its refresh command.
 // `query` and `listSessions` are injectable as one Sdk pair: tests pass a fake, dev a script.
-import { query as sdkQuery, listSessions as sdkListSessions, createSdkMcpServer, tool as sdkTool } from '@anthropic-ai/claude-agent-sdk';
+import { query as sdkQuery, listSessions as sdkListSessions, createSdkMcpServer, tool as sdkTool, resolveSettings } from '@anthropic-ai/claude-agent-sdk';
 import type {
   CanUseTool, EffortLevel, ListSessionsOptions, McpSdkServerConfigWithInstance, McpServerStatus, ModelInfo, Options, PermissionUpdate,
   SDKControlInterruptResponse, SDKMessage, SDKSessionInfo, SDKUserMessage, SlashCommand,
@@ -436,6 +437,26 @@ export function bundledCli(): string | null {
     return createRequire(import.meta.url).resolve(`@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/claude`);
   } catch {
     return null;
+  }
+}
+
+// ---------- a folder's awsAuthRefresh ----------
+
+// The `awsAuthRefresh` the CLI would read in `cwd` from the user, project and local settings files only
+// (resolveSettings, the CLI's own merge; `sources` low to high, so the last that sets it wins), or ''.
+// Managed and flag settings aren't asked: the value only prefills the line you confirm (creds.ts).
+export async function awsAuthRefreshOf(cwd: string): Promise<string> {
+  try {
+    const r = await resolveSettings({ cwd, settingSources: ['user', 'project', 'local'] });
+    let v = '';
+    for (const src of r.sources) {
+      if (src.source !== 'user' && src.source !== 'project' && src.source !== 'local') continue;
+      const x = (src.settings as { awsAuthRefresh?: unknown }).awsAuthRefresh;
+      if (typeof x === 'string' && x.trim()) v = x.trim();
+    }
+    return v;
+  } catch {
+    return '';
   }
 }
 

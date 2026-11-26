@@ -55,6 +55,8 @@ Rules the design keeps:
 | `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, the in-process tool server (`toolServer`), `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
 | `menu.ts` | Slash commands and model list per folder: cache, persisted models, backoff after a failed fill, one send per folder per connection. |
 | `mcp.ts` | `/mcp` (R5.15): per session, its MCP servers' rows, the action running on each and the last error, sent whole as `mcp` to every page. Status and control calls from the session's process (`Session.mcpControl`), else an idle probe in its folder (`sdk.ts` `mcpProbe`, closed 3 min after the last ask); a fresh source's empty first answer and `pending` rows are read again every 0.5 s. Sign-in and sign-out run the bundled CLI (`sdk.ts` `bundledCli`) as `claude mcp login <name>` or `logout` in the session's folder, no TTY, 5 min for a sign-in, then `reconnectMcpServer`. The runner and the probe are injected (tests; the scripted SDK's pretend CLI). |
+| `creds.ts` | Credential refresh (R8.2, 2026-11-26), the one owner: each folder's refresh command (`state.json` `refresh`, keyed by the git root), one run per folder for an expiry shared by its sessions, the `creds` frame (phase, command or guess, live output, failure sentence) to every page, `credsSave`/`credsInput`/`credsCancel`. The guess: `sdk.ts` `awsAuthRefreshOf`, then an executable `bin/aws-login`. The pty runner is injected (tests). |
+| `pty.ts` | A command in one pseudo-terminal for its whole run (`script(1)` behind a `cat` pipe), its output to a callback only, a line typed into it, its exit code; killed as a group. |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
@@ -108,6 +110,7 @@ Dev and test only (not loaded in production):
 | `js/toast.js` | The toast line. |
 | `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
 | `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
+| `js/creds-line.js` | The dock's credential line (R8.2): renders the backend's `creds` frame for the session, the live run with its input field and Cancel, or the editable command with Save. |
 | `js/mcp-panel.js` | The MCP panel (R5.15), a layer in `keys.js` drawn like the Open list: renders the backend's `mcp` frame, chooses a server and an action, sends `mcpAction`. |
 | `js/folder-list.js` | The folder list (New session and "Continue in a folder"): known folders, path completion on Tab, the create row, gone rows, the fixed list with no open session. |
 | `js/theme-switch.js` | The theme choice: footer switch, system listener, UI state `theme`, the localStorage copy for first paint. |
@@ -257,6 +260,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 | Layout | `layout.ts` | page renders the server layout, sends intents |
 | Open list | `sessions.ts` | |
 | MCP panel: servers, running action, last error | `mcp.ts` | page renders `mcp` |
+| Credential refresh: each folder's command, its run, the dock line's phase and output | `creds.ts` (`state.json` `refresh`) | page renders `creds` |
 | UI state | `ui-state.ts` (backend) | page `ui-state.js` collects and applies |
 | Theme | backend `ui.theme` | localStorage first-paint copy |
 | Reviewed marks | `store.ts` `ReviewedMarks` via router: only a subagent an open session has, the 1000 newest kept, not pruned with closed sessions (a closed session can be reopened) | page via `agents[].review` |

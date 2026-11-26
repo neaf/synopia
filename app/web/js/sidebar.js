@@ -47,7 +47,8 @@ function rowWord(s) {
   if (st.light === "red") return `${esc(st.word)}, ${age(st.since)}`;
   if (st.status === "busy") return n ? `Working, ${esc(n)} message${n > 1 ? "s" : ""} queued` : esc(st.word);
   if (st.status === "compacting") return "Compacting context";
-  if (st.status === "retrying") return `Rate limited, retrying${d.retry ? ` ${until(d.retry.at)}` : ""}`;
+  if (st.status === "retrying") return `${esc(st.word)}${d.retry ? `, ${until(d.retry.at)}` : ""}`;
+  if (st.status === "refreshing") return esc(st.word);
   if (st.status === "stale") return `No updates for ${age(st.since)}`;
   return `${esc(st.word)}, ${age(st.since)}`;
 }

@@ -398,7 +398,8 @@ function liveLine(s, A) {
 function phaseText(s) {
   const st = s.state.status, d = s.state.detail;
   if (st === "compacting") return "Summing up the conversation to free space";
-  if (st === "retrying") return d.retry ? `Retrying ${until(d.retry.at)}, attempt ${esc(d.retry.attempt)}${d.retry.max ? ` of ${esc(d.retry.max)}` : ""}` : "Retrying by itself";
+  if (st === "retrying") return d.retry ? `${d.retry.text ? `${esc(d.retry.text)} · ` : ""}retrying ${until(d.retry.at)}` : "Retrying by itself";
+  if (st === "refreshing") return "Running the folder's refresh command";
   if (st === "stale") return `Nothing for ${age(s.state.since)}; the session may be gone`;
   if (st === "busy" && d.queued && !queuedOf(s).length) return queuedText(d.queued); // shown as themselves above
   return "";

@@ -311,3 +311,19 @@ test('scripted: MCP status, reconnect, toggle and the pretend login and logout, 
   assert.equal(row('wiki')?.status, 'needs-auth');
   mcp.stop();
 });
+
+test('scripted: a retry step writes the api_error record and yields api_retry, as the CLI reports one (docs/Agent SDK.md, "Retried requests")', async () => {
+  const C3 = 'c3c3c3c3-0000-4000-8000-00000000000c';
+  const { claudeDir, transcripts, publisher, meta, stop } = await setup('claude-states', (s) => {
+    s.sessions[C3].steps = [running(1000), { retry: { attempt: 4, max: 10, delayMs: 60_000, status: 403, error: 'unknown', text: 'The security token included in the request is expired' } }];
+  });
+  try {
+    transcripts.poll();
+    await sleep(20);
+    const st = meta(C3);
+    assert.deepEqual([st.status, st.word, st.detail.error], ['signedout', 'Needs you, sign-in expired', 'The security token included in the request is expired']);
+    const file = fs.readdirSync(path.join(claudeDir, 'projects'), { recursive: true }).map(String).find((f) => f.endsWith(`${C3}.jsonl`))!;
+    const recs = fs.readFileSync(path.join(claudeDir, 'projects', file), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(recs.filter((r) => r.subtype === 'api_error').map((r) => [r.retryAttempt, r.error.status]), [[4, 403]]);
+  } finally { stop(); }
+});

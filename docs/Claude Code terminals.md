@@ -104,3 +104,13 @@ Seen in live run MC-2 (2026-11-25, the same CLI; one script `check.mjs` in `/tmp
 Unverified: the exit code and output of a sign-in that completes, or that the browser flow refuses, since the check stopped before the browser step. Synopia counts exit 0 as signed in and shows the last line's first sentence on anything else.
 
 What Synopia does: `mcp.ts` `cliRunner` runs `mcp login` under `/usr/bin/script -q /dev/null` with stdin `/dev/null` and `mcp logout` with no TTY, without `--no-browser`. The output stays in memory; the error sentence drops URLs, control characters and the echoed `^D`. It kills the run on Cancel or after 5 min (`LOGIN_TIMEOUT_MS`). Code: `mcp.ts` `cliRunner`, `sentence`. Test: `mcp.test.ts` (the injected runner gets `pty: true` for login only).
+
+## A command in a pseudo-terminal
+
+`pty.ts` runs a command that may need a terminal for its whole run, with a line typed into it now and then: the credential refresh (`creds.ts`, 2026-11-26), such as a sign-in that prints a code, opens the browser and waits for Enter. No dependency: macOS's `script(1)` gives the pty, as for `claude mcp login` above.
+- `script` takes no Node pipe as stdin (a socket, MC-2). `/bin/sh -c 'cat | { /usr/bin/script -q /dev/null "$0" -lc "$1" 3>&-; echo $? >&3; }' <shell> <command>` puts a real pipe between them. `cat` copies Node's pipe into it. `script` accepts it (tcgetattr there fails with ENOTTY, which it allows) and writes what comes to the pty. The child sees a TTY on stdin (`[ -t 0 ]`), and the pty's echo shows the typed line in the output.
+- `script` exits with the child's code. The wrapper writes it to fd 3, then Node ends `cat`'s input, so the run ends when the command does, even with a background child left. The child runs in its own process group. A Cancel or the 10 min timeout kills the group.
+- Checked 2026-11-26 with a made-up script that prints a code, reads a line and exits 3: the output, the typed line and the code came back in about 25 ms. A command that leaves a `sleep 30 &` still ended at once. Test: `creds.test.ts` ("pty: …").
+- The output goes only to the page (16 KB at most, escape sequences and carriage returns dropped), never to `backend.log` or `state.json`. The command runs as `zsh -lc <command>` in the folder, so PATH and the AWS profile setup match a terminal. The page checks use `sh -lc`, which reads no profile of yours.
+
+mcp.ts could use it for `claude mcp login`; it still runs with stdin `/dev/null`.

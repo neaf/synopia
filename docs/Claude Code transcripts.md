@@ -158,6 +158,12 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 - Workaround: a turn running by the transcript alone ends after `QUIET_MS` (30 min) without a change; the publisher flushes every session each 60 s to notice.
 - Code: `status.ts` `QUIET_MS`, `publisher.ts` `RECHECK_MS`.
 
+## Retried requests
+
+When the CLI retries a request it writes a `system` record with `subtype: 'api_error'` (`level: 'error'`, `source: 'request_retry'`), one per attempt, just before the SDK's `system/api_retry` message. Shape, seen in the user's transcripts (`entrypoint` `sdk-ts` and `sdk-cli`) and in live run AR-1 (docs/Agent SDK.md): `retryAttempt`, `maxRetries`, `retryInMs`, and `error` with `message` and `formatted` (two different strings), `status` (absent without an HTTP response), `connection`, `isNetworkDown`, `rateLimits`, `noResponse`, and `isCloudCredentialError` for a credential error. `formatted`, else `message`, is the sentence the CLI shows ("The security token included in the request is expired"). A later user, assistant, turn-end or queued record in the main thread means the retry is over.
+
+Code: `claude-jsonl.ts` `classify` (`api-error`), `transcript.ts` `apiError`, `transcripts.ts` `running`. Test: `claude-jsonl.test.ts`, `scripted-sdk.test.ts`.
+
 ## Interrupts
 
 - An Esc interrupt during tools writes an error `tool_result` for each cut-short tool, then the user record `[Request interrupted by user` (or `… for tool use]`).
