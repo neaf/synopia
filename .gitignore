@@ -15,3 +15,6 @@ build/
 # Synopia app: dev state and local-only fixtures
 app/.dev-state/
 app/backend/test/fixtures/local/
+
+# Agent worktrees (the Agent tool's isolation: worktree)
+.claude/worktrees/
