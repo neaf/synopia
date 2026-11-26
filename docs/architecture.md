@@ -43,7 +43,7 @@ Rules the design keeps:
 | `server.ts` | HTTP and WebSocket transport: 127.0.0.1, token, Host/Origin, CSP, static files, 32 MB cap, per-client backpressure (drop `stream` first), error handlers. No routing logic. |
 | `router.ts` | Page-to-server dispatch table keyed by `t`: validates each frame against `protocol.js`, resolves id aliases once, calls one module, answers `ack {id, ok, error}`; one try/catch per frame. |
 | `publisher.ts` | Server-to-page, the only frame sender: per-client subscriptions, meta diffs, `items` reset/upsert/prepend, `agents`, `background`, `pending`, `stream` (viewer only), `layout`, `restore`/`toast` to the acting client; one re-entrancy-guarded flush with a fixed frame order. |
-| `store.ts` | `state.json`: load, validate every entry, cap growing maps, atomic write at most 1/s, retry after a failed write, sync flush on any exit, `.bad-<ms>` on corrupt; `ReviewedMarks`. |
+| `store.ts` | `state.json`: load, validate every entry (the `items` section through `open-items.ts` `cleanItems`), cap growing maps, atomic write at most 1/s, retry after a failed write, sync flush on any exit, `.bad-<ms>` on corrupt; `ReviewedMarks`. |
 | `ui-state.ts` | UI state (R3.9): patch, caps, drafts as files, prune on close and at start, rekey on id swap; never clears `current`/`view` on an empty entry. |
 | `layout.ts` | The one layout owner: applies page intents (move, new group, rename group), reconciles with the open list, renames on id swap, keeps closed ids in place. Pure functions plus the `Layouts` owner. |
 | `sessions.ts` | The set of open sessions: open list, new (in a folder, made first on request)/open/close/continue (fork into another folder), `listRecent` (the matcher over every past session, with totals), `listFolders`, id aliases, one `rekey` that moves the whole per-session record. |
@@ -62,6 +62,7 @@ Rules the design keeps:
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
 | `ledger.ts` | Adapter for the open-items ledger, `.ai-notes/<area>/open-items.md` (FR-ITEM-01, FR-ITEM-04): `parse` of the version 1 line shapes into open items, closed lines and the lines it can't read (one bad line never fails the file), `blockOf` (an item's own lines), `nextId`, `fromOf`, `optionsOf`, `stampTime` (local time, date-only stamps), the path rule `isLedgerPath` (with `ledgerPathOf` for a tool's path and `ledgerPathIn` for a Bash command), a brief's `Open items:` line (`ownedIds`) and `ownerOf` (the brief first, the `subagent` field by name second). Pure. |
+| `open-items.ts` | Open items (R3.16, FR-ITEM-01 to -04, -06), the one owner and writer of every list: one list per ledger (by its absolute path, `session:<sid>` while the session named none), the session's list from `transcripts.ts` `ledgerOf` (a shared ledger counts under the session that named it last). Reads the ledger through `ledger.ts` on a new tool result for it and on a size or mtime change (looked at every 2 s), async, one read per file at a time; not over 256 KB nor in a protected folder (`folders.ts` `isProtected`), with the note why. Merges each read by the items' own lines as last read (`blockOf`): new ids adopted (Synopia's item on that number renumbered), a changed item wins, an unchanged one keeps Synopia's state, a gone one dropped. Opens `Review: <name>` for finished `For review: ` subagents, ties a ledger review item to its subagent by the `subagent` field, `markReviewed`. Derives `view` (the open Y items, the A items, Closed this turn, unread count, note; `with` from `ledger.ts` `ownerOf`) and `counts` (review, waiting, due). `state.json` `items` (`cleanItems` validates on load and carries the old `reviewed` marks). |
 | `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). The main conversation's open-items facts (FR-ITEM-01, FR-ITEM-04): `ledger`, the last ledger a Read, Write or Edit `file_path` or a Bash command named (relative to the record's `cwd`), with the count of its tool results; `ownsOf`, the ids an Agent brief's `Open items:` line names (the prompt is not kept); a ledger's patches flagged `ledger` (R5.9). Rebuilt by construction on reset. No I/O. |
 | `tail.ts` | File tailing by byte offset and the subagent folder watcher: 4 MB slices, `fs.watch` plus the 1 s poll, reset on shrink, inode change or content rewrite (not on a bare touch). |
 | `transcripts.ts` | The reading set: one Tailer + Transcript per open session and subagent, the new-session finder, the one 1 s poll, facts for other modules (`facts`, `turns`, `ledgerOf`, `ownsOf`), async rereads for `toolOutput` and `/api/image`. |
@@ -151,7 +152,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 4. The CLI writes JSONL. `tail` -> `claude-jsonl` (classify) -> `transcript` (reduce) inside `transcripts` -> `status` (transcript facts) and `publisher` (items). The SDK stream carries only control and live state (R12); the stream preview is cleared when its record lands.
 5. `cli-terminals` watches pid files -> `session` yields or takes over; `macos` gives process facts.
 6. `publisher` flushes once per change batch: `session` meta (with `state` from `status`), then `agents`/`background`, then `items`. Every module that changes visible state tells the publisher; nobody else sends frames.
-7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, reviewed, settings and UI state.
+7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, reviewed, open items (`open-items.ts` owns the `items` section: the lists, each item's lines as last read, the carried marks), settings and UI state.
 8. Folders: the page asks `listFolders` when the folder list opens (no disk read: the open list and `listSessions()`), `completeFolder` on Tab (one `readdir`), `checkFolders` for the rows on screen once per opening and for a typed path when typing stops; `newSession`/`continueSession` with `create` make the folder first. A continue starts the session's process with `resume`, `forkSession` and the new `cwd`; its `system/init` id goes through `rekey` ('moved'), which also moves the open entry to the new folder. `layout` and `ui-state` own their sections; `store` owns the file.
 9. Shell: `Backend` polls `/api/badge` (cached count from `status`, O(1)) every 2 s on an async session; on loss reads `daemon.json` `handover` to wait for the successor.
 
@@ -214,6 +215,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
   "open":     [{"id": "…", "cwd": "…", "openedAt": 0, "closedAt": null}],
   "layout":   {"groups": [{"id": "g…", "name": "…", "ids": ["…"]}], "others": ["…"]},
   "reviewed": ["<agentId>"],
+  "items":    {"lists": {"<ledger path>|session:<sid>": {"top": {"Y": 0, "A": 0}, "items": [{"id": "Y1", "kind": "review", "text": "Review: …", "fields": {"subagent": "…"}, "source": "agent|synopia", "block": "<its lines as last read>", "agent": "<agentId>", "at": 0, "closed": {"how": "done", "at": 0, "note": "marked reviewed", "by": "agent|synopia"}}]}}, "carried": ["<agentId>"]},
   "models":   {"<sid>": {"model": "…", "effort": "…"}},
   "rules":    {"<sid>": ["Bash(npm run test:*)"]},
   "answers":  {"<toolUseId>": "Allow once"},
@@ -238,7 +240,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
 }
 ```
 
-- Caps: `reviewed` keeps the newest 1000, `answers` 2000, `plans` 100 (`store.ts`), trimmed on write and on load. `written.history` keeps 50 titles. Every map entry is validated on load; a wrong one is dropped.
+- Caps: `reviewed` keeps the newest 1000; `items` keeps closed items with an agent id and the `carried` marks the newest 1000 together, other closed items the newest 30 per list (`open-items.ts`); `answers` 2000, `plans` 100 (`store.ts`), trimmed on write and on load. `written.history` keeps 50 titles. Every map entry is validated on load; a wrong one is dropped.
 - `ui` (R3.9, `ui-state.ts`; page side `ui-state.js`): `<view>` is `""` for the main conversation, else the agent id. The page sends `ui {patch}` with the fields that changed, 300 ms after the last change (2 s at most) and at once on `visibilitychange` (hidden), `pagehide` and a send. A top-level field replaces the stored one; `sessions` merges per session and per field, `null` removing it. Unknown fields and malformed values are dropped. It is never broadcast: the last writer wins. `hello` returns it.
 - The page applies `ui` before its first render. The scroll waits for the view's reset items, re-requests earlier items up to the stored oldest id, then goes to the anchor (the first block whose bottom is below the top of the log, and the pixels into it; at the end, the last block on screen, so what came since is below it), loading up to 5 more pages of earlier items to find it. A missing anchor block goes to the bottom. A view follows its end only while the window is visible. `seen` is the furthest block whose first line was on screen 1 s in a row with the window focused (`run@<offset>` for a line of a shell's or monitor's output, `bg-view.js` `outEnds`), `seenAt` when you last had it on screen, and `newAt` `{id, at}` the block the "New since" line sits above: placed when you come back to the view or the window is shown again, kept over a reload (`watchSeen`, `placeNew`, `drawNew`; 2026-11-25).
 - Draft images: the page sends an image's base64 once, with the first patch that lists it; the backend writes `<state>/drafts/<sid>/<id>.png|jpg` (5 MB each, 20 MB per session; past that a toast and it isn't kept) and keeps only `{id, mediaType, size, n}`. A patch that no longer lists an image removes its file; a send clears the draft. After a restore the page loads them from `GET /api/image?sid&ref=draft:<id>`.
@@ -272,6 +274,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 | A run waits for input; when a run's card shows | `pty.ts` `InputWatch`; `runs.ts` `cardAt` (your runs and the refresh) | `bang.ts`, `creds.ts` send them; the page compares `cardAt` with its clock |
 | UI state | `ui-state.ts` (backend) | page `ui-state.js` collects and applies |
 | Theme | backend `ui.theme` | localStorage first-paint copy |
+| Open items: the lists, ids, Synopia's state per item, review items | `open-items.ts` (`state.json` `items`); the ledger file is the agent's, an input | publisher (2.4) |
 | Reviewed marks | `store.ts` `ReviewedMarks` via router: only a subagent an open session has, the 1000 newest kept, not pruned with closed sessions (a closed session can be reopened) | page via `agents[].review` |
 | Model and effort choice | `session.ts` resolver (one), used for header and process | |
 | Token and port | `daemon-files.ts` | page URL |
@@ -437,12 +440,12 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-KEY-06 | composer.js, keys.js |
 | FR-KEY-07 | keys.js, folder-list.js, open-list.js |
 | FR-REV-01 | replaced by FR-ITEM-03; until it lands status.ts, store.ts, router.ts, publisher.ts, transcript.js, rail.js |
-| FR-ITEM-01 | ledger.ts (the format, the path rule), transcript.ts (`ledger`), transcripts.ts (`ledgerOf`); planned: open-items.ts |
-| FR-ITEM-02 | none yet (planned: open-items.ts, ledger.ts, store.ts) |
-| FR-ITEM-03 | none yet (planned: open-items.ts, router.ts, publisher.ts, status.ts, rail.js, transcript.js) |
-| FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`); planned: open-items.ts, rail.js |
+| FR-ITEM-01 | ledger.ts (the format, the path rule), transcript.ts (`ledger`), transcripts.ts (`ledgerOf`), open-items.ts (the reads) |
+| FR-ITEM-02 | open-items.ts, ledger.ts, store.ts |
+| FR-ITEM-03 | open-items.ts (review items, `markReviewed`, the carried marks); planned: router.ts, publisher.ts, status.ts, rail.js, transcript.js |
+| FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`), open-items.ts (`with`); planned: rail.js |
 | FR-ITEM-05 | none yet (planned: publisher.ts, protocol.js, state.js, open-items.js, rail.js, composer.js) |
-| FR-ITEM-06 | none yet (planned: open-items.ts, status.ts, sidebar.js, tween.js) |
+| FR-ITEM-06 | open-items.ts (`counts`); planned: status.ts, sidebar.js, tween.js |
 | FR-ITEM-07 | none yet (planned: open-items.ts, keys.js, ui-state.js, rail.js) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |

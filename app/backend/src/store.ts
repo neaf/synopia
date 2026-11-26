@@ -9,6 +9,8 @@ import { normalizeUi } from './ui-state.ts';
 import type { UiState } from './ui-state.ts';
 import { cleanLayout } from './layout.ts';
 import type { Layout } from './layout.ts';
+import { cleanItems } from './open-items.ts';
+import type { ItemsState } from './open-items.ts';
 
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
 // `model`: the model of new sessions when set (else the CLI's default).
@@ -52,6 +54,9 @@ export type State = {
   // The credential refresh command of each folder (creds.ts, 2026-11-26), keyed by its absolute path (the
   // session's git root, else its folder). creds.ts is its one owner.
   refresh: Record<string, string>;
+  // The open-items lists (open-items.ts, FR-ITEM-02), its one owner: per list its items with Synopia's state, each
+  // item's lines as last read and the highest number given; `carried`, agent ids marked reviewed with no item yet.
+  items: ItemsState;
   // The page's UI state, restored after a reload, a crash or a quit (ui-state.ts).
   ui: UiState;
 };
@@ -72,6 +77,7 @@ export function defaultState(): State {
     endedFailed: {},
     settings: { writerModel: 'haiku' },
     refresh: {},
+    items: { lists: {}, carried: [] },
     ui: { sessions: {} },
   };
 }
@@ -128,6 +134,8 @@ export function normalize(raw: unknown): State {
     }
     return w;
   });
+  // the old `reviewed` marks are carried into `items` (FR-ITEM-03)
+  s.items = cleanItems(raw.items, raw.reviewed);
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
     const st = raw.settings;
