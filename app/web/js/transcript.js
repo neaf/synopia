@@ -310,7 +310,9 @@ export function itemsHTML(items, sessionBusy, s) {
     flush();
     /* it continued in another folder (R3.11): a quiet line in place, as a title change */
     if (it.k === "moved") { out.push([it.id, `<div class="done retitle moved">Continued in <span class="t">${esc(it.cwd || "another folder")}</span></div>`]); continue; }
-    if (it.k === "claude") out.push([it.id, `<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
+    /* f, f set the turn aside for your messages (R9.8, 2026-11-26): its live line, as it was, still and struck through */
+    if (it.k === "aside") { out.push([it.id, asideHTML(it, s, items)]); continue; }
+    if (it.k === "claude") out.push([it.id, `<div class="ln claude${it.aside ? " aside" : ""}"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`]);
     else if (it.k === "report") {
       const a = s && agentById(s, it.agent);
       out.push([it.id, `<div class="ln agent"><span class="g">${a ? ind(a.review ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${esc(a.id)}">Open its transcript</button></p>` : ""}</details></div>`]);
@@ -349,6 +351,22 @@ function bangHTML(id, cmd, sh, run, opens = false) {
 }
 /* the panel's run for a bash item: by the run's id, or the item it landed as */
 const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed === id) : null;
+/* The line f, f's interrupt set aside (R9.8): the still mark, "Working" and the step it named then, struck
+   through, and why. Not a running mark: it doesn't move. */
+function asideHTML(it, s, items) {
+  const t = it.step ? items.find(x => x.k === "tool" && x.id === it.step) : null;
+  return `<div class="ln asideln"><span class="g">${ind("s_agent")}</span><div><s><b>Working</b>${t ? ` ${liveName(s, t)}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
+}
+/* the reply an aside cut short goes above it, greyed with it, though its partial record lands after */
+function placeAsides(items) {
+  if (!items.some(i => i.k === "aside")) return items;
+  const list = items.slice();
+  for (const a of items.filter(i => i.k === "aside")) {
+    const last = list.findLastIndex(i => i.k === "claude" && i.aside === a.id), at = list.indexOf(a);
+    if (last > at) { list.splice(at, 1); list.splice(last, 0, a); }
+  }
+  return list;
+}
 /* Your `!` runs stay where they ran, in time order (R5.13, 2026-11-26): the live one (an item `live`), and one
    whose records landed after messages sent while it ran, go before the first item stamped after its start. */
 function placeBangs(items, s) {
@@ -488,7 +506,7 @@ export function renderHeader() {
 /* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
 const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
 function logEntries(s, A) {
-  const items = A ? (A.items || []) : placeBangs(withPending(s.items, requestsOf(s), extAsk(s)), s);
+  const items = A ? (A.items || []) : placeBangs(placeAsides(withPending(s.items, requestsOf(s), extAsk(s))), s);
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   onLive = A ? null : liveFg(s);

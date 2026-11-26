@@ -53,7 +53,8 @@ async function setup(o: { bash?: boolean } = {}) {
   const stop = () => { sessions!.stop(); transcripts.stop(); publisher.stop(); };
   const pushes = () => call.inputs.map((m: SDKUserMessage) => ({ text: typeof m.message.content === 'string' ? m.message.content : '', priority: m.priority ?? null, origin: m.origin?.kind ?? null }));
   const route = () => [...logs].reverse().find((l) => l.e === 'session.sendNow')?.d.route;
-  return { s, call, got, logs, stop, pushes, route, transcripts };
+  const append = (r: object) => { fs.appendFileSync(path.join(dir, `${SID}.jsonl`), rec(r)); transcripts.poll(); };
+  return { s, call, got, logs, stop, pushes, route, transcripts, append };
 }
 
 test('nowRoute: the route table, and never "now" while anything is queued', () => {
@@ -129,6 +130,37 @@ test('sendNow: messages queued while Claude writes: the plain interrupt, no Stop
   assert.equal(t.got.filter((m) => m.t === 'toast').length, 0, 'no toast');
   assert.notEqual(t.s.status.status, 'stopped', 'not shown as a Stop');
   assert.notEqual(t.s.status.status, 'failed');
+  t.stop();
+});
+
+test('sendNow, the interrupt route: the live line stays as a still aside, and the reply it cut short is marked as its', async () => {
+  const t = await setup();
+  const ev = (event: object) => emit(t.call, { type: 'stream_event', event, parent_tool_use_id: null, uuid: 'u-se', session_id: SID });
+  ev({ type: 'message_start', message: { id: 'msg_cut' } });
+  ev({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } });
+  ev({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'The build is half' } });
+  await tick();
+  t.s.send('one', [], U1);
+  t.call.reply = { still_queued: [U1] };
+  assert.deepEqual(await t.s.sendNow(null), { ok: true, sid: SID });
+  assert.equal(t.route(), 'interrupt');
+  const items = () => t.transcripts.get(SID)!.items;
+  const aside = items().find((i) => i.k === 'aside');
+  assert.ok(aside && aside.step === undefined, 'Claude only wrote: the line names no step');
+  t.append({ type: 'assistant', uuid: 'n-a9', timestamp: new Date().toISOString(), message: { role: 'assistant', id: 'msg_cut', content: [{ type: 'text', text: 'The build is half' }] } });
+  await tick(20);
+  const text = items().find((i) => i.k === 'claude');
+  assert.equal(text?.aside, aside!.id, 'the partial reply that lands after it is greyed with it');
+  t.stop();
+});
+
+test('sendNow, the background route: no aside, the step goes to the background', async () => {
+  const t = await setup({ bash: true });
+  t.transcripts.taskStarted(SID, 'toolu_nb', 'bnb1');
+  t.s.send('one', [], U1);
+  assert.deepEqual(await t.s.sendNow(null), { ok: true, sid: SID });
+  assert.equal(t.route(), 'background');
+  assert.equal(t.transcripts.get(SID)!.items.some((i) => i.k === 'aside'), false);
   t.stop();
 });
 

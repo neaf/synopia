@@ -28,7 +28,11 @@ export type Output = { text: string; lines: number; cut: boolean; interrupted?: 
 // content); the page loads it from `GET /api/image`. `w` and `h` come from the image's header when cheap.
 export type ImageRef = { ref: string; mediaType: string; w?: number; h?: number };
 export type Item = {
-  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang' | 'moved'; ts: string | null;
+  id: string; k: 'you' | 'claude' | 'tool' | 'report' | 'ask' | 'title' | 'bang' | 'moved' | 'aside'; ts: string | null;
+  // aside: f, f interrupted the turn for your queued messages (R9.8, 2026-11-26): the live line as it was then, a
+  // still record. `step`: the main step it named (a tool item's id), none while Claude only wrote or thought.
+  // claude: `aside` is the id of the aside whose interrupted reply this text was, so it shows greyed above it.
+  step?: string; aside?: string;
   cwd?: string; // moved: the folder the session continues in (R3.11), as the page shows it
   cmd?: string; sh?: BashOutput; // bang: a bash-mode command (`!`) and its output, from Synopia or the CLI (R5.13)
   title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
@@ -339,6 +343,9 @@ class ReadState {
   shownTitle: string | null = null;
   prompted = false;
   writtenAt = -Infinity;
+  // f, f's interrupt route (R9.8): the claude items of each message, and the aside that cut a message short.
+  textsOf = new Map<string, string[]>();
+  asideOf = new Map<string, string>();
 
   // `taskIds`: the SDK's task_started ids, which a rewrite keeps.
   constructor(taskIds: Map<string, string>) {
@@ -723,7 +730,10 @@ export class Transcript {
     if (r.message.key !== key) r.message = { key, uses: [] };
     for (const b of a.blocks) {
       if (b.type === 'text') {
-        if (b.text.trim()) this.put({ id: `${uuid}:${b.index}`, k: 'claude', ts, text: clip(b.text) });
+        if (!b.text.trim()) continue;
+        const id = `${uuid}:${b.index}`, aside = r.asideOf.get(key);
+        this.put({ id, k: 'claude', ts, text: clip(b.text), ...(aside ? { aside } : {}) });
+        if (a.messageId) r.textsOf.set(key, [...(r.textsOf.get(key) ?? []).filter((x) => x !== id), id]);
         continue;
       }
       if (b.type !== 'tool_use') continue;
@@ -806,6 +816,22 @@ export class Transcript {
     if (!this.r.taskIds.has(tid)) this.setTask(tid, task);
     for (const a of this.agentMeta.values()) if (a.sub?.getBackground(tid)) this.r.changedBg.add(tid);
     this.refreshTool(tid); // a foreground step can go to the background from now (`fg`)
+  }
+
+  // f, f's interrupt route (R9.8, 2026-11-26): the live line as it was, kept as a still record at the end,
+  // naming the main step it named then (the newest step of the turn's own, while it runs). `msg`: the
+  // message Claude was writing (the stream preview's), whose text, landed or still to land, is greyed above it.
+  setAside(at: string, msg: string | null): void {
+    const r = this.r;
+    const last = [...r.items].reverse().find((i) => i.k === 'tool' && !i.bg);
+    const id = `aside:${at}`;
+    this.put({ id, k: 'aside', ts: at, ...(last && last.state === 'running' ? { step: last.id } : {}) });
+    if (!msg) return;
+    r.asideOf.set(msg, id);
+    for (const t of r.textsOf.get(msg) ?? []) {
+      const it = r.byId.get(t);
+      if (it) { it.aside = id; r.changed.add(t); }
+    }
   }
 
   // f, f (R9.8): the main conversation's running foreground Bash and Agent steps by tool use id.

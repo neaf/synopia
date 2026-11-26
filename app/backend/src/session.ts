@@ -794,7 +794,9 @@ export class Session {
         if (!moved) return { ok: false, error: 'Claude\'s step couldn\'t go to the background. Your messages stay queued.' };
       } else if (r.kind === 'interrupt') {
         this.status.hurried(); // no Stop: the queued messages run next, and the queue isn't given back
+        const msg = this.stream.writing();
         await proc.interruptKeepingQueue();
+        this.d.transcripts.setAside(this.id, msg); // the live line stays, struck through (R9.8)
       }
     } catch {
       this.status.interruptFailed();
@@ -1172,6 +1174,11 @@ export class StreamPreview {
       this.blocks.splice(i, 1);
     }
     return changed;
+  }
+
+  // The message whose text is being streamed, if any text came: the reply an interrupt cuts short.
+  writing(): string | null {
+    return this.blocks.some((b) => b.msg === this.msg && b.text) ? this.msg || null : null;
   }
 
   clear(): boolean {

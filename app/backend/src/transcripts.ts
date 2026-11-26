@@ -316,6 +316,11 @@ export class Transcripts {
     return this.live.get(sid)?.t.foreground() ?? { ready: [], early: [] };
   }
 
+  // f, f's interrupt route (R9.8): the live line set aside for your queued messages (Transcript.setAside).
+  setAside(sid: string, msg: string | null): void {
+    this.edit(sid, (t) => t.setAside(new Date().toISOString(), msg));
+  }
+
   // The SDK's background_tasks_changed: the task ids of its live background work (REPLACE semantics).
   backgroundTasks(sid: string, taskIds: string[]): void {
     this.edit(sid, (t) => t.backgroundTasks(taskIds, new Date().toISOString()));

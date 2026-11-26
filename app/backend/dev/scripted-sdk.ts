@@ -225,6 +225,8 @@ class ScriptedSession implements QueryLike {
   private running = false; // a turn runs
   private queued: { uuid: string; text: string }[] = []; // sent during the turn
   private seqs = new Set<Turn>();
+  private moved = new Set<string>(); // task ids backgroundTasks moved (background_tasks_changed's live set)
+  private writing: { id: string; text: string } | null = null; // the reply the stream_event steps are writing
   private inited = false; // its system/init went out
   private held: { uuid: string; text: string }[] = []; // shouldQuery:false messages not yet in the transcript
   private mcpServers: Record<string, unknown> | undefined; // Synopia's tools for agents, for `call`
@@ -274,7 +276,11 @@ class ScriptedSession implements QueryLike {
         { message: this.init() }, { message: { type: 'system', subtype: 'session_state_changed', state: 'running' } },
         ...(this.env.script.sessions[this.sid]?.onSend ?? this.env.script.onSend ?? []),
       ] : [];
+      // a reply being written stops at once: its partial assistant message lands (live run PR-2)
+      const w = this.writing;
+      this.writing = null;
       void this.play([
+        ...(w && w.text ? [{ append: [{ type: 'assistant', uuid: randomUUID(), message: { role: 'assistant', id: w.id, content: [{ type: 'text', text: w.text }] } }] }] : []),
         { message: { type: 'result', subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' } },
         { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } },
         ...next,
@@ -297,7 +303,14 @@ class ScriptedSession implements QueryLike {
     await this.out.deliver({ type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: tid, status: 'stopped', summary: '', output_file: '', uuid: randomUUID(), session_id: this.sid } as unknown as SDKMessage);
   }
   // The queued messages fold into the running turn at once, in order (live runs PR-1 and PR-2).
-  async backgroundTasks(): Promise<boolean> {
+  // f, f's call, with a step's tool use id: that step goes first, background_tasks_changed with the moved
+  // tasks. b, b's call (no id) moves nothing here, so background.mjs keeps its steps in the foreground.
+  async backgroundTasks(toolUseId?: string): Promise<boolean> {
+    const add = toolUseId ? [...this.tasks].filter(([, tid]) => tid === toolUseId).map(([task]) => task) : [];
+    if (add.length) {
+      for (const task of add) this.moved.add(task);
+      await this.out.deliver({ type: 'system', subtype: 'background_tasks_changed', tasks: [...this.moved].map((task_id) => ({ task_id })), uuid: randomUUID(), session_id: this.sid } as unknown as SDKMessage);
+    }
     this.takeIn(this.queued.filter((q) => !this.landed(q)));
     this.queued = [];
     return true;
@@ -405,6 +418,8 @@ class ScriptedSession implements QueryLike {
       const m = { uuid: randomUUID(), session_id: this.sid, ...step.message };
       if (m.type === 'system' && m.subtype === 'init') this.inited = true;
       if (m.type === 'system' && m.subtype === 'session_state_changed') this.running = m.state !== 'idle';
+      if (m.type === 'stream_event') this.wrote(m.event as { type?: string; message?: { id?: string }; delta?: { type?: string; text?: string } });
+      if (m.type === 'result') this.writing = null;
       if (m.type === 'result') this.queued = this.queued.filter((q) => !this.landed(q));
       if (m.type === 'system' && m.subtype === 'task_started' && typeof m.task_id === 'string' && typeof m.tool_use_id === 'string') this.tasks.set(m.task_id, m.tool_use_id);
       await this.out.deliver(m as unknown as SDKMessage);
@@ -420,6 +435,12 @@ class ScriptedSession implements QueryLike {
     }
     if (step.call) return { answer: this.call(step.call, t) };
     return { answer: null };
+  }
+
+  // What a stream_event step writes: the message's id and its text so far.
+  private wrote(ev: { type?: string; message?: { id?: string }; delta?: { type?: string; text?: string } }): void {
+    if (ev.type === 'message_start') this.writing = { id: ev.message?.id ?? '', text: '' };
+    else if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta' && this.writing) this.writing.text += ev.delta.text ?? '';
   }
 
   // A tool call of Synopia's own as the CLI makes it (live run TL-1): always asks; on allow the tool
