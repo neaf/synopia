@@ -361,6 +361,37 @@ Titles and the Now line come from a one-turn query that can't act and writes not
 
 Code: `sdk.ts` `writerOptions`, `oneShot`; `writer.ts` `write`. Test: `sdk.test.ts`, `writer.test.ts`.
 
+## Plugins and an appended system prompt
+
+Not used by Synopia yet: the facts the bundled agent-harness plugin will rest on (`.ai-notes/harness-and-open-items/`). The plugin format itself is in agent-harness `skills/harness-common/topics/Claude Code.md`, "Plugins".
+
+### Documented surface
+
+- `Options.plugins: SdkPluginConfig[]`, each `{type: 'local', path, skipMcpDiscovery?}`; a relative path resolves from `cwd`, `~` is not expanded, a missing path is skipped silently. `pluginDelivery: 'argv'` (default, one `--plugin-dir` per plugin) or `'initialize'` ([Plugins in the SDK](https://code.claude.com/docs/en/agent-sdk/plugins); typings).
+- `system/init` lists `plugins` (`name`, `path`, `source`), `plugin_errors` only when a plugin or a component failed, and the namespaced `skills`, `slash_commands` and `agents`. `Query.reloadPlugins({addPlugins})` adds plugins to a running process.
+- Plugin skills run as `/<plugin>:<skill>`, plugin agents spawn as `<plugin>:<agent>`. A personal skill of the same name loads too, and bare `/<name>` runs it ([Skills](https://code.claude.com/docs/en/skills), "Resolve skills that share a name").
+- `Options.skills`: `'all'` or a list of names (`plugin:skill` for plugin skills) that the model may see and the Skill tool may run; omitted leaves the CLI's defaults.
+- `Options.systemPrompt: {type: 'preset', preset: 'claude_code', append?, excludeDynamicSections?, snapshot?}` keeps Claude Code's prompt and adds `append` to it.
+
+### Live run PL-1
+
+One scripted check, 2026-11-26 (SDK 0.3.330 with its bundled CLI 2.1.330; haiku; scratch folder `/tmp/synopia-pl1/`, scripts `check.mjs` and `step4.mjs` outside the repo; a throwaway `CLAUDE_CONFIG_DIR`; shapes only). An invented plugin `pl1kit` with skill `greet`, a skill with `user-invocable: false` and agent `helper`; a personal skill `greet` in the throwaway config's `skills/`; each skill only replies with its own marker word. The `append` asked for a random code word.
+
+Auth: with a throwaway HOME too, the menu calls answered but every model turn failed with `cloud_credential_error` ("Could not load AWS credentials") after an `awsAuthRefresh` from a settings source outside the throwaway config failed. The model turns ran with the real HOME and the throwaway `CLAUDE_CONFIG_DIR`, as MC-1 did. Four plugins enabled by the machine's managed policy loaded in every run, beside the one passed.
+
+| Question | What happened |
+|---|---|
+| Do the plugin's skill and agent appear? | Yes. `init.plugins` has `{name: 'pl1kit', path, source}`, no `plugin_errors`. `skills` and `slash_commands` hold `greet` and `pl1kit:greet`; `agents` and `supportedAgents()` hold `pl1kit:helper` (`{name, description}`). `supportedCommands()` gives both `greet` rows with no `builtin`: the personal one's description ends `(user)`, the plugin's starts `(pl1kit)`. The `user-invocable: false` skill is in none of these lists. |
+| Does `systemPrompt.append` reach the model? | Yes: asked for the code word, the reply was the word the append held. |
+| Personal and plugin skill with one name | Both load. `/greet` ran the personal skill, `/pl1kit:greet` the plugin's. Asked to use the Skill tool with `greet`, the model called `Skill({skill: 'greet'})` and got the personal one. So a bundled skill never wins a bare name; it answers to its prefixed name only. |
+| The hidden skill typed by the user | `/<name>` and `/pl1kit:<name>` both ended at once with "This skill can only be invoked by Claude, not directly by users. Ask Claude to use the "…" skill for you." (`result/success`, no model call). Whether the model can still load it through the Skill tool: `unverified` live. |
+| Spawning the plugin agent | `Agent({subagent_type: 'pl1kit:helper', …})` was accepted and started (in the background). |
+| Synopia's command filters (`sdk.ts` `toCommands`) | Keep both `greet` rows and all plugin rows: they drop only `__` names and `workflow-launch-exec`, and dedupe by exact name, so `greet` and `pl1kit:greet` stay two rows. The hidden skill never reaches the filter. |
+
+The agent-harness checkout loaded the same way (branch `plugin-manifest`, after `install.py --plugin`; throwaway HOME, no model call): `init.plugins` row `agent-harness` with `source: 'agent-harness@inline'`, no `plugin_errors`; nine skills `agent-harness:<skill>` in `skills`, `slash_commands` and `supportedCommands()` (descriptions start `(agent-harness)`), all nine kept by `toCommands`; `harness-common` in none of them; six agents `agent-harness:<agent>` in `init.agents` and `supportedAgents()`.
+
+What it means for Synopia's build: on a machine where `install.py` also installed the harness, every harness skill shows twice in the menu (`handoff` and `agent-harness:handoff`) and a bare name runs the installed copy. The skills spawn agents by bare names (`rearch-auditor`), which a plugin-only session doesn't have.
+
 ## Errors and Bedrock
 
 - `assistant.error` and `api_retry.error` carry `SDKAssistantMessageError` (13 values, including `authentication_failed`, `cloud_credential_error`). Synopia reads `authentication_failed` and `cloud_credential_error`, and on a retry also HTTP 401 or 403, as the sign-in expired. Code: `status.ts` `AUTH_ERRORS`, `isAuthFailure`.
