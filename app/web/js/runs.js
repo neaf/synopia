@@ -1,5 +1,6 @@
 /* Runs (requirements R5.6, R5.13, R7.1, R7.2, 2026-11-26; prototype/shell-storyboard.html): every shell command
-   and monitor of a session, whoever started it, in one shape. A run is one row in the transcript: its command
+   and monitor of a session, whoever started it, in one shape. A run is one row in the transcript (but Claude's
+   ordinary foreground Bash is a step there, folded with the others, 2026-11-26; its panel card and view stay): its command
    line (Claude's under a grey `$` in the gutter, yours on the pink `!` band, Synopia's refresh with its lock),
    its last 3 lines of output, and a state line with a status mark. The row opens the run's shell view
    (bg-view.js), the only place for its whole output, its input and its stop. The backend owns every fact here

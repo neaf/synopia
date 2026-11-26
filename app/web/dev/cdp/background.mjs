@@ -4,8 +4,8 @@
 // Checks: the first b marks the steps that can go (a foreground Bash, a foreground Agent; not a background
 // one) and turns the message box into the prompt; another key, a click or the turn ending cancels it; the
 // second b sends `background {sid}`; Esc and b replace each other's prompt; nothing in a session Synopia
-// doesn't drive; b types in insert mode; a step the live line names is marked there only, not on its group
-// run row, also after a redraw and when the live line re-renders; the live line names a subagent by its kind tag and
+// doesn't drive; b types in insert mode; a step the live line names is marked there only, not on its step
+// line, also after a redraw and when the live line re-renders; the live line names a subagent by its kind tag and
 // name, a Bash as Bash(…), never a background subagent while the turn runs; once the main turn is over there is no
 // live line at all, even with a background shell and subagent running: the transcript ends with "Worked for"
 // (2026-11-26). Writes background-asking.png and background-live.png.
@@ -115,12 +115,12 @@ await K.esc(); await K.l();
 check('Esc then l:the interrupt prompt alone, still nothing sent', (await asking()) === null && (await sent()).length === 1);
 
 // the live line names a foreground Bash (the newest step, after a finished Read): the mark is on the live line
-// only, not on its own run row; the earlier Bash and the subagent the live line doesn't name keep theirs where they are shown
+// only, not on its own step line; the earlier Bash and the subagent the live line doesn't name keep theirs where they are shown
 const step = (o) => `(s => { const b = s.items.find(i => i.id === 'toolu_bsleep'); return { ...b, ...${JSON.stringify(o)} }; })(__synopia.cur())`;
 const addLive = (o = {}) => ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total + ['toolu_bread', 'toolu_blive'].filter(id => !s.items.some(i => i.id === id)).length, upsert: [${step({ id: 'toolu_bread', name: 'Read', verb: 'Read', obj: 'README.md', state: 'done', fg: false })}, ${step({ id: 'toolu_blive', obj: 'npm run build', ...o })}] }))(__synopia.cur())`);
 await addLive();
 await c.until(`!!document.querySelector('#log .liveln') && /Bash\\(npm run build\\)/.test(document.querySelector('#log .liveln').textContent)`);
-const where = () => ev(`(() => { const g = document.querySelector('#log .runrow[data-bg="toolu_blive"]'); return {
+const where = () => ev(`(() => { const g = document.querySelector('#log details.step[data-step="toolu_blive"]:not(.live)')?.closest('.ln.tool'); return {
   live: document.querySelector('#log .liveln')?.hasAttribute('data-fg'), group: !g || g.hasAttribute('data-fg') || !!g.querySelector('[data-fg]'),
   sleep: !!document.querySelector('#log .ln.tool[data-fg]:not(.liveln)') && /sleep 40/.test(document.querySelector('#log .ln.tool[data-fg]:not(.liveln)').textContent), agent: !!document.querySelector('#log .wgrid [data-fg]'),
   n: document.querySelectorAll('#log [data-fg]').length }; })()`);
@@ -132,7 +132,7 @@ const m2 = await marked();
 check('first b: three steps marked once each, the live line one of them', m2.length === 3 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Working/.test(m2[2]), JSON.stringify(m2));
 await ev(`__synopia.redraw()`);
 const w1 = await where();
-check('after a redraw: its run row is not marked, the live line still is', w1.live === true && w1.group === false, JSON.stringify(w1));
+check('after a redraw: its step line is not marked, the live line still is', w1.live === true && w1.group === false, JSON.stringify(w1));
 await addLive({ obj: 'npm run build:all' }); // the live line re-renders under the prompt
 await c.until(`/build:all/.test(document.querySelector('#log .liveln')?.textContent || '')`);
 const w2 = await where();

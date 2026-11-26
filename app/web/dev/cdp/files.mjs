@@ -22,7 +22,7 @@ check('the created script reads new', row('scripts/tidy.sh') === 'new +2 −0', 
 check('a changed file with no diff has no counts', row('.tidy-stamp') === '', JSON.stringify(rows));
 check('and 2 more files', await ev(`[...document.querySelectorAll('.ln.files .root')].pop().textContent`) === 'and 2 more files');
 check('the total counts the more files', /^7 files,/.test(await ev(`document.querySelector('.ln.files .name + .dim').textContent`)));
-check('the Bash step is a run row, Bash(…) (R5.6, 2026-11-26)', await ev(`[...document.querySelectorAll('.ln.tool.runrow')].some(r => r.textContent.includes('Bash(Reword the second idea and add the tidy script)'))`));
+check('the Bash step is a step line, Bash(…), not a run row (R5.6, 2026-11-26)', await ev(`!document.querySelector('#log .runrow') && [...document.querySelectorAll('#log details.step > summary')].some(r => r.textContent.includes('Bash(Reword the second idea and add the tidy script)'))`));
 await ev(`[...document.querySelectorAll('.ln.files .frow')].find(r => r.querySelector('.fp').textContent === 'notes.md').querySelector('.fc').click()`);
 const diff = await ev(`(() => { const b = [...document.querySelectorAll('.ln.files .frow')].find(r => r.querySelector('.fp').textContent === 'notes.md').querySelector('.fc'); const d = document.getElementById(b.getAttribute('aria-controls')); return d.hidden ? '' : d.textContent; })()`);
 check('the notes.md diff has both changes', diff.includes('the first idea') && diff.includes('a second, better idea') && diff.includes('next edit'), diff.slice(0, 200));
