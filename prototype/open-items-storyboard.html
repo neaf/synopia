@@ -1077,6 +1077,12 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
   .x-olh span { font-weight: 400; color: var(--ink-3); }
   .x-olh:first-child { padding-top: 3px; }
   .ol-it .n .x-id { font-size: 10.5px; margin-right: 1ch; }
+  /* section 10: an item a subagent owns, under its card in the tree; the To review card with its id */
+  .kid > .x-on { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; row-gap: 1px; align-items: baseline; margin: 4px 7px 1px 43px; font-size: 11.5px; line-height: 1.35; }
+  .x-on .x-t { color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .x-on .x-w { grid-column: 2; font-size: 10.5px; color: var(--ink-3); display: inline-flex; gap: .5ch; align-items: center; }
+  .x-on .x-w .ind { font-size: 9px; }
+  .rv-open .n .x-id { font-size: 9.5px; padding: 1px 2px; margin-right: 4px; vertical-align: 1px; }
   .ol-it .n .x-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .ol-it .n { gap: 0; align-items: baseline; }
   .sb-dark .ol-it[aria-selected="true"] { background: var(--blue-bg); }
@@ -1185,7 +1191,7 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
       <h1>What waits on you, kept by AI: open items across turns and sessions</h1>
       <p class="sb-p">How a long session keeps its loose ends: the decisions Claude needs, the tasks only you can do, what Claude will re-check later, and the proposals that go ahead unless you object. The page compares the real choices and recommends one design: a skill and a file as the base, then Synopia's keeper, panel and list on top. Its text companion is <code>prototype/open-items-design.md</code>. Every frame uses the app's own CSS and markup; only the open items, the sidebar line and the Waiting on you list are new. Every session, folder, pull request, person and command here is invented.</p>
       <ul class="sb-toc">
-        <li><a href="#summary">Summary</a></li><li><a href="#picture">The design in one picture</a></li><li><a href="#s1">1. A reply opens 5 items</a></li><li><a href="#s2">2. Answering in prose</a></li><li><a href="#s3">3. Several in one message</a></li><li><a href="#s4">4. A follow-up comes due</a></li><li><a href="#s5">5. A default goes ahead</a></li><li><a href="#s6">6. The keeper cleans up</a></li><li><a href="#s7">7. A wrong guess</a></li><li><a href="#s8">8. A handoff</a></li><li><a href="#s9">9. Across sessions</a></li><li><a href="#s10">10. Dark mode</a></li><li><a href="#keys">Keys</a></li><li><a href="#edges">Edge cases</a></li><li><a href="#rejected">Rejected</a></li>
+        <li><a href="#summary">Summary</a></li><li><a href="#picture">The design in one picture</a></li><li><a href="#s1">1. A reply opens 5 items</a></li><li><a href="#s2">2. Answering in prose</a></li><li><a href="#s3">3. Several in one message</a></li><li><a href="#s4">4. A follow-up comes due</a></li><li><a href="#s5">5. A default goes ahead</a></li><li><a href="#s6">6. The keeper cleans up</a></li><li><a href="#s7">7. A wrong guess</a></li><li><a href="#s8">8. A handoff</a></li><li><a href="#s9">9. Across sessions</a></li><li><a href="#s10">10. Subagents</a></li><li><a href="#s11">11. Dark mode</a></li><li><a href="#keys">Keys</a></li><li><a href="#edges">Edge cases</a></li><li><a href="#rejected">Rejected</a></li>
       </ul>
     </div>
     <div class="sb-btns"><button class="sb-btn" id="sb-theme" type="button">Dark mode</button><button class="sb-btn" id="sb-motion" type="button">Preview reduced motion</button></div>
@@ -1204,6 +1210,7 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
         <li><b>The panel shows it.</b> "Waiting on you" and "Claude will check" in the background panel; "Closed this turn" with Undo. A solid id box means Claude recorded it, a dashed one that Synopia found it.</li>
         <li><b>Buttons only write prose.</b> An option writes <code>Y1 Run it</code> into the box. Enter sends, as for any message.</li>
         <li><b>Your turn stays your turn.</b> A sidebar line says "○ 4 waiting on you"; Needs you stays for the cards that block.</li>
+        <li><b>Subagents work on items but never write the list.</b> A brief names the ids a subagent owns, shown under its card; its report says which it closed, and its questions become your items. A finished <code>For review:</code> subagent opens a review item, and To review shows those items.</li>
         <li><b>One list across sessions:</b> <kbd>w</kbd> opens every open item of every session, like the Open list.</li>
       </ul>
     </section>
@@ -1215,6 +1222,7 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
         <li><b>R3.4</b> The writer gets a second call type, the keeper, in its own queue, run when you send and when a turn ends.</li>
         <li><b>R7.1</b> The panel gains "Waiting on you", "Claude will check" and "Closed this turn", under To review; it shows when a session has open items, not only background work.</li>
         <li><b>R4.2</b> A sub-line "○ N waiting on you" (", N due"), and the head's "○ N waiting on you" button.</li>
+        <li><b>R7.1, R10.1, R10.2, R2.6</b> To review becomes a view of review items; the stored reviewed marks become their states; "N to review" and the Dock badge count them.</li>
         <li><b>R8.2</b> Unchanged: open items never make a session "Needs you".</li>
         <li><b>R9</b> New: <kbd>w</kbd> opens the Waiting on you list; <kbd>d</kbd> on a focused item, "Not an item"; <kbd>J</kbd>/<kbd>K</kbd> reach the items after the cards.</li>
         <li><b>New topic doc</b> <code>docs/Open items.md</code>: the file's version 1 grammar, pinned by a test.</li>
@@ -1278,7 +1286,11 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
   <h3 class="sb-h">Recommended flow</h3>
   <div class="sb-strip" style="--n:2" id="f-s9"></div>
 
-  <h2 class="sb-part" id="s10">10. Dark mode, recommended</h2>
+  <h2 class="sb-part" id="s10">10. Subagents work on items, and never write the list</h2>
+  <p class="sb-lede">Your decisions of 2026-11-26. You answer Y5 "Main's", and Claude hands the rebase to a subagent; a second one drafts the receipt email copy for your review. Only Claude and Synopia write the list: a subagent's brief names the items it owns, and its report says which it closed and what it needs from you.</p>
+  <div class="sb-strip" style="--n:3" id="f-s10"></div>
+
+  <h2 class="sb-part" id="s11">11. Dark mode, recommended</h2>
   <p class="sb-lede">The same frames in the dark theme: the sidebar stays the darkest surface, ids keep their solid and dashed boxes, and the list uses the selection tint.</p>
   <div class="sb-strip sb-wide" id="f-dark"></div>
 
@@ -1346,13 +1358,14 @@ const head = (title = TITLE, now = "", dir = DIR) => `<h2 class="c-title">${esc(
 const dock = (draft = "", title = TITLE, rows = 0) => `<div class="dock"><div class="dock-inner"><div class="composer"><div class="slash" hidden></div><div class="attach" style="grid-column:2"></div><span class="g">❯</span><textarea rows="${rows || Math.max(1, draft.split("\n").length)}" aria-label="Message" readonly placeholder="${esc(`Message ${title}, / for commands`)}">${esc(draft)}</textarea></div></div></div>`;
 
 /* the panel, as rail.js writes it, with the proposal's groups */
-const card = ({ name, kind = "monitor", start, d, ended = false }) => { const kk = kind === "monitor" ? "mon" : "shell";
-  return `<div class="kid"><i class="tg"></i><button class="card kc-${kk}${ended ? " ended" : ""}" aria-current="false">${ended ? `<span class="pm">${ind("done")}${ind("s_" + kk)}</span>` : ind("k_" + kk)}<span class="n">${esc(name)}</span><span class="m"><span class="kw">${kind}</span>, started ${start}</span><span class="d">${d}</span></button></div>`; };
+const card = ({ name, kind = "monitor", start, d, ended = false, on = "" }) => { const kk = kind === "monitor" ? "mon" : kind === "subagent" ? "sub" : "shell";
+  return `<div class="kid"><i class="tg"></i><button class="card kc-${kk}${ended ? " ended" : ""}" aria-current="false">${ended ? `<span class="pm">${ind("done")}${ind("s_" + kk)}</span>` : ind("k_" + kk)}<span class="n">${esc(name)}</span><span class="m"><span class="kw">${kind}</span>, started ${start}</span><span class="d">${d}</span></button>${on}</div>`; };
 const pr = (name, d, kk = "shell", st = "done") => `<button class="pr"><span class="pm">${ind(st)}${ind("s_" + kk)}</span><span class="n">${esc(name)}</span><span class="d">${d}</span></button>`;
 const LIGHT = { turn: ["amber", "stopped", "Your turn"], work: ["green", "work", "Working"] };
-const rail = ({ st = "turn", count = 0, cards = "", items = [], n = null, checks = [], closed = [], past = [] }) => {
+const rail = ({ st = "turn", count = 0, cards = "", review = [], items = [], n = null, checks = [], closed = [], past = [] }) => {
   const [state, mark, word] = LIGHT[st];
   return `<aside class="rail panel"><div class="now"><button class="main-row" data-state="${state}" aria-current="true">${ind(mark)}<b>Main conversation</b><span class="m">${count ? `${count} running in the background` : "Nothing running in the background"}</span><span class="w">${word}</span></button>${cards ? `<div class="kids">${cards}</div>` : ""}</div>`
+    + (review.length ? `<div class="review"><h3>To review <span class="cnt">${review.length}</span></h3>${review.join("")}</div>` : "")
     + (items.length ? `<section class="x-items"><h3>Waiting on you <span class="cnt">${n ?? items.length}</span></h3>${items.join("")}</section>` : "")
     + (checks.length ? `<section class="x-checks"><h3>Claude will check <span class="cnt">${checks.length}</span></h3>${checks.join("")}</section>` : "")
     + (closed.length ? `<section class="x-closed"><h3>Closed this turn <span class="cnt">${closed.length}</span></h3>${closed.join("")}</section>` : "")
@@ -1363,7 +1376,7 @@ const rail = ({ st = "turn", count = 0, cards = "", items = [], n = null, checks
 const chips = x => (x.opts || x.acts) ? `<span class="x-acts">${(x.opts || []).map(l => `<button class="x-chip">${l}${l === x.rec ? `<span class="rc">Recommended</span>` : ""}</button>`).join("")}${(x.acts || []).map(l => `<button class="x-chip">${l}</button>`).join("")}</span>` : "";
 const item = (x, o = {}) => `<div class="x-it${o.ans ? " x-ans" : ""}${o.focus ? " x-focus" : ""}">`
   + `<span class="x-id${x.found ? " x-found" : ""}">${x.id}</span>`
-  + `<span class="x-k">${x.kind}${x.found ? ", found by Synopia" : ""}${o.isnew ? `, <span class="x-new">new</span>` : ""}</span><span class="x-age">${o.age || x.age || ""}</span>`
+  + `<span class="x-k">${x.kind}${x.by ? `, from ${esc(x.by)}` : ""}${x.found ? ", found by Synopia" : ""}${o.isnew ? `, <span class="x-new">new</span>` : ""}</span><span class="x-age">${o.age || x.age || ""}</span>`
   + `<span class="x-t">${x.text}</span>`
   + (x.when && !o.ans ? `<span class="x-w">${x.when}, unless you object</span>` : "")
   + (o.ans ? `<span class="x-w">${o.ans}</span>` : o.note ? `<span class="x-w">${o.note}</span>${chips(x)}` : chips(x))
@@ -1562,7 +1575,25 @@ put("f-s9", [
 ].map((s, i) => `<figure class="sb-state"><p class="sb-do"><i>${i + 1}</i>${s.do}</p>${s.f}<p class="sb-see">${s.see}</p></figure>`).join(""));
 document.getElementById("f-s9").style.setProperty("--n", "1");
 
-/* ---------- 10. dark ---------- */
+/* ---------- 10. subagents ---------- */
+const SUB = "Rebase #820 on main", RCPT = "For review: Receipt email copy";
+const onLn = (x, mark = "k_sub") => `<div class="x-on"><span class="x-id">${x.id}</span><span class="x-t">${x.text}</span><span class="x-w">${ind(mark)}<span>with ${esc(SUB)}</span></span></div>`;
+const Y5a = { ...Y5, text: "#820 conflicts in <code>config/tax_rates.yml</code>: keep main's Norway rates. You said “Main's”." };
+const Y7 = { id: "Y7", kind: "decision", by: SUB, text: "The 2027 reduced rate is 12% on main and 15% in the #820 fixture: which is right?", opts: ["12%", "15%"], age: "now" };
+const Y3l = { ...Y3, when: "Goes ahead after the demo" };
+const subCard = card({ name: SUB, kind: "subagent", start: "4:41 PM", d: "2m", on: onLn(Y5a) });
+const rcptCard = (d = "2m") => card({ name: RCPT, kind: "subagent", start: "4:41 PM", d });
+const rvCard = `<div class="rv"><button class="rv-open">${ind("review")}<span class="n"><span class="x-id">Y8</span>Receipt email copy</span><span class="m"><span class="kind">subagent</span> finished 4:58 PM</span></button><button class="btn quiet rv-done">Mark reviewed</button></div>`;
+const REPORT = `<div class="ln agent"><span class="g">${ind("s_sub")}</span><details class="fold" open><summary><span class="name">Report from ${esc(SUB)}</span> <span class="dim">11m 02s</span> <span class="hint">(click to read)</span></summary><div class="body md"><p>Rebased #820 on main, kept main's Norway rates, pushed.</p><p>Closed: Y5 (done: rebased with main's rates, pushed)</p><p>Question: which 2027 reduced rate is right, 12% on main or 15% in the #820 fixture?</p></div></details></div>`;
+const subLn = name => `<span class="r-agent kc-sub"><i class="el"></i>${ind("k_sub")} <b class="kw">${esc(name)}</b></span>`;
+const rvLn = n => `<span class="r-agent r-review"><i class="el"></i>${ind("review")} ${n} to review</span>`;
+strip("f-s10", [
+  { do: "You answer Y5; Claude hands it to a subagent", f: stack(crop(band("<p>Y5 Main's</p>") + tool("Agent", SUB) + tool("Agent", RCPT) + claude(`<p>Started 2 subagents. <strong>Y5</strong> is with ${esc(SUB)}; the receipt copy comes back for your review.</p>`) + doneLn("Worked for 14s, done 4:41 PM"), {}), railCrop(rail({ count: 2, cards: subCard + rcptCard(), items: [item(Y3l)] }))), see: "The brief's <code>Open items: Y5</code> line puts Y5 under the subagent's card, \"with Rebase #820 on main\", with its moving mark. It leaves Waiting on you while the subagent holds it." },
+  { do: "4:52 PM: the report comes back", f: stack(crop(REPORT + claude("<p>Closed this turn: <strong>Y5</strong> (rebased with main's rates). <strong>Waiting on you</strong> (2): Y3, and <strong>Y7</strong> from the subagent: which 2027 reduced rate is right?</p>") + doneLn("Worked for 9s, done 4:52 PM"), {}), railCrop(rail({ count: 1, cards: rcptCard("11m"), items: [item(Y3l), item(Y7, { isnew: true })], closed: [closedLn("Y5", `Done by ${esc(SUB)}: rebased with main's rates, pushed`)] }))), see: "The report says it closed Y5 and asks one question. Claude records both: Y5 closes, Y7 opens \"from Rebase #820 on main\". You answer Y7 here, in Main conversation." },
+  { do: "4:58 PM: the review subagent finishes", f: stack(railCrop(rail({ review: [rvCard], items: [item(Y3l), item(Y7)] })), sideCrop(sideHTML({ total: 5, groups: [["Checkout", srow({ title: TITLE, word: "Your turn, now", now: "Receipt email copy ready for your review", cur: true, subs: wl(2) + rvLn(1) }) + srow({ title: "Norway tax rates", word: "Your turn, 3 h", subs: wl(2) })]] }))), see: "It opens Y8, \"Review: Receipt email copy\". To review shows it as before, now with its id: a click opens the report; Mark reviewed, or a reply about it, closes it. The sidebar counts it once, in \"1 to review\"." },
+]);
+
+/* ---------- 11. dark ---------- */
 put("f-dark", [
   `<figure class="sb-state"><p class="sb-do">The picture, dark</p>${win({ side: SIDE_A(), hd: head(TITLE, "Your turn: Y1, run the lint fix or look first"), log: LOG1, dk: dock(), r: R1(), h: 700, dark: true })}</figure>`,
   `<figure class="sb-state"><p class="sb-do">The Waiting on you list, dark</p>${WIN9(WLIST(4), { dark: true })}</figure>`,
