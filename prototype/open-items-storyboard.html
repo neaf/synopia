@@ -1,0 +1,1607 @@
+<!-- Design history, not the spec: where this storyboard differs from docs/requirements.md (R3.4, R3.15, R4.2, R6, R7.1, R8.2, R9), the requirements win once decided. Its text companion is prototype/open-items-design.md. All data in it is invented. The app's CSS below is app/web/css/app.css and dark.css as of 2026-11-26, copied in whole by a build: only its font paths, the body[data-mode] scope and the dark-mode scope are rewritten so each frame carries its own mode and theme. Classes starting x- are the proposal under review; classes starting sb- are the page's own. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: what waits on you, kept by AI, storyboard</title>
+<style>
+/* ===== app/web/css/app.css, as in the app ===== */
+/* Light theme with visible panels. Sizes are 81% of the first draft (two 90% steps). */
+/* The fonts are bundled (decision Q8), both under the SIL Open Font License (OFL.txt beside them), so
+   the page looks the same offline. Atkinson Hyperlegible Next: googlefonts/atkinson-hyperlegible-next at
+   7925f50, fonts/webfonts. JetBrains Mono NL (no ligatures): JetBrains/JetBrainsMono release v2.304,
+   fonts/ttf (the release has no NL web font). Local files load before the first paint, so `block`
+   shows no fallback text that rewraps later. */
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 400; font-display: block; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Regular.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 500; font-display: block; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Medium.woff2") format("woff2"); }
+@font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 700; font-display: block; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Bold.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono NL"; font-weight: 400; font-display: block; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf") format("truetype"); }
+@font-face { font-family: "JetBrains Mono NL"; font-weight: 700; font-display: block; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf") format("truetype"); }
+:root {
+  /* one speed for every moving mark (R8.1); a monitor only watches, so its sweep is slower */
+  --mark-period: 2s; --mark-watch: 3s;
+  --canvas: #EDEFF2; --side: #E1E4E8; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+  --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+  --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
+  --bash: #BF3989; /* bash mode's mark: the CLI's bash pink, on this palette */
+  --band: #F0F3F6; /* your message's band, and the box in insert mode */
+  --dot-amber: #D4A72C; --dot-green: #2DA44E;
+  --add-bg: #DAFBE1; --del-bg: #FFEBE9;
+  --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --log-font: 12px; --log-lh: 1.45; /* the transcript's text; thumbnails are 3 of its lines high */
+  --thumb-h: calc(3 * var(--log-font) * var(--log-lh));
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--canvas); color: var(--ink); font: 400 13px/1.5 var(--sans); }
+button, textarea, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+::selection { background: #B6E3FF; }
+code, .mono { font-family: var(--mono); font-size: .9em; }
+.link { background: none; border: 0; padding: 0; color: var(--link); text-decoration: underline; text-underline-offset: 2.5px; font-size: 11.5px; }
+.btn { background: var(--panel); border: 1px solid var(--line); border-radius: 5.5px; padding: 4.5px 11px; font-size: 12px; font-weight: 500; }
+.btn:hover { background: var(--sub); }
+.btn.primary { background: #1F883D; border-color: #1A7F37; color: #fff; }
+.btn.primary:hover { background: #1A7F37; }
+.btn.quiet { border-color: transparent; background: none; color: var(--ink-2); }
+.btn.quiet:hover { background: var(--line-2); }
+kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 2.5px; padding: 0 3.5px; background: var(--panel); }
+
+.app { display: grid; grid-template-columns: 270px minmax(0, 1fr); height: 100vh; }
+
+/* ---------- sidebar: iTerm-like tabs; the open one takes the canvas colour and runs into it ---------- */
+.side { background: var(--side); display: flex; flex-direction: column; min-height: 0; }
+.side-head { display: flex; align-items: center; gap: 9px; padding: 12.5px 12.5px 9px; border-right: 1px solid var(--line); }
+.side-head h1 { font-size: 15.5px; margin: 0; }
+.conn { font-size: 11px; color: var(--ink-3); margin-left: auto; } /* the backend went away: quiet, no motion */
+.side-scroll { overflow-y: auto; overflow-x: hidden; flex: 1; padding: 0 0 11px; background: linear-gradient(to left, var(--line) 1px, transparent 1px); }
+.side-foot { border-right: 1px solid var(--line); border-top: 1px solid var(--line); padding: 9px 12.5px; display: flex; align-items: center; font-size: 11px; color: var(--ink-3); }
+.side-foot .btn { margin-left: auto; }
+.group { margin-top: 11px; }
+.g-name { font-weight: 700; font-size: 12px; display: flex; gap: 7px; align-items: baseline; }
+.row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 9px; align-items: start;
+  width: 100%; padding: 7px 12.5px 8px; cursor: pointer; border-top: 1px solid transparent; border-bottom: 1px solid transparent; }
+.row:hover { background: linear-gradient(to left, var(--line) 1px, #D8DCE1 1px); }
+.row:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+.row[aria-current="true"] { background: var(--canvas); border-color: var(--line); }
+.r-main { min-width: 0; display: grid; gap: 1px; }
+.r-title { font-weight: 500; font-size: 12px; line-height: 1.3; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row[aria-current="true"] .r-title { color: var(--ink); font-weight: 700; }
+.r-state { font-size: 11px; line-height: 1.3; font-weight: 500; }
+.row[data-state="red"] .r-state { color: var(--red); }
+.row[data-state="amber"] .r-state { color: var(--amber); }
+.row[data-state="green"] .r-state { color: var(--green); }
+.row[data-state="grey"] .r-state { color: var(--ink-3); }
+.r-now { font-size: 11px; color: var(--ink-3); line-height: 1.35; }
+.r-agent { font-size: 10.5px; color: var(--ink-3); line-height: 1.35; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.r-agent b { color: var(--kc, var(--green)); font-weight: 500; }
+.r-side { width: 12.5px; height: 16px; display: flex; align-items: center; justify-content: center; }
+
+/* ---------- main area: the conversation as one panel, the background panel beside it, on the canvas ---------- */
+.conv { display: grid; grid-template-columns: minmax(0, 1fr) 320px; grid-template-rows: minmax(0, 1fr); gap: 9px; padding: 9px; min-height: 0; }
+.conv.no-rail { grid-template-columns: minmax(0, 1fr); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+/* one panel end to end (R5): the header, the log, the queue, and the message box as its last row */
+.thread { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.thread > .c-head { flex: none; border-bottom: 1px solid var(--line-2); }
+.c-head { padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
+.c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
+.c-now { color: var(--ink-2); margin: 0; }
+.c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
+.c-meta .mono { color: var(--ink-2); }
+/* the folder's mono span and the subagent view's back link sit inside the line's own height, so the meta
+   line is 16.5px in every view (a button's or a second font's line box would add a fraction) */
+.c-meta { line-height: 16.5px; height: 16.5px; }
+.c-meta .mono, .c-meta .link { line-height: 1; }
+.c-meta .link { font-size: inherit; }
+/* the header keeps one shape in every view (title, Now or status, meta; one line each), so switching
+   between the session and a subagent never moves the panels below it */
+.c-head > .c-title, .c-head > .c-now, .c-head > .c-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.c-acts { grid-row: 1 / 6; grid-column: 2; display: flex; gap: 7px; align-items: center; }
+.missing { padding: 27px; max-width: 60ch; }
+
+.log { position: relative; overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; flex: 1 1 0; }
+/* the text keeps a 150ch measure; a band's fill (your prompt, a queued one, a `!` command) runs edge to edge
+   across the panel at any width, its text in the same measure */
+.log-inner > :not(.prompt, .qpin, .bang), .bang > :not(.prompt) { max-width: 150ch; }
+.prompt > :not(.g) { max-width: 148ch; }
+/* a line that is one long token (a path, a list of tool names) wraps anywhere rather than run past the panel,
+   as commands, paths and diffs already do */
+.log .ln { overflow-wrap: anywhere; }
+.earlier { color: var(--ink-3); margin: 0 0 11px; }
+/* "Show 160 earlier": a quiet link in the line's own grey, darker on hover */
+.earlier button { all: unset; cursor: pointer; text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 2.5px; }
+.earlier button:hover { color: var(--ink-2); text-decoration-color: currentColor; }
+.earlier button:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+
+/* transcript: mono, gutter glyphs like the CLI */
+.log, .composer textarea, .status { font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
+.ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
+.ln > .g { user-select: none; }
+.ln.claude > .g { color: var(--ink); }
+.ln.tool > .g, .ln.agent > .g { color: var(--dot-green); }
+.ln.tool.failed > .g { color: var(--red); }
+.ln.tool.stopped > .g, .ln.tool.denied > .g { color: var(--ink-3); }
+.ln.ask > .g { color: var(--dot-amber); }
+.ln .name { font-weight: 700; color: var(--ink); }
+.ln .dim, .res { color: var(--ink-3); }
+.res { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
+/* the guide into a result or a run's step: the drawn corner, as in the sidebar and the files list */
+.res > .lcorner { align-self: start; margin: 2px 0 0 3px; }
+.res.failed { color: var(--red); }
+details.fold > summary { cursor: pointer; list-style: none; }
+details.fold > summary::-webkit-details-marker { display: none; }
+details.fold > summary .hint { color: var(--faint); }
+details.fold[open] > summary .hint { display: none; }
+details.fold .body { margin-top: 5.5px; }
+/* a step, expanded (R5.6): the command or input in ink, the result under ⎿, "Show all" as the earlier link */
+details.step > summary { cursor: pointer; list-style: none; }
+details.step > summary::-webkit-details-marker { display: none; }
+.step-out { margin: 2px 0 5.5px; }
+.body .step-out { margin-left: 3ch; }
+.step-out .cmd { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.step-out .out { color: var(--ink-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* the output in its own subtle panel under its command, as a code block in Claude's text (.md pre): one look for all
+   shell output, a step's result, a `!` command's, a shell's or monitor's view (prototype/working-shell-storyboard.html C,
+   2026-11-25); stderr keeps its red rule beside it */
+.step-out .out:not(.err) { display: block; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
+.step-out .earlier.more { margin: 0 0 0 3ch; }
+/* runView: a quiet description over the command, stderr in red, the running row's note fainter; an open
+   running step shows "Running, 42s" in its body, so its line's own "Running" row steps aside */
+.step-out .desc { color: var(--ink-3); }
+.step-out .out.err { color: var(--red); border-left: 1px solid currentColor; padding-left: 1ch; } /* shape as well as colour: a 1px rule at its edge */
+.step-out .res.note { color: var(--faint); }
+details.step[open] > summary .res.run { display: none; }
+/* an edit step's diff (R5.6): the Files changed view, under the guide instead of under its row */
+.step-out .res > .diff { grid-column: auto; margin: 2px 0 3.5px; color: var(--ink); }
+.dc { font-variant-numeric: tabular-nums; }
+/* the band runs from the panel's inner edge (-16px, the log's padding), so its 2.5px edge shows whole */
+.prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+.prompt > .g { color: var(--link); }
+.prompt .img, .prompt .dim { color: var(--ink-3); }
+/* messages you sent while the turn runs (R5.5): the same band, a still clock in place of `❯` and lighter
+   text. When Claude takes one, only the mark and the ink change; nothing changes size */
+.prompt.qc > .md { color: var(--ink-3); }
+.prompt.qc { opacity: .5; } /* not taken yet: the whole band, its fill, edge and clock, at half strength (2026-11-25) */
+/* under "Send all now?" (f, R9.8) the bands that will go carry b, b's mark: the selection tint and a 1px blue ring,
+   inside the band since it runs edge to edge, at full strength while asked */
+.log.now-asking .prompt.qc { opacity: 1; background: #DDF4FF; box-shadow: inset 0 0 0 1px #54AEFF; }
+/* the queued clock sits where the ❯ would: centred on its cell and on its ink, --dot-lift above the line's middle (below) */
+.prompt > .g { position: relative; }
+.prompt > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+/* the queue, one block at the log's end (transcript.js queuedHTML): the transcript's end, scrolling with it like
+   any message (2026-11-25: not pinned). The negative top margin keeps the 11px gap above the first band; the
+   log's bottom padding moves into the block */
+.log { container-type: size; }
+.log:has(> .log-inner > .qpin), .thread:has(.dock-inner > :not(.composer)) > .log { padding-bottom: 0; }
+.qpin { display: flow-root; margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; }
+.qpin > .prompt:first-child { margin-top: 0; }
+/* "New since 2:14 PM" (R5.12d, prototype/unread-storyboard.html C): a 1px line in the gap above the first item you
+   hadn't seen; it takes no space. In a shell's or monitor's output, a zero-height block between two lines. */
+.log-inner > .new-at { position: relative; }
+.new-at::before { content: ""; position: absolute; left: -16px; right: -16px; top: -6px; height: 1px; background: var(--link); z-index: 1; }
+.new-at > .nlab { position: absolute; right: -4px; top: -12.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+.nlab i { font-style: normal; font-weight: 500; color: var(--ink-3); }
+.prompt.new-at > .nlab { right: 12px; } /* the band reaches the log's edges */
+.nl-at { display: block; position: relative; height: 0; }
+.nl-at::before { content: ""; position: absolute; left: -100vw; right: -16px; top: -.5px; height: 1px; background: var(--link); z-index: 1; }
+.nl-at > .nlab { position: absolute; right: -4px; top: -6.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+/* bash mode (R5.13): the command on the prompt band, `!` and its edge in the bash pink; the output under the
+   guide through runView, as a step's result */
+.bang { margin: 0 0 11px; }
+.prompt.bang-cmd { border-left-color: var(--bash); margin-bottom: 2px; }
+.prompt.bang-cmd > .g { color: var(--bash); font-weight: 700; }
+.prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
+.bang-res { padding-left: 2ch; color: var(--ink-3); }
+.bang-res > .step-out { margin: 0; }
+/* ---------- a run (runs.js, R5.6, R5.13, R7.1, 2026-11-26; prototype/shell-storyboard.html): one row for every shell
+   command, whoever started it. The whole row is the link to its shell view; hover shades it as a Past line shades. */
+.runrow { position: relative; isolation: isolate; cursor: pointer; }
+.runrow::before { content: ""; position: absolute; inset: -2px -8px; z-index: -1; border-radius: 5.5px; pointer-events: none; }
+.runrow:hover::before { background: var(--sub); }
+.bang.runrow::before { inset: 3.5px -8px -2px; }
+.runrow:hover .prompt.bang-cmd { background: var(--line-2); }
+/* the command in Claude's row stays one line: the shell view has the rest */
+.runrow .step-out .cmd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* the state line: the status mark, then the words */
+.runrow .res.rst > span:last-child, .rst > span:last-child { display: inline-flex; align-items: center; gap: .6ch; }
+.rst .ind { font-size: 10px; }
+.res.waits, .status .res.waits span { color: var(--red); }
+.liveln[data-state="red"] b { color: var(--red); } /* the shell view's live line while its run waits */
+.rst .rhint { color: var(--faint); }
+.liveln[data-bg] { cursor: pointer; } /* "Working Bash(…)" opens that run's shell view */
+/* Claude's command line: a grey $ in the gutter, as the permission card's (.qbody .cmd .ps), under the step's dot
+   and in the column of your band's !; no band, no fill. One mark per gutter line: the dot on the step, $ on the command. */
+.ln.tool > .g.ps.ps { color: var(--ink-3); user-select: none; margin-top: 2px; }
+.done { color: var(--ink-3); margin: 0 0 14.5px; }
+.retitle > .t { color: var(--ink-2); } /* a title change: the day separator's quiet line, the new title a step darker */
+.opt-line { color: var(--ink-3); }
+.opt-line.picked { color: var(--ink); font-weight: 700; }
+.md p { margin: 0 0 .85em; }
+.md > :last-child { margin-bottom: 0; }
+.md ul, .md ol { margin: 0 0 .85em; padding-left: 2ch; }
+.md ul { list-style: none; }
+.md ul > li::before { content: "- "; margin-left: -2ch; }
+.md ol { padding-left: 3ch; }
+.md li { margin: 0; }
+.md h4 { font-size: 1em; margin: 0 0 .4em; font-weight: 700; }
+.md b { font-weight: 700; }
+.md code { color: var(--link); }
+.md pre { margin: 0 0 .85em; padding: 5.5px 9px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; white-space: pre-wrap; }
+.md pre code { color: var(--ink); }
+.md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
+.md a { color: var(--link); }
+/* a path in a reply that is there (R5.9, path-links.js): with ⌘ held it reads as a link; as plain code otherwise */
+.cmd-held .md code.path-ok { color: var(--link); text-decoration: underline 1px; text-underline-offset: 2.5px; cursor: pointer; }
+/* tables (R5.10): 11px, 1px rules between rows; md.js marks each column (num, short, prose, c0 the first)
+   and table-fit.js fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+.md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+.md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+.md .tw::-webkit-scrollbar { height: 5px; }
+.md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; } /* not the line's break-anywhere */
+.md table code { font-size: 1em; }
+.md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
+.md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+.md th { padding-top: 0; }
+.md th:last-child, .md td:last-child { padding-right: 0; }
+.md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+.md .num { text-align: right; font-variant-numeric: tabular-nums; }
+.md .short, .md .num, .md .c0 { white-space: nowrap; }
+.md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+.md .c0 code { white-space: nowrap; }
+.md .prose { min-width: 26ch; overflow-wrap: break-word; }
+.md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; } /* the separator row's colons win */
+
+/* waves of subagents */
+.wave .name { font-weight: 700; }
+.wgrid { display: grid; grid-template-columns: 2ch minmax(0, max-content) max-content; column-gap: 2ch; align-items: center; margin-top: 2px; }
+.ln.one .adur { margin-left: 2ch; }
+.wgrid > .ind { font-size: 10px; }
+.wgrid > * { line-height: 1.4; }
+.alink { all: unset; cursor: pointer; color: var(--link); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch; }
+.wgrid .alink { display: block; }
+.alink:hover { text-decoration: underline; text-underline-offset: 2.5px; }
+.alink:focus-visible { outline: 2px solid var(--link); }
+.adur { color: var(--ink-3); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* files changed and diffs */
+.files .root { color: var(--ink-3); margin-top: 2px; }
+.flist { display: grid; grid-template-columns: 2ch minmax(0, max-content) max-content minmax(0, 1fr); column-gap: 1ch; } /* the last track takes an open diff's width, so the path and counts columns never move */
+.frow { display: contents; }
+.frow > :first-child { grid-column: 1; } /* each file row starts a grid row: the 4th track is only for an open diff */
+/* the guide into each file: the sidebar's sub-line corner (R4.4), two equal 7px legs, 1px */
+.lcorner { display: inline-block; width: 7px; height: 7px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+.frow > .lcorner { align-self: start; margin: 2px 0 0 3px; }
+.frow .fp { color: var(--link); overflow-wrap: anywhere; }
+.frow .fp { text-decoration: none; }
+.frow .fp:hover { text-decoration: underline; text-underline-offset: 2.5px; }
+.frow .fc { all: unset; justify-self: start; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: pointer; border-radius: 3px; padding: 0 3px; margin-left: calc(1ch - 3px); } /* 2ch after the path: the grid gap is 1ch for the guide */
+.frow .fc:hover { background: var(--sub); box-shadow: inset 0 0 0 1px var(--line); }
+.frow .fc:focus-visible { outline: 2px solid var(--link); }
+.frow .fc[aria-expanded="true"] { background: #DDF4FF; box-shadow: inset 0 0 0 1px #54AEFF; }
+.add { color: var(--green); } .del { color: var(--red); } .new { color: var(--ink-3); }
+.diff { grid-column: 1 / -1; min-width: 0; margin: 3.5px 0 9px 3ch; border: 1px solid var(--line); border-radius: 5.5px; overflow: hidden; }
+.diff[hidden] { display: none; }
+.dl { display: grid; grid-template-columns: calc(var(--dn, 4ch) + 2ch) 2ch minmax(0, 1fr); /* the digits plus 1ch each side */ white-space: pre-wrap; overflow-wrap: anywhere; }
+.dl .no { color: var(--faint); text-align: right; padding: 0 1ch; user-select: none; background: var(--sub); }
+.dl.a { background: var(--add-bg); } .dl.a .no { background: #CCFFD8; } .dl.a .sg { color: var(--green); }
+.dl.d { background: var(--del-bg); } .dl.d .no { background: #FFD7D5; } .dl.d .sg { color: var(--red); }
+.dl.c { color: var(--ink-2); }
+.dgap { color: var(--faint); padding-left: calc(var(--dn, 4ch) + 3ch); background: var(--sub); }
+
+/* the message box, the panel's last row: a card or status line above it, at the transcript's end */
+.dock { flex: none; padding: 0; overflow: visible; }
+.dock-inner { max-width: none; }
+.dock-inner > :not(.composer) { border-top: 1px solid var(--line-2); margin-bottom: 23.5px; } /* then the gap the log's end has, then the box's line */
+/* a subagent, shell or monitor view has no message box (R5.12): the panel ends with the log; the row shows only while a key's prompt asks */
+.dock.nobox:not(:has(.composer.asking)) { display: none; }
+.status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); }
+.status b { font-weight: 700; }
+.status[data-state="red"] b { color: var(--red); }
+.status span { color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* styled as a `❯` band being written: ❯ 16px in, where a posted band's sits, under a 1px line (R5) */
+.composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); align-items: center; padding: 9px 16px 9px 13.5px; border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent; cursor: text; } /* the whole box focuses the field */
+.composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
+.composer.bash > .g { color: var(--bash); font-weight: 700; } /* bash mode (R5.13): `!` in place of `❯` */
+.composer .attach { grid-column: 2; }
+.composer textarea { width: 100%; max-width: 148ch; background: none; border: 0; resize: none; outline: none; min-height: 3lh; height: auto; max-height: 198px; padding: 0; display: block; } /* three transcript lines at least, growing as you type */
+.composer .attach { grid-row: 2; } /* the pasted images sit below the text */
+.composer .attach:not(:empty) { margin: 5.5px 0 2px; }
+
+/* images (R5.12b, R5.13): a wrapping row of thumbnails under a prompt, a tool step, a collapsed run or the
+   message box, the same size everywhere: at most 3 transcript lines high, never scaled up, 320px wide at
+   most, cropped to the centre. --iw/--ih (.sized): the image's size, from the backend or from the image's
+   header once the browser has read it. Until then it is 3 lines high and takes its own aspect ratio. */
+.thumbs { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 5.5px; margin: 3.5px 0 2px; }
+.ln > .thumbs { grid-column: 2; }
+.thumb.sized { --th: min(calc(var(--ih) * 1px), var(--thumb-h)); --tw: min(320px, calc(var(--th) * var(--iw) / var(--ih))); }
+button.thumb { all: unset; display: block; cursor: zoom-in; border-radius: 5.5px; }
+.thumb img, .thumb.gone { display: block; box-sizing: content-box; width: var(--tw, auto); max-width: 320px; height: var(--th, var(--thumb-h)); border: 1px solid var(--line); border-radius: 5.5px; background: var(--sub); }
+.thumb img { object-fit: cover; object-position: center; }
+button.thumb:hover img { border-color: var(--faint); }
+button.thumb:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.thumb.gone { border-color: var(--line-2); color: var(--faint); font: 400 10.5px/1.2 var(--sans); display: grid; place-items: center; text-align: center; overflow: hidden; min-width: 7ch; }
+.thumb-wrap { margin: 0; position: relative; }
+.thumb-wrap .unattach { position: absolute; top: -5.5px; right: -5.5px; width: 16px; height: 16px; border-radius: 50%; border: 1px solid var(--panel); background: var(--ink-2); color: #fff; font-size: 9px; line-height: 14px; padding: 0; text-align: center; opacity: 0; cursor: pointer; }
+.thumb-wrap:hover .unattach, .thumb-wrap .unattach:focus-visible { opacity: 1; }
+.thumb-wrap .unattach:hover { background: var(--ink); }
+/* a pasted image whose [Image #N] tag was deleted from the text: kept in the row, dimmed with a dashed line, not sent (R5.13) */
+.thumb-wrap.untagged .thumb { opacity: .45; }
+.thumb-wrap.untagged .thumb img { border: 1px dashed var(--ink-3); }
+.img-tag { color: var(--ink-3); }
+
+/* the viewer: one image on the canvas colour, clear of the title bar; the stage scrolls at 100%, the
+   footer has the count, the source and the keys (as .nd-foot). Fit: never larger than its real size. */
+.viewer { position: fixed; inset: var(--titlebar, 0px) 0 0 0; z-index: 30; background: rgba(237, 239, 242, .94); cursor: zoom-out; outline: none; }
+.viewer .v-stage { position: absolute; inset: 0 0 34px 0; display: flex; padding: 25px 25px 8px; overflow: hidden; overscroll-behavior: contain; }
+.viewer.full .v-stage { overflow: auto; }
+.viewer .v-stage img { display: block; margin: auto; flex: none; box-sizing: border-box; max-width: 100%; max-height: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 7px 21.5px rgba(140, 149, 159, .25); cursor: default; user-select: none; -webkit-user-drag: none; }
+.viewer.zoomable .v-stage img { cursor: zoom-in; }
+.viewer.full .v-stage img { max-width: none; max-height: none; cursor: grab; }
+.viewer.full .v-stage { cursor: grab; }
+.viewer.panning .v-stage, .viewer.panning .v-stage img { cursor: grabbing; }
+.viewer .v-foot { position: absolute; left: 0; right: 0; bottom: 0; height: 34px; display: flex; align-items: center; justify-content: center; gap: 18px; padding: 0 25px; font-size: 11px; color: var(--ink-3); cursor: default; }
+.viewer .v-where { display: flex; gap: 10px; min-width: 0; align-items: baseline; }
+.viewer .v-n { flex: none; }
+.viewer .v-from { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46vw; }
+.viewer .v-foot .hint { display: flex; gap: 12px; align-items: center; flex: none; }
+.viewer .v-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+.slash { position: absolute; left: 9px; right: 9px; bottom: calc(100% + 5.5px); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 7px 21.5px rgba(140,149,159,.25);
+  font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 3.5px 0; max-height: 297px; overflow-y: auto; z-index: 5; }
+.slash[hidden] { display: none; }
+.slash .it { display: grid; grid-template-columns: minmax(0, 46ch) minmax(0, 1fr); gap: 0 2ch; padding: 2px 10px; cursor: pointer; }
+.slash .it .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slash .it .n .h { color: var(--ink-3); }
+.slash .it .d { color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.slash .it[aria-selected="true"] { background: #DDF4FF; }
+.slash .it[aria-selected="true"] .n { color: var(--link); }
+.slash .head { color: var(--ink-3); padding: 2px 10px 3.5px; }
+/* the model picker's effort row: the levels of the selected model, under its description; the chosen one boxed */
+.slash .eff { grid-column: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 1ch; padding: 1px 0 3px; color: var(--ink-3); }
+.slash .eff-l { margin-right: 1ch; }
+.slash .eff-o { padding: 0 .6ch; border: 1px solid transparent; border-radius: 4px; color: var(--ink-2); }
+.slash .eff-o[aria-checked="true"] { border-color: var(--link); color: var(--link); }
+/* "Interrupt?": the message box asks before Esc, Esc stops the turn; what you typed stays underneath */
+.int-ask { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+/* in ink, not red: red is kept for needs you (and the failed square), and interrupting is neither */
+.int-ask b { color: var(--ink); font-weight: 700; }
+.composer.asking .int-ask { display: block; align-self: start; } /* on the first line beside ❯, not centred in the three-line box */
+.composer.asking textarea, .composer.asking .attach { visibility: hidden; }
+[data-mode] .composer.asking > .g { color: var(--ink); }
+/* a terminal holds the session (R3.2): one quiet line where your message would go, gone once you type; under a
+   message that takes it back, the take-over's state */
+.term-line, .term-wait { display: none; margin: 0; grid-column: 2; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-3); }
+.term-line { grid-row: 1; align-self: start; pointer-events: none; } /* on the first line, over the empty field */
+.term-wait { grid-row: 3; margin-top: 3.5px; }
+.composer.held:has(textarea:placeholder-shown):not(.asking) .term-line { display: block; }
+.composer.held textarea::placeholder, [data-mode] .composer.held textarea::placeholder { color: transparent; }
+.composer.taking:not(.asking) .term-wait { display: block; }
+.ol-it .n { display: flex; gap: 2ch; }
+.ol-it .n .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.ol-it .n .term { flex: none; color: var(--ink-3); }
+/* "Send to background?": the steps b, b would send are marked like a selected row, a 1px blue ring on the
+   selection tint, drawn outside the line (box-shadow) so nothing moves; their own running marks stay as they are */
+.log.bg-asking [data-fg] { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px #DDF4FF, 0 0 0 3px #54AEFF; }
+/* a block a jump landed on (the "To review" card goes to its report, R7.1): the same mark, held, then faded out
+   (transcript.js markJump); a highlight, not a running mark */
+.log .jump-mark { background: #DDF4FF; box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; border-radius: 2px; }
+.log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; transition: background-color .6s linear, box-shadow .6s linear; }
+@media (prefers-reduced-motion: reduce) { .log .jump-mark.fading { transition: none; } }
+/* the Open list: past sessions over the main area, rows drawn like the command menu's */
+.app > .side { grid-column: 1; grid-row: 1; }
+.app > .conv { grid-column: 2; grid-row: 1; }
+.open-list { grid-column: 2; grid-row: 1; z-index: 6; background: var(--canvas); padding: 9px; min-height: 0; display: flex; }
+.open-list[hidden] { display: none; }
+.ol-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.ol-head { padding: 11px 14.5px; border-bottom: 1px solid var(--line-2); }
+.ol-filter { border-bottom: 1px solid var(--line-2); }
+.ol-filter input { font-family: var(--mono); font-size: 12px; line-height: 1.45; width: 100%; background: none; border: 0; outline: none; padding: 0; color: var(--ink); }
+.ol-list { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 3.5px 0; }
+.ol-it { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 40ch) 10ch; gap: 2ch; padding: 2px 14.5px; cursor: pointer; }
+.ol-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ol-it .f, .ol-it .a { color: var(--ink-3); }
+.ol-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+.ol-it:hover { background: var(--sub); }
+.ol-it[aria-selected="true"] { background: #DDF4FF; }
+.ol-it[aria-selected="true"] .n { color: var(--link); }
+.ol-empty { color: var(--ink-3); margin: 0; padding: 5.5px 14.5px; }
+.ol-keys { margin: 0; padding: 6.5px 14.5px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--ink-3); }
+.ol-note { margin: 0; padding: 4px 14.5px 5px; font-family: var(--mono); font-size: 12px; line-height: 1.4; color: var(--ink-3); }
+.ol-note[hidden] { display: none; }
+.ol-it .f.gone { text-decoration: line-through; text-decoration-color: var(--faint); }
+/* the folder list (R3.3): a folder, its sessions, when last used; drawn like the Open list */
+.fl-it { display: grid; grid-template-columns: minmax(0, 1fr) 12ch 9ch; gap: 1.5ch; padding: 2px 14.5px; cursor: pointer; }
+.fl-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fl-it .c, .fl-it .a { color: var(--ink-3); }
+.fl-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+.fl-it:hover { background: var(--sub); }
+.fl-it[aria-selected="true"] { background: #DDF4FF; }
+.fl-it[aria-selected="true"] .p { color: var(--link); }
+.fl-it.gone { color: var(--faint); cursor: default; }
+.fl-it.gone:hover { background: none; }
+.fl-it.mk .p { grid-column: 1 / -1; color: var(--ink-2); }
+.fl-it.mk[aria-selected="true"] .p { color: var(--link); }
+/* fuzzy matches (R3.14), as nota draws them: bold in the link blue; on the selected row also underlined */
+.ol-list b.m, .slash b.m { font-weight: 700; color: var(--link); }
+.ol-list [aria-selected="true"] b.m, .slash [aria-selected="true"] b.m { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 2px; }
+.fl-it.gone b.m { color: inherit; }
+/* the MCP panel (R5.15): drawn like the Open list; a server, its status (a mark and a word), its kind, its actions.
+   The actions are words like the effort row's: the one Enter does is boxed, on the selected row only. */
+.mcp-it { display: grid; grid-template-columns: minmax(0, 1fr) 27ch 24ch 42ch; gap: 2ch; align-items: baseline; padding: 2px 14.5px; cursor: pointer; }
+.mcp-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-it .st { display: flex; align-items: baseline; gap: .8ch; color: var(--ink-2); }
+.mcp-it .st .ind { flex: none; align-self: center; }
+.mcp-it.st-needs-auth .st, .mcp-it.st-failed .st { color: var(--red); }
+.mcp-it.st-disabled .st, .mcp-it.st-disabled .n, .mcp-it .f { color: var(--ink-3); }
+.mcp-it.st-busy .st { color: var(--ink); }
+.mcp-it .acts { display: flex; gap: 0 1ch; justify-content: flex-end; color: var(--ink-3); }
+.mcp-it .act { padding: 0 .6ch; border: 1px solid transparent; border-radius: 4px; }
+.mcp-it .act:hover { color: var(--link); }
+.mcp-it:not([aria-selected="true"]) .acts { visibility: hidden; }
+.mcp-it:hover .acts { visibility: visible; }
+.mcp-it[aria-selected="true"] { background: #DDF4FF; }
+.mcp-it[aria-selected="true"] .n { color: var(--link); }
+.mcp-it[aria-selected="true"] .act { color: var(--ink-2); }
+.mcp-it .act[aria-pressed="true"] { border-color: var(--link); color: var(--link); }
+.mcp-it:hover:not([aria-selected="true"]) { background: var(--sub); }
+.mcp-err { color: var(--red); }
+/* its folder is gone (R3.11): one line instead of the field */
+.gone-line { display: none; margin: 0; grid-column: 2; grid-row: 1; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-3); cursor: pointer; }
+.gone-line b { color: var(--ink); font-weight: 400; }
+.composer.gone .gone-line { display: block; }
+.composer.gone textarea, .composer.gone .attach { display: none; }
+.c-meta .gone { color: var(--ink-2); }
+
+/* background work panel, like a play queue turned upside down:
+   past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */
+.rail { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.past { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 0 36px; display: flex; flex-direction: column;
+  -webkit-mask-image: linear-gradient(to top, transparent 0, #000 57.5px); mask-image: linear-gradient(to top, transparent 0, #000 57.5px); }
+.rail h3 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; display: flex; align-items: baseline; gap: 7px; }
+.rail h3 .cnt { margin-left: auto; font-weight: 400; color: var(--ink-3); font-size: 11px; }
+.past h3 { color: var(--faint); }
+.past > * { flex: none; }
+.pr { all: unset; box-sizing: border-box; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; width: 100%; padding: 2.5px 12.5px; cursor: pointer; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
+.pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.pr .in { color: var(--faint); } /* the subagent a shell or monitor ran in */
+.pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
+.pr.failed .d, .pr.failed .k { color: var(--red); }
+/* hover and the open item draw in a frame on the cards' edges (7 px in), behind the text, so a Past row lines up with the cards above */
+.pr { position: relative; isolation: isolate; }
+.pr::before { content: ""; position: absolute; inset: 0 7px; z-index: -1; border: 1px solid transparent; border-radius: 5.5px; pointer-events: none; }
+.pr:hover::before { background: var(--sub); }
+.pr:focus-visible { outline: 2px solid var(--link); outline-offset: -2px; }
+/* the item you're viewing, of any kind: its one 1px edge turns ink, nothing else around it */
+.pr[aria-current="true"]::before { border-color: var(--ink); }
+.pr[aria-current="true"] .n { color: var(--ink); }
+.now { border-bottom: 1px solid var(--line-2); padding: 7px 0 7px; flex: none; max-height: 55%; overflow-y: auto; }
+/* a running item's card: neutral, no coloured edge (the mark carries the kind) */
+.card { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  margin: 0 7px 5.5px; width: calc(100% - 14.5px); padding: 7px 9px; border-radius: 5.5px; background: var(--panel); border: 1px solid var(--line); cursor: pointer; }
+.card:hover { background: var(--sub); }
+.card:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.card[aria-current="true"] { border-color: var(--ink); }
+.card .n { font-weight: 700; font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
+.card .m .kind { margin-right: 4px; }
+.card .d { color: var(--ink-3); font-variant-numeric: tabular-nums; font-size: 11px; grid-row: 1 / 3; grid-column: 3; } /* quiet like "Working" and the Past times */
+/* the main conversation is a card like the running ones; what runs in the background hangs under it as a tree,
+   drawn like the sidebar's groups (R4.3): a 1px guide down from the main card's mark, a tick into each child, a corner on the last */
+.main-row { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center;
+  margin: 0 7px; width: calc(100% - 14px); padding: 7px 9px; border-radius: 5.5px; border: 1px solid var(--line); cursor: pointer; }
+.main-row:focus-visible { outline: 2px solid var(--link); outline-offset: 1px; }
+.main-row > .ind { grid-row: 1 / 3; align-self: center; }
+.main-row b { font-size: 12px; line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.main-row .m { grid-column: 2; font-size: 11px; line-height: 1.3; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.main-row .w { grid-row: 1 / 3; grid-column: 3; font-size: 11px; color: var(--ink-3); }
+.kid { position: relative; padding-top: 5.5px; }
+.kid > .card { margin: 0 7px 0 33px; width: calc(100% - 40px); }
+/* a nameless item keeps the card's two lines, so every mark sits at the tick's height */
+.kid > .card .n { min-height: 1.3em; }
+/* the guide runs at the main card's mark (7 + 1 + 9 + 5.5 px in); the tick meets a child card's border at its mark's height */
+.kid > .tg { display: block; position: absolute; left: 22px; top: 0; bottom: 0; width: 11px; pointer-events: none; }
+.kid > .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
+.kid:last-child > .tg::before { bottom: auto; height: 29px; border-bottom: 1px solid var(--guide); width: 11px; }
+/* a subagent's own shells and monitors, one level deeper: the guide drops from the subagent card's mark (33 + 1 + 9 + 5.5 px in) */
+.kid .kid > .tg { left: 48px; }
+.kid .kid > .card { margin-left: 59px; width: calc(100% - 66px); }
+/* a child coming or going (rail.js railTw) clips to its tweened height; its guide is inside, so it follows */
+.kid.tw { box-sizing: border-box; overflow: hidden; }
+.kid.gone { pointer-events: none; }
+/* just finished, for its grace: the status mark with the still kind mark, as in Past, and the final duration */
+.card.ended { grid-template-columns: auto minmax(0, 1fr) auto; }
+.card.ended > .pm { grid-row: 1 / 3; align-self: center; display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+.card.ended .d { color: var(--ink-3); }
+/* who started a run, as a sign before a card's or Past line's name: your `!` in bash pink, Synopia's lock (R7.1, 2026-11-26) */
+.who { font-family: var(--mono); font-weight: 700; color: var(--bash); margin-right: .5ch; }
+.who.lock { color: var(--ink-3); font-size: 10px; vertical-align: -1px; }
+.who .ind { font-size: 10px; }
+.r-agent .who { margin-right: 0; }
+/* a card whose run waits for input: the needs-you tint the Main conversation card uses */
+.card.waits { background: var(--red-bg, #FFEBE9); border-color: var(--red-line, #FFCECB); }
+.card.waits .m { color: var(--red); }
+.kid:not(:last-child) > .tg::after { content: ""; position: absolute; left: 0; top: 28px; width: 11px; border-top: 1px solid var(--guide); }
+
+/* motion only on things that are running (the marks, below); still with reduced motion */
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.status[data-state="red"] { background: #FFEBE9; border-bottom-color: #FFCECB; }
+
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* drag and drop in the sidebar */
+.row { position: relative; }
+.row.dragging { opacity: .35; }
+.ghost { position: fixed; z-index: 50; pointer-events: none; background: var(--panel) !important; border: 1px solid var(--line) !important; border-radius: 5.5px; box-shadow: 0 3px 10px rgba(31, 35, 40, .12); opacity: .5; }
+body.is-dragging, body.is-dragging * { user-select: none; cursor: grabbing !important; }
+#groups .row { touch-action: none; }
+.row.drop-before::before, .row.drop-after::after { content: ""; position: absolute; left: 9px; right: 9px; height: 2px; background: var(--link); border-radius: 1px; z-index: 3; pointer-events: none; }
+.row.drop-before::before { top: -1px; } .row.drop-after::after { bottom: -1px; }
+.row.drop-before::after, .row.drop-after::before { content: ""; position: absolute; left: 5.5px; width: 7px; height: 7px; border: 2px solid var(--link); border-radius: 50%; background: var(--panel); z-index: 3; pointer-events: none; box-sizing: border-box; }
+.row.drop-before::after { top: -4px; } .row.drop-after::before { bottom: -4px; }
+.merge-hint { display: none; position: absolute; right: 30.5px; top: 7px; font-size: 10.5px; font-weight: 700; color: var(--link); background: #DDF4FF; border: 1px solid #54AEFF; border-radius: 3.5px; padding: 0 5.5px; pointer-events: none; }
+.row.drop-merge { background: #DDF4FF; box-shadow: inset 0 0 0 2px #54AEFF; border-radius: 5.5px; }
+.row.drop-merge .merge-hint { display: block; }
+.drop-into { background: #DDF4FF; box-shadow: inset 0 0 0 2px #54AEFF; border-radius: 5.5px; }
+.g-name { cursor: default; }
+.g-input { font: inherit; font-weight: 700; font-size: 12px; width: 100%; border: 1px solid var(--link); border-radius: 3.5px; padding: 1px 4.5px; background: var(--panel); }
+.g-empty { margin: 0 12.5px; padding: 7px 9px; border: 1px dashed var(--line); border-radius: 5.5px; font-size: 11px; color: var(--faint); }
+body:not(.is-dragging) .g-empty { display: none; }
+
+/* ---------- marks (marks.js): a 1em box, every part in em so the 64px view is the 12px mark enlarged ---------- */
+@keyframes spinback { to { transform: rotate(-360deg); } }
+@keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+@keyframes shrink { from { transform: scale(1); } to { transform: scale(.06); } }
+
+.ind { display: inline-grid; place-items: center; width: 1em; height: 1em; position: relative; flex: none; vertical-align: middle; line-height: 0; }
+.ind > * { grid-area: 1 / 1; }
+.ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
+
+/* no updates: a frozen arc; compacting: rings shrinking; rate limited: dashes turning back */
+.ind .arc.frozen { width: 1em; height: 1em; border-radius: 50%; border: .17em solid var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); transform: rotate(-20deg); }
+.ind .cr { width: 1em; height: 1em; border-radius: 50%; border: .13em solid var(--green); animation: shrink var(--mark-period) linear infinite; }
+.ind .cr:nth-child(2) { animation-delay: -.6s; } .ind .cr:nth-child(3) { animation-delay: -1.2s; }
+.ind .rl { animation: spinback var(--mark-period) linear infinite; }
+.ind .rl circle { stroke: var(--amber); }
+
+/* two stripes: needs you */
+.ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
+.ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; }
+.ind .v-seesaw .bars i { animation: see var(--mark-period) linear infinite; }
+.ind .v-seesaw .bars i + i { animation-delay: -.55s; }
+
+/* still shapes: done, to review, signed out */
+.ind .chk { width: .32em; height: .6em; border: solid var(--ink-3); border-width: 0 .16em .16em 0; transform: translateY(-.07em) rotate(45deg); }
+.ind .badge { width: .9em; height: .9em; border-radius: 50%; background: var(--link); }
+.ind .badge-chk { width: .22em; height: .42em; border: solid #fff; border-width: 0 .13em .13em 0; transform: translateY(-.06em) rotate(45deg); }
+.ind .lock { position: relative; width: .74em; height: .92em; }
+.ind .lock .sh { position: absolute; left: .14em; top: 0; width: .46em; height: .52em; border: .13em solid var(--red); border-bottom: 0; border-radius: .24em .24em 0 0; }
+.ind .lock .bd { position: absolute; left: 0; bottom: 0; width: .74em; height: .5em; background: var(--red); border-radius: .08em; }
+
+/* reduced motion: every mark keeps its shape and stops */
+@media (prefers-reduced-motion: reduce) { .ind *, .ind *::before { animation: none !important; } }
+.ind { font-size: 11px; }
+.kind { --kc: #57606A; --kb: #EAEEF2; display: inline-flex; align-items: center; gap: 3px; font: 500 10px/14px var(--sans); padding: 0 5px 0 3px; border-radius: 4px;
+  color: var(--kc); background: var(--kb); white-space: nowrap; vertical-align: 1px; flex: none; }
+.kind svg { width: 11px; height: 11px; flex: none; display: block; }
+.kind.g { padding: 0 2px; }
+.kd-sub { --kc: #1A7F37; --kb: #DAFBE1; } .kd-fork { --kc: #8250DF; --kb: #F3EEFE; } .kd-shell { --kc: #0B7A82; --kb: #DCF1F2; } .kd-mon { --kc: #0E6BA8; --kb: #DDEEF8; }
+.kind .ind { font-size: 10px; }
+
+/* placing the marks */
+.r-side .ind { font-size: 11px; }
+.r-agent .ind { font-size: 9px; vertical-align: -1px; }
+.r-agent .kind.g { vertical-align: -2px; }
+.r-review { color: var(--link); }
+.status .ind { font-size: 11px; margin-right: .3ch; vertical-align: -1px; }
+.main-row .ind { font-size: 11px; }
+.pr .pm { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
+.pr .pm .ind { font-size: 9px; }
+.pr .k { color: var(--ink-3); }
+.pr.failed .k { color: var(--red); }
+.wgrid .ind { font-size: 9px; vertical-align: -1px; }
+.review { border-bottom: 1px solid var(--line-2); padding: 8px 0; }
+.review h3 { color: var(--link); }
+.rv { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; margin: 0 7px 5px; border: 1px solid #B6E3FF; background: #F1F8FF; border-radius: 5px; }
+.rv-open { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 13px minmax(0, 1fr); column-gap: 7px; padding: 6px 8px; cursor: pointer; min-width: 0; }
+.rv-open > .ind { grid-row: 1 / 3; align-self: center; font-size: 11px; }
+.rv-open .n { font-weight: 700; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-open .m { font-size: 10px; color: var(--ink-2); }
+.rv-open .m .kind { margin-right: 4px; }
+.rv-done { font-size: 10.5px; margin-right: 4px; }
+/* the whole card goes to its report (transcript.js toReport): it shades on hover like the panel's other rows */
+.rv { cursor: pointer; }
+.rv:hover:not(:has(.rv-done:hover)) { background: #DDF4FF; }
+
+/* the kinds' colours (their words and tags; the marks use the --mk-* set) */
+:root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
+.kw { font-weight: 700; color: var(--kc); }
+.kc-sub { --kc: var(--k-sub); } .kc-fork { --kc: var(--k-fork); } .kc-shell { --kc: var(--k-shell); } .kc-mon { --kc: var(--k-mon); }
+
+/* SVG kind marks */
+.ind svg.k { width: 1em; height: 1em; display: block; overflow: visible; }
+.ind .rot { transform-box: view-box; transform-origin: 50% 50%; animation: spin var(--d, 1s) linear infinite; }
+.ind .rev { animation-direction: reverse; }
+/* shell: the underscore stretches right, shrinks from the left, stretches back left; linear, so it never stops */
+@keyframes bounce {
+  0%   { transform: translateX(0) scaleX(.42); }
+  25%  { transform: translateX(0) scaleX(1); }
+  50%  { transform: translateX(2.44px) scaleX(.42); }
+  75%  { transform: translateX(0) scaleX(1); }
+  100% { transform: translateX(0) scaleX(.42); }
+}
+.ind .bounce { transform-box: fill-box; transform-origin: 0 50%; animation: bounce var(--mark-period) linear infinite; }
+@media (prefers-reduced-motion: reduce) { .ind .rot, .ind .bounce { animation: none; } }
+
+/* groups as a tree: a heading, sessions indented under it with thin guides; a hairline between every two sessions */
+:root { --guide: #B1BAC4; }
+.tree { margin-top: 12px; }
+.tree .th { display: flex; align-items: center; gap: 8px; padding: 0 12px 0 12px; }
+.tree .g-name { font-weight: 700; font-size: 12.5px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree .g-input { flex: 1; }
+.tg { display: none; }
+.tree .row { padding-left: 28px; }
+.row { grid-template-columns: 20px minmax(0, 1fr); column-gap: 8px; }
+/* the mark sits in a small rounded box drawn like the guides, so the tick runs into it */
+.row .r-side { order: -1; align-self: start; width: 20px; height: 20px; box-sizing: border-box; margin-top: -2px;
+  border: 1px solid var(--guide); border-radius: 6px; background: var(--sub); display: flex; align-items: center; justify-content: center; }
+.row[aria-current="true"] .r-side { background: var(--panel); }
+.row .r-side .ind { display: grid; place-items: center; width: 11px; height: 11px; font-size: 11px; line-height: 0; margin: 0; }
+.tree .row .tg { display: block; position: absolute; left: 17px; top: -1px; bottom: -1px; width: 11px; pointer-events: none; }
+.tree .row .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
+.tree .row:last-child .tg::before { bottom: auto; height: 18.5px; border-bottom: 1px solid var(--guide); width: 11px; }
+.tree .row:not(:last-child) .tg::after { content: ""; position: absolute; left: 0; top: 17.5px; width: 11px; border-top: 1px solid var(--guide); }
+/* where one session ends and the next starts */
+.side-scroll .row { padding-top: 9px; padding-bottom: 10px; }
+.tree.others .g-name { color: var(--ink-3); }
+.tree.others .g-empty { margin-left: 28px; }
+
+
+.liveln b { color: var(--green); }
+.liveln[data-state="amber"] b { color: var(--amber); }
+.liveln[data-state="grey"] b { color: var(--ink-3); }
+/* the Working line (R5.5, prototype/working-shell-storyboard.html A, 2026-11-25): a 1px rule edge to edge across
+   the log through the line's middle, the moving mark and the words sitting on it and breaking it; a pseudo-element,
+   so it takes no space. The breaks are the panel's colour (--rule-bg; the "Send to background?" tint while b, b asks).
+   The right padding keeps the words in the 150ch measure at any width. */
+.log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 max(16px, calc(100% + 16px - 150ch)) 0 16px; max-width: none; --rule-bg: var(--panel); }
+.log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(var(--log-font) * var(--log-lh) / 2 - .5px); height: 1px; background: var(--line); }
+.log-inner > .liveln.rule > .g { background: var(--rule-bg); box-shadow: -5px 0 0 var(--rule-bg); }
+.log-inner > .liveln.rule > :not(.g) { position: relative; }
+/* the line is a grid, so its children are blocks: the break is the words' own inline box (summary, .lh), not the column */
+.log-inner > .liveln.rule summary, .log-inner > .liveln.rule > div > .lh { display: inline; background: var(--rule-bg); padding-right: 1ch; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.log-inner > .liveln.rule > details { display: inline; }
+.log.bg-asking .liveln.rule[data-fg] { --rule-bg: #DDF4FF; }
+
+.log { overflow-x: hidden; }
+
+/* marks in the transcript gutter sit where the ● glyph sits: centred on the first character cell and on the ●'s ink,
+   which in the mono face is --dot-lift above the line's middle (measured: .084em; motion.mjs pins it within 0.5px) */
+.log { --dot-lift: calc(var(--log-font) * .084); }
+.ln > .g { position: relative; }
+/* em and ch here are the mark's own 10px: the ● centre is .5ch of the 12px line, so .6ch of 10px */
+.ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+/* a wave's rows centre their mark on the row: lifted the same, onto the ● height of the row's text */
+.wgrid > .ind { position: relative; top: calc(-1 * var(--dot-lift)); }
+
+.doneln { color: var(--ink-3); margin-bottom: 16px; }
+.doneln > .g > .ind { opacity: .55; }
+/* f, f's interrupt (R9.8): the live line it set aside, a still record, and the reply it cut short, greyed */
+.asideln { color: var(--ink-3); }
+.asideln > .g > .ind { opacity: .55; }
+.asideln s { text-decoration-thickness: 1px; }
+.ln.claude.aside, .ln.claude.aside > .g { color: var(--ink-3); }
+
+/* ---------- dark sidebar; the open session is a light cut-out that runs into the canvas ---------- */
+.side { background: #22272E; color: #E6EDF3;
+  --guide: #545D68; --k-sub: #3FB950; --k-shell: #39C5CF; --k-mon: #58A6FF; --k-fork: #BC8CFF; }
+.side-head, .side-foot { border-right-color: #22272E; }
+.side-foot { border-top-color: #373E47; color: #9198A1; }
+.side-foot .btn { background: #2D333B; border-color: #444C56; color: #E6EDF3; }
+.side-foot .btn:hover { background: #373E47; }
+/* "Open session", quiet, then "New session", on one row at the right */
+.side-foot .btn + .btn { margin-left: 5.5px; }
+.side-foot .btn.quiet { background: none; border-color: transparent; color: #9198A1; }
+.side-foot .btn.quiet:hover { background: #2D333B; color: #E6EDF3; }
+/* "Update ready: restarts when idle": the footer's quiet text (the prototype's #exported), on its own row above the buttons */
+.side-foot { flex-wrap: wrap; row-gap: 7px; }
+.side-foot .upd { flex: 1 0 100%; }
+.side-head h1 { color: #F0F6FC; }
+.side-scroll { background: none; }
+.side .tree .g-name { color: #F0F6FC; }
+.side .tree.others .g-name { color: #9198A1; }
+.side .row:hover { background: #2D333B; }
+.side .row .r-title { color: #CDD9E5; }
+.side .row .r-now { color: #9198A1; }
+.side .row[data-state="red"] .r-state { color: #FF7B72; }
+.side .row[data-state="amber"] .r-state { color: #E3B341; }
+.side .row[data-state="green"] .r-state { color: #56D364; }
+.side .row[data-state="grey"] .r-state { color: #8C959F; }
+.side .row .r-agent { color: #9198A1; }
+.side .r-review { color: #58A6FF !important; }
+.side .row .r-side { border-color: var(--guide); background: #F6F8FA; }
+/* the open session: light like the canvas, normal light-theme text, kind colours back to the light set */
+.side .row[aria-current="true"] { background: var(--canvas); border-color: var(--canvas);
+  --k-sub: #1A7F37; --k-shell: #0B7A82; --k-mon: #0E6BA8; --k-fork: #8250DF; }
+.side .row[aria-current="true"] .r-title { color: var(--ink); }
+.side .row[aria-current="true"] .r-now { color: var(--ink-2); }
+.side .row[aria-current="true"][data-state="red"] .r-state { color: var(--red); }
+.side .row[aria-current="true"][data-state="amber"] .r-state { color: var(--amber); }
+.side .row[aria-current="true"][data-state="green"] .r-state { color: var(--green); }
+.side .row[aria-current="true"][data-state="grey"] .r-state { color: var(--ink-3); }
+.side .row[aria-current="true"] .r-agent { color: var(--ink-3); }
+.side .row[aria-current="true"] .r-review { color: var(--link) !important; }
+.side .row[aria-current="true"] .r-side { background: var(--panel); }
+/* the guide keeps running through the light row */
+.side .tree .row[aria-current="true"] .tg::before, .side .tree .row[aria-current="true"] .tg::after { border-color: #8C959F; }
+/* drag and drop on dark */
+.side .row.drop-before::before, .side .row.drop-after::after { background: #58A6FF; }
+.side .row.drop-before::after, .side .row.drop-after::before { border-color: #58A6FF; background: #22272E; }
+.side .row.drop-merge { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
+.side .merge-hint { background: #1C2D41; color: #58A6FF; border-color: #58A6FF; }
+.side .g-empty { border-color: #545D68; color: #9198A1; }
+.side .g-input { color: var(--ink); }
+
+/* the open row as a tab: rounded on the left, curving into the canvas on the right */
+.side .row { width: calc(100% - 6px); margin-left: 6px; }
+.side .row[aria-current="true"] { border-radius: 9px 0 0 9px; }
+.cap { display: none; position: absolute; right: 0; width: 9px; height: 9px; pointer-events: none; }
+.side .row[aria-current="true"] .cap { display: block; }
+.cap.ct { top: -10px; background: radial-gradient(circle at 0 0, transparent 8.5px, var(--canvas) 9px); }
+.cap.cb { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 8.5px, var(--canvas) 9px); }
+
+/* marks take their colours from variables, so the dark sidebar gets a dark set and the open row keeps the light one */
+:root { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
+.side { --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
+.side .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+.side .row[aria-current="true"] { --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-0E6BA8: #0E6BA8; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-8250DF: #8250DF; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; --mk-E2D6F8: #E2D6F8; }
+.side .row[aria-current="true"] .ind { --red: #CF222E; --ink-3: #6E7781; --link: #0550AE; --dot-amber: #D4A72C; --amber: #9A6700; --green: #1A7F37; --line-2: #E4E8EC; }
+.side .row .r-side { background: #2D333B; border-color: #545D68; border-width: 1px; }
+.side .row[aria-current="true"] .r-side { background: var(--panel); border-color: #8C959F; }
+
+.tree.others .row .tg { display: none; }
+
+/* sub-line corner drawn like the tree guides: two equal 7px legs */
+.r-agent { display: flex; align-items: center; gap: 5px; }
+.r-agent .el { flex: none; width: 7px; height: 7px; margin: -6px 1px 0 2px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+.r-agent b, .r-agent .ind { flex: none; }
+.r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
+.r-agent .ind { margin: 0; }
+/* a sub-line opening or closing (sidebar.js tweenLines) clips to its tweened height */
+.r-main > .tw { overflow: hidden; }
+.r-main > .r-gone { pointer-events: none; }
+
+.composer button, .composer .attach img, .composer .slash { cursor: default; }
+.composer > .g { align-self: start; }
+.model-btn { font-size: 12px; color: var(--ink-2); }
+
+/* main conversation row: tinted by the session's state (green = the agent is running); the edge marks that you're viewing it */
+.main-row { box-shadow: none; }
+.main-row[data-state="green"] { background: #E6F6EA; border-color: #B4E2C0; }
+.main-row[data-state="red"] { background: #FFEBE9; border-color: #FFCECB; }
+.main-row[data-state="amber"] { background: var(--sub); }
+/* selected: its border turns ink, as on a selected card or Past row, over any state tint */
+.main-row[aria-current="true"] { border-color: var(--ink); }
+.main-row:hover { filter: brightness(.98); }
+
+/* modes */
+.composer { grid-template-columns: 2ch minmax(0, 1fr); }
+.composer > textarea { grid-column: 2; grid-row: 1; }
+.composer > .g { grid-column: 1; grid-row: 1; align-self: start; } /* on the first line, as in the CLI */
+.composer > .slash { grid-column: 1 / -1; }
+/* the mode (R9.2), one indicator: in normal mode the box's text and ❯ at half strength, its line at full; a card
+   above it, or a line you must read (Interrupt?, Send to background?, Close this session?, a gone folder, a
+   take-over's state), keeps it at full strength. In insert mode the box is the band your message becomes: the
+   band's fill and blue left edge (bash mode's pink), in the place it will land */
+[data-mode="normal"] .dock:not(:has(.dock-inner > :not(.composer), .composer.asking, .composer.gone, .composer.taking)) .composer > :not(.slash) { opacity: .5; }
+[data-mode="insert"] .dock .composer { background: var(--band); border-left-color: var(--link); }
+[data-mode="insert"] .dock .composer.bash { border-left-color: var(--bash); }
+
+/* ---------- Claude's questions card ---------- */
+:root { --sel: #DDF4FF; }
+.qa-card { border-bottom: 1px solid var(--line-2); }
+.nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; font-size: 12px; }
+.nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+.nd-head .why { color: var(--ink-2); }
+.nd-head .prog { margin-left: auto; color: var(--ink-2); font-size: 11.5px; }
+.qbody { padding: 9px 12.5px 9px; font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; }
+.qbody .qt { margin: 0 0 7px; max-width: 110ch; }
+.opts { display: grid; grid-template-columns: 1.4ch 11px max-content minmax(0, 1fr); column-gap: 1.2ch; row-gap: 1px; margin: 0 0 0 -.6ch; }
+.o { all: unset; box-sizing: border-box; display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; align-items: baseline; padding: 2px .6ch; border-radius: 4px; cursor: pointer; }
+.o:hover { background: var(--sub); }
+.o > .k { color: var(--link); font-weight: 700; text-align: right; }
+.o > .l { font-weight: 700; white-space: nowrap; padding-right: 1.4ch; }
+.o > .l .rc-t { display: block; font: 500 10.5px/1.35 var(--sans); color: var(--green); }
+.o > .d { color: var(--ink-3); font-size: 11.5px; max-width: 90ch; }
+.o.on { background: var(--sel); }
+.o.on > .l { color: var(--link); }
+.o.on > .d { color: var(--ink-2); }
+.o.other > .l { font-weight: 400; color: var(--ink-3); }
+.o.other.on > .l { font-weight: 700; color: var(--link); }
+.o.focus { box-shadow: inset 0 0 0 1px #54AEFF; }
+.radio { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; box-sizing: border-box; }
+.o.on > .radio { border-color: var(--link); }
+.o.on > .radio::after { content: ""; position: absolute; inset: 2px; border-radius: 50%; background: var(--link); }
+.box { width: 11px; height: 11px; border-radius: 2.5px; border: 1.5px solid var(--faint); display: inline-block; vertical-align: -1px; position: relative; box-sizing: border-box; }
+.o.on > .box { border-color: var(--link); background: var(--link); }
+.o.on > .box::after { content: ""; position: absolute; left: 2.5px; top: 0; width: 3px; height: 6px; border: solid #fff; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+.pen { width: 11px; height: 11px; border-radius: 50%; border: 1.5px dashed var(--faint); display: inline-block; vertical-align: -1px; box-sizing: border-box; }
+.o.on > .pen { border-style: solid; border-color: var(--link); background: radial-gradient(circle, var(--link) 0 2px, transparent 2.5px); }
+.nd-foot { display: flex; align-items: center; gap: 14px; padding: 6px 12.5px 7px; font-size: 11px; color: var(--ink-3); }
+.nd-foot .btn { margin-left: auto; }
+.nd-foot .hint { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.nd-foot .hint span { display: inline-flex; gap: 4px; align-items: center; }
+/* the read-only card of another process's question (R6.8): rows that don't answer to the pointer */
+.qa-card.ro .o { cursor: default; }
+.qa-card.ro .o:hover { background: none; }
+.waitln b { color: var(--red); }
+
+/* accordion: one line per question, the current one open */
+.acc { all: unset; box-sizing: border-box; display: grid; grid-template-columns: 1.6ch 16ch minmax(0, 1fr); column-gap: 1.2ch; align-items: baseline; width: 100%; padding: 2px .6ch; border-radius: 4px; cursor: pointer; }
+button.acc:hover { background: var(--sub); }
+.acc .hd { font-weight: 700; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acc .ans { color: var(--link); font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acc .miss { color: var(--ink-3); }
+.am { text-align: center; color: var(--faint); }
+.am.ok { color: var(--green); } .am.cur { color: var(--link); }
+.acc.open { display: block; cursor: default; margin: 3px 0; padding: 0; }
+.acc-h { display: grid; grid-template-columns: 1.6ch minmax(0, 1fr); column-gap: 1.2ch; padding: 2px .6ch; }
+.acc.open .acc-h .hd { color: var(--link); font-weight: 700; }
+.acc-b { margin-left: calc(2.8ch); padding: 3px 0 6px; }
+.qa-card .qbody > :only-child .acc-b { margin-left: 0; }
+
+.qa-own { font: inherit; font-size: 12px; width: 100%; max-width: 90ch; box-sizing: border-box; border: 1px solid #54AEFF; border-radius: 4px; padding: 1px 6px; background: var(--panel); color: var(--ink); outline: none; box-shadow: 0 0 0 2px #DDF4FF; }
+
+.qbody .cmd { display: block; margin: 0 0 5px; padding: 4px 9px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5px; color: var(--ink); white-space: pre-wrap; max-width: 104ch; font-family: var(--mono); }
+.qbody .cmd .ps { color: var(--ink-3); user-select: none; }
+.qbody .why2 { color: var(--ink-2); margin: 0 0 7px; max-width: 104ch; }
+.qbody .why2 .who { color: var(--ink-3); }
+.qbody .why2.own { color: var(--ink); } /* a call of Synopia's own tool: the line says what it does (R3.15) */
+
+.qnote { display: block; color: var(--ink); font-style: italic; margin-top: 1px; }
+.qa-note { display: block; margin-top: 3px; }
+
+.toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6.5px 11.5px; border-radius: 5.5px; font-weight: 500; display: none; z-index: 10; }
+.toast.show { display: block; }
+
+/* ---------- the integrated title bar (Synopia.app only) ----------
+   The shell sets html.in-app on every load and html.fullscreen in fullscreen.
+   The traffic lights sit in the sidebar's top --titlebar, and the shell's
+   native drag strip covers just that: the sidebar column's top (270px, kept in
+   sync with sidebarWidth in TitleBar.swift). So only the sidebar starts below
+   it; the main area keeps its 9px canvas gap from the window top, as in Slack
+   and Linear, and every click there goes to the page. The shell also sets
+   --titlebar inline to the title bar's measured height (32px on macOS 26). In
+   a browser and in fullscreen it is 0. */
+:root { --titlebar: 0px; }
+html.in-app:not(.fullscreen) { --titlebar: 28px; }
+.app > .side { padding-top: var(--titlebar); }
+/* right under the traffic lights the heading needs less air above it */
+html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
+
+@media (max-width: 990px) {
+  .conv { grid-template-columns: minmax(0, 1fr); }
+  .rail { grid-column: 1; grid-row: auto; max-height: 234px; }
+}
+@media (max-width: 684px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: auto; }
+  .side { max-height: 44vh; }
+  /* the placements set for the Open list would keep two columns: stack the sidebar over the main area */
+  .app > .conv, .open-list { grid-column: 1; grid-row: 2; }
+  .conv { min-height: 90vh; }
+  .c-head { grid-template-columns: 1fr; }
+  .c-acts { grid-row: auto; grid-column: 1; }
+}
+/* the credential refresh line (creds-line.js, R8.2 2026-11-26): the status line, wrapped, with the command on one
+   editable line and Save; while the command runs its output in the shell output panel and one field typed into it */
+.status.creds { flex-wrap: wrap; row-gap: 3.5px; }
+.status.creds > span { white-space: normal; flex: 1 1 40ch; }
+.status.creds[data-state="green"] b { color: var(--green); }
+.status.creds code { color: var(--ink); }
+.creds-line { flex: 1 0 100%; display: flex; align-items: baseline; gap: 1ch; min-width: 0; }
+.creds-line label, .creds-line .g { color: var(--ink-3); white-space: nowrap; }
+.creds-line input { flex: 1 1 auto; min-width: 12ch; max-width: 90ch; font: inherit; border: 1px solid var(--line); border-radius: 4px; padding: 0 6px; background: var(--panel); color: var(--ink); outline: none; }
+.creds-line input:focus { border-color: #54AEFF; box-shadow: 0 0 0 2px #DDF4FF; }
+.creds-line button { border: 1px solid var(--line); border-radius: 4px; padding: 0 1ch; background: var(--panel); }
+.creds-line button:hover { border-color: var(--faint); }
+/* the refresh's run in its dock line: the status line over a run preview, which opens its shell view */
+.status.creds .runrow { flex: 1 0 100%; margin: 2px 0 0 0; }
+.status.creds .runrow::before { inset: -2px -6px; }
+.status.creds .runrow .cmd { color: var(--ink); }
+
+</style>
+<style>
+/* ===== app/web/css/dark.css, as in the app; :root[data-theme="dark"] scoped to a frame (.sb-dark) ===== */
+/* Dark mode (requirements section 11), loaded after app.css and preview.css. theme.js and theme-switch.js set <html data-theme>:
+   the system's appearance until the switch in the sidebar footer picks one. The layout reads as in the light
+   theme: the sidebar (#22272E, unchanged) stays the darkest surface, the canvas a step lighter, the panels a
+   step lighter again; lines stay 1px; text keeps 4.5:1 or more; the marks take the bright set the dark
+   sidebar already uses (R8.4); red stays for needs you. Every rule is prefixed with .sb-dark.sb-dark,
+   which outranks the light rule it replaces. No transition: the switch is instant. */
+
+/* ---------- the switch: a shaded moon in light mode, a sun in dark mode; no border, no fill, a faint hover tint ---------- */
+.theme-btn { all: unset; box-sizing: border-box; flex: none; display: inline-grid; place-items: center; width: 24px; height: 24px; margin-left: -5px;
+  border-radius: 5.5px; color: #9198A1; cursor: pointer; }
+.theme-btn:hover { background: #2D333B; color: #E6EDF3; }
+.theme-btn:focus-visible { outline: 2px solid #58A6FF; outline-offset: 1px; }
+.theme-btn svg { width: 14px; height: 14px; display: block; overflow: visible; }
+.theme-btn .sun, .sb-dark.sb-dark .theme-btn .moon { display: none; }
+.sb-dark.sb-dark .theme-btn .sun { display: block; }
+
+/* ---------- the palette ---------- */
+.sb-dark.sb-dark {
+  color-scheme: dark;
+  --canvas: #2A3038; --side: #22272E; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+  --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1;
+  --red: #FF7B72; --amber: #E3B341; --green: #56D364; --link: #6CB6FF;
+  --bash: #F778BA; --band: #2C3644;
+  --dot-amber: #E3B341; --dot-green: #3FB950;
+  --add-bg: #2A4234; --del-bg: #482D31; --sel: #1F3B5C; --guide: #606B78;
+  --k-sub: #3FB950; --k-fork: #BC8CFF; --k-shell: #39C5CF; --k-mon: #58A6FF;
+  /* the marks' dark set, as in the sidebar */
+  --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
+  --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66;
+  /* tints used below */
+  --blue-bg: #1F3B5C; --blue-line: #4493F8; --red-bg: #4A2A2D; --red-line: #7A3B3E; --green-bg: #243F2E; --green-line: #2F6B3F;
+  --shadow: 0 7px 21.5px rgba(0, 0, 0, .45);
+}
+/* the marks' own colours everywhere, as .side .ind sets them */
+.sb-dark.sb-dark .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+
+.sb-dark.sb-dark ::selection { background: #264F78; }
+.sb-dark.sb-dark .btn.primary { background: #238636; border-color: #2EA043; color: #FFFFFF; }
+.sb-dark.sb-dark .btn.primary:hover { background: #2EA043; }
+
+/* ---------- sidebar: the open row runs into the dark canvas, so it keeps the dark set too ---------- */
+.sb-dark.sb-dark .side .row[aria-current="true"] { --k-sub: #3FB950; --k-shell: #39C5CF; --k-mon: #58A6FF; --k-fork: #BC8CFF;
+  --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-0E6BA8: #58A6FF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45;
+  --mk-8250DF: #BC8CFF; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; --mk-E2D6F8: #3E2F66; }
+.sb-dark.sb-dark .side .row[aria-current="true"] .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --dot-amber: #E3B341; --amber: #E3B341; --green: #3FB950; --line-2: #444C56; }
+.sb-dark.sb-dark .side .row[aria-current="true"] .r-side { border-color: #6E7781; }
+.sb-dark.sb-dark .side .tree .row[aria-current="true"] .tg::before, .sb-dark.sb-dark .side .tree .row[aria-current="true"] .tg::after { border-color: #6E7781; }
+.sb-dark.sb-dark .drop-into { background: #1C2D41; box-shadow: inset 0 0 0 2px #58A6FF; }
+
+/* ---------- transcript ---------- */
+/* "Send to background?" (b, b): the steps it would send, on the selection tint with a 1px blue ring */
+.sb-dark.sb-dark .log.bg-asking [data-fg] { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+.sb-dark.sb-dark .log.bg-asking .liveln.rule[data-fg] { --rule-bg: var(--blue-bg); }
+/* "Send all now?" (f, f): the queued bands that will go, the same mark inside the band */
+.sb-dark.sb-dark .log.now-asking .prompt.qc { background: var(--blue-bg); box-shadow: inset 0 0 0 1px var(--blue-line); }
+.sb-dark.sb-dark .log.bg-asking .wgrid [data-fg] { box-shadow: 0 0 0 2px var(--blue-bg), 0 0 0 3px var(--blue-line); }
+.sb-dark.sb-dark .log .jump-mark { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+.sb-dark.sb-dark .log .jump-mark.fading { background: transparent; box-shadow: 0 0 0 3px transparent, 0 0 0 4px transparent; }
+.sb-dark.sb-dark .md pre { background: var(--sub); }
+
+/* files changed and diffs: tinted rows, a stronger tint in the number gutter */
+.sb-dark.sb-dark .frow .fc[aria-expanded="true"] { background: var(--blue-bg); box-shadow: inset 0 0 0 1px var(--blue-line); }
+.sb-dark.sb-dark .dl.a .no { background: #335240; color: var(--ink-3); }
+.sb-dark.sb-dark .dl.d .no { background: #5A363B; color: var(--ink-3); }
+.sb-dark.sb-dark .dl.d .sg { color: #FF7B72; }
+
+/* ---------- the message panel ---------- */
+.sb-dark.sb-dark .status[data-state="red"] { background: var(--red-bg); border-bottom-color: var(--red-line); }
+.sb-dark.sb-dark .slash { box-shadow: var(--shadow); }
+.sb-dark.sb-dark .slash .it[aria-selected="true"], .sb-dark.sb-dark .ol-it[aria-selected="true"], .sb-dark.sb-dark .fl-it[aria-selected="true"], .sb-dark.sb-dark .mcp-it[aria-selected="true"] { background: var(--blue-bg); }
+.sb-dark.sb-dark .thumb-wrap .unattach { color: var(--panel); }
+
+/* needs you: the question card, its options, the own-answer field */
+.sb-dark.sb-dark .nd-head { background: var(--red-bg); border-bottom-color: var(--red-line); }
+.sb-dark.sb-dark .o.focus { box-shadow: inset 0 0 0 1px var(--blue-line); }
+.sb-dark.sb-dark .o.on > .box::after { border-color: var(--panel); }
+.sb-dark.sb-dark .qa-own { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }
+
+/* ---------- the image viewer and the toast ---------- */
+.sb-dark.sb-dark .viewer { background: rgba(42, 48, 56, .94); }
+.sb-dark.sb-dark .viewer img { box-shadow: var(--shadow); }
+.sb-dark.sb-dark .toast { background: #444C58; color: var(--ink); box-shadow: inset 0 0 0 1px #5B6573; }
+.sb-dark.sb-dark .ghost { box-shadow: 0 3px 10px rgba(0, 0, 0, .4); }
+
+/* ---------- the background panel ---------- */
+.sb-dark.sb-dark .main-row[data-state="green"] { background: var(--green-bg); border-color: var(--green-line); }
+.sb-dark.sb-dark .main-row[data-state="red"] { background: var(--red-bg); border-color: var(--red-line); }
+/* the item you're viewing keeps its one 1px ink edge (light ink here) over the state tints */
+.sb-dark.sb-dark .main-row[aria-current="true"] { border-color: var(--ink); }
+.sb-dark.sb-dark .main-row:hover { filter: brightness(1.12); }
+.sb-dark.sb-dark .rv { border-color: #2F5A88; background: #22344A; }
+.sb-dark.sb-dark .rv:hover:not(:has(.rv-done:hover)) { background: #29405A; }
+
+/* ---------- marks and kind tags: the dark tracks under the turning parts ---------- */
+.sb-dark.sb-dark .ind .arc.frozen { border-color: var(--line-2); border-top-color: var(--ink-3); border-right-color: var(--ink-3); }
+.sb-dark.sb-dark .kind { --kc: #ADBAC7; --kb: #3A424D; }
+.sb-dark.sb-dark .kd-sub { --kc: #56D364; --kb: #1F3A28; }
+.sb-dark.sb-dark .kd-fork { --kc: #D2A8FF; --kb: #382B54; }
+.sb-dark.sb-dark .kd-shell { --kc: #56D4DD; --kb: #183B3F; }
+.sb-dark.sb-dark .kd-mon { --kc: #79C0FF; --kb: #1C3352; }
+
+/* ---------- the file preview: bat's dark theme comes from the backend; the find marks and change bars here ---------- */
+.sb-dark.sb-dark ::highlight(pv-find) { background-color: #5C4A16; }
+.sb-dark.sb-dark ::highlight(pv-cur) { background-color: #E3B341; color: #1F2328; }
+.sb-dark.sb-dark ::highlight(tf-find) { background-color: #5C4A16; }
+.sb-dark.sb-dark ::highlight(tf-cur) { background-color: var(--blue-bg); color: var(--ink); text-decoration-color: var(--blue-line); }
+.sb-dark.sb-dark .pl.chg .no { box-shadow: inset 2px 0 0 #3FB950; }
+.sb-dark.sb-dark .pl.cut .no { background-image: linear-gradient(#FF7B72, #FF7B72); }
+.sb-dark.sb-dark .creds-line input:focus { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }
+
+</style>
+<style>
+  /* ===== the proposal under review (x-): the open items in the panel, the sidebar line, the list across sessions ===== */
+  /* an id: a 1px box; solid when Claude recorded the item, dashed when Synopia's keeper found it */
+  .x-id { display: inline-block; font: 700 10.5px/1 var(--mono); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px; padding: 2px 3px 1.5px; min-width: 2.6ch; text-align: center; }
+  .x-id.x-found { border-style: dashed; }
+  /* the groups: under To review, above Past, in the panel's heading style */
+  .x-items, .x-checks, .x-closed { border-bottom: 1px solid var(--line-2); padding: 8px 0 3px; }
+  .x-items h3, .x-checks h3, .x-closed h3 { color: var(--ink); }
+  .x-closed h3 { color: var(--faint); }
+  /* a Y item: id, kind and age on one line, the text under it (2 lines at most), then its buttons */
+  .x-it { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 7px; row-gap: 2px; align-items: baseline; margin: 0 7px 5px; padding: 6px 8px 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); font-size: 11.5px; line-height: 1.35; }
+  .x-it > .x-id { grid-row: 1 / 3; align-self: start; margin-top: 1px; }
+  .x-it .x-k { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .x-it .x-age { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .x-it .x-t { grid-column: 2 / 4; color: var(--ink); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .x-it .x-t code, .x-fu .x-t code { font-size: .95em; color: var(--link); }
+  .x-it .x-w { grid-column: 2 / 4; font-size: 10.5px; color: var(--ink-2); }
+  .x-it .x-acts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .x-chip { all: unset; box-sizing: border-box; font-size: 10.5px; line-height: 17px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--sub); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+  .x-chip:hover { border-color: var(--faint); color: var(--ink); }
+  .x-chip .rc { color: var(--green); margin-left: 3px; }
+  .x-new { font-weight: 700; color: var(--link); }
+  .x-it.x-ans { background: var(--sub); }
+  .x-it.x-ans .x-w { color: var(--ink-2); }
+  .x-it.x-focus { box-shadow: inset 0 0 0 1px var(--link); border-color: var(--link); }
+  .x-it.x-due { border-color: var(--ink-3); }
+  /* an A item: one line with its trigger, quiet like a Past line */
+  .x-fu { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; row-gap: 1px; padding: 2.5px 12.5px 4px; font-size: 11.5px; line-height: 1.35; align-items: baseline; }
+  .x-fu .x-t { color: var(--ink-2); }
+  .x-fu .x-w { grid-column: 2; font-size: 10.5px; color: var(--ink-3); display: inline-flex; gap: .5ch; align-items: center; }
+  .x-fu .x-w .ind { font-size: 9px; }
+  .x-fu.x-due .x-t { color: var(--ink); }
+  .x-fu.x-due .x-w b { color: var(--ink); }
+  /* a closed line, as a Past line, with what closed it and Undo for a guess */
+  .x-cl .n { white-space: normal; }
+  .x-cl .x-id { font-size: 9.5px; padding: 1px 2px; margin-right: 3px; color: var(--ink-2); border-color: var(--faint); }
+  .x-undo { font-size: 11px; }
+  /* the hollow circle of "not answered", as the card's ○; the sidebar line and the head's button */
+  .ind.x-o { color: var(--ink-3); }
+  .side .ind.x-o { color: #9198A1; }
+  .x-wl { color: #ADBAC7; }
+  .side-head .x-wbtn { margin-left: auto; color: #ADBAC7; border-color: #444C56; background: transparent; font-size: 11px; padding: 1px 8px; display: inline-flex; gap: 5px; align-items: center; }
+  .side-head .x-wbtn .ind { font-size: 9px; }
+  /* the list across sessions: the Open list's frame, rows grouped under each session */
+  .x-olh { display: flex; gap: 2ch; padding: 7px 14.5px 2px; font-family: var(--sans); font-size: 12px; font-weight: 700; color: var(--ink); }
+  .x-olh span { font-weight: 400; color: var(--ink-3); }
+  .x-olh:first-child { padding-top: 3px; }
+  .ol-it .n .x-id { font-size: 10.5px; margin-right: 1ch; }
+  .ol-it .n .x-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .ol-it .n { gap: 0; align-items: baseline; }
+  .sb-dark .ol-it[aria-selected="true"] { background: var(--blue-bg); }
+  /* the source reply, marked as To review marks a report */
+  .x-ring { box-shadow: 0 0 0 3px #DDF4FF, 0 0 0 4px #54AEFF; background: #DDF4FF; border-radius: 2px; }
+  .sb-dark .x-ring { background: var(--blue-bg); box-shadow: 0 0 0 3px var(--blue-bg), 0 0 0 4px var(--blue-line); }
+  /* the CLI, drawn plain: a terminal in the page's colours */
+  .sb-cli { border: 1px solid var(--pg-line); border-radius: 9px; overflow: hidden; background: #FFFFFF; color: #1F2328; height: var(--h, auto); display: flex; flex-direction: column; }
+  :root[data-theme="dark"] .sb-cli { background: #161B22; color: #E6EDF3; }
+  .sb-cli-bar { font: 400 11px/1 var(--sans); color: var(--pg-ink3); padding: 7px 12px; border-bottom: 1px solid var(--pg-line); background: var(--pg-bg); }
+  .sb-cli pre { margin: 0; padding: 10px 14px 14px; font: 400 12px/1.5 var(--mono); white-space: pre-wrap; overflow: hidden; flex: 1; }
+  .sb-cli .u { display: block; background: rgba(140, 149, 159, .16); margin: 0 -14px; padding: 0 14px; }
+  .sb-cli .d { color: #6E7781; } :root[data-theme="dark"] .sb-cli .d { color: #8B949E; }
+  .sb-cli .y { color: #9A6700; } :root[data-theme="dark"] .sb-cli .y { color: #E3B341; }
+  .sb-cli .c { color: #0550AE; } :root[data-theme="dark"] .sb-cli .c { color: #79C0FF; }
+  .sb-cli b { font-weight: 700; }
+  .sb-file .sb-cli-bar { font-family: var(--mono); }
+
+  /* ===== the storyboard page; every class here starts with sb- ===== */
+  html, body { height: auto; }
+  :root { --pg-bg: #F6F7F9; --pg-ink: #1F2328; --pg-ink2: #4B535C; --pg-ink3: #6E7781; --pg-line: #D0D7DE; --pg-card: #fff; --pg-rec: #0550AE; }
+  :root[data-theme="dark"] { --pg-bg: #1C2128; --pg-ink: #CDD9E5; --pg-ink2: #ADBAC7; --pg-ink3: #8C959F; --pg-line: #444C56; --pg-card: #22272E; --pg-rec: #539BF5; }
+  body { background: var(--pg-bg); color: var(--pg-ink); font: 400 14.5px/1.5 var(--sans); }
+  .sb-page { max-width: 1880px; margin: 0 auto; padding: 28px 32px 80px; }
+  .sb-top { display: flex; gap: 24px; align-items: flex-start; }
+  .sb-top > div { flex: 1; }
+  .sb-top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -.01em; }
+  .sb-btns { display: flex; gap: 8px; }
+  .sb-btn { background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 5px; padding: 4px 11px; font: inherit; font-size: 12.5px; color: var(--pg-ink); cursor: pointer; }
+  .sb-p { margin: 0 0 8px; color: var(--pg-ink2); max-width: 100ch; }
+  .sb-toc { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 12px 0 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .sb-toc a { color: var(--pg-rec); }
+  .sb-part { font-size: 25px; line-height: 1.2; margin: 64px 0 6px; padding-top: 18px; border-top: 1px solid var(--pg-line); }
+  .sb-h { font-size: 18px; line-height: 1.25; margin: 34px 0 6px; }
+  .sb-lede { margin: 0 0 14px; color: var(--pg-ink2); max-width: 108ch; }
+  .sb-page code { font-size: .88em; }
+  .sb-sum { display: grid; grid-template-columns: 1.25fr 1fr .9fr; gap: 16px; margin: 22px 0 0; }
+  .sb-sum > section { background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 8px; padding: 14px 18px; font-size: 13.5px; color: var(--pg-ink2); }
+  .sb-sum h2 { font-size: 16px; margin: 0 0 8px; color: var(--pg-ink); }
+  .sb-sum ul, .sb-sum ol { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+  .sb-sum b { color: var(--pg-ink); }
+  .sb-opts { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .sb-opt { margin: 0; min-width: 0; }
+  .sb-opt > header { margin: 0 2px 8px; font-size: 13.5px; color: var(--pg-ink2); }
+  .sb-opt > header b { display: flex; align-items: center; gap: 8px; color: var(--pg-ink); font-size: 14.5px; }
+  .sb-rtag { font-size: 11.5px; font-weight: 700; color: #fff; background: var(--pg-rec); border-radius: 4px; padding: 0 6px; line-height: 18px; }
+  .sb-ntag { font-size: 11.5px; font-weight: 400; color: var(--pg-ink3); }
+  .sb-opt.sb-rec .sb-stack > *, .sb-opt.sb-rec > .sb-crop, .sb-opt.sb-rec > .sb-win { box-shadow: 0 0 0 2px var(--pg-rec); }
+  .sb-strip { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 16px; align-items: start; margin-top: 16px; }
+  .sb-state { margin: 0; min-width: 0; }
+  .sb-do { margin: 0 2px 7px; font-size: 13.5px; color: var(--pg-ink); }
+  .sb-do i { font-style: normal; display: inline-grid; place-items: center; width: 20px; height: 20px; margin-right: 6px; border-radius: 50%; border: 1px solid var(--pg-line); font-size: 11.5px; color: var(--pg-ink2); }
+  .sb-see { margin: 7px 2px 0; font-size: 13px; color: var(--pg-ink2); }
+  .sb-stack { display: grid; gap: 8px; }
+  .sb-why { margin: 16px 0 0; padding: 12px 16px; background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 8px; font-size: 14px; color: var(--pg-ink2); max-width: 120ch; }
+  .sb-why b { color: var(--pg-ink); }
+  .sb-why p { margin: 0 0 8px; } .sb-why p:last-child { margin: 0; }
+  table.sb-t { border-collapse: collapse; font-size: 13.5px; background: var(--pg-card); border: 1px solid var(--pg-line); border-radius: 8px; overflow: hidden; max-width: 140ch; }
+  .sb-t th, .sb-t td { text-align: left; vertical-align: top; padding: 7px 12px; border-bottom: 1px solid var(--pg-line); }
+  .sb-t th { color: var(--pg-ink); font-weight: 700; }
+  .sb-t td { color: var(--pg-ink2); }
+  .sb-t tr:last-child td { border-bottom: 0; }
+  ul.sb-rej { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 120ch; color: var(--pg-ink2); }
+  ul.sb-rej b { color: var(--pg-ink); }
+  footer.sb-foot { margin-top: 64px; padding-top: 14px; border-top: 1px solid var(--pg-line); color: var(--pg-ink3); font-size: 13px; }
+
+  /* frames: a crop of the main pane (the canvas, 9px, around one panel), the panel on the right, the sidebar, or the window */
+  .sb-crop { background: var(--canvas); color: var(--ink); border: 1px solid #D0D7DE; border-radius: 9px; padding: 9px; height: var(--h, 360px);
+    display: flex; flex-direction: column; font: 400 13px/1.5 var(--sans); min-width: 0; }
+  .sb-crop.sb-dark, .sb-win.sb-dark { border-color: #22272E; }
+  .sb-crop > .thread, .sb-crop > .rail { flex: 1 1 0; }
+  .sb-crop.sb-auto { height: auto; }
+  .sb-auto > .thread { flex: none; }
+  .sb-auto .log { flex: none; overflow: visible; container-type: inline-size; } /* the app sizes the log by the window (size containment); a crop sizes it by its rows */
+  .sb-crop.sb-railc { width: 340px; max-width: 100%; height: auto; }
+  .sb-crop.sb-railc > .rail { flex: none; }
+  .sb-railc .now { max-height: none; }
+  .sb-railc .past { flex: none; overflow: visible; padding-bottom: 9px; -webkit-mask-image: none; mask-image: none; }
+  .sb-crop.sb-sidec { padding: 0; background: var(--side); border-color: #22272E; height: auto; width: 290px; max-width: 100%; overflow: hidden; }
+  .sb-sidec > .side { padding: 6px 0 8px; }
+  .sb-win { border: 1px solid #D0D7DE; border-radius: 9px; overflow: hidden; height: var(--h, 640px); font: 400 13px/1.5 var(--sans); color: var(--ink); background: var(--canvas); }
+  .sb-win > .app { height: 100%; }
+  .sb-crop .log, .sb-win .log { scrollbar-width: none; }
+  .sb-crop .log::-webkit-scrollbar, .sb-win .log::-webkit-scrollbar { display: none; }
+  .sb-crop button, .sb-win button { cursor: default; }
+  .sb-row2 { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 9px; align-items: start; }
+  :root[data-theme="dark"] :is(.sb-do, .sb-see, .sb-opt > header, .sb-t, .sb-sum, .sb-lede, .sb-p, .sb-why) kbd { background: var(--pg-card); border-color: var(--pg-line); color: var(--pg-ink); }
+  body.sb-reduced .ind *, body.sb-reduced .ind *::before { animation: none !important; }
+  @media (max-width: 1300px) { .sb-opts, .sb-strip { --n: 2 !important; } .sb-sum { grid-template-columns: 1fr; } }
+  @media (max-width: 800px) { .sb-opts, .sb-strip { --n: 1 !important; } .sb-page { padding: 18px 14px 60px; } .sb-row2 { grid-template-columns: 1fr; } }
+
+  .sb-strip.sb-wide { grid-template-columns: minmax(0, 1fr); }
+  .sb-pair { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 9px; align-items: start; }
+  .sb-crop.sb-railc { width: 330px; }
+  .sb-nolog .log { display: none; }
+  .sb-cli.sb-dk { background: #161B22; color: #E6EDF3; border-color: #444C56; }
+  .sb-cli.sb-dk .sb-cli-bar { background: #1C2128; border-color: #444C56; color: #8C959F; }
+  .sb-cli.sb-dk .d { color: #8B949E; }
+  @media (max-width: 1300px) { .sb-pair { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="sb-page">
+  <div class="sb-top">
+    <div>
+      <h1>What waits on you, kept by AI: open items across turns and sessions</h1>
+      <p class="sb-p">How a long session keeps its loose ends: the decisions Claude needs, the tasks only you can do, what Claude will re-check later, and the proposals that go ahead unless you object. The page compares the real choices and recommends one design: a skill and a file as the base, then Synopia's keeper, panel and list on top. Its text companion is <code>prototype/open-items-design.md</code>. Every frame uses the app's own CSS and markup; only the open items, the sidebar line and the Waiting on you list are new. Every session, folder, pull request, person and command here is invented.</p>
+      <ul class="sb-toc">
+        <li><a href="#summary">Summary</a></li><li><a href="#picture">The design in one picture</a></li><li><a href="#s1">1. A reply opens 5 items</a></li><li><a href="#s2">2. Answering in prose</a></li><li><a href="#s3">3. Several in one message</a></li><li><a href="#s4">4. A follow-up comes due</a></li><li><a href="#s5">5. A default goes ahead</a></li><li><a href="#s6">6. The keeper cleans up</a></li><li><a href="#s7">7. A wrong guess</a></li><li><a href="#s8">8. A handoff</a></li><li><a href="#s9">9. Across sessions</a></li><li><a href="#s10">10. Dark mode</a></li><li><a href="#keys">Keys</a></li><li><a href="#edges">Edge cases</a></li><li><a href="#rejected">Rejected</a></li>
+      </ul>
+    </div>
+    <div class="sb-btns"><button class="sb-btn" id="sb-theme" type="button">Dark mode</button><button class="sb-btn" id="sb-motion" type="button">Preview reduced motion</button></div>
+  </div>
+
+  <div class="sb-sum" id="summary">
+    <section>
+      <h2>Recommended</h2>
+      <ul>
+        <li><b>You never keep the list.</b> AI finds the items in the conversation, Claude's and yours ("I'll review it tonight", "remind me"), and closes them when they're answered or done.</li>
+        <li><b>The base is a skill and a file.</b> The <code>open-items</code> skill in agent-harness, and <code>.ai-notes/&lt;area&gt;/open-items.md</code> per area. Every turn the agent closes what you answered, opens what its reply leaves open, re-checks due follow-ups, and prints the reply's "Waiting on you" block from the file. It works in the CLI.</li>
+        <li><b>Ids are short and stable.</b> Y1, Y2 wait on you; A1, A2 wait on Claude. The same id in the CLI, in Synopia and after a handoff.</li>
+        <li><b>Prose answers just work.</b> Quote a line and write "Run it", or write "Y1 run it, Y3 later". An answer that could mean two items gets a one-line question, never a guess.</li>
+        <li><b>Synopia's keeper reads every exchange too.</b> A one-shot model call after you send and after each turn returns typed changes. Each change must quote the exchange word for word, or it's dropped. It catches what the agent forgot, and keeps a list for sessions with no skill.</li>
+        <li><b>Synopia owns one list per ledger and writes the file back.</b> Your corrections, the agent's records (the <code>open_items</code> tool or its file edits) and the keeper's changes are its inputs, applied in that order.</li>
+        <li><b>The panel shows it.</b> "Waiting on you" and "Claude will check" in the background panel; "Closed this turn" with Undo. A solid id box means Claude recorded it, a dashed one that Synopia found it.</li>
+        <li><b>Buttons only write prose.</b> An option writes <code>Y1 Run it</code> into the box. Enter sends, as for any message.</li>
+        <li><b>Your turn stays your turn.</b> A sidebar line says "○ 4 waiting on you"; Needs you stays for the cards that block.</li>
+        <li><b>One list across sessions:</b> <kbd>w</kbd> opens every open item of every session, like the Open list.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Requirement changes</h2>
+      <ul>
+        <li><b>New R3.16</b> Open items: the model (kinds, ids, states), the keeper call, the ownership and merge rules, the ledger file Synopia reads and writes back.</li>
+        <li><b>R3.15</b> A second tool, <code>open_items</code> (open, update, close, list), with no permission card.</li>
+        <li><b>R3.4</b> The writer gets a second call type, the keeper, in its own queue, run when you send and when a turn ends.</li>
+        <li><b>R7.1</b> The panel gains "Waiting on you", "Claude will check" and "Closed this turn", under To review; it shows when a session has open items, not only background work.</li>
+        <li><b>R4.2</b> A sub-line "○ N waiting on you" (", N due"), and the head's "○ N waiting on you" button.</li>
+        <li><b>R8.2</b> Unchanged: open items never make a session "Needs you".</li>
+        <li><b>R9</b> New: <kbd>w</kbd> opens the Waiting on you list; <kbd>d</kbd> on a focused item, "Not an item"; <kbd>J</kbd>/<kbd>K</kbd> reach the items after the cards.</li>
+        <li><b>New topic doc</b> <code>docs/Open items.md</code>: the file's version 1 grammar, pinned by a test.</li>
+        <li><b>Outside this repo</b> agent-harness: <code>skills/open-items/</code>, a line in <code>instructions/global.md</code>, ai-notes' State and To do, its requirements and architecture.</li>
+      </ul>
+    </section>
+    <section>
+      <h2>Open questions</h2>
+      <ol>
+        <li><b>Do inferred changes apply at once</b> (marked, with Undo), or wait for the agent's confirmation next turn? Proposal: at once.</li>
+        <li><b>May Synopia write the ledger file</b> in your repo, so the CLI and a handoff carry the keeper's finds? Proposal: yes, between turns, only for a file the agent created.</li>
+        <li><b>The keeper's model.</b> Proposal: a stronger model than the titles' haiku, since a wrong item costs attention and calls are free. Not checked: one scripted batch of 50 invented exchanges would show the gap.</li>
+        <li><b>Should Synopia wake an idle session</b> when a trigger it can check fires? Proposal: not yet; the agent's own watcher starts the turn.</li>
+      </ol>
+    </section>
+  </div>
+
+  <h2 class="sb-part" id="picture">The design in one picture</h2>
+  <p class="sb-lede">Three sessions open, 7 items waiting on you across them. In "Ship checkout M2" Claude just finished a turn: the reply lists its items, the panel holds them with their answer buttons, and one item, Y4, has a dashed id: Claude asked it in prose and didn't record it, so Synopia's keeper did. Look first at the panel's "Waiting on you", then at the sidebar's lines.</p>
+  <div id="f-picture"></div>
+
+  <h2 class="sb-part" id="s1">1. A reply opens 5 mixed items</h2>
+  <p class="sb-lede">Claude rebased the 12 pull requests of the M2 stack (#812 to #823). Its reply leaves 5 things open: a decision, a task of yours, a proposal that goes ahead on green CI, a follow-up after the merge, and, in its last sentence, a question it didn't record. Today the reply's "Waiting on you" list is typed by hand each turn, and Synopia shows nothing of it.</p>
+  <h3 class="sb-h">Where the items show in a session</h3>
+  <div class="sb-opts" id="f-s1-opts"></div>
+  <h3 class="sb-h">Recommended flow</h3>
+  <div class="sb-strip" style="--n:3" id="f-s1"></div>
+
+  <h2 class="sb-part" id="s2">2. Answering one item in prose</h2>
+  <p class="sb-lede">You quote Y1's line from the reply and write "Run it", as you would today. No id, no button. The keeper marks it answered the moment you send; Claude runs the fix and closes it.</p>
+  <div class="sb-strip" style="--n:3" id="f-s2"></div>
+
+  <h2 class="sb-part" id="s3">3. Several in one message, by id</h2>
+  <p class="sb-lede">Ids are the shortcut for many at once. You click "Keep them" on Y4, which writes <code>Y4 Keep them</code> into the box, then type two more lines yourself. One message, three items.</p>
+  <div class="sb-strip" style="--n:3" id="f-s3"></div>
+
+  <h2 class="sb-part" id="s4">4. A follow-up whose trigger fires later</h2>
+  <p class="sb-lede">A1 says "after the M2 stack merges: re-check #820". Claude armed a watcher on #812 to #815 when it recorded A1. Two hours later, at 4:40 PM, the last one merges. The watcher's line starts Claude's turn; nobody has to remember.</p>
+  <div class="sb-strip" style="--n:3" id="f-s4"></div>
+
+  <h2 class="sb-part" id="s5">5. A default that goes ahead</h2>
+  <p class="sb-lede">Y3 proposes an order for marking #812 to #815 ready and goes ahead when CI is green on all four. You answer other items and don't object. CI turns green at 2:31 PM.</p>
+  <div class="sb-strip" style="--n:3" id="f-s5"></div>
+
+  <h2 class="sb-part" id="s6">6. The keeper catches what the agent didn't</h2>
+  <p class="sb-lede">Three ways the list stays right without you: an item the agent forgot to record, a task of yours that the work shows done, and a follow-up that went stale. Each change is marked "by Synopia" and can be undone for one turn.</p>
+  <div class="sb-strip" style="--n:3" id="f-s6"></div>
+
+  <h2 class="sb-part" id="s7">7. A wrong guess, corrected without curating</h2>
+  <p class="sb-lede">The keeper took a question Claude answered itself as a decision for you, and later read your "go" as closing the wrong item. Each fix is one key or one sentence.</p>
+  <div class="sb-strip" style="--n:3" id="f-s7"></div>
+
+  <h2 class="sb-part" id="s8">8. A handoff carries the ledger</h2>
+  <p class="sb-lede">The session is long; you type <code>/handoff</code>. The handoff file lists <code>open-items.md</code> first, the new session reads it, and every id stays as it was.</p>
+  <div class="sb-strip" style="--n:3" id="f-s8"></div>
+
+  <h2 class="sb-part" id="s9">9. Everything waiting on you, across sessions</h2>
+  <p class="sb-lede">Three sessions open, 7 items waiting on you in them. You want to clear them in one sitting, without opening each session to find out.</p>
+  <h3 class="sb-h">Where the items of every session show</h3>
+  <div class="sb-opts" id="f-s9-opts" style="grid-template-columns:minmax(0,2.3fr) minmax(0,1fr) minmax(0,1fr)"></div>
+  <h3 class="sb-h">Recommended flow</h3>
+  <div class="sb-strip" style="--n:2" id="f-s9"></div>
+
+  <h2 class="sb-part" id="s10">10. Dark mode, recommended</h2>
+  <p class="sb-lede">The same frames in the dark theme: the sidebar stays the darkest surface, ids keep their solid and dashed boxes, and the list uses the selection tint.</p>
+  <div class="sb-strip sb-wide" id="f-dark"></div>
+
+  <h2 class="sb-part" id="keys">Keys</h2>
+  <p class="sb-lede">Counted from normal mode in the session, not counting the message you type.</p>
+  <table class="sb-t">
+    <tr><th>You want to</th><th>Keys</th><th>Presses</th></tr>
+    <tr><td>Answer one item in prose</td><td><kbd>i</kbd>, type, <kbd>Enter</kbd></td><td>2</td></tr>
+    <tr><td>Answer a decision with one of its options</td><td>click the option, <kbd>Enter</kbd></td><td>1 click, 1</td></tr>
+    <tr><td>Answer several</td><td><kbd>i</kbd>, one line per id, <kbd>Enter</kbd></td><td>2</td></tr>
+    <tr><td>Say an item isn't one</td><td><kbd>J</kbd> to the item, <kbd>d</kbd></td><td>2 or more</td></tr>
+    <tr><td>Undo a close</td><td>click Undo under "Closed this turn"</td><td>1 click</td></tr>
+    <tr><td>See every item of every session</td><td><kbd>w</kbd></td><td>1</td></tr>
+    <tr><td>Answer an item from that list</td><td><kbd>w</kbd>, <kbd>j</kbd>/<kbd>k</kbd>, <kbd>Enter</kbd>, type, <kbd>Enter</kbd></td><td>3 or more</td></tr>
+  </table>
+  <p class="sb-lede" style="margin-top:14px">Inside the Waiting on you list:</p>
+  <table class="sb-t">
+    <tr><th>Key</th><th>Does</th></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd></td><td>Move between items, across sessions</td></tr>
+    <tr><td>Typing</td><td>Filters by the item's text, its id, or the session's title</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Opens that session with <code>Y2 </code> started in its box, in insert mode</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Closes the list</td></tr>
+  </table>
+
+  <h2 class="sb-part" id="edges">Edge cases</h2>
+  <div class="sb-opts" style="--n:3" id="f-edges"></div>
+
+  <h2 class="sb-part" id="rejected">Rejected</h2>
+  <ul class="sb-rej">
+    <li><b>An "Add item" button or field.</b> You asked never to add items by hand; saying it in the session opens it.</li>
+    <li><b>Synopia's code reading items out of prose</b> (a regex for "Waiting on you"). It breaks on the next wording; only a model reads prose, and code checks its typed output.</li>
+    <li><b>The ledger built on Claude Code's task list.</b> The task tools are off by default on newer models, the list lives in <code>~/.claude/tasks/</code> outside the repo, and only Claude Code reads it.</li>
+    <li><b>The rules as a section of ai-notes.</b> It isn't loaded every turn, and sessions without a notes area would get no rules.</li>
+    <li><b>Answer buttons that send at once.</b> Several answers would be several messages and several turns; writing into the box keeps one way to send.</li>
+    <li><b>Needs you while a decision is open.</b> In a long session something nearly always waits on you; red would stop meaning blocked.</li>
+    <li><b>The file as the one owner, with the keeper writing it too.</b> Two writers race on one file mid-turn, and Synopia's own facts (found by, undone, not an item) would live in your repo.</li>
+    <li><b>Two lists side by side</b>, the agent's and the keeper's. The same item shows twice and you end up merging them.</li>
+    <li><b>One id prefix per kind</b> (D1, T1, F1, P1). You only need to know whether it waits on you; four prefixes are four things to learn.</li>
+    <li><b>Synopia evaluating triggers itself</b> (polling GitHub). It would be a second watcher beside feedback-watch; the agent's watcher already starts the turn.</li>
+  </ul>
+
+  <footer class="sb-foot">Synopia, open items, 2026-11-26. All content is invented.</footer>
+</div>
+
+<script>
+/* the marks, as js/marks.js MARKS (copied by the build) */
+const M = {"work":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-C6E9D0)\" stroke-width=\"1.8\"/><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-1A7F37)\" stroke-width=\"1.8\" pathLength=\"4\" stroke-dasharray=\"1.6 2.4\" class=\"rot\" style=\"--d:var(--mark-period)\"/><circle cx=\"6\" cy=\"6\" r=\"1.8\" fill=\"var(--mk-1A7F37)\"/></svg>"],"queued":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-C6E9D0)\" stroke-width=\"1.8\"/><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-1A7F37)\" stroke-width=\"1.8\" pathLength=\"4\" stroke-dasharray=\"1.6 2.4\" class=\"rot\" style=\"--d:var(--mark-period)\"/><circle cx=\"6\" cy=\"6\" r=\"1.8\" fill=\"var(--mk-0550AE)\"/></svg>"],"waiting":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-0550AE)\" stroke-width=\"1.4\"/><path d=\"M6 3.3V6l1.9 1.3\" stroke=\"var(--mk-0550AE)\" stroke-width=\"1.4\"/></svg>"],"compact":["","<i class=\"cr\"></i><i class=\"cr\"></i><i class=\"cr\"></i>"],"pause":["v-seesaw","<span class=\"bars\"><i></i><i></i></span>"],"creds":["","<i class=\"lock\"><i class=\"sh\"></i><i class=\"bd\"></i></i>"],"stale":["","<i class=\"arc frozen\"></i>"],"ratelimit":["","<svg viewBox=\"0 0 12 12\" class=\"rl\"><circle cx=\"6\" cy=\"6\" r=\"4.9\" fill=\"none\" stroke-width=\"2\" pathLength=\"24\" stroke-dasharray=\"3.6 2.4\"/></svg>"],"stopped":["","<svg class=\"k\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><rect x=\"2.3\" y=\"2.3\" width=\"7.4\" height=\"7.4\" rx=\"1.1\" fill=\"var(--ink-3)\"/></svg>"],"failed":["","<svg class=\"k\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><rect x=\"2.3\" y=\"2.3\" width=\"7.4\" height=\"7.4\" rx=\"1.1\" fill=\"var(--red)\"/></svg>"],"timeout":["","<svg class=\"k\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><rect x=\"2.4\" y=\"2.4\" width=\"7.2\" height=\"7.2\" rx=\"1\" fill=\"none\" stroke=\"var(--amber)\" stroke-width=\"1\" vector-effect=\"non-scaling-stroke\"/></svg>"],"done":["","<i class=\"chk\"></i>"],"mcp_off":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.6\" stroke=\"var(--ink-3)\" stroke-width=\"1.4\"/><line x1=\"3.4\" y1=\"6\" x2=\"8.6\" y2=\"6\" stroke=\"var(--ink-3)\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg>"],"review":["","<i class=\"badge\"></i><i class=\"badge-chk\"></i>"],"k_sub":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.4\" stroke=\"var(--mk-7CC48F)\" stroke-width=\"1.6\"/><g class=\"rot\" style=\"--d:var(--mark-period)\"><circle cx=\"6\" cy=\"1.6\" r=\"1.8\" fill=\"var(--mk-1A7F37)\"/></g></svg>"],"k_fork":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.4\" stroke=\"var(--mk-E2D6F8)\" stroke-width=\"1.4\"/><g class=\"rot\" style=\"--d:var(--mark-period)\"><circle cx=\"6\" cy=\"10.4\" r=\"1.6\" fill=\"var(--mk-8250DF)\" transform=\"rotate(-50 6 6)\"/></g><g class=\"rot rev\" style=\"--d:var(--mark-period)\"><circle cx=\"6\" cy=\"10.4\" r=\"1.6\" fill=\"var(--mk-8250DF)\" transform=\"rotate(50 6 6)\"/></g></svg>"],"k_shell":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M1.8 3.2 5 6 1.8 8.8\" stroke=\"var(--mk-0B7A82)\" stroke-width=\"1.8\"/><line x1=\"6.4\" y1=\"9.5\" x2=\"10.6\" y2=\"9.5\" stroke=\"var(--mk-B6E0E3)\" stroke-width=\"1.9\"/><line x1=\"6.4\" y1=\"9.5\" x2=\"10.6\" y2=\"9.5\" stroke=\"var(--mk-0B7A82)\" stroke-width=\"1.9\" class=\"bounce\"/></svg>"],"k_mon":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-0E6BA8)\" stroke-width=\"1.4\"/><g class=\"rot\" style=\"--d:var(--mark-watch)\"><path d=\"M6 6H1.9A4.1 4.1 0 0 1 6 1.9Z\" fill=\"var(--mk-0E6BA8)\" fill-opacity=\".28\" stroke=\"none\"/><line x1=\"6\" y1=\"6\" x2=\"6\" y2=\"2.6\" stroke=\"var(--mk-0E6BA8)\" stroke-width=\"1.6\"/></g></svg>"],"s_agent":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-1A7F37)\" stroke-width=\"1.8\"/><circle cx=\"6\" cy=\"6\" r=\"1.8\" fill=\"var(--mk-1A7F37)\"/></svg>"],"s_sub":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.4\" stroke=\"var(--mk-7CC48F)\" stroke-width=\"1.6\"/><circle cx=\"6\" cy=\"1.6\" r=\"1.8\" fill=\"var(--mk-1A7F37)\"/></svg>"],"s_fork":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.4\" stroke=\"var(--mk-E2D6F8)\" stroke-width=\"1.4\"/><circle cx=\"2.9\" cy=\"2.9\" r=\"1.6\" fill=\"var(--mk-8250DF)\"/><circle cx=\"9.1\" cy=\"2.9\" r=\"1.6\" fill=\"var(--mk-8250DF)\"/></svg>"],"s_shell":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M1.8 3.2 5 6 1.8 8.8\" stroke=\"var(--mk-0B7A82)\" stroke-width=\"1.8\"/><line x1=\"6.4\" y1=\"9.5\" x2=\"10.6\" y2=\"9.5\" stroke=\"var(--mk-0B7A82)\" stroke-width=\"1.9\"/></svg>"],"s_mon":["","<svg class=\"k\" viewBox=\"0 0 12 12\" fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><circle cx=\"6\" cy=\"6\" r=\"4.8\" stroke=\"var(--mk-0E6BA8)\" stroke-width=\"1.4\"/><line x1=\"6\" y1=\"6\" x2=\"6\" y2=\"2.6\" stroke=\"var(--mk-0E6BA8)\" stroke-width=\"1.6\"/></svg>"]};
+const ind = k => `<span class="ind ${M[k][0]}" role="img" aria-hidden="true">${M[k][1]}</span>`;
+const esc = s => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const put = (id, html) => { document.getElementById(id).innerHTML = html; };
+const XO = `<span class="ind x-o" role="img" aria-hidden="true"><svg class="k" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.3" stroke="currentColor" stroke-width="1.4"/></svg></span>`;
+
+/* ---------- the app's markup, as transcript.js, rail.js and sidebar.js write it ---------- */
+const TITLE = "Ship checkout M2", DIR = "~/dev/shop";
+const band = html => `<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`;
+const claude = (html, cls = "") => `<div class="ln claude${cls ? " " + cls : ""}"><span class="g">●</span><div class="md">${html}</div></div>`;
+const tool = (name, obj, state = "done") => `<div class="ln tool ${state}"><span class="g">●</span><div><span class="name">${name}</span>(${esc(obj)})</div></div>`;
+const doneLn = txt => `<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>${txt}</div></div>`;
+const live = (what, mark = "work", word = "Working", state = "green") => `<div class="ln liveln rule" data-state="${state}"><span class="g">${ind(mark)}</span><div><span class="lh"><b>${word}</b> <span class="dim">${what}</span></span></div></div>`;
+const res = (html, first) => `<div class="res">${first ? `<span class="lcorner" aria-hidden="true"></span>` : "<span></span>"}${html}</div>`;
+const step = (name, obj, out) => `<div class="ln tool done"><span class="g">●</span><div><span class="name">${name}</span>(${esc(obj)})<div class="step-out">${res(`<span class="out">${esc(out.join("\n"))}</span>`, true)}</div></div></div>`;
+
+const acts = `<div class="c-acts"><button class="btn quiet model-btn" title="Change the model (same as /model)">Opus</button></div>`;
+const head = (title = TITLE, now = "", dir = DIR) => `<h2 class="c-title">${esc(title)}</h2><p class="c-now">${now ? `Now: ${esc(now)}` : "&nbsp;"}</p><p class="c-meta">Folder <span class="mono">${dir}</span>.</p>${acts}`;
+const dock = (draft = "", title = TITLE, rows = 0) => `<div class="dock"><div class="dock-inner"><div class="composer"><div class="slash" hidden></div><div class="attach" style="grid-column:2"></div><span class="g">❯</span><textarea rows="${rows || Math.max(1, draft.split("\n").length)}" aria-label="Message" readonly placeholder="${esc(`Message ${title}, / for commands`)}">${esc(draft)}</textarea></div></div></div>`;
+
+/* the panel, as rail.js writes it, with the proposal's groups */
+const card = ({ name, kind = "monitor", start, d, ended = false }) => { const kk = kind === "monitor" ? "mon" : "shell";
+  return `<div class="kid"><i class="tg"></i><button class="card kc-${kk}${ended ? " ended" : ""}" aria-current="false">${ended ? `<span class="pm">${ind("done")}${ind("s_" + kk)}</span>` : ind("k_" + kk)}<span class="n">${esc(name)}</span><span class="m"><span class="kw">${kind}</span>, started ${start}</span><span class="d">${d}</span></button></div>`; };
+const pr = (name, d, kk = "shell", st = "done") => `<button class="pr"><span class="pm">${ind(st)}${ind("s_" + kk)}</span><span class="n">${esc(name)}</span><span class="d">${d}</span></button>`;
+const LIGHT = { turn: ["amber", "stopped", "Your turn"], work: ["green", "work", "Working"] };
+const rail = ({ st = "turn", count = 0, cards = "", items = [], n = null, checks = [], closed = [], past = [] }) => {
+  const [state, mark, word] = LIGHT[st];
+  return `<aside class="rail panel"><div class="now"><button class="main-row" data-state="${state}" aria-current="true">${ind(mark)}<b>Main conversation</b><span class="m">${count ? `${count} running in the background` : "Nothing running in the background"}</span><span class="w">${word}</span></button>${cards ? `<div class="kids">${cards}</div>` : ""}</div>`
+    + (items.length ? `<section class="x-items"><h3>Waiting on you <span class="cnt">${n ?? items.length}</span></h3>${items.join("")}</section>` : "")
+    + (checks.length ? `<section class="x-checks"><h3>Claude will check <span class="cnt">${checks.length}</span></h3>${checks.join("")}</section>` : "")
+    + (closed.length ? `<section class="x-closed"><h3>Closed this turn <span class="cnt">${closed.length}</span></h3>${closed.join("")}</section>` : "")
+    + `<div class="past">${past.length ? `<h3>Past <span class="cnt">${past.length}</span></h3>${past.join("")}` : ""}</div></aside>`;
+};
+
+/* ---------- the proposal: an item ---------- */
+const chips = x => (x.opts || x.acts) ? `<span class="x-acts">${(x.opts || []).map(l => `<button class="x-chip">${l}${l === x.rec ? `<span class="rc">Recommended</span>` : ""}</button>`).join("")}${(x.acts || []).map(l => `<button class="x-chip">${l}</button>`).join("")}</span>` : "";
+const item = (x, o = {}) => `<div class="x-it${o.ans ? " x-ans" : ""}${o.focus ? " x-focus" : ""}">`
+  + `<span class="x-id${x.found ? " x-found" : ""}">${x.id}</span>`
+  + `<span class="x-k">${x.kind}${x.found ? ", found by Synopia" : ""}${o.isnew ? `, <span class="x-new">new</span>` : ""}</span><span class="x-age">${o.age || x.age || ""}</span>`
+  + `<span class="x-t">${x.text}</span>`
+  + (x.when && !o.ans ? `<span class="x-w">${x.when}, unless you object</span>` : "")
+  + (o.ans ? `<span class="x-w">${o.ans}</span>` : o.note ? `<span class="x-w">${o.note}</span>${chips(x)}` : chips(x))
+  + `</div>`;
+const check = (a, o = {}) => `<div class="x-fu${o.due ? " x-due" : ""}"><span class="x-id${a.found ? " x-found" : ""}">${a.id}</span><span class="x-t">${a.text}</span><span class="x-w">${o.due ? `<b>Due:</b> ${o.due}` : `${a.watch ? ind("k_mon") : ""}<span>${a.trig}</span>`}</span></div>`;
+const closedLn = (id, txt, o = {}) => `<div class="pr x-cl"><span class="pm">${ind(o.mark || "done")}</span><span class="n"><span class="x-id${o.found ? " x-found" : ""}">${id}</span>${txt}</span><span class="d">${o.undo ? `<button class="link x-undo">Undo</button>` : ""}</span></div>`;
+
+/* ---------- the sidebar, as sidebar.js writes it, with the proposal's line and button ---------- */
+const srow = ({ title, state = "amber", word, now = "", mark = "stopped", cur = false, subs = "" }) =>
+  `<button class="row" data-state="${state}" aria-current="${cur}"><span class="r-main"><span class="r-title">${esc(title)}</span><span class="r-state">${word}</span>${now ? `<span class="r-now">${esc(now)}</span>` : ""}${subs}</span><span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span><span class="r-side">${ind(mark)}</span></button>`;
+const wl = (n, due = 0) => `<span class="r-agent x-wl"><i class="el"></i>${XO} ${n} waiting on you${due ? `, ${due} due` : ""}</span>`;
+const monLine = txt => `<span class="r-agent kc-mon"><i class="el"></i>${ind("k_mon")} <b class="kw">${txt}</b></span>`;
+const sideHTML = ({ groups, total = null }) => `<aside class="side"><div class="side-head"><h1>Synopia</h1>${total !== null ? `<button class="btn quiet x-wbtn">${XO} ${total} waiting on you</button>` : ""}</div><div class="side-scroll">${groups.map(([name, rows]) => `<section class="group tree${name ? "" : " others"}"><div class="th"><span class="g-name">${name || "Not in a group"}</span></div>${rows}</section>`).join("")}</div></aside>`;
+
+/* ---------- frames ---------- */
+const crop = (log, { h = 0, dark = false, mode = "normal", hd = "", dk = "" } = {}) =>
+  `<div class="sb-crop${h ? "" : " sb-auto"}${dark ? " sb-dark" : ""}${log ? "" : " sb-nolog"}" data-mode="${mode}"${h ? ` style="--h:${h}px"` : ""}><div class="thread panel">${hd ? `<header class="c-head">${hd}</header>` : ""}<div class="log" data-scroll="end"><div class="log-inner">${log}</div></div>${dk}</div></div>`;
+const railCrop = (r, dark = false) => `<div class="sb-crop sb-railc${dark ? " sb-dark" : ""}">${r}</div>`;
+const sideCrop = (side, dark = false) => `<div class="sb-crop sb-sidec${dark ? " sb-dark" : ""}">${side}</div>`;
+const pair = (a, b) => `<div class="sb-pair">${a}${b}</div>`;
+const win = ({ side, hd, log, dk, r = "", h = 700, dark = false, mode = "normal", over = "" }) =>
+  `<div class="sb-win${dark ? " sb-dark" : ""}" data-mode="${mode}" style="--h:${h}px"><div class="app">${side}<main class="conv${r ? "" : " no-rail"}"><div class="thread panel"><header class="c-head">${hd}</header><div class="log" data-scroll="end"><div class="log-inner">${log}</div></div>${dk}</div>${r}</main>${over}</div></div>`;
+const cli = (body, h = 0, bar = "~/dev/shop · claude", dk = false) => `<div class="sb-cli${dk ? " sb-dk" : ""}"${h ? ` style="--h:${h}px"` : ""}><div class="sb-cli-bar">${bar}</div><pre>${body}</pre></div>`;
+const opt = (name, line, html, rec = false) => `<figure class="sb-opt${rec ? " sb-rec" : ""}"><header><b>${name} ${rec ? `<span class="sb-rtag">Recommended</span>` : `<span class="sb-ntag">Not recommended</span>`}</b>${line}</header>${html}</figure>`;
+const stack = (...xs) => `<div class="sb-stack">${xs.join("")}</div>`;
+const strip = (id, states) => put(id, states.map((s, i) => `<figure class="sb-state"><p class="sb-do"><i>${i + 1}</i>${s.do}</p>${s.f}<p class="sb-see">${s.see}</p></figure>`).join(""));
+const edge = (name, line, html) => `<figure class="sb-opt"><header><b>${name}</b>${line}</header>${html}</figure>`;
+
+/* ---------- invented data ---------- */
+const Y1 = { id: "Y1", kind: "decision", text: "Run <code>bin/schema-lint --fix</code> now, or look at the 14 new warnings first?", opts: ["Run it", "Look first"], rec: "Look first", age: "4 min" };
+const Y2 = { id: "Y2", kind: "your task", text: "Answer Mira's 2 review threads on #812.", acts: ["Done"], age: "4 min" };
+const Y3 = { id: "Y3", kind: "default", text: "Mark #812 to #815 ready in this order: #812, #814, #813, #815.", when: "Goes ahead when CI is green on all four", acts: ["Object"], age: "4 min" };
+const Y4 = { id: "Y4", kind: "decision", text: "Can I remove the worktrees <code>~/dev/shop-wt-cart</code> and <code>~/dev/shop-wt-tax</code>?", opts: ["Remove both", "Keep them"], found: true, age: "4 min" };
+const A1 = { id: "A1", text: "Re-check #820, which GitHub shows as conflicting.", trig: "after the M2 stack merges", watch: true };
+const A2 = { id: "A2", text: "Re-run the tax specs on #818 once its fixture lands.", trig: "after #818 is updated" };
+const Y5 = { id: "Y5", kind: "decision", text: "#820 conflicts in <code>config/tax_rates.yml</code>: keep main's Norway rates, or this branch's?", opts: ["Main's", "This branch's"], rec: "Main's", age: "now" };
+
+const ASK = `<p>Rebase the M2 stack on main and push. Tell me what's left for me.</p>`;
+const RECORD = tool("Open items", "Y1: Run the lint fix, or look first?") + tool("Open items", "Y2: Answer Mira's threads on #812") + tool("Open items", "Y3: Mark #812 to #815 ready") + tool("Open items", "A1: Re-check #820 after the M2 merge");
+const REPLY = `<p><strong>Done on all 12 PRs</strong></p><ul><li>Rebased #812 to #823 on main and pushed; CI runs on each.</li><li>Fixed the 2 failing specs in #816 (a stale tax fixture).</li><li>Regenerated the schema dump in #819.</li></ul>`
+  + `<p><strong>Waiting on you</strong> (3)</p><ul><li><strong>Y1</strong> decision: Run <code>bin/schema-lint --fix</code> now, or look at the 14 new warnings first? (I'd look first)</li><li><strong>Y2</strong> your task: Answer Mira's 2 review threads on #812.</li><li><strong>Y3</strong> goes ahead when CI is green: mark #812 to #815 ready, in the order #812, #814, #813, #815. Say if you want another order.</li></ul>`
+  + `<p><strong>Claude will check</strong> (1)</p><ul><li><strong>A1</strong> after the M2 stack merges: re-check #820, which GitHub shows as conflicting.</li></ul>`
+  + `<p>Can I remove these two worktrees? <code>~/dev/shop-wt-cart</code> and <code>~/dev/shop-wt-tax</code> are both merged.</p>`;
+const LOG1 = band(ASK) + step("Bash", "Rebase and push the stack", ["Pushed 12 branches.", "CI started on #812 to #823."]) + RECORD + claude(REPLY) + doneLn("Worked for 3m 12s, done 2:14 PM");
+const WATCH = card({ name: "Watch the M2 stack", start: "2:14 PM", d: "4m" });
+const SIDE_A = (n = 4, extra = {}) => sideHTML({ total: extra.total ?? n + 3, groups: [
+  ["Checkout", srow({ title: TITLE, word: extra.word || "Your turn, 4 min", now: extra.now || "Your turn: Y1, run the lint fix or look first", cur: true, state: extra.state || "amber", mark: extra.mark || "stopped", subs: monLine("Watch the M2 stack") + (n ? wl(n, extra.due) : "") })
+    + srow({ title: "Norway tax rates", word: "Your turn, 1 h", now: "Waiting for your pick of the rounding rule", subs: wl(2) })],
+  ["", srow({ title: "Fix the flaky upload test", word: "Working", state: "green", mark: "work", now: "Claude is running the upload specs" })
+    + srow({ title: "Docs: billing webhooks", word: "Your turn, 3 h", now: "Draft ready for your review", subs: wl(1) })],
+] });
+const R1 = (o = {}) => rail({ count: 1, cards: WATCH, items: o.items || [item(Y1), item(Y2), item(Y3), item(Y4, { isnew: true })], checks: o.checks || [check(A1)], closed: o.closed || [], past: [pr("Rebase and push the stack", "2m 40s")] });
+
+/* ---------- the picture ---------- */
+put("f-picture", win({ side: SIDE_A(), hd: head(TITLE, "Your turn: Y1, run the lint fix or look first"), log: LOG1, dk: dock(), r: R1(), h: 760 }));
+
+/* ---------- 1. a reply opens 5 items ---------- */
+const CLI1 = `<span class="u">&gt; Rebase the M2 stack on main and push. Tell me what's left for me.</span>
+<span class="c">⏺</span> Bash(Rebase and push the stack)
+  <span class="d">⎿  Pushed 12 branches.</span>
+<span class="c">⏺</span> Bash(/usr/bin/python3 -I ~/.claude/skills/open-items/scripts/ledger.py block
+       .ai-notes/checkout-m2/open-items.md)
+  <span class="d">⎿  **Waiting on you** (3) …</span>
+<span class="c">⏺</span> <b>Done on all 12 PRs</b>
+  - Rebased #812 to #823 on main and pushed; CI runs on each.
+  - Fixed the 2 failing specs in #816 (a stale tax fixture).
+  - Regenerated the schema dump in #819.
+
+  <b>Waiting on you</b> (3)
+  - <b>Y1</b> decision: Run <span class="c">bin/schema-lint --fix</span> now, or look at the
+    14 new warnings first? (I'd look first)
+  - <b>Y2</b> your task: Answer Mira's 2 review threads on #812.
+  - <b>Y3</b> goes ahead when CI is green: mark #812 to #815 ready, in the
+    order #812, #814, #813, #815. Say if you want another order.
+
+  <b>Claude will check</b> (1)
+  - <b>A1</b> after the M2 stack merges: re-check #820, which GitHub shows
+    as conflicting.
+
+  Can I remove these two worktrees? <span class="c">~/dev/shop-wt-cart</span> and
+  <span class="c">~/dev/shop-wt-tax</span> are both merged.
+
+<span class="d">✻ Worked for 3m 12s</span>`;
+
+const cardTop = `<div class="qa-card"><div class="nd-head"><b>${XO} Waiting on you</b><span class="why">4 items from Claude's replies</span></div><div class="qbody">`
+  + [["Y1", "Run the lint fix, or look first?"], ["Y2", "Answer Mira's 2 threads on #812"], ["Y3", "Mark #812 to #815 ready (goes ahead on green CI)"], ["Y4", "Remove the two worktrees?"]].map(([i, t], k) => `<div class="acc"><span class="am">○</span><span class="hd">${i}</span><span class="miss">${t}</span></div>`).join("")
+  + `</div></div>`;
+put("f-s1-opts", [
+  opt("A. Groups in the background panel", "The panel already holds what runs beside the conversation. The items stay in view while you read and type, and don't take the transcript's space.", railCrop(R1()), true),
+  opt("B. A card above the message box", "It looks like the Needs you card, so it reads as blocking when nothing blocks, and with 4 items open it takes a third of the panel for the whole session.", crop(claude(REPLY) + doneLn("Worked for 3m 12s, done 2:14 PM"), { h: 470, dk: `<div class="dock"><div class="dock-inner">${cardTop}<div class="composer"><span class="g">❯</span><textarea rows="1" readonly placeholder="Message ${TITLE}, / for commands"></textarea></div></div></div>` })),
+  opt("C. Live in the replies", "Each reply's list would update in place, so the same item shows in many replies, and the open ones scroll away with the reply they came from.", crop(claude(REPLY.replace("<strong>Y1</strong>", `<strong class="x-ring">Y1</strong>`)) + doneLn("Worked for 3m 12s, done 2:14 PM") + band("<p>Y2 done</p>") + claude(`<p>Thanks. <strong>Waiting on you</strong> (3): <strong>Y1</strong>, <strong>Y3</strong>, <strong>Y4</strong>, as above.</p>`), { h: 470, dk: dock() })),
+].join(""));
+
+strip("f-s1", [
+  { do: "In the Claude Code CLI, with the skill", f: cli(CLI1, 560), see: "The block is printed from the ledger file by <code>ledger.py block</code>, never typed. The last question is outside it: the agent didn't record it." },
+  { do: "In Synopia, as the turn ends", f: pair(crop(RECORD + claude(REPLY) + doneLn("Worked for 3m 12s, done 2:14 PM"), { h: 560, dk: dock() }), railCrop(R1({ items: [item(Y1), item(Y2), item(Y3)] }))), see: "Claude's 4 <code>Open items</code> calls show as steps. The panel already lists Y1, Y2, Y3 and A1 from them, with solid ids." },
+  { do: "2 seconds later, without you", f: `<div style="display:flex;gap:9px;align-items:start">${railCrop(R1())}${sideCrop(SIDE_A())}</div>`, see: "The keeper read the reply and opened Y4 from its last sentence: dashed id, \"found by Synopia\". The sidebar line counts 4." },
+]);
+document.getElementById("f-s1").style.setProperty("--n", "2");
+
+/* ---------- 2. answering in prose ---------- */
+const QUOTE = "> Run `bin/schema-lint --fix` now, or look at the 14 new warnings first?\n\nRun it";
+const QUOTE_MD = `<blockquote><p>Run <code>bin/schema-lint --fix</code> now, or look at the 14 new warnings first?</p></blockquote><p>Run it</p>`;
+const LINT = step("Bash", "Fix the schema lint warnings", ["Fixed 14 warnings in 6 files.", "Pushed #819."]);
+strip("f-s2", [
+  { do: "Quote Y1's line, write \"Run it\"", f: crop(claude(REPLY.split("<p><strong>Claude")[0]) + doneLn("Worked for 3m 12s, done 2:14 PM"), { h: 360, mode: "insert", dk: dock(QUOTE, TITLE, 4) }), see: "Plain prose, as you write today. No id needed." },
+  { do: "<kbd>Enter</kbd>", f: stack(crop(band(QUOTE_MD) + live("Bash(Fix the schema lint warnings)"), { h: 160 }), railCrop(rail({ st: "work", count: 1, cards: WATCH, items: [item(Y1, { ans: "Answered: “Run it”. Claude is on it." }), item(Y2), item(Y3), item(Y4)], checks: [check(A1)] }))), see: "The keeper's call on your message matched the quote to Y1: answered, in grey, while Claude runs the fix." },
+  { do: "The turn ends", f: stack(crop(band(QUOTE_MD) + LINT + claude("<p>Fixed the 14 warnings in #819. <strong>Waiting on you</strong> (3): Y2, Y3, Y4. Closed this turn: Y1.</p>") + doneLn("Worked for 41s, done 2:19 PM"), { h: 220 }), railCrop(rail({ count: 1, cards: WATCH, items: [item(Y2), item(Y3), item(Y4)], checks: [check(A1)], closed: [closedLn("Y1", "Answered “Run it”: 14 warnings fixed")] }))), see: "Claude closed Y1 itself (solid id, no Undo). Its reply's block now lists Y4 too: Synopia wrote the keeper's find into the file, so the agent read it." },
+]);
+
+/* ---------- 3. several by id ---------- */
+const R3 = (o = {}) => rail({ count: 1, cards: WATCH, items: o.items, checks: [check(A1)], closed: o.closed || [] });
+strip("f-s3", [
+  { do: "Click \"Keep them\" on Y4", f: stack(railCrop(R3({ items: [item(Y2), item(Y3), item({ ...Y4 }, { focus: true })] })), crop("", { mode: "insert", dk: dock("Y4 Keep them") })), see: "The button only writes <code>Y4 Keep them</code> into the box and puts you in insert mode. Nothing is sent yet." },
+  { do: "Type two more lines, <kbd>Enter</kbd>", f: stack(crop("", { mode: "insert", dk: dock("Y4 Keep them\nY2 done\nY3 later, after the demo") }), crop(band("<p>Y4 Keep them<br>Y2 done<br>Y3 later, after the demo</p>") + live("Thinking"), { h: 130 })), see: "One message, three answers. The ids make each line unambiguous; prose would work too." },
+  { do: "The turn ends", f: railCrop(R3({ items: [item(Y3, { note: "Later: after the demo. It goes ahead then, unless you object.", age: "later" })], closed: [closedLn("Y4", "Answered “Keep them”"), closedLn("Y2", "Done: you said done; 2 threads resolved on #812")] })), see: "Y2 and Y4 closed. Y3 stays, marked later with your words; its trigger moved to after the demo." },
+]);
+
+/* ---------- 4. a follow-up comes due ---------- */
+const WATCH_END = `<div class="ln tool done"><span class="g">●</span><div><span class="name">Monitor</span>(Watch the M2 stack)<div class="step-out">${res(`<span class="out">#815 merged, stopped watching\nALL DONE</span>`, true)}</div></div></div>`;
+strip("f-s4", [
+  { do: "2:20 PM: you leave it", f: stack(railCrop(rail({ count: 1, cards: WATCH, items: [item(Y3)], checks: [check(A1)] })), sideCrop(SIDE_A(1, { total: 4 }))), see: "A1 waits on its trigger, with the watcher's moving mark beside it. The session is your turn." },
+  { do: "4:40 PM: the last PR merges", f: crop(WATCH_END + claude("<p><strong>A1</strong> is due: the M2 stack merged. Re-checking #820.</p>") + step("Bash", "Rebase #820 on main", ["CONFLICT (content): Merge conflict in config/tax_rates.yml"]) + live("Thinking"), { h: 300 }), see: "The watcher's line starts Claude's turn. Claude names the item it is acting on." },
+  { do: "The turn ends", f: railCrop(rail({ items: [item(Y3), item(Y5, { isnew: true })], closed: [closedLn("A1", "Checked: #820 still conflicts; Claude asks you in Y5")], past: [pr("Watch the M2 stack", "2h 26m", "mon")] })), see: "A1 closed; what it found became a new decision, Y5. If #820 had rebased cleanly, A1 would just close." },
+]);
+
+/* ---------- 5. a default goes ahead ---------- */
+strip("f-s5", [
+  { do: "2:20 PM", f: railCrop(rail({ count: 1, cards: WATCH, items: [item(Y3), item(Y4)], checks: [check(A1)] })), see: "Y3 says when it goes ahead and that you can object. \"Object\" would write <code>Y3 wait: </code> into the box." },
+  { do: "2:31 PM: CI turns green", f: crop(`<div class="ln tool done"><span class="g">●</span><div><span class="name">Monitor</span>(Watch the M2 stack)<div class="step-out">${res(`<span class="out">#812 to #815 | CI done | failing: none</span>`, true)}</div></div></div>` + claude("<p><strong>Y3</strong> goes ahead: CI is green on all four and you didn't object.</p>") + step("Bash", "Mark #812 to #815 ready", ["#812 ready", "#814 ready", "#813 ready", "#815 ready"]) + doneLn("Worked for 9s, done 2:31 PM"), { h: 300 }), see: "Claude acts on the default and says so in one line." },
+  { do: "After the turn", f: railCrop(rail({ count: 1, cards: WATCH, items: [item(Y4)], checks: [check(A1)], closed: [closedLn("Y3", "Went ahead: #812, #814, #813, #815 marked ready")] })), see: "Y3 closed as went ahead. Had you written \"Y3 wait\", it would have stayed open as a decision." },
+]);
+
+/* ---------- 6. the keeper ---------- */
+const WATCH_THREADS = `<div class="ln tool done"><span class="g">●</span><div><span class="name">Monitor</span>(Watch the M2 stack)<div class="step-out">${res(`<span class="out">#812 b41c9e2 | CI done | failing: none | unresolved threads: 0</span>`, true)}</div></div></div>`;
+strip("f-s6", [
+  { do: "The agent forgot an item", f: stack(crop(claude(`<p>…</p><p>Can I remove these two worktrees? <code>~/dev/shop-wt-cart</code> and <code>~/dev/shop-wt-tax</code> are both merged.</p>`) + doneLn("Worked for 3m 12s, done 2:14 PM"), {}), railCrop(rail({ count: 1, cards: WATCH, items: [item(Y4, { isnew: true })] }))), see: "The question was outside the reply's block. The keeper quoted it and opened Y4, dashed." },
+  { do: "The work shows your task done", f: stack(crop(WATCH_THREADS, {}), railCrop(rail({ count: 1, cards: WATCH, items: [item(Y3)], closed: [closedLn("Y2", "Closed by Synopia: the watcher shows no open threads on #812", { found: true, undo: true })] }))), see: "You answered Mira's threads on GitHub and said nothing. The watcher's line was the evidence; Undo stays for one turn." },
+  { do: "A follow-up went stale", f: stack(crop(claude("<p>Mira closed #818 in favour of #824, so there's nothing to re-run there.</p>") + doneLn("Worked for 6s, done 3:02 PM"), {}), railCrop(rail({ items: [item(Y3)], checks: [check(A1)], closed: [closedLn("A2", "Dropped by Synopia: #818 was closed", { found: true, mark: "stopped", undo: true })] }))), see: "Claude said it in passing and didn't close A2. The keeper dropped it, with the reason." },
+]);
+
+/* ---------- 7. wrong guesses ---------- */
+const Y6 = { id: "Y6", kind: "decision", text: "Should the tax table be cached per request?", opts: ["Yes", "No"], found: true, age: "1 min" };
+strip("f-s7", [
+  { do: "A false item: <kbd>J</kbd> to it, <kbd>d</kbd>", f: stack(crop(claude("<p>Should the tax table be cached per request? No: it is 40 rows and read once at boot, so I left it.</p>"), {}), railCrop(rail({ items: [item(Y3), item(Y6, { focus: true })] }))), see: "Claude asked and answered itself; the keeper took it as a decision. <kbd>d</kbd> says \"Not an item\"." },
+  { do: "It goes, and stays gone", f: railCrop(rail({ items: [item(Y3)], closed: [closedLn("Y6", "Not an item: you said so", { found: true, mark: "stopped", undo: true })] })), see: "The keeper never opens the same text again in this ledger. Undo brings it back for one turn." },
+  { do: "A wrong close: say so", f: stack(railCrop(rail({ items: [item(Y4)], closed: [closedLn("Y3", "Went ahead by Synopia: you said “go”", { found: true, undo: true })] })), crop(band("<p>No, \"go\" was for Y4. Y3 waits for the demo.</p>"), {})), see: "The closed line names what it read, so the mistake shows. Undo, or one sentence: Y3 reopens and Y4 closes." },
+]);
+
+/* ---------- 8. handoff ---------- */
+const FILE = `<span class="d"># Open items: checkout-m2</span>
+
+<span class="d">## Waiting on you</span>
+
+- [ ] Y3 · default · Mark #812 to #815 ready in this order: #812, #814, #813, #815.
+  - goes ahead: after the demo, unless you object
+- [ ] Y5 · decision · #820 conflicts in config/tax_rates.yml: keep main's Norway rates, or this branch's?
+  - options: Main's | This branch's
+  - recommended: Main's
+
+<span class="d">## Claude will check</span>
+
+- [ ] A3 · follow-up · Re-run the checkout specs on main.
+  - trigger: after #820 merges
+
+<span class="d">## Closed</span>
+
+- [x] Y1 · answered 2026-11-26 14:15 · "Run it" · done: 14 warnings fixed
+- [x] Y4 · answered 2026-11-26 14:22 · "Keep them"
+- [-] A2 · dropped 2026-11-26 15:02 · #818 was closed`;
+const A3 = { id: "A3", text: "Re-run the checkout specs on main.", trig: "after #820 merges" };
+strip("f-s8", [
+  { do: "<code>/handoff</code>", f: crop(band("<p>/handoff</p>") + tool("Write", ".ai-notes/checkout-m2/handoff-m3.md") + tool("Start session", "Ship checkout M3") + claude("<p>Handed off: <strong>Y3</strong>, <strong>Y5</strong> and <strong>A3</strong> are in “Ship checkout M3”. The handoff file lists <code>open-items.md</code> first.</p>") + doneLn("Worked for 22s, done 5:02 PM"), { h: 300 }), see: "The old session's last reply says which items moved and where." },
+  { do: "The new session's first turn", f: stack(railCrop(rail({ st: "turn", items: [item({ ...Y3, when: "Goes ahead after the demo" }), item(Y5)], checks: [check(A3)] })), sideCrop(sideHTML({ total: 5, groups: [["Checkout", srow({ title: TITLE, word: "Your turn, 1 min", now: "Handed off to Ship checkout M3" }) + srow({ title: "Ship checkout M3", word: "Your turn, now", now: "Your turn: Y5, which tax rates to keep", cur: true, subs: wl(2) })]] }))), see: "Same ids, under the new session. The old row lost its line: the list follows the session that holds the ledger." },
+  { do: "The file both read", f: cli(FILE, 0, ".ai-notes/checkout-m2/open-items.md"), see: "Readable as it is, one line per item, written back by Synopia between turns. The CLI reads the same file." },
+]);
+
+/* ---------- 9. across sessions ---------- */
+const OL_ROWS = [
+  ["Ship checkout M2", "Your turn, 4 min", [["Y1", "Run bin/schema-lint --fix now, or look at the 14 new warnings first?", "decision", "4 min"], ["Y2", "Answer Mira's 2 review threads on #812.", "your task", "4 min"], ["Y3", "Mark #812 to #815 ready in this order: #812, #814, #813, #815.", "default", "4 min"], ["Y4", "Can I remove the worktrees ~/dev/shop-wt-cart and ~/dev/shop-wt-tax?", "decision", "4 min", true]]],
+  ["Norway tax rates", "Your turn, 1 h", [["Y2", "Round per line or per invoice?", "decision", "1 h"], ["Y3", "Ask finance for the 2027 reduced rate.", "your task", "2 h"]]],
+  ["Docs: billing webhooks", "Your turn, 3 h", [["Y1", "Review the draft of the retry section.", "your task", "3 h"]]],
+];
+const olList = sel => { let k = 0; return OL_ROWS.map(([t, w, its]) => `<div class="x-olh">${t}<span>${w}</span></div>` + its.map(([i, txt, kind, a, f]) => `<div class="ol-it" aria-selected="${k++ === sel}"><span class="n"><span class="x-id${f ? " x-found" : ""}">${i}</span><span class="x-t">${esc(txt)}</span></span><span class="f">${kind}</span><span class="a">${a}</span></div>`).join("")).join(""); };
+const WLIST = sel => `<div class="open-list"><div class="panel ol-panel"><header class="ol-head"><h2 class="c-title">Waiting on you</h2><p class="c-meta">7 items in 3 sessions, in sidebar order.</p></header><div class="composer ol-filter"><span class="g">❯</span><input readonly placeholder="Type to find an item by its text, its id or its session"></div><div class="ol-list">${olList(sel)}</div><p class="ol-keys"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> move, <kbd>Enter</kbd> answers in its session, <kbd>Esc</kbd> closes</p></div></div>`;
+const WIN9 = (over, o = {}) => win({ side: SIDE_A(), hd: head(TITLE, "Your turn: Y1, run the lint fix or look first"), log: LOG1, dk: dock(), r: R1(), h: 520, over, ...o });
+const pinned = sideHTML({ total: null, groups: [["Waiting on you", OL_ROWS.flatMap(([t, w, its]) => its.slice(0, 2).map(([i, txt]) => `<button class="row" data-state="amber" aria-current="false"><span class="r-main"><span class="r-title"><span class="x-id" style="color:inherit">${i}</span> ${esc(txt)}</span><span class="r-state">${t}</span></span><span class="r-side">${XO}</span></button>`)).join("")], ["Checkout", srow({ title: TITLE, word: "Your turn, 4 min", cur: true }) + srow({ title: "Norway tax rates", word: "Your turn, 1 h" })]] });
+put("f-s9-opts", [
+  opt("A. A list over the main area, by <kbd>w</kbd>", "Every item in one place, grouped by session in sidebar order, built like the Open list; the sidebar stays one row per session.", WIN9(WLIST(0)), true),
+  opt("B. A group pinned in the sidebar", "Items become rows among sessions, so the sidebar's one meaning (a row is a session) breaks, and 7 items push the sessions down.", sideCrop(pinned)),
+  opt("C. Sidebar lines only", "You see how many, never what: you open each session to find its items.", sideCrop(SIDE_A())),
+].join(""));
+put("f-s9", [
+  { do: "<kbd>w</kbd>, then <kbd>j</kbd> four times to Norway's Y2", f: WIN9(WLIST(4)), see: "Every open item, grouped by session in sidebar order. Dashed ids show what Synopia found." },
+  { do: "<kbd>Enter</kbd>", f: win({ side: sideHTML({ total: 7, groups: [["Checkout", srow({ title: TITLE, word: "Your turn, 4 min", subs: wl(4) }) + srow({ title: "Norway tax rates", word: "Your turn, 1 h", now: "Waiting for your pick of the rounding rule", cur: true, subs: wl(2) })], ["", srow({ title: "Fix the flaky upload test", word: "Working", state: "green", mark: "work", now: "Claude is running the upload specs" }) + srow({ title: "Docs: billing webhooks", word: "Your turn, 3 h", subs: wl(1) })]] }), hd: head("Norway tax rates", "Waiting for your pick of the rounding rule"), log: claude("<p><strong>Waiting on you</strong> (2)</p><ul><li><strong>Y2</strong> decision: Round per line or per invoice? (I'd round per invoice, as the 2026 rules say)</li><li><strong>Y3</strong> your task: Ask finance for the 2027 reduced rate.</li></ul>") + doneLn("Worked for 1m 02s, done 1:10 PM"), dk: dock("Y2 ", "Norway tax rates"), r: rail({ items: [item({ id: "Y2", kind: "decision", text: "Round per line or per invoice?", opts: ["Per line", "Per invoice"], rec: "Per invoice", age: "1 h" }, { focus: true }), item({ id: "Y3", kind: "your task", text: "Ask finance for the 2027 reduced rate.", acts: ["Done"], age: "2 h" })] }), h: 520, mode: "insert" }), see: "That session opens with <code>Y2 </code> in its box, in insert mode, and the item focused. Type the answer, <kbd>Enter</kbd>." },
+].map((s, i) => `<figure class="sb-state"><p class="sb-do"><i>${i + 1}</i>${s.do}</p>${s.f}<p class="sb-see">${s.see}</p></figure>`).join(""));
+document.getElementById("f-s9").style.setProperty("--n", "1");
+
+/* ---------- 10. dark ---------- */
+put("f-dark", [
+  `<figure class="sb-state"><p class="sb-do">The picture, dark</p>${win({ side: SIDE_A(), hd: head(TITLE, "Your turn: Y1, run the lint fix or look first"), log: LOG1, dk: dock(), r: R1(), h: 700, dark: true })}</figure>`,
+  `<figure class="sb-state"><p class="sb-do">The Waiting on you list, dark</p>${WIN9(WLIST(4), { dark: true })}</figure>`,
+  `<figure class="sb-state"><p class="sb-do">Answered, closed and undoable, dark</p><div class="sb-opts" style="--n:3">${railCrop(rail({ st: "work", count: 1, cards: WATCH, items: [item(Y1, { ans: "Answered: “Run it”. Claude is on it." }), item(Y4, { focus: true })], checks: [check(A1)] }), true)}${railCrop(rail({ items: [item(Y3)], closed: [closedLn("Y2", "Closed by Synopia: the watcher shows no open threads on #812", { found: true, undo: true }), closedLn("Y1", "Answered “Run it”: 14 warnings fixed")] }), true)}${cli(FILE, 0, ".ai-notes/checkout-m2/open-items.md", true)}</div></figure>`,
+].join(""));
+
+/* ---------- edge cases ---------- */
+const many = Array.from({ length: 6 }, (_, i) => item({ id: "Y" + (i + 3), kind: ["decision", "your task", "default"][i % 3], text: ["Pick the retry limit for the webhook sender.", "Approve the copy change on the receipt email.", "Rename the flag to checkout_v2 on Monday.", "Confirm the 2027 VAT table with finance.", "Answer the question from support on #829.", "Drop the old cart cookie after the release."][i], acts: i % 3 === 1 ? ["Done"] : [], age: (i + 1) * 7 + " min" }));
+put("f-edges", [
+  edge("Nothing open", "No groups in the panel; the reply's block is one line, \"Nothing waits on you.\" The sidebar has no line.", crop(claude("<p>Pushed #823. <strong>Nothing waits on you.</strong></p>") + doneLn("Worked for 8s, done 5:40 PM"), { h: 150 })),
+  edge("31 items open", "The panel shows the 6 oldest and \"25 more in the Waiting on you list (w)\". At 3 sessions untouched, an item reads stale and is dropped at the next handoff, with a line saying so.", railCrop(rail({ n: 31, items: [...many, `<p class="x-w" style="margin:2px 12.5px 6px;font-size:11px;color:var(--ink-3)">25 more in the Waiting on you list (<kbd>w</kbd>)</p>`] }))),
+  edge("A line Synopia can't read", "Someone edited the file by hand. Synopia shows the line as it is, never guesses from it, and the agent's next turn rewrites it.", railCrop(rail({ items: [item(Y3), `<div class="x-it"><span class="x-id" style="border-style:dotted">?</span><span class="x-k">1 line Synopia can't read, in open-items.md</span><span></span><span class="x-t" style="font-family:var(--mono);font-size:11px">- Y7 ask Mira about the refund flow??</span></div>`] }))),
+  edge("A session with no skill", "Every item is the keeper's, so every id is dashed; no file is written until the agent names one.", railCrop(rail({ items: [item({ ...Y1, found: true }), item({ ...Y2, found: true })] }))),
+  edge("A long item", "The text stops at two lines in the panel; the list across sessions shows one. The full text is in the reply it came from (a click on it) and in the file.", railCrop(rail({ items: [item({ id: "Y8", kind: "decision", text: "The refund webhook retries 5 times over 2 hours, but support wants refunds to show within 10 minutes and finance wants no duplicate credit notes, so either shorten the backoff, add an idempotency key on the credit note, or both?", opts: ["Shorten it", "Add the key", "Both"], rec: "Both", age: "2 min" })] }))),
+  edge("Two sessions share a ledger", "Both work in checkout-m2: one id series, so Y6 opened in one is never reused by the other. The list shows each item under the session that opened it.", sideCrop(sideHTML({ total: 3, groups: [["Checkout", srow({ title: TITLE, word: "Your turn, 4 min", subs: wl(2) }) + srow({ title: "Checkout: receipt emails", word: "Working", state: "green", mark: "work", subs: wl(1) })]] }))),
+].join(""));
+
+/* ---------- theme, motion, scroll, height ---------- */
+const root = document.documentElement, tb = document.getElementById("sb-theme"), mq = matchMedia("(prefers-color-scheme: dark)");
+let picked = new URLSearchParams(location.search).get("theme");
+const fixed = new Set([...document.querySelectorAll(".sb-dark, .sb-light")]); // frames drawn dark on purpose
+const apply = () => {
+  const dark = picked ? picked === "dark" : mq.matches;
+  root.dataset.theme = dark ? "dark" : "light";
+  tb.textContent = dark ? "Light mode" : "Dark mode";
+  document.querySelectorAll(".sb-crop, .sb-win").forEach(f => { if (!fixed.has(f)) f.classList.toggle("sb-dark", dark); });
+};
+mq.addEventListener("change", apply);
+tb.onclick = () => { picked = root.dataset.theme === "dark" ? "light" : "dark"; apply(); };
+apply();
+const mo = document.getElementById("sb-motion");
+mo.onclick = () => { const on = document.body.classList.toggle("sb-reduced"); mo.textContent = on ? "Preview motion" : "Preview reduced motion"; };
+if (matchMedia("(prefers-reduced-motion: reduce)").matches) document.body.classList.add("sb-reduced");
+const settle = () => {
+  document.querySelectorAll(".sb-crop .log, .sb-win .log").forEach(l => { l.scrollTop = l.scrollHeight; });
+  root.dataset.h = root.scrollHeight;
+};
+settle();
+document.fonts.ready.then(settle);
+</script>
+</body>
+</html>
