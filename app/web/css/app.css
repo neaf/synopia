@@ -971,3 +971,10 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
 .oi-on .oi-w { grid-column: 2; font-size: 10.5px; color: var(--ink-3); display: inline-flex; gap: .5ch; align-items: center; }
 .oi-on .oi-w .ind { font-size: 9px; }
 .kid .kid > .oi-on { margin-left: 69px; }
+
+/* ---------- the sidebar's "○ N waiting on you" line (R4.2, sidebar.js waitingLine): drawn like "N to review", in the row's quiet ink ---------- */
+.ind.o-open { color: var(--ink-3); }
+.side .row .r-wait { color: #ADBAC7; }
+.side .row .r-wait .ind.o-open { color: #9198A1; }
+.side .row[aria-current="true"] .r-wait { color: var(--ink-2); }
+.side .row[aria-current="true"] .r-wait .ind.o-open { color: var(--ink-3); }

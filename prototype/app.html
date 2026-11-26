@@ -599,6 +599,11 @@
   .side .row .r-drift { color: #E3B341; }
   .side .row .r-agent { color: #9198A1; }
   .side .r-review { color: #58A6FF !important; }
+  .ind.o-open { color: var(--ink-3); }
+  .side .row .r-wait { color: #ADBAC7; }
+  .side .row .r-wait .ind.o-open { color: #9198A1; }
+  .side .row[aria-current="true"] .r-wait { color: var(--ink-2); }
+  .side .row[aria-current="true"] .r-wait .ind.o-open { color: var(--ink-3); }
   .side .row .r-side { border-color: var(--guide); background: #F6F8FA; }
   /* the open session: light like the canvas, normal light-theme text, kind colours back to the light set */
   .side .row[aria-current="true"] { background: var(--canvas); border-color: var(--canvas);
@@ -967,6 +972,7 @@ function rowHTML(s) {
       ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
       ${(n => n ? `<span class="r-agent"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
       ${(n => n ? `<span class="r-agent r-review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(toReview(s).length)}
+      ${((n, d) => n || d ? `<span class="r-agent r-wait"><i class="el"></i>${ind("open")} ${[...(n ? [`${n} waiting on you`] : []), ...(d ? [`${d} due`] : [])].join(", ")}</span>` : "")(OI(s).items.filter(i => i.kind !== "review" && i.state !== "answered" && i.state !== "later").length, OI(s).checks.filter(a => a.state === "due").length)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
     <span class="merge-hint">+ New group</span>
@@ -1241,6 +1247,7 @@ function filesHTML(patches) {
     timeout: ['', '<i class="sqo amber"></i>'],
     timeoutfill: ['', '<i class="sq amber"></i>'],
     review: ['', '<i class="badge"></i><i class="badge-chk"></i>'],
+    open: ['o-open', '<svg class="k" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.3" stroke="currentColor" stroke-width="1.4"/></svg>'],
     reviewflag: ['', '<i class="flag"></i>'],
     reviewring: ['', '<i class="ring-blue"></i><i class="chk sm bluechk"></i>']
   };

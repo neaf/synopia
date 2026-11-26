@@ -113,6 +113,10 @@ check('Closed this turn: dim lines with what closed them', JSON.stringify(closed
 const bad = await ev(`document.querySelector('.rail .oi-wait .oi.bad')?.textContent || ''`);
 check('the line Synopia can\'t read', bad === "?1 line Synopia can't read, in open-items.md", bad);
 
+// ---------- the sidebar's line (R4.2, FR-ITEM-06) ----------
+const side = await J(`(l => l ? { text: l.textContent.trim(), after: l.previousElementSibling?.dataset.line, still: (l.querySelector('.ind')?.getAnimations({ subtree: true }) || []).length === 0, ring: !!l.querySelector('.ind.o-open circle') } : null)(document.querySelector('#groups .row[data-id="${S}"] [data-line="waiting"]'))`);
+check('the sidebar: "○ 4 waiting on you" under "2 to review", its hollow circle still (open Y items, review items aside, the owned Y5 counted)', !!side && side.text === '4 waiting on you' && side.after === 'review' && side.still && side.ring, JSON.stringify(side));
+
 // ---------- a subagent's item under its card ----------
 const owned = await J(`(k => k ? { on: k.querySelector('.oi-on')?.textContent || '', moves: (k.querySelector('.oi-on .ind')?.getAnimations({ subtree: true }) || []).filter(a => a.playState === 'running').length } : null)(document.querySelector('.rail .kid:has(.card[data-agent="${REBASE}"])'))`);
 check('Y5 shows under its subagent\'s card, "with <name>", with the moving mark', !!owned && owned.on.startsWith('Y5') && owned.on.endsWith('with Rebase #820 on main') && owned.moves > 0, JSON.stringify(owned));
@@ -166,5 +170,6 @@ fs.writeFileSync(LEDGER, ledger().replace('- Y8 ask Mira about the refund flow??
 const t0 = Date.now();
 const follows = await c.until(`!!document.querySelector('.rail .oi[data-oi="Y11"]') && !document.querySelector('.rail .oi.bad')`, 3000);
 check('a rewritten ledger shows in the panel within 3 s', follows, `${Date.now() - t0} ms`);
+check('the sidebar line follows: 5 waiting on you', await c.until(`(document.querySelector('#groups .row[data-id="${S}"] [data-line="waiting"]')?.textContent || '').trim() === '5 waiting on you'`, 3000));
 c.print();
 c.close();

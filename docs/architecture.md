@@ -99,7 +99,7 @@ Dev and test only (not loaded in production):
 | `js/table-fit.js` | Fits a markdown table in the log to its reply (only the long text wraps, then the first column, then it scrolls in its box), again when the log resizes or a fold opens. |
 | `js/marks.js` | Mark drawing per mark key and the animation phase pin (CON-WK-05). |
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
-| `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
+| `js/sidebar.js` | Rows (their sub-lines, "○ N waiting on you, N due" from the state's `waiting` and `due` among them), groups tree, rename field; sends layout intents. |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
 | `js/rail.js` | Background work panel: agents (an owned item under its running subagent, `open-items.js`), To review and the open-items groups (`open-items.js`) between the tree and Past, shown with background work or open items; Claude's background shells and monitors as cards from their start, your runs and the refresh once due (`cardAt`), no card for Claude's foreground Bash; who started each by its sign, the waiting card. |
 | `js/runs.js` | Runs (R5.13, R7.1, 2026-11-26): your `!` command and the refresh in one shape (`ownRowHTML` on the `!` band in the transcript, `credsRunHTML` in the dock), their state line; `bgState` and the who sign for the panel; draws only what the backend sent. Claude's Bash and Monitor steps are steps (`transcript.js`). |
@@ -444,7 +444,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-ITEM-03 | open-items.ts (review items, `markReviewed`, the carried marks), router.ts (`item`), publisher.ts (`agents[].review`), status.ts (`review`), protocol.js, state.js (`applyOpenItems`), transcript.js (Mark reviewed by the item's id), open-items.js and rail.js (To review from the review items) |
 | FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`), open-items.ts (`with`), open-items.js and rail.js (under the subagent's card) |
 | FR-ITEM-05 | publisher.ts, protocol.js (`openItems`), state.js (`applyOpenItems`), open-items.js, rail.js, transcript.js (the clicks), composer.js (`writeLine`), app.css, dark.css |
-| FR-ITEM-06 | open-items.ts (`counts`), status.ts (`waiting`, `due`), publisher.ts; planned: sidebar.js, tween.js |
+| FR-ITEM-06 | open-items.ts (`counts`), status.ts (`waiting`, `due`), publisher.ts, sidebar.js (`waitingLine`), tween.js, marks.js (`open`) |
 | FR-ITEM-07 | none yet (planned: open-items.ts, keys.js, ui-state.js, rail.js) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |

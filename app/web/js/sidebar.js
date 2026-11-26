@@ -24,6 +24,7 @@ export function rowHTML(s) {
       ${waitLine(s)}
       ${bgLine(s)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(s.state.review)}
+      ${waitingLine(s)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
     <span class="merge-hint">+ New group</span>
@@ -41,6 +42,12 @@ function bgLine(s) {
   const st = bgState(b), x = { bg: b, running: false, failed: st === "failed", st };
   const word = st === "failed" ? "failed" : st === "timed out" ? "timed out" : st === "stopped" || st === "killed" ? "stopped" : "finished";
   return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))} ${many(gr.length)} ${word}</span>`;
+}
+/* the open items waiting on you, and the follow-ups due (R4.2, FR-ITEM-06): the backend's counts (status.ts), under "N to review" */
+function waitingLine(s) {
+  const n = s.state.waiting || 0, d = s.state.due || 0; if (!n && !d) return "";
+  const text = [...(n ? [`${n} waiting on you`] : []), ...(d ? [`${d} due`] : [])].join(", ");
+  return `<span class="r-agent r-wait" data-line="waiting"><i class="el"></i>${ind("open")} ${text}</span>`;
 }
 /* a run of yours that waits for input (R4.2, 2026-11-26): the only run of yours that reaches the sidebar, as needs you */
 function waitLine(s) {
