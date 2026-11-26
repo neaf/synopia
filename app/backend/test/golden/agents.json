@@ -14,6 +14,7 @@
       "running": true,
       "review": false,
       "stopped": false,
+      "waiting": false,
       "start": "2026-11-20T13:00:10.000Z",
       "end": "2026-11-20T13:01:00.000Z",
       "total": 3

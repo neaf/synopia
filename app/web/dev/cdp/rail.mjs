@@ -12,6 +12,12 @@ import path from 'node:path';
 import { shot as shotTo, spySent, outPanel } from './helpers.mjs';
 import { connect, sleep } from './cdp.mjs';
 const RV = '77777777-0000-4000-8000-000000000007';
+// a background subagent waiting on its own background work (docs/Claude Code transcripts.md, made up)
+const WT = '88888888-0000-4000-8000-000000000008', WA = 'dddd0001';
+const wj = (o) => JSON.stringify(o) + '\n', wat = (n) => new Date(Date.UTC(2026, 10, 20, 15, 0, 0) + n * 60_000).toISOString();
+const wnote = (n, summary, result) => wj({ type: 'user', uuid: `wt-n${n}`, timestamp: wat(n), origin: { kind: 'task-notification' }, message: { role: 'user', content:
+  `<task-notification>\n<task-id>${WA}</task-id>\n<tool-use-id>toolu_dag</tool-use-id>\n<status>completed</status>\n<summary>Agent "Run the page bench" ${summary}</summary>\n<note>made up</note>\n<result>${result}</result>\n</task-notification>` } });
+const wsc = (o) => wj({ ...o, isSidechain: true, agentId: WA });
 if (process.argv[2] === 'make') {
   const [claude, tasks] = process.argv.slice(3);
   fs.mkdirSync(tasks, { recursive: true });
@@ -39,6 +45,21 @@ if (process.argv[2] === 'make') {
   out += report(n++, 'cccc0003', 'Seven open bugs, listed in bugs.md.');
   chat(30);
   fs.writeFileSync(path.join(dir, `${RV}.jsonl`), out);
+  // the waiting subagent: it started the bench as its own background shell, ended its turn, and was notified "waiting"
+  const wsub = path.join(dir, WT, 'subagents');
+  fs.mkdirSync(wsub, { recursive: true });
+  fs.writeFileSync(path.join(tasks, 'bwait1.output'), 'page 1 of 40\npage 2 of 40\n');
+  fs.writeFileSync(path.join(dir, `${WT}.jsonl`), wj({ type: 'user', uuid: 'wt-u1', timestamp: wat(0), message: { role: 'user', content: 'Bench the pages in the background.' } })
+    + wj({ type: 'assistant', uuid: 'wt-a1', timestamp: wat(1), message: { id: 'msg_wt-a1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_dag', name: 'Agent', input: { description: 'Run the page bench', subagent_type: 'general-purpose', prompt: 'made-up', run_in_background: true } }] } })
+    + wj({ type: 'user', uuid: 'wt-r1', timestamp: wat(1), toolUseResult: { isAsync: true, status: 'async_launched', agentId: WA, description: 'd', prompt: 'made-up', outputFile: '/tmp/o' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_dag', content: 'Async agent launched successfully.' }] } })
+    + wj({ type: 'assistant', uuid: 'wt-a2', timestamp: wat(2), message: { id: 'msg_wt-a2', role: 'assistant', content: [{ type: 'text', text: 'The bench runs in the background.' }] } })
+    + wj({ type: 'system', subtype: 'stop_hook_summary', uuid: 'wt-s1', timestamp: wat(2), hookCount: 0, hookInfos: [], hookErrors: [], preventedContinuation: false, stopReason: '', hasOutput: false })
+    + wnote(5, 'is waiting on its own background work', 'The bench is running.'));
+  fs.writeFileSync(path.join(wsub, `agent-${WA}.jsonl`), wsc({ type: 'user', uuid: 'wt-s0', timestamp: wat(1), message: { role: 'user', content: 'Run the page bench.' } })
+    + wsc({ type: 'assistant', uuid: 'wt-s1', timestamp: wat(3), message: { id: 'msg_wt-s1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_dsh', name: 'Bash', input: { command: 'node bench.mjs', description: 'Run the bench over every page', run_in_background: true } }] } })
+    + wsc({ type: 'user', uuid: 'wt-s2', timestamp: wat(3), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_dsh', content: `Command running in background with ID: bwait1. Output is being written to: ${path.join(tasks, 'bwait1.output')}. You will be notified when it completes.` }] } })
+    + wsc({ type: 'assistant', uuid: 'wt-s3', timestamp: wat(4), message: { id: 'msg_wt-s3', role: 'assistant', content: [{ type: 'text', text: 'The bench is running.' }] } }));
+  fs.writeFileSync(path.join(wsub, `agent-${WA}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description: 'Run the page bench', toolUseId: 'toolu_dag', spawnDepth: 1, requestShape: 'background', finished: true }));
   agents.forEach(([id, tid, d], i) => {
     fs.writeFileSync(path.join(sub, `agent-${id}.jsonl`), j({ type: 'user', uuid: `${id}-u1`, timestamp: at(1), isSidechain: true, agentId: id, message: { role: 'user', content: `${d}.` } })
       + j({ type: 'assistant', uuid: `${id}-a1`, timestamp: at(3 + i), isSidechain: true, agentId: id, message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } }));
@@ -46,7 +67,7 @@ if (process.argv[2] === 'make') {
   });
   process.exit(0);
 }
-const [url, state] = process.argv.slice(2);
+const [url, state, claude] = process.argv.slice(2);
 const c = await connect();
 const { ev, check } = c;
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 2, mobile: false });
@@ -294,5 +315,27 @@ for (const type of ['keyDown', 'keyUp']) await c.cdp('Input.dispatchKeyEvent', {
 await c.until(`__synopia.view() === null && ${settled} && !!document.querySelector('#log [data-key="report:cccc0001"].jump-mark')`, 8000);
 check('Enter on a focused card goes to its report', nearTop(await report('cccc0001')));
 await shot('rail-review-jump');
+// ---------- a subagent waiting on its own background work: running, its shell under it, then Past after its report ----------
+await ev(`document.querySelector('#groups .row[data-id^="88888888"]').click()`);
+await c.until(`(__synopia.current() || '').startsWith('88888888') && ${settled} && !!document.querySelector('.rail .card[data-agent="${WA}"]')`, 5000);
+const waitView = () => ev(`(() => { const card = document.querySelector('.rail .now .card[data-agent="${WA}"]'), sh = document.querySelector('.rail .kid[data-line="${WA}"] > .kids .card[data-bg="toolu_dsh"]');
+  const moving = (e) => e ? (e.querySelector('.ind')?.getAnimations({ subtree: true }) || []).filter((a) => a.playState === 'running').length : -1, row = document.querySelector('#groups .row[data-id^="88888888"]');
+  return JSON.stringify({ card: !!card, cardMoves: moving(card), cardM: card?.querySelector('.m')?.textContent || '', shell: !!sh, shellMoves: moving(sh), main: document.querySelector('.main-row .m')?.textContent, word: document.querySelector('.main-row .w')?.textContent,
+    pastAgent: !!document.querySelector('.rail .pr[data-agent="${WA}"]'), pastShell: document.querySelector('.rail .pr[data-bg="toolu_dsh"]')?.innerHTML || '', side: row?.querySelector('.r-state')?.textContent || '', sub: row?.querySelector('[data-line="a:${WA}"]')?.textContent.trim() || '' }); })()`).then(JSON.parse);
+let w = await waitView();
+check('a subagent waiting on its own background work stays in the running part with the still kind mark and says so',
+  w.card && w.cardMoves === 0 && /^subagent, started .*, waiting on its background work$/.test(w.cardM) && !w.pastAgent, JSON.stringify(w));
+check('its own background shell runs under it, with the moving mark', w.shell && w.shellMoves > 0 && !w.pastShell, JSON.stringify(w));
+check('Main conversation counts it and the session is working, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Working' && w.side === 'Working' && /^Run the page bench waiting, /.test(w.sub), JSON.stringify(w));
+await shot('rail-waiting');
+// its shell ends (notified in its own file), it reports: the subagent and its shell go to Past, the shell done, not stopped
+const wdir = path.join(claude, 'projects', '-tmp-fixture');
+fs.appendFileSync(path.join(wdir, WT, 'subagents', `agent-${WA}.jsonl`), wsc({ type: 'attachment', uuid: 'wt-s4', timestamp: wat(30), attachment: { type: 'queued_command', commandMode: 'task-notification',
+  prompt: `<task-notification>\n<task-id>bwait1</task-id>\n<tool-use-id>toolu_dsh</tool-use-id>\n<status>completed</status>\n<summary>Background command "Run the bench over every page" completed (exit code 0)</summary>\n</task-notification>` } })
+  + wsc({ type: 'assistant', uuid: 'wt-s5', timestamp: wat(31), message: { id: 'msg_wt-s5', role: 'assistant', content: [{ type: 'text', text: 'All 40 pages benched.' }] } }));
+fs.appendFileSync(path.join(wdir, `${WT}.jsonl`), wnote(32, 'finished', 'All 40 pages benched.'));
+check('after its report the subagent moves to Past', await c.until(`!!document.querySelector('.rail .pr[data-agent="${WA}"]') && !document.querySelector('.rail .now .card[data-agent="${WA}"]')`, 12000));
+w = await waitView();
+check("its shell is in Past as done, not stopped, and Main conversation runs nothing", /class="chk"/.test(w.pastShell) && !/var\(--ink-3\)"\/><\/svg>/.test(w.pastShell) && w.main === 'Nothing running in the background' && w.word === 'Your turn', JSON.stringify(w));
 c.print();
 c.close();

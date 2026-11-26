@@ -64,12 +64,27 @@ test('task notifications: ids, status, summary and result; a monitor event has n
   assert.deepEqual(taskNotes('<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>killed</status>\n<summary>Stopped</summary>\n</task-notification>'
     + '<task-notification><task-id>m1</task-id><summary>Monitor event</summary><event>tick</event></task-notification>'
     + '<task-notification><task-id>a1</task-id><status>completed</status><result>Done.\n</result></task-notification>'), [
-    { taskId: 'b1', toolUseId: 't1', status: 'killed', summary: 'Stopped', result: null, event: null, outputFile: null },
-    { taskId: 'm1', toolUseId: null, status: null, summary: 'Monitor event', result: null, event: 'tick', outputFile: null },
-    { taskId: 'a1', toolUseId: null, status: 'completed', summary: null, result: 'Done.\n', event: null, outputFile: null },
+    { taskId: 'b1', toolUseId: 't1', status: 'killed', summary: 'Stopped', result: null, event: null, outputFile: null, waiting: false },
+    { taskId: 'm1', toolUseId: null, status: null, summary: 'Monitor event', result: null, event: 'tick', outputFile: null, waiting: false },
+    { taskId: 'a1', toolUseId: null, status: 'completed', summary: null, result: 'Done.\n', event: null, outputFile: null, waiting: false },
   ]);
   assert.equal(user('<task-notification><task-id>b1</task-id></task-notification>').notes.length, 1);
   assert.equal(user('<bash-input>echo "<task-notification><task-id>x</task-id></task-notification>"</bash-input>').notes.length, 0, 'not inside a ! command');
+});
+
+// docs/Claude Code transcripts.md "A subagent waiting on its own background work" (shape scan 2026-11-26, invented text)
+test('a subagent waiting on its own background work: a completed notification that is not its end; a shell result names its task id', () => {
+  const [w] = taskNotes('<task-notification>\n<task-id>a1b2c3</task-id>\n<tool-use-id>t9</tool-use-id>\n<output-file>/tmp/t/a1b2c3.output</output-file>\n<status>completed</status>\n'
+    + '<summary>Agent "Run the bench" is waiting on its own background work</summary>\n<note>made up</note>\n<result>The bench runs.</result>\n<usage><duration_ms>1</duration_ms></usage>\n</task-notification>');
+  assert.deepEqual([w.status, w.waiting, w.result], ['completed', true, 'The bench runs.']);
+  const [f] = taskNotes('<task-notification><task-id>a1b2c3</task-id><status>completed</status><summary>Agent "Run the bench" finished</summary></task-notification>');
+  assert.equal(f.waiting, false);
+  const id = (text: string, isError = false) => user([{ type: 'tool_result', tool_use_id: 't1', content: text, is_error: isError }]).results[0].taskId;
+  assert.equal(id('Command running in background with ID: bx7k2. Output is being written to: /tmp/t/bx7k2.output. You will be notified.'), 'bx7k2');
+  assert.equal(id('Monitor started (task m4q9z, expires in 30m unless the source ends first).'), 'm4q9z');
+  assert.equal(id('Command was moved to the background (ID: b3) so that a message can reach you.'), 'b3');
+  assert.equal(id('Command running in background with ID: bx7k2.', true), '', 'not an error');
+  assert.equal(id('total 8'), '');
 });
 
 test('background output (docs/Claude Code transcripts.md#background-output): the file a shell result names, an end notification\'s, a monitor event\'s lines', () => {

@@ -413,7 +413,8 @@ function liveLine(s, A) {
     const body = !extra && liveStep(t) ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
     return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}><span class="g">${ind(mark)}</span>${body}</div>`;
   };
-  if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
+  // a subagent waiting on its own background work: still, it runs nothing itself (its shells move in the panel)
+  if (A) return A.finished ? "" : A.waiting ? line(A.fork ? "s_fork" : "s_sub", null, "Waiting", "on its own background work") : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
   if (s.state.light === "amber") {
     const bg = bgRunning(s);
     return bg.length ? line("k_" + bg[0].k, null, "Working", bg.length === 1 ? `${kind(bg[0].k)} ${esc(bg[0].name)}` : `${bg.length} running in the background`, "green") : "";

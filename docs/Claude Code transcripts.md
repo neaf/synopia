@@ -198,7 +198,7 @@ A tool call a permission check said no to never runs. The CLI writes its `tool_r
 
 - Explore agents launch async even without `run_in_background`.
 - A task ends with a `<task-notification>` holding `<task-id>`, `<tool-use-id>`, `<status>` (`completed`, `failed`, `killed` for a stopped shell) and `<summary>`.
-- A subagent woken again after its first end notifies with `<task-id>` only; the code maps the agent id back to its tool use.
+- A subagent woken again after its first end notifies with `<task-id>` only, or with the tool use id of what woke it; the code maps the agent id back to its own Agent tool use. See "A subagent waiting on its own background work".
 - A monitor's event notification has no `<tool-use-id>` and does not end the monitor.
 - A foreground subagent's shells are stopped by the CLI when that subagent ends.
 - The CLI writes a stop notification to the JSONL only when a turn runs; see [Agent SDK](Agent%20SDK.md#task-notifications).
@@ -223,9 +223,26 @@ Code: `claude-jsonl.ts` `OUTPUT_FILE`, `taskNotes` (`event`, `outputFile`); `tra
 ### Quirk: subagent shells have no task id in SDK sessions
 
 - Symptom: a subagent's shell in a Synopia-driven session has no id to stop it by.
-- Cause: an SDK-driven CLI writes no `toolUseResult` in a subagent's records (scratch runs 1 to 3). `unverified` beyond those runs: the live check is cited in code and notes only.
+- Cause: an SDK-driven CLI writes no `toolUseResult` in a subagent's records (scratch runs 1 to 3). A terminal session's subagents have none either (shape scan 2026-11-26).
+- 2026-11-26: the result text names the task id (see "A subagent waiting on its own background work"); `task_started` still gives it first in a Synopia-driven session.
 - Workaround: the id comes from the SDK's `system/task_started` (`task_id`, `tool_use_id`, `task_type: local_bash`, `owned_by_subagent`, `is_backgrounded`), kept over a rewrite. A foreground Bash gets `task_started` about 2 s after it starts; a foreground Agent at once.
 - Code: `session.ts` `onMessage` (`task_started`), `transcript.ts` `taskStarted`, `refreshTool` (`fg`).
+
+### A subagent waiting on its own background work
+
+Seen 2026-11-26 in a live terminal session (CLI 2.1.33x; shape scan of keys, tags and the CLI's fixed sentences, no content), and in two older sessions of the same folder.
+
+- A background subagent (`requestShape: 'background'` in its meta) that ends its turn while shells or monitors it started still run is not over. Its meta gets `finished: true` anyway, and the main file gets a `<task-notification>` with `<status>completed</status>` and `<summary>Agent "<description>" is waiting on its own background work</summary>`, plus `<task-id>` (the agent id), `<output-file>`, `<note>` (a fixed sentence: it may wake on its own and notify again under the same task id), `<result>` (its last message, not its report) and `<usage>`. A real end has the summary `Agent "<description>" finished` (or `was stopped by Claude`, status `killed`); every agent notification carries `<note>`, so only the summary tells them apart.
+- Each later turn of it notifies again. The `<tool-use-id>` is then the tool use that woke it (a SendMessage to it), or missing; the task id is the agent id. Seen: 3 waiting notifications in a row while its shell ran for over an hour, and 6 in another session.
+- Its shells and monitors: a Bash `run_in_background` and a Monitor `tool_use` in its file, whose result has no `toolUseResult` (in a terminal session too, not only SDK ones). The task id is in the result text: `Command running in background with ID: <id>. Output is being written to: <path>`, `Monitor started (task <id>, …`. Each ends with a `<task-notification>` (`<task-id>`, `<tool-use-id>`, `<status>`, `<summary>`) in a `queued_command` attachment in the subagent's own file (5 of 5 ended shells seen), which wakes it. A monitor's events can land in either file.
+- The output file says nothing about the end: a command that redirects its output leaves it at 0 bytes for its whole run.
+
+Rules Synopia uses:
+
+- A subagent whose latest notification says "waiting" runs (`waiting: true` while it is idle), so does a background one whose meta says `finished` while a shell or monitor of its own has no end yet (the notification lags). Woken (records in its file after that notification) it runs as usual. It is over at a later notification that isn't "waiting", or when the process ends (then stopped). The "waiting" `<result>` is not its report.
+- A subagent's shell or monitor has ended when a notification with its tool use id lands in either file, or the SDK's `task_notification` says so; its task id comes from its result text. With none, it runs while its subagent runs. When the subagent is over: stopped ("Ended with its subagent") after a foreground subagent, a stopped or failed one, or the process's end; after a background subagent's "finished" it had ended ("Ended before its subagent finished", status `completed`), because the CLI says "waiting" while any of its own work runs.
+
+Code: `claude-jsonl.ts` `taskNotes` (`waiting`), `toolResultOf` (`taskId`); `transcript.ts` `note`, `agentRunning`, `idleWaiting`, `ownRunning`, `subBackground`. Test: `claude-jsonl.test.ts` "a subagent waiting on its own background work", `transcript.test.ts` "a subagent waiting on its own background work …" (three), page check `rail` (the waiting part).
 
 ## Shell edits (`bashEditDiff`)
 

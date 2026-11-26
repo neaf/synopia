@@ -20,7 +20,7 @@ export function rowHTML(s) {
       <span class="r-state">${rowWord(s)}</span>
       ${s.now ? `<span class="r-now" data-line="now">${esc(s.now)}</span>` : ""}
       ${agentsOf(s).filter(a => !a.finished || inGrace(s.id, a.id)).slice(0, 3).map(a => { const k = a.fork ? "fork" : "sub", x = { agent: a, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done" };
-        return `<span class="r-agent kc-${k}" data-line="a:${esc(a.id)}"><i class="el"></i>${a.finished ? `${ind(bgMarkKey(x))}${ind("s_" + k)}` : ind("k_" + k)} <b class="kw">${esc(a.description)}</b> ${a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))}</span>`; }).join("")}
+        return `<span class="r-agent kc-${k}" data-line="a:${esc(a.id)}"><i class="el"></i>${a.finished ? `${ind(bgMarkKey(x))}${ind("s_" + k)}` : ind((a.waiting ? "s_" : "k_") + k)} <b class="kw">${esc(a.description)}</b> ${a.finished ? took(agentMs(a)) : `${a.waiting ? "waiting, " : ""}${live(a.start, agentMs(a))}`}</span>`; }).join("")}
       ${bgLine(s)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(s.state.review)}
     </span>

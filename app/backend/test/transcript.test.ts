@@ -250,7 +250,7 @@ test('subagents: meta, running rule, fork, For review and a file without meta', 
   const a1 = main.getAgent('aaaa0001')!;
   assert.deepEqual(a1, {
     id: 'aaaa0001', type: 'Explore', fork: false, description: 'Find the demo config', toolUseId: 'toolu_ag1',
-    model: 'haiku', depth: 1, finished: true, running: false, review: false, stopped: false,
+    model: 'haiku', depth: 1, finished: true, running: false, review: false, stopped: false, waiting: false,
     start: '2026-11-20T13:00:06.000Z', end: '2026-11-20T13:01:50.000Z', total: 2,
   });
   assert.equal(main.getAgent('aaaa0003')!.fork, true);
@@ -712,9 +712,13 @@ test("subagents' shells and monitors: changes reported, and they end when their 
   t.taskEnded('toolu_bmon1', 'stopped', '', '2026-11-20T13:07:00.000Z'); // the SDK's, by its tool use id
   assert.deepEqual(t.takeChanges().background, ['toolu_bmon1']);
   assert.equal(t.getBackground('toolu_bmon1')?.status, 'stopped');
+  // a background subagent whose meta says finished while its own shell runs waits on it (its notification not here yet)
   t.setAgent('bbbb0001', { agentType: 'general-purpose', description: 'Build image thumbnails', toolUseId: 'toolu_r1', finished: true });
   assert.ok(t.takeChanges().background.includes('toolu_bsh1'));
-  assert.deepEqual([t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], ['stopped', 'Ended with its subagent']);
+  assert.deepEqual([t.getAgent('bbbb0001')?.running, t.getAgent('bbbb0001')?.waiting, t.getBackground('toolu_bsh1')?.status], [true, true, 'running']);
+  t.pushAll([{ type: 'user', uuid: 'r-k1', timestamp: '2026-11-20T13:08:00.000Z', message: { role: 'user', content: '<task-notification>\n<task-id>bbbb0001</task-id>\n<tool-use-id>toolu_r1</tool-use-id>\n<status>killed</status>\n<summary>Agent "Build image thumbnails" was stopped</summary>\n</task-notification>' } }]);
+  assert.ok(t.takeChanges().background.includes('toolu_bsh1'));
+  assert.deepEqual([t.getAgent('bbbb0001')?.stopped, t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], [true, 'stopped', 'Ended with its subagent']);
 });
 
 // Facts settled 2026-11-24 (docs/Claude Code transcripts.md), in the shapes real files hold (made-up content).
@@ -817,13 +821,86 @@ test("a subagent's shell under an SDK-driven CLI: no toolUseResult in its file, 
   ]);
   main.setAgent('gggg0001', { agentType: 'general-purpose', description: 'Sleep', toolUseId: 'toolu_ag' }, sub);
   main.takeChanges();
-  assert.equal(main.getBackground('toolu_gsh')?.taskId, null, 'nothing in the file');
+  assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x', 'its result text names it');
   main.taskStarted('toolu_gsh', 'bg9x');
   assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x');
   assert.ok(main.takeChanges().background.includes('toolu_gsh'), 'pages get it');
   main.reset(); // a rewritten file keeps what the SDK said
   main.pushAll([typed('g-u1', 'Go', ago(10))]);
   assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x');
+});
+
+// docs/Claude Code transcripts.md "A subagent waiting on its own background work": the shapes of a live session
+// (shape scan 2026-11-26, keys only), invented content. A background subagent starts a long shell and a waiter, ends its
+// turn; the CLI marks its meta finished and notifies "waiting"; a message wakes it; the shell ends; it reports.
+function waitingAgent() {
+  const sc = { isSidechain: true, agentId: 'wwww0001' };
+  const note = (uuid: string, ts: string, summary: string, tuid: string | null, result: string) => ({ type: 'user', uuid, timestamp: ts, origin: { kind: 'task-notification' }, message: { role: 'user', content:
+    `<task-notification>\n<task-id>wwww0001</task-id>\n${tuid ? `<tool-use-id>${tuid}</tool-use-id>\n` : ''}<output-file>/tmp/t/wwww0001.output</output-file>\n<status>completed</status>\n<summary>Agent "Run the bench" ${summary}</summary>\n<note>made up</note>\n<result>${result}</result>\n<usage><subagent_tokens>1</subagent_tokens><tool_uses>2</tool_uses><duration_ms>3</duration_ms></usage>\n</task-notification>` } });
+  const main = new Transcript({ home: HOME });
+  main.pushAll([typed('w-u1', 'Bench the pages', ago(60)),
+    replied('w-a1', ago(59), [{ type: 'tool_use', id: 'toolu_wag', name: 'Agent', input: { description: 'Run the bench', prompt: 'x', subagent_type: 'general-purpose', run_in_background: true } }]),
+    { ...toolResult('w-r1', ago(59), 'toolu_wag', { content: 'Async agent launched successfully.' }), toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'wwww0001', description: 'd', prompt: 'p', outputFile: '/tmp/t/wwww0001.output' } },
+    replied('w-a2', ago(58), [{ type: 'text', text: 'The bench runs in the background.' }])]);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.pushAll([
+    { ...typed('w-s0', 'Run the bench.', ago(59)), ...sc },
+    { ...replied('w-s1', ago(50), [{ type: 'tool_use', id: 'toolu_wsh', name: 'Bash', input: { command: 'node bench.mjs > run.log', description: 'Run the page bench', timeout: 7200000, run_in_background: true } }]), ...sc },
+    { ...toolResult('w-s2', ago(50), 'toolu_wsh', { content: 'Command running in background with ID: bw1. Output is being written to: /tmp/t/bw1.output. You will be notified.' }), ...sc },
+    { ...replied('w-s3', ago(49), [{ type: 'tool_use', id: 'toolu_wmon', name: 'Monitor', input: { command: 'tail -f run.log', description: 'Bench progress', timeout_ms: 1800000 } }]), ...sc },
+    { ...toolResult('w-s4', ago(49), 'toolu_wmon', { content: 'Monitor started (task mw1, expires in 30m).' }), ...sc },
+    { ...replied('w-s5', ago(48), [{ type: 'text', text: 'Waiting for the bench.' }]), ...sc },
+  ]);
+  main.setAgent('wwww0001', { agentType: 'general-purpose', description: 'Run the bench', toolUseId: 'toolu_wag', spawnDepth: 1, requestShape: 'background', finished: true }, sub);
+  return { main, sub, sc, note };
+}
+
+test('a subagent waiting on its own background work runs, its shells run under it, until it reports', () => {
+  const { main, sub, sc, note } = waitingAgent();
+  const a = () => main.getAgent('wwww0001')!, sh = () => main.getBackground('toolu_wsh')!;
+  const status = () => transcriptStatus({ agents: main.agents().filter((x) => x.running).length, turn: false, lastAt: 0 }); // the main turn is over
+  assert.deepEqual([a().running, a().finished, a().waiting], [true, false, true], 'meta finished, no notification yet: waiting');
+  main.pushAll([note('w-n1', ago(47), 'is waiting on its own background work', 'toolu_wag', 'Waiting for the bench.')]);
+  assert.deepEqual([a().running, a().finished, a().waiting, a().stopped], [true, false, true, false], 'the waiting notification is not its end');
+  assert.deepEqual([sh().status, sh().taskId, sh().agentId, main.getBackground('toolu_wmon')!.taskId], ['running', 'bw1', 'wwww0001', 'mw1'], 'its shell runs, the task id from its result text');
+  assert.equal(byId(main, 'toolu_wag').state, 'running', 'the Agent step still runs');
+  assert.ok(!main.items.some((i) => i.k === 'report'), 'the message it waits with is not its report');
+  assert.equal(status(), 'busy', 'the main turn is over: working, on a background subagent (FR-STAT-02)');
+  // a message wakes it; it answers and waits again (that notification carries the SendMessage's tool use id)
+  main.pushAll([replied('w-a3', ago(40), [{ type: 'tool_use', id: 'toolu_wsm', name: 'SendMessage', input: { to: 'wwww0001', message: 'Status?' } }]), toolResult('w-r3', ago(40), 'toolu_wsm')]);
+  sub.pushAll([{ ...typed('w-s6', 'Status?', ago(40)), ...sc, isMeta: true }, { ...replied('w-s7', ago(39), [{ type: 'text', text: '34 of 372 done.' }]), ...sc }]);
+  main.setAgent('wwww0001', undefined);
+  assert.deepEqual([a().running, a().waiting], [true, false], 'awake after the notification: working');
+  main.pushAll([note('w-n2', ago(39), 'is waiting on its own background work', 'toolu_wsm', '34 of 372 done.')]);
+  assert.deepEqual([a().running, a().waiting], [true, true], 'waiting again, by its own Agent step');
+  // the monitor and the shell end, each notified in its own file; it wakes, then reports
+  sub.pushAll([
+    { type: 'attachment', uuid: 'w-s8', timestamp: ago(19), ...sc, attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>mw1</task-id>\n<tool-use-id>toolu_wmon</tool-use-id>\n<status>completed</status>\n<summary>Monitor "Bench progress" timed out</summary>\n</task-notification>' } },
+    { type: 'attachment', uuid: 'w-s9', timestamp: ago(10), ...sc, attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>bw1</task-id>\n<tool-use-id>toolu_wsh</tool-use-id>\n<output-file>/tmp/t/bw1.output</output-file>\n<status>completed</status>\n<summary>Background command "Run the page bench" completed (exit code 0)</summary>\n</task-notification>' } },
+    { ...replied('w-s10', ago(9), [{ type: 'text', text: 'All 372 pages done.' }]), ...sc },
+  ]);
+  main.setAgent('wwww0001', undefined);
+  assert.deepEqual([sh().status, a().running, a().waiting], ['completed', true, false], 'its shell ended; it works on its report');
+  main.pushAll([note('w-n3', ago(8), 'finished', null, 'All 372 pages done.')]);
+  assert.deepEqual([a().running, a().finished, a().waiting, a().stopped], [false, true, false, false], 'its report: finished');
+  assert.equal(byId(main, 'report:wwww0001').text, 'All 372 pages done.');
+  assert.equal(byId(main, 'toolu_wag').state, 'done');
+  assert.equal(status(), 'idle');
+});
+
+test('a subagent waiting on its own background work: the process ends, it and its shells read stopped', () => {
+  const { main, note } = waitingAgent();
+  main.pushAll([note('w-n1', ago(47), 'is waiting on its own background work', 'toolu_wag', 'Waiting.')]);
+  main.processEnded(ago(30));
+  assert.deepEqual([main.getAgent('wwww0001')!.running, main.getAgent('wwww0001')!.stopped], [false, true]);
+  assert.deepEqual([main.getBackground('toolu_wsh')!.status, main.getBackground('toolu_wsh')!.summary], ['stopped', 'Ended with its subagent']);
+});
+
+test('a background subagent that notified finished: a shell of its own with no notification had ended, not stopped', () => {
+  const { main, note } = waitingAgent();
+  main.pushAll([note('w-n1', ago(47), 'finished', 'toolu_wag', 'Done.')]);
+  assert.deepEqual([main.getAgent('wwww0001')!.running, main.getAgent('wwww0001')!.stopped], [false, false]);
+  assert.deepEqual([main.getBackground('toolu_wsh')!.status, main.getBackground('toolu_wsh')!.summary], ['completed', 'Ended before its subagent finished']);
 });
 
 test('a stale card: a question in a transcript quiet for 12 hours is your turn, not needs you', () => {
