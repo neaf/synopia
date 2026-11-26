@@ -15,7 +15,8 @@ import { ownRowHTML, ownRun } from "./runs.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
-import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent } from "./composer.js";
+import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent, writeLine } from "./composer.js";
+import { focusItem } from "./open-items.js";
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
 import { fitTables, watchTables } from "./table-fit.js";
@@ -602,8 +603,20 @@ function carryState(from, to) {
 }
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  const rv = e.target.closest(".rail .rv"); // a "To review" card: anywhere on it but "Mark reviewed" goes to the report
-  if (rv && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); toReport(rv.querySelector(".rv-open").dataset.agent); return; }
+  /* a "To review" card: anywhere on it but "Mark reviewed" goes to the report; one whose subagent isn't in this
+     transcript (a handoff) only takes the focus (R7.1) */
+  const rv = e.target.closest(".rail .rv");
+  if (rv && !e.target.closest("[data-reviewed]")) {
+    e.preventDefault(); e.stopPropagation();
+    const a = rv.querySelector(".rv-open").dataset.agent;
+    if (a) toReport(a); else { focusItem(cur()?.id, rv.dataset.oi); renderRail(); }
+    return;
+  }
+  /* an open item's button writes its line into the box and sends nothing (R7.1); a click elsewhere on the item focuses it */
+  const chip = e.target.closest(".rail [data-write]");
+  if (chip) { e.preventDefault(); e.stopPropagation(); writeItemLine(chip.dataset.write); return; }
+  const oi = e.target.closest(".rail [data-oi]");
+  if (oi && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); focusItem(cur()?.id, oi.dataset.oi); renderRail(); return; }
   const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], [data-session], #model-label");
   if (!t || t.closest(".qa-card")) return;
   if (t.hasAttribute("data-earlier")) loadEarlier();
@@ -616,15 +629,20 @@ conv.addEventListener("click", e => {
     selectView(t.dataset.agent); renderConv();
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { selectView(null); renderConv(); }
-  else if (t.dataset.reviewed) { e.stopPropagation(); markReviewed(t.dataset.reviewed); } // the backend sends the subagent back with review false
+  else if (t.dataset.reviewed) { e.stopPropagation(); markReviewed(t.dataset.reviewed); } // the backend's next openItems drops the card
   else if (t.dataset.bg) { if (e.target.closest("a[href]")) return; selectView(t.dataset.bg); renderConv(); } // a shell or monitor opens in the pane, as a subagent does (R7.2)
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });
-/* Mark reviewed on a To review card: the open review item of that subagent (the backend's `openItems`, FR-ITEM-03) */
-function markReviewed(agentId) {
-  const s = cur(), it = s?.openItems?.items.find(i => i.kind === "review" && i.agent === agentId);
-  if (it) act({ t: "item", sid: s.id, item: it.id, act: "reviewed" });
+/* Mark reviewed on a To review card: closes its review item, by the item's own id (FR-ITEM-03) */
+function markReviewed(id) {
+  const s = cur(); if (s && id) act({ t: "item", sid: s.id, item: id, act: "reviewed" });
+}
+/* an item's button: its line in Main conversation's box, where the box is (composer.js writeLine) */
+function writeItemLine(text) {
+  const s = cur(); if (!s) return;
+  if (view) { selectView(null); renderConv(); }
+  writeLine(s.id, text);
 }
 /* A "To review" card (R7.1): Main conversation, scrolled so that subagent's "Report from" block is near the top,
    briefly marked; its own transcript when this session's transcript has no report from it. Nothing is marked

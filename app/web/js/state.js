@@ -159,7 +159,7 @@ export function applyAgents(m) {
   if (m.sid === current && view && !viewable(s, view)) view = null;
   return s;
 }
-/* the session's open items (the backend's `openItems`, whole): kept as they came, for To review's Mark reviewed */
+/* the session's open items (the backend's `openItems`, whole): kept as they came; open-items.js draws them */
 export function applyOpenItems(m) {
   const s = store.sessions.get(m.sid); if (!s) return null;
   const { t, sid, ...items } = m;

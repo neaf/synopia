@@ -467,6 +467,36 @@
   .rv-open .m { font-size: 10px; color: var(--ink-2); }
   .rv-open .m .kind { margin-right: 4px; }
   .rv-done { font-size: 10.5px; margin-right: 4px; }
+  /* open items in the panel (?demo=items; the same rules as app/web/css/app.css's open-items block) */
+  .oi-id { display: inline-block; font: 700 10.5px/1 var(--mono); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px; padding: 2px 3px 1.5px; min-width: 2.6ch; text-align: center; box-sizing: border-box; }
+  .oi-id.q { border-style: dotted; color: var(--ink-3); }
+  .oi-group { border-bottom: 1px solid var(--line-2); padding: 8px 0 3px; }
+  .oi-group h3 { color: var(--ink); }
+  .oi-closed h3 { color: var(--faint); }
+  .oi { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 7px; row-gap: 2px; align-items: baseline; margin: 0 7px 5px; padding: 6px 8px 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); font-size: 11.5px; line-height: 1.35; }
+  .oi > .oi-id { grid-row: 1 / 3; align-self: start; margin-top: 1px; }
+  .oi .oi-k { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .oi .oi-age { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .oi-t { all: unset; box-sizing: border-box; cursor: pointer; color: var(--ink); min-width: 0; }
+  .oi .oi-t { grid-column: 2 / 4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .oi-t code { font-size: .95em; color: var(--link); }
+  .oi .oi-w { grid-column: 2 / 4; font-size: 10.5px; color: var(--ink-2); }
+  .oi .oi-acts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .oi-chip { all: unset; box-sizing: border-box; font-size: 10.5px; line-height: 17px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--sub); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+  .oi-chip:hover { border-color: var(--faint); color: var(--ink); }
+  .oi-chip .rc { color: var(--green); margin-left: 3px; }
+  .oi.ans { background: var(--sub); }
+  .oi.focus, .oi-fu.focus, .rv.focus { box-shadow: inset 0 0 0 1px var(--link); border-color: var(--link); }
+  .oi.bad { grid-template-columns: auto minmax(0, 1fr); }
+  .oi.bad > .oi-id { grid-row: auto; }
+  .oi-fu { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; row-gap: 1px; margin: 0 7px; padding: 2.5px 5.5px 4px; border: 1px solid transparent; border-radius: 5px; font-size: 11.5px; line-height: 1.35; align-items: baseline; }
+  .oi-fu .oi-t { color: var(--ink-2); }
+  .oi-fu .oi-w { grid-column: 2; font-size: 10.5px; color: var(--ink-3); }
+  .pr.oi-cl { cursor: default; }
+  .oi-cl .n { white-space: normal; }
+  .oi-cl .pm { align-self: start; margin-top: 4px; }
+  .oi-cl .oi-id, .rv-open .n .oi-id { font-size: 9.5px; padding: 1px 2px; margin-right: 4px; vertical-align: 1px; }
+  .oi-cl .oi-id { color: var(--ink-2); border-color: var(--faint); }
 
   /* kind = spinner + colour: subagent orbit (slate), fork two arcs (purple), shell turning bar (teal), monitor radar (pink) */
   :root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
@@ -797,7 +827,16 @@ function applyDemo() {
   if (!s) return;
   s.items = [...s.items];
   const now = new Date().toISOString();
-  if (DEMO === "ask") {
+  if (DEMO === "items") { // open items in the panel (R7.1, app/web/js/open-items.js), invented
+    const at = Date.now() - 4 * 60_000;
+    s.openItems = { unread: 1, note: null,
+      items: [{ id: "Y1", kind: "decision", text: "Run `bin/schema-lint --fix` now, or look at the 14 warnings first?", at, options: ["Run it", "Look first"], recommended: "Look first" },
+        { id: "Y2", kind: "your task", text: "Answer the 2 review threads from Mira on #812.", at },
+        { id: "Y4", kind: "default", text: "Mark #812 to #815 ready in this order: #812, #814, #813, #815.", at, goesAhead: "when CI is green on all four, unless you object" },
+        { id: "Y9", kind: "review", text: "Review: Pricing page copy", at: null, subagent: "Pricing page copy" }],
+      checks: [{ id: "A1", kind: "follow-up", text: "Re-check #820, which GitHub shows as conflicting.", at, trigger: "after the M2 stack merges" }],
+      closed: [{ id: "Y3", kind: "decision", text: "", how: "answered", at: Date.now() - 60_000, note: "“Run it” · done: 14 entries added", by: "agent" }] };
+  } else if (DEMO === "ask") {
     const i = s.items.map(x => x.k).lastIndexOf("ask");
     if (i < 0) return;
     s.items = s.items.slice(0, i + 1); s.items[i] = { ...s.items[i], state: "pending", answer: null };
@@ -1295,7 +1334,31 @@ function waveHTML(tools, s) {
 
 /* ---------- background work: forks, subagents, shells, monitors ---------- */
 const bgOf = s => s.background || [];
-const hasBackground = s => agentsOf(s).length || bgOf(s).length;
+/* open items (R7.1, the same as app/web/js/open-items.js): s.openItems, set by ?demo=items */
+const OI = s => s.openItems || { items: [], checks: [], closed: [], unread: 0, note: null };
+const hasItems = s => { const o = OI(s); return !!(o.items.length || o.checks.length || o.unread || o.note); };
+const oiText = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
+const oiId = id => `<span class="oi-id">${esc(id)}</span>`;
+const oiAge = i => typeof i.at === "number" ? `${Math.max(0, Math.round((Date.now() - i.at) / 60000))} min` : "";
+function oiChips(i) {
+  if (i.state === "answered") return "";
+  const b = (label, rec) => `<button class="oi-chip">${esc(label)}${rec ? `<span class="rc">Recommended</span>` : ""}</button>`;
+  const out = i.kind === "decision" ? (i.options || []).map(o => b(o, o === i.recommended)) : i.kind === "your task" ? [b("Done")] : i.kind === "default" ? [b("Object")] : [];
+  return out.length ? `<span class="oi-acts">${out.join("")}</span>` : "";
+}
+const oiItem = i => `<div class="oi${i.state === "answered" ? " ans" : ""}">${oiId(i.id)}<span class="oi-k">${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}</span><span class="oi-age">${oiAge(i)}</span><button class="oi-t">${oiText(i.text)}</button>${i.goesAhead ? `<span class="oi-w">Goes ahead ${esc(i.goesAhead)}</span>` : ""}${oiChips(i)}</div>`;
+function oiReview(s) {
+  const rv = OI(s).items.filter(i => i.kind === "review"); if (!rv.length) return "";
+  return `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>${rv.map(i => `<div class="rv"><button class="rv-open">${ind("review")}<span class="n">${oiId(i.id)}${esc(i.subagent || i.text)}</span><span class="m">${kind("sub")} handed over</span></button><button class="btn quiet rv-done">Mark reviewed</button></div>`).join("")}</div>`;
+}
+function oiGroups(s) {
+  const o = OI(s), wait = o.items.filter(i => i.kind !== "review" && !i.with);
+  const bad = o.unread ? `<div class="oi bad"><span class="oi-id q">?</span><span class="oi-k">${o.unread} line${o.unread > 1 ? "s" : ""} Synopia can't read, in open-items.md</span></div>` : "";
+  return (wait.length || bad ? `<section class="oi-group oi-wait"><h3>Waiting on you <span class="cnt">${wait.length}</span></h3>${wait.map(oiItem).join("")}${bad}</section>` : "")
+    + (o.checks.length ? `<section class="oi-group oi-check"><h3>Claude will check <span class="cnt">${o.checks.length}</span></h3>${o.checks.map(a => `<div class="oi-fu">${oiId(a.id)}<button class="oi-t">${oiText(a.text)}</button><span class="oi-w"><span>${esc(a.trigger || "")}</span></span></div>`).join("")}</section>` : "")
+    + (o.closed.length ? `<section class="oi-group oi-closed"><h3>Closed this turn <span class="cnt">${o.closed.length}</span></h3>${o.closed.map(c => `<div class="pr oi-cl"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${oiId(c.id)}${esc((c.how[0].toUpperCase() + c.how.slice(1)) + (c.note ? `: ${c.note}` : ""))}</span><span class="d">${hhmm(c.at)}</span></div>`).join("")}</section>` : "");
+}
+const hasBackground = s => agentsOf(s).length || bgOf(s).length || hasItems(s);
 function bgState(b) {
   if (b.status && b.status !== "running") return b.status === "completed" ? "done" : b.status;
   if (b.kind === "monitor" && b.timeout && !b.persistent && new Date(b.start).getTime() + b.timeout < NOWISH) return "timed out";
@@ -1323,6 +1386,7 @@ function railHTML(s, A, B) {
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
         <button class="btn quiet rv-done" data-reviewed="${x.agent.id}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
+    ${oiReview(s)}${oiGroups(s)}
     <div class="now">
       <h3>Running <span class="cnt">${now.length ? `${now.length} in the background` : ""}</span></h3>
       ${now.length ? now.map(x => `<button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}`).join("") : `<p class="none">Nothing running in the background.</p>`}

@@ -317,6 +317,20 @@ function takeReturned(sid) {
   ta.dispatchEvent(new Event("input"));
   renderAttachments(); ui.changed();
 }
+/* An open item's button (R7.1, open-items.js): `text` on a new line of the session's draft, the caret after it, in
+   insert mode. Nothing is sent: you add more, or send with Enter. A `!` command in the box stays one, its `!` back
+   in the text. False when the box isn't on screen (a view with no box, a gone folder). */
+export function writeLine(sid, text) {
+  const ta = document.getElementById("msg"); if (!ta || sid !== current || ta.readOnly) return false;
+  if (ta.dataset.bash) { ta.value = ta.value ? "!" + ta.value : ""; setBash(ta, false); }
+  ta.bashBefore = ta.value;
+  ta.value = ta.value && !ta.value.endsWith("\n") ? `${ta.value}\n${text}` : ta.value + text;
+  ta.dispatchEvent(new Event("input"));
+  setMode("insert");
+  const n = ta.value.length; ta.setSelectionRange(n, n);
+  ui.changed();
+  return true;
+}
 
 /* ---------- sending: Enter sends the text and the tagged images (R5.13) ---------- */
 /* the images a send carries, in the shape the backend reads (sdk.ts userContent: the text, then these in tag

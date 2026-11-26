@@ -284,7 +284,7 @@ check('the mark fades and goes', await c.until(`!document.querySelector('#log .j
 await ev(`document.getElementById('log').scrollTop -= 300`); await sleep(100);
 const top0 = (await report('cccc0003')).top;
 sent = await spySent(c);
-await ev(`document.querySelector('.rail [data-reviewed="cccc0003"]').click()`);
+await ev(`document.querySelector('.rail .rv:has(.rv-open[data-agent="cccc0003"]) [data-reviewed]').click()`);
 await c.until(`document.querySelectorAll('.rail .rv').length === 2 && ${settled}`, 5000);
 r = await report('cccc0003');
 const marks = await sent('item');

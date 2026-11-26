@@ -101,7 +101,7 @@ Dev and test only (not loaded in production):
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
 | `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
-| `js/rail.js` | Background work panel: agents, Claude's background shells and monitors as cards from their start, your runs and the refresh once due (`cardAt`), no card for Claude's foreground Bash; who started each by its sign, the waiting card. |
+| `js/rail.js` | Background work panel: agents (an owned item under its running subagent, `open-items.js`), To review and the open-items groups (`open-items.js`) between the tree and Past, shown with background work or open items; Claude's background shells and monitors as cards from their start, your runs and the refresh once due (`cardAt`), no card for Claude's foreground Bash; who started each by its sign, the waiting card. |
 | `js/runs.js` | Runs (R5.13, R7.1, 2026-11-26): your `!` command and the refresh in one shape (`ownRowHTML` on the `!` band in the transcript, `credsRunHTML` in the dock), their state line; `bgState` and the who sign for the panel; draws only what the backend sent. Claude's Bash and Monitor steps are steps (`transcript.js`). |
 | `js/bg-view.js` | A run's shell view (R7.2): its header, and `titleWithCrumb`, the title line with "‹ <session title>" that every view but Main conversation uses (R5.1), its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors (from their card or Past line), its foreground Bash (from the live line), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
  `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps (Claude's Bash and Monitor among them, foreground and background, folded and expanded in place), files changed, earlier link, live line, the sticky queue of queued prompts. |
@@ -109,7 +109,8 @@ Dev and test only (not loaded in production):
 | `js/preview.js` | File preview pane and find (`findIn`, the page's one matcher). |
 | `js/find.js` | Find in the transcript (R5.12e, R9.9): the ⌘F bar, `find`/`found`, each match's Range from the rendered blocks (an item's block by key, a step's `data-item`), going to a match through `ui-state.js` `jumpTo`, the marks (CSS Custom Highlights `tf-find`, `tf-cur`). |
 | `js/path-links.js` | Paths in replies (R5.9, 2026-11-25): asks `resolvePaths` for the new `data-pc` code spans once per render, cached per session; ⌘ held (`cmd-held`, cleared on blur) and ⌘-click to the preview, the image viewer or `open`. |
-| `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back. |
+| `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back; `writeLine` (an open item's button: its line on a new line of the draft, insert mode, nothing sent). |
+| `js/open-items.js` | Open items in the panel (R7.1, FR-ITEM-03 to -05): draws the session's `openItems` as HTML for `rail.js`: To review from the review items (a handed-over one only focuses), Waiting on you, Claude will check, Closed this turn, the unread line and the note, the items a running subagent owns; the buttons carry their line (`data-write`) and `transcript.js` hands it to `composer.js` `writeLine`; the focused item (one per page, not stored). Imports only state.js, format.js and marks.js (composer.js would make a cycle through sidebar.js). |
 | `js/card.js` | Needs-you card and the status line; keeps picks until the answer is acked. |
 | `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, folder list, sidebar drag), then the session keys (n, o among them); `renderAll`. |
 | `js/mode.js` | Normal and insert mode (`setMode`, `paintMode`); the box is the only indicator. |
@@ -142,7 +143,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 ### Tooling
 
-`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 27 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
+`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 32 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
 
 ## Data flow
 
@@ -440,9 +441,9 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-REV-01 | replaced by FR-ITEM-03 |
 | FR-ITEM-01 | ledger.ts (the format, the path rule), transcript.ts (`ledger`), transcripts.ts (`ledgerOf`), open-items.ts (the reads) |
 | FR-ITEM-02 | open-items.ts, ledger.ts, store.ts |
-| FR-ITEM-03 | open-items.ts (review items, `markReviewed`, the carried marks), router.ts (`item`), publisher.ts (`agents[].review`), status.ts (`review`), protocol.js, state.js (`applyOpenItems`), transcript.js (Mark reviewed); planned: rail.js (To review from the review items) |
-| FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`), open-items.ts (`with`); planned: rail.js |
-| FR-ITEM-05 | publisher.ts, protocol.js (`openItems`), state.js (`applyOpenItems`); planned: open-items.js, rail.js, composer.js |
+| FR-ITEM-03 | open-items.ts (review items, `markReviewed`, the carried marks), router.ts (`item`), publisher.ts (`agents[].review`), status.ts (`review`), protocol.js, state.js (`applyOpenItems`), transcript.js (Mark reviewed by the item's id), open-items.js and rail.js (To review from the review items) |
+| FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`), open-items.ts (`with`), open-items.js and rail.js (under the subagent's card) |
+| FR-ITEM-05 | publisher.ts, protocol.js (`openItems`), state.js (`applyOpenItems`), open-items.js, rail.js, transcript.js (the clicks), composer.js (`writeLine`), app.css, dark.css |
 | FR-ITEM-06 | open-items.ts (`counts`), status.ts (`waiting`, `due`), publisher.ts; planned: sidebar.js, tween.js |
 | FR-ITEM-07 | none yet (planned: open-items.ts, keys.js, ui-state.js, rail.js) |
 | FR-LOOK-01 | app.css, fonts |
