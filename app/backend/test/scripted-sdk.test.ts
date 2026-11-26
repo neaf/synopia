@@ -107,7 +107,7 @@ test('scripted: the states fixture plays one session per wired state, on the rea
     const blocked = every.find((s) => s.id.startsWith('a8a8'));
     assert.deepEqual([blocked?.status, blocked?.light, blocked?.word, blocked?.mark, blocked?.needsYou], ['idle', 'red', 'Needs you, blocked', 'pause', 'blocked']);
     const all = every.filter((s) => s !== blocked);
-    assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy', 'busy']);
+    assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'idle', 'busy'], 'f6f6: its main turn is over, its subagents run: your turn (2026-11-26)');
     assert.equal(all[0].detail.queued, 1, 'the message sent during the turn');
     assert.deepEqual([all[2].detail.retry?.attempt, all[2].detail.retry?.max], [3, 10]);
     assert.ok(Math.abs((all[2].detail.retry?.at ?? 0) - Date.now() - 38_000) < 2000, 'the retry 38 s off');

@@ -18,6 +18,9 @@ export const PAGE = {
   earlier: { sid: "str", agent: "str?", before: "str" },
   earlierOutput: { sid: "str", bg: "str", before: "num" },
   toolOutput: { sid: "str", agent: "str?", toolUseId: "str" },
+  /* ⌘F in the transcript (R5.12e): the matches of q in the whole view (view: a subagent's, shell's or monitor's id, null
+     for the main conversation); seq comes back in `found` */
+  find: { sid: "str", view: "str?", q: "str", seq: "num?" },
   listRecent: { filter: "str?" },
   /* the folder list (R3.3, R3.13): the known folders; one folder's child folders, on Tab; whether named paths are
      gone (a path inside a protected folder only when `chosen`) */
@@ -60,6 +63,9 @@ export const PAGE = {
   credsSave: { id: "str?", sid: "str", command: "str" },
   credsInput: { id: "str?", sid: "str", text: "str" },
   bangInput: { id: "str?", sid: "str", text: "str" },
+  /* Esc, Esc in a run's shell view (R9.4, 2026-11-26): stop your `!` command, or Claude's background shell or monitor (stopTask), by its id */
+  bangStop: { id: "str?", sid: "str", bg: "str" },
+  stopTask: { id: "str?", sid: "str", bg: "str" },
   credsCancel: { id: "str?", sid: "str" },
 };
 
@@ -71,7 +77,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "bangInput", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel"]);
+export const ACTIONS = new Set(["send", "bang", "bangInput", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel", "bangStop", "stopTask"]);
 
 /* backend to page */
 export const SERVER = {
@@ -96,6 +102,9 @@ export const SERVER = {
   menu: { cwd: "str", commands: "arr", models: "arr" },
   toast: { text: "str" },
   toolOutput: { sid: "str", agent: "str?", toolUseId: "str", text: "str" },
+  /* the answer to `find` (find.ts): hits [{id, at: [[from, to], …]}] in transcript order (id an item's, or the view's for
+     a shell's output), the offsets in that item's search text; total matches, more when past 10,000 */
+  found: { sid: "str", view: "str?", q: "str", seq: "num?", hits: "arr", total: "num", more: "bool?" },
   /* a shown shell's or monitor's output (R7.2): a part [from, to) of total, in bytes for a shell, in events for a
      monitor; a reset, the part before what the page has (prepend), else what came after it. lost: "unnamed" (no
      output file named) or "gone" (it can't be read) */

@@ -24,3 +24,9 @@
 /* change marks, gutter only (an editor's change bars): green bar beside added lines, a red notch where lines were removed */
 .pl.chg .no { box-shadow: inset 2px 0 0 #2DA44E; }
 .pl.cut .no { background-image: linear-gradient(#CF222E, #CF222E); background-size: 6px 2px; background-position: 0 0; background-repeat: no-repeat; }
+
+/* the transcript's find bar (find.js, R5.12e): the same find box, under the header, over the log; matches marked
+   as here, the current one in the selection tint with the 1px blue line of a jump (.jump-mark), so it differs by shape too */
+.thread > .tf-find { flex: none; border-top: 0; cursor: default; }
+::highlight(tf-find) { background-color: #FFF1B3; }
+::highlight(tf-cur) { background-color: var(--sel); color: var(--ink); text-decoration: underline 1px #54AEFF; text-underline-offset: 2px; }

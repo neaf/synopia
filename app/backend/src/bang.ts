@@ -5,25 +5,30 @@
 // it (input(): "Press Enter" works), with stderr on its own pipe as before. TERM=dumb and PAGER=cat, so
 // `git log` and the like print and end instead of waiting in a pager. Its output streams to the page as
 // plain text (pty.ts plainText: no escape sequences, the pty's CRLF as LF), capped at 30,000 characters
-// (the Bash tool's default). Esc, Esc ends it: SIGTERM to its own process group, SIGKILL 3 s later. The
+// (the Bash tool's default). Its shell view stops it (Esc, Esc there, 2026-11-26): SIGTERM to its own process
+// group, SIGKILL 3 s later. It waits for input by pty.ts InputWatch's rule (live run IN-1), and gets its panel
+// card by runs.ts cardAt. The
 // command and its output then go to the session in the CLI's format (`<bash-input>`, `<bash-stdout>`,
 // `<bash-stderr>`), as user messages with `shouldQuery: false` (sdk.d.ts SDKUserMessage.shouldQuery:
 // appended to the transcript without a turn, merged into the next user message that queries).
 import { groupAlive } from './macos.ts';
-import { plainText, shellPty } from './pty.ts';
+import { InputWatch, plainText, shellPty } from './pty.ts';
 import type { PtyRun, PtyStart } from './pty.ts';
+import { cardAt } from './runs.ts';
 
 export const BANG_CAP = 30_000;
 export const KILL_AFTER_MS = 3000;
 export const BANG_TICK_MS = 100; // the page gets the output at most this often while it runs
-export const QUIET_MS = 800; // this long with no new output, it may be waiting for you: the page offers the input line
 
 // One run, as the page shows it until its records land in the transcript. `exit`: the shell's exit
-// code (128 + the signal's number when a signal ended it); null while it runs. `quiet`: it went
-// QUIET_MS with no new output at least once (it stays set while it runs). `end`: when it ended (ms).
+// code (128 + the signal's number when a signal ended it); null while it runs. `end`: when it ended (ms).
+// `waiting`: it waits for input now (pty.ts InputWatch: a prompt-shaped last line, quiet); `quiet`: no
+// output for a while without such a line, so it may wait (a hint only); `waitedAt`: when it first waited.
+// `cardAt`: when its panel card shows (runs.ts), null for none.
 export type BangRun = {
   id: string; cmd: string; out: string; err: string; cut: boolean;
-  running: boolean; exit: number | null; interrupted: boolean; at: number; end: number | null; quiet: boolean;
+  running: boolean; exit: number | null; interrupted: boolean; at: number; end: number | null;
+  waiting: boolean; quiet: boolean; waitedAt: number | null; cardAt: number | null;
   error?: string; // it couldn't start, or couldn't go to Claude
 };
 
@@ -36,7 +41,8 @@ export type BangOptions = {
   cap?: number;
   killAfterMs?: number;
   tickMs?: number;
-  quietMs?: number;
+  promptMs?: number; // pty.ts PROMPT_QUIET_MS
+  hintMs?: number; // pty.ts QUIET_HINT_MS
   now?: () => number;
   start?: PtyStart; // default: pty.ts shellPty
   onUpdate: (run: BangRun) => void; // throttled while it runs
@@ -49,14 +55,15 @@ export class Bang {
   private opts: BangOptions;
   private tick: NodeJS.Timeout | null = null;
   private killTimer: NodeJS.Timeout | null = null;
-  private quietTimer: NodeJS.Timeout | null = null;
+  private watch: InputWatch | null = null;
   private finished = false;
   private raw = { out: '', err: '' }; // what the pty gave, before plainText and the cap
   private full = false; // the cap was reached: nothing more is kept
 
   constructor(opts: BangOptions) {
     this.opts = opts;
-    this.run = { id: opts.id, cmd: opts.cmd, out: '', err: '', cut: false, running: true, exit: null, interrupted: false, at: this.now(), end: null, quiet: false };
+    const at = this.now();
+    this.run = { id: opts.id, cmd: opts.cmd, out: '', err: '', cut: false, running: true, exit: null, interrupted: false, at, end: null, waiting: false, quiet: false, waitedAt: null, cardAt: cardAt(at, null) };
     const env = { ...(opts.env ?? process.env), TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat' };
     const shell = opts.shell || env.SHELL || '/bin/zsh';
     try {
@@ -67,7 +74,12 @@ export class Bang {
       queueMicrotask(() => this.fail(e));
       return;
     }
-    this.arm();
+    this.watch = new InputWatch({ now: () => this.now(), promptMs: opts.promptMs, hintMs: opts.hintMs, onChange: (st) => {
+      if (this.finished) return;
+      Object.assign(this.run, st);
+      this.run.cardAt = cardAt(this.run.at, null, st.waitedAt);
+      this.opts.onUpdate(this.run);
+    } });
     void this.pty.done.then((end) => {
       if (end.error) { this.fail(end.error); return; }
       this.run.exit = end.code;
@@ -82,7 +94,7 @@ export class Bang {
     return true;
   }
 
-  // Esc, Esc: SIGTERM to its process group, SIGKILL if it is still there after 3 s.
+  // Esc, Esc in its shell view: SIGTERM to its process group, SIGKILL if it is still there after 3 s.
   kill(): void {
     if (this.finished || !this.pty) return;
     this.run.interrupted = true;
@@ -102,19 +114,11 @@ export class Bang {
     return (this.opts.now ?? Date.now)();
   }
 
-  // the quiet timer: QUIET_MS after the start or the last output
-  private arm(): void {
-    if (this.run.quiet || this.finished) return;
-    if (this.quietTimer) clearTimeout(this.quietTimer);
-    this.quietTimer = setTimeout(() => { this.quietTimer = null; if (this.finished) return; this.run.quiet = true; this.opts.onUpdate(this.run); }, this.opts.quietMs ?? QUIET_MS);
-    this.quietTimer.unref?.();
-  }
-
   // The output as plain text (pty.ts plainText, the one place the pty's CRLF and escapes go), out and err
   // together cut at the cap by code point (a cut never splits a surrogate pair).
   private take(which: 'out' | 'err', d: string): void {
     if (this.finished) return;
-    this.arm();
+    this.watch?.take(which, d);
     if (this.full) { this.run.cut = true; return; }
     this.raw[which] += d;
     const out = [...plainText(this.raw.out)], err = [...plainText(this.raw.err)];
@@ -140,7 +144,8 @@ export class Bang {
   private finish(): void {
     if (this.finished) return;
     this.finished = true;
-    for (const t of [this.tick, this.quietTimer]) if (t) clearTimeout(t);
+    if (this.tick) clearTimeout(this.tick);
+    this.watch?.stop();
     // The SIGKILL stays armed only while something of the group lives (a child that ignored SIGTERM):
     // once the group is empty its id can be reused, and that group must get no signal.
     const g = this.pty?.group() ?? null;
@@ -149,7 +154,10 @@ export class Bang {
       this.killTimer = null;
     }
     this.run.running = false;
+    this.run.waiting = false;
+    this.run.quiet = false;
     this.run.end = this.now();
+    this.run.cardAt = cardAt(this.run.at, this.run.end, this.run.waitedAt);
     this.opts.onDone(this.run);
   }
 }

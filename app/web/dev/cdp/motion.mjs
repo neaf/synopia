@@ -135,7 +135,7 @@ const onRule = await ev(`(() => { const l = document.querySelector('#log .liveln
   const an = l.querySelector('.g .ind').getAnimations({ subtree: true }); return { rule: b.height === '1px' && b.position === 'absolute', n: an.length, running: an.every(a => a.playState === 'running' && a.effect.getTiming().iterations === Infinity && a.effect.getComputedTiming().easing === 'linear') }; })()`);
 check('the Working line\'s mark on its rule keeps moving (linear, infinite)', !!onRule && onRule.rule && onRule.n > 0 && onRule.running, JSON.stringify(onRule));
 await reduce(true);
-const NEED = [/queued clock/, /claude ●/, /tool running ●/, /agent one svg/, /wave row/, /liveln rule svg/, /ln agent ind/];
+const NEED = [/queued clock/, /claude ●/, /tool (runrow )?running ●/, /agent one svg/, /wave row/, /liveln rule svg/, /ln agent ind/];
 await centred('1x', NEED);
 await c.cdp('Emulation.setDeviceMetricsOverride', { width: 1280, height: 820, deviceScaleFactor: 2, mobile: false });
 await sleep(200);

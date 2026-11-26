@@ -299,7 +299,8 @@ function scrollTo(a) {
   if (a.bottom && atEnd(log)) log.scrollTop = log.scrollHeight; // nothing came since: pinned to the end again
   log.dispatchEvent(new Event("scroll")); // noted even when the position didn't change
 }
-const hasBlock = (key) => { const log = document.getElementById("log"); return !!log && blocks(log).some(c => c.dataset.key === key); };
+/* a jump's target is a block's key, or {has(), land()} for something inside one (find.js: a match) */
+const hasBlock = (key) => { if (typeof key !== "string") return key.has(); const log = document.getElementById("log"); return !!log && blocks(log).some(c => c.dataset.key === key); };
 /* items for the viewed conversation, rendered: finish a restore, or note the earlier items loaded */
 export function items(m) {
   const s = cur(); if (!s || !mounted) return;
@@ -333,7 +334,7 @@ function restored() {
 }
 
 /* ---------- a jump to a block: the "To review" card goes to its subagent's report (R7.1) ---------- */
-/* { key: the view, block: its block's key, done(found) } until the block is on screen or the view has no such
+/* { key: the view, block: its block's key (or {has, land}, hasBlock), done(found) } until the block is on screen or the view has no such
    block. It loads earlier pages as the restore does (items above) and lands as a scroll of yours. */
 let jump = null;
 const JUMP_PAGES = 50, JUMP_GAP = 12; // pages at most; the block's top this far under the log's top
@@ -345,8 +346,9 @@ export function jumpTo(key, block, done) {
   restoring = { key, back: false, tries: 1, got: true, reset: true, timer: giveUp(key) }; // its replies go through items()
 }
 function toBlock(key) {
-  const log = document.getElementById("log"), el = blocks(log).find(c => c.dataset.key === key);
-  log.scrollTop += el.getBoundingClientRect().top - log.getBoundingClientRect().top - JUMP_GAP;
+  const log = document.getElementById("log");
+  if (typeof key !== "string") key.land(); // it scrolls itself
+  else log.scrollTop += blocks(log).find(c => c.dataset.key === key).getBoundingClientRect().top - log.getBoundingClientRect().top - JUMP_GAP;
   log.dispatchEvent(new Event("scroll")); // noted as a scroll of yours: the anchor, what you saw
   const s = cur(), A = view && agentById(s, view), list = (A || s).items || [];
   if (list.length && (A || s).total > list.length) { sess(s.id).earlier[viewKey()] = list[0].id; changed(); } // a reload asks for the pages it loaded

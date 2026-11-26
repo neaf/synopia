@@ -1,14 +1,17 @@
-// Expanding a tool step to its command or input and its result (R5.6), on a copy of the fixture tree.
+// Tool steps (R5.6), on a copy of the fixture tree: a Bash step is a run row (2026-11-26, prototype/shell-storyboard.html),
+// other steps expand to their input and result.
 // usage: node steps.mjs make <fixture-dir> <claude-dir>   copies the fixture and adds two running steps (run.sh does this)
 //        node steps.mjs <url> <state-dir> <claude-dir>
-// Checks: a step inside "2 Bash commands, …" opens with a click to its command and output, a long
-// result shows 20 lines and "Show all 32 lines", which loads the rest from the server (`toolOutput`),
-// a live update of the block keeps both, a click closes it, and a single inline step opens too.
-// A running Bash step of a driven session (the SDK's tool_progress: 42 s) expands from the live line
-// and from its own line, one open state: the command, a ticking "Running, 42s" and "Output shows when
-// it finishes"; it stays open through a redraw and a reload, and turns into the finished view in place
-// when its result lands. A session Synopia doesn't drive shows the command and "Running".
-// Writes steps.png and steps-running.png.
+// Checks: a Bash step is one row of the same shape as your `!` command: ● Bash(description), the command under a grey $
+// in the gutter (no band), the last 3 lines in the output panel, a state line with its mark; no expansion, no input
+// field. A click on it opens its shell view (the command, its whole result, how it ended). A step inside "Searched
+// once, …" opens to its input and result, 20 lines and "Show all 32 lines" (`toolOutput`), kept through a live
+// update; a single non-shell step opens inline. A running Bash step of a driven session (the SDK's tool_progress:
+// 42 s): its row says "Output shows when it finishes" and "Running, 42s" ticking; the live line names it and opens
+// its shell view ("Shell in Claude's turn", how to see more); its card is in the panel (3 s on) without a sign, not
+// counted as background; its result lands in the open shell view and in the row in place. A session Synopia doesn't
+// drive: the command and "Running", no note. Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS,
+// dollar-row-<theme>.png and step-<theme>.png there).
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, fresh, shot, running, outPanel } from './helpers.mjs';
@@ -38,17 +41,49 @@ if (process.argv[2] === 'make') {
 const [url, stateDir, claude] = process.argv.slice(2);
 const c = await connect();
 const { ev, check, until } = c;
+const theme = process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light', shots = process.env.SYNOPIA_SHOTS;
+if (shots) fs.mkdirSync(shots, { recursive: true });
+const clipOf = (sel) => ev(`(() => { const r = document.querySelector(${JSON.stringify(sel)}).getBoundingClientRect(); return { x: Math.max(0, r.left - 16), y: Math.max(0, r.top - 10), width: Math.min(1000, r.width + 32), height: Math.min(800, r.height + 20), scale: 1 }; })()`);
 await c.load(url + '#11111111', `__synopia.current()?.startsWith('11111111')`);
-check('the tool group shows', await until(`!!document.querySelector('details.fold .body details.step')`));
 await ev('__synopia.spy()');
+
+// ---------- a Bash step is a run row ----------
+const ROW = `[...document.querySelectorAll('#log .ln.tool.runrow')].find(r => r.textContent.includes('List the demo folder'))`;
+check('a Bash step is a run row of its own, not folded with the other steps', await until(`!!${ROW} && !${ROW}.closest('details.fold')`), await ev(`document.getElementById('log').textContent.slice(0, 300)`));
+const shape = await ev(`(() => { const r = ${ROW}, kids = [...r.children]; const ps = r.querySelector(':scope > .g.ps'), cmd = r.querySelector(':scope > .step-out > .cmd'), st = r.querySelector('.res.rst');
+  return { kids: kids.map(k => k.className), dot: kids[0].textContent, head: kids[1].textContent, ps: ps?.textContent, psColor: ps ? getComputedStyle(ps).color : '', ink3: getComputedStyle(document.body).getPropertyValue('--ink-3').trim(),
+    cmd: cmd?.textContent, cmdOneLine: cmd ? getComputedStyle(cmd).whiteSpace : '', out: r.querySelector('.step-out .out')?.textContent, st: st?.textContent, mark: !!st?.querySelector('.ind .chk'), details: !!r.querySelector('details'), input: !!r.querySelector('input, textarea'), link: r.dataset.bg, band: !!r.querySelector('.prompt') }; })()`);
+check('the row: ● Bash(description), then a grey $ in the gutter and the command, on one line', shape.dot === '●' && shape.head === 'Bash(List the demo folder)' && shape.ps === '$' && shape.cmd === 'ls -la /Users/fixture/dev/demo' && shape.cmdOneLine === 'nowrap', JSON.stringify(shape));
+check('the $ has no band and no fill: the gutter text in grey', !shape.band && await ev(`(() => { const ps = ${ROW}.querySelector('.g.ps'), st = getComputedStyle(ps); return st.backgroundColor === 'rgba(0, 0, 0, 0)' && st.color === getComputedStyle(document.querySelector('.qbody .cmd .ps') || ps).color; })()`), JSON.stringify(shape));
+check('the $ is grey, not the step dot\'s green', await ev(`getComputedStyle(${ROW}.querySelector('.g.ps')).color !== getComputedStyle(${ROW}.querySelector(':scope > .g')).color`));
+check('its last lines in the output panel, then "Finished" with the check mark', shape.out === 'notes.md\nREADME.md' && /^Finished/.test(shape.st || '') && shape.mark, JSON.stringify(shape));
+{ const p = await ev(`(() => { ${ROW}.querySelector('.step-out .out').id = 'st-out'; return true; })()`) && await outPanel(c, '#st-out'); check('its output sits in the output panel', !!p && p.ok, JSON.stringify(p)); }
+check('no expansion and no input field in the row', !shape.details && !shape.input && !!shape.link, JSON.stringify(shape));
+// the same shape as your ! run: a recorded one, put in after it
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'bang-shape', k: 'bang', ts: '2026-11-20T10:03:30.000Z', cmd: 'ls demo', sh: { out: 'notes.md\\nREADME.md\\n', err: '', cut: false, exit: 0 } }], total: s.total + 1 }); })()`);
+await until(`!!document.querySelector('#log .bang[data-bang="bang-shape"]')`);
+const same = await ev(`(() => { const a = ${ROW}, b = document.querySelector('#log .bang[data-bang="bang-shape"]');
+  const sig = r => { const o = r.querySelector('.step-out .out'), st = r.querySelector('.res.rst'), so = getComputedStyle(o); return { rows: [...r.querySelectorAll('.step-out > .res')].map(x => x.className.replace(/\\s*(failed|waits)/, '')), corner: !!r.querySelector('.step-out > .res > .lcorner'), panel: [so.backgroundColor, so.borderTopWidth, so.borderRadius, so.paddingLeft].join(), mark: !!st.querySelector('.ind'), font: getComputedStyle(st).fontSize }; };
+  return { claude: sig(a), yours: sig(b), bang: b.querySelector('.bang-cmd > .g').textContent, bangColor: getComputedStyle(b.querySelector('.bang-cmd > .g')).color, bandEdge: getComputedStyle(b.querySelector('.bang-cmd')).borderLeftColor }; })()`);
+check('the same row shape for your ! run and Claude\'s Bash: output panel, guide, state line with its mark', JSON.stringify(same.claude) === JSON.stringify(same.yours), JSON.stringify(same));
+check('yours on the pink ! band, Claude\'s with the $: the sign tells them apart', same.bang === '!' && /^rgb\((191, 57, 137|247, 120, 186)\)$/.test(same.bangColor) && same.bandEdge === same.bangColor, JSON.stringify(same));
+await ev(`${ROW}.scrollIntoView({ block: 'center' })`);
+await sleep(150);
+if (shots) await shot(c, path.join(shots, `dollar-row-${theme}.png`), await clipOf('#log .ln.tool.runrow'));
+// the click opens its shell view
+const sid1 = await ev(`__synopia.current()`), bid = await ev(`${ROW}.dataset.bg`);
+await ev(`${ROW}.querySelector('.step-out .out').click()`);
+check('a click on the row opens its shell view', await until(`__synopia.view() === '${bid}' && !!document.querySelector('#log .bg-run')`, 3000));
+const view = await ev(`(() => { const r = document.querySelector('#log .bg-run'); return { ps: r.querySelector(':scope > .g.ps')?.textContent, cmd: r.querySelector('.step-out .cmd')?.textContent, out: r.querySelector('.step-out .out')?.textContent, end: document.querySelector('#log .bg-end')?.textContent.trim(), head: document.querySelector('.c-head').textContent.replace(/\\s+/g, ' '), box: !!document.getElementById('run-in') || !!document.getElementById('msg') }; })()`);
+check('its shell view: the $ and the command, its whole result, how it ended, no box', view.ps === '$' && view.cmd === 'ls -la /Users/fixture/dev/demo' && /notes\.md/.test(view.out || '') && /^Finished after/.test(view.end || '') && /Shell in Claude's turn/.test(view.head) && !view.box, JSON.stringify(view));
+await ev(`document.querySelector('[data-back]').click()`);
+await until(`__synopia.view() === null && __synopia.current() === '${sid1}'`, 3000);
+
+// ---------- the other steps still expand ----------
+check('the search group shows', await until(`!!document.querySelector('details.fold .body details.step')`));
 const step = (name) => `[...document.querySelectorAll('details.step')].find(d => d.querySelector('summary').textContent.includes(${JSON.stringify(name)}))`;
 const click = (name) => ev(`${step(name)}.querySelector('summary').click()`);
 await ev(`document.querySelector('details.fold').open = true`);
-await click('List the demo folder');
-await sleep(150);
-const bash = await ev(`(() => { const d = ${step('List the demo folder')}; return d.open ? d.querySelector('.step-out').innerText : ''; })()`);
-check('a Bash step opens to its command and output', bash.includes('ls -la /Users/fixture/dev/demo') && bash.includes('notes.md') && bash.includes('README.md'), JSON.stringify(bash));
-{ const p = await ev(`(() => { const d = ${step('List the demo folder')}, o = d.querySelector('.step-out .out'); o.id = 'st-out'; return true; })()`) && await outPanel(c, '#st-out'); check('its output sits in the output panel under the command, in ink', !!p && p.ok && await ev(`getComputedStyle(${step('List the demo folder')}.querySelector('.step-out .cmd')).color === getComputedStyle(document.querySelector('.c-title')).color`), JSON.stringify(p)); }
 await click('Grep(TODO)');
 await sleep(150);
 const lines = () => ev(`(() => { const d = ${step('Grep(TODO)')}; return d.open ? d.querySelector('.out').textContent.split('\\n').length : 0; })()`);
@@ -57,82 +92,64 @@ check('the input of a search shows', (await ev(`${step('Grep(TODO)')}.querySelec
 check('"Show all 32 lines"', (await ev(`${step('Grep(TODO)')}.querySelector('[data-full]')?.textContent`)) === 'Show all 32 lines');
 await ev(`${step('Grep(TODO)')}.querySelector('[data-full]').click()`);
 check('show all loads the full result', await until(`(() => { const d = ${step('Grep(TODO)')}; return d && d.open && d.querySelector('.out').textContent.split('\\n').length === 32 && !d.querySelector('[data-full]'); })()`));
-check('the full result is in the one output panel', await ev(`(() => { const d = ${step('Grep(TODO)')}; return d.querySelectorAll('.step-out .out:not(.err)').length === 1 && getComputedStyle(d.querySelector('.out')).display === 'block'; })()`));
 check('one toolOutput message', (await ev(`JSON.stringify(__synopia.sent('toolOutput'))`)) === JSON.stringify([{ t: 'toolOutput', sid: '11111111-0000-4000-8000-000000000001', agent: null, toolUseId: 'toolu_grep1' }]));
-// a live update that redraws the block: the running fetch finishes
 const before = await ev(`document.querySelector('details.fold').closest('[data-key]').dataset.key`);
-await ev(`(() => { const s = __synopia.cur(), it = s.items.find(i => i.id === 'toolu_fetch1'); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ ...it, state: 'done', out: { text: 'made-up page', lines: 1, cut: false } }], total: s.total }); window.__el = document.querySelector('details.fold'); })()`);
+await ev(`(() => { const s = __synopia.cur(), it = s.items.find(i => i.id === 'toolu_fetch1'); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ ...it, state: 'done', out: { text: 'made-up page', lines: 1, cut: false } }], total: s.total }); })()`);
 await sleep(300);
 check('the live update redrew the block', await ev(`!document.querySelector('details.fold .body').textContent.includes('running')`));
-check('both steps stay open, the full result stays', await ev(`${step('List the demo folder')}.open && ${step('Grep(TODO)')}.open && ${step('Grep(TODO)')}.querySelector('.out').textContent.split('\\n').length === 32`));
-check('the group stays open', await ev(`document.querySelector('details.fold').open && document.querySelector('[data-key="${before}"]') !== null`));
+check('the step and the full result stay open, and the group', await ev(`${step('Grep(TODO)')}.open && ${step('Grep(TODO)')}.querySelector('.out').textContent.split('\\n').length === 32 && document.querySelector('details.fold').open && document.querySelector('[data-key="${before}"]') !== null`));
 await ev(`document.querySelector('details.fold').closest('[data-key]').scrollIntoView({ block: 'start' })`);
 await sleep(200);
-const clip = await ev(`(() => { const r = document.querySelector('details.fold').closest('[data-key]').getBoundingClientRect(); return { x: Math.max(0, r.left - 20), y: Math.max(0, r.top - 10), width: Math.min(1000, r.width + 40), height: Math.min(800, r.height + 20), scale: 1 }; })()`);
+const clip = await clipOf('details.fold');
 await shot(c, path.join(stateDir, 'steps.png'), clip);
-if (process.env.SYNOPIA_SHOTS) { fs.mkdirSync(process.env.SYNOPIA_SHOTS, { recursive: true }); await shot(c, path.join(process.env.SYNOPIA_SHOTS, `step-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`), clip); }
+if (shots) await shot(c, path.join(shots, `step-${theme}.png`), clip);
 await click('Grep(TODO)');
 await sleep(150);
 check('a click closes it', await ev(`!${step('Grep(TODO)')}.open`));
-// a single step shows inline: make one by viewing a run of one tool
-await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'toolu_one', k: 'tool', ts: '2026-11-20T10:03:00.000Z', name: 'Bash', verb: 'Ran', obj: 'Say hi', state: 'done', input: 'echo hi', out: { text: 'hi', lines: 1, cut: false } }], total: s.total + 1 }); })()`);
-check('a single step is inline', await until(`(() => { const d = ${step('Say hi')}; return d && d.parentElement.matches('.ln.tool'); })()`));
-await click('Say hi');
+await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: [{ id: 'toolu_one', k: 'tool', ts: '2026-11-20T10:04:00.000Z', name: 'Grep', verb: 'Searched', obj: 'hello', state: 'done', input: 'pattern: hello', out: { text: 'hello.md', lines: 1, cut: false } }], total: s.total + 2 }); })()`);
+check('a single step is inline', await until(`(() => { const d = ${step('Grep(hello)')}; return d && d.parentElement.matches('.ln.tool'); })()`));
+await click('Grep(hello)');
 await sleep(150);
-check('a single step opens', await ev(`${step('Say hi')}.open && ${step('Say hi')}.querySelector('.step-out').innerText.includes('echo hi')`));
+check('a single step opens', await ev(`${step('Grep(hello)')}.open && ${step('Grep(hello)')}.querySelector('.step-out').innerText.includes('pattern: hello')`));
 
-// ---------- a running step (R5.6) ----------
-// a full load of the page, not a jump to its fragment
+// ---------- a running Bash step (R5.6, R7.1, R7.2) ----------
 const reload = async (u, extra) => { await c.cdp('Page.navigate', { url: 'about:blank' }); await sleep(200); return c.load(u, extra); };
-const LIVE = `document.querySelector('#log .liveln details.step[data-step="toolu_live1"]')`;
-const OWN = `document.querySelector('#log .ln.tool details.step[data-step="toolu_live1"]')`;
+const LIVE = `document.querySelector('#log .liveln')`;
+const OWN = `document.querySelector('#log .ln.tool.runrow[data-bg="toolu_live1"]')`;
 await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
-check('the live line names the running step and can expand', (await ev(`${LIVE}?.querySelector('summary').textContent`)) === `Working Bash(${DESC})`, await ev(`document.querySelector('#log .liveln')?.outerHTML`));
-check('its own line can expand too', await ev(`!!${OWN} && !${OWN}.open && !${LIVE}.open`));
-await ev(`${LIVE}.querySelector('summary').click()`);
-check('a click on the live line opens both', await c.until(`${LIVE}.open && ${OWN}.open`, 2000));
-const body = await ev(`${LIVE}.querySelector('.step-out').innerText`);
-check('it shows the full command at once', body.includes('npm run build') && body.includes('--grep "ability builder"'), JSON.stringify(body));
-const timer = () => ev(`${LIVE}.querySelector('.res.running')?.textContent ?? ''`);
+check('the live line names the running step', (await ev(`${LIVE}?.textContent.replace(/\\s+/g, ' ').trim()`)) === `Working Bash(${DESC})`, await ev(`${LIVE}?.outerHTML`));
+const timer = () => ev(`${OWN}?.querySelector('.res.rst')?.textContent ?? ''`);
 const t1 = await timer();
-check('a quiet "Running, 42s" from the SDK\'s elapsed time', /^Running, ((4|5)\ds|1m \d\ds)$/.test(t1), t1);
-check('"Output shows when it finishes"', (await ev(`${LIVE}.querySelector('.res.note')?.textContent`)) === 'Output shows when it finishes');
-check('the step\'s own line shows the same', (await ev(`${OWN}.querySelector('.step-out').innerText`)).includes('npm run build') && !!(await ev(`${OWN}.querySelector('.res.running [data-live]')`)));
-check('its line\'s own Running row steps aside while open', await ev(`getComputedStyle(${OWN}.querySelector('summary .res.run')).display === 'none'`));
+check('its row: "Output shows when it finishes", then "Running, 42s" from the SDK\'s elapsed time', /^Running, ((4|5)\ds|1m \d\ds)$/.test(t1) && (await ev(`${OWN}.querySelector('.res.note')?.textContent`)) === 'Output shows when it finishes', t1);
+check('its command on one line under the $: the first line of a two-line command', (await ev(`${OWN}.querySelector('.step-out .cmd').textContent`)).startsWith('npm run build'));
 await sleep(2100);
 const t2 = await timer();
 check('the timer ticks', t2 !== t1 && t2.startsWith('Running, '), `${t1} -> ${t2}`);
+check('its card is in the panel (3 s on), without a sign, not counted as background work', await until(`(() => { const r = document.querySelector('.rail .now [data-bg="toolu_live1"]'); return !!r && !r.querySelector('.who') && /shell, started/.test(r.textContent) && /Nothing running in the background/.test(document.querySelector('.rail .main-row').textContent); })()`, 3000), await ev(`JSON.stringify([document.querySelector('.rail')?.textContent || 'no panel', __synopia.cur().items.map(i => [i.id, i.ts, i.cardAt, i.state])])`));
 await ev(`(() => { const l = document.getElementById('log'); l.scrollTop = l.scrollHeight; })()`);
 await sleep(100);
 await shot(c, path.join(stateDir, 'steps-running.png'));
-await ev(`${OWN}.querySelector('summary').click()`);
-check('a click on its own line closes both', await c.until(`!${LIVE}.open && !${OWN}.open`, 2000));
-await ev(`${OWN}.querySelector('summary').click()`);
-check('and opens both', await c.until(`${LIVE}.open && ${OWN}.open`, 2000));
-// a redraw replaces every block
-await ev(`(() => { window.__old = [${LIVE}, ${OWN}]; __synopia.redraw(); })()`);
-check('both stay open through a redraw', await ev(`${LIVE} !== __old[0] && ${OWN} !== __old[1] && ${LIVE}.open && ${OWN}.open`));
-await sleep(600); // the UI state goes to the server
-await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
-check('the UI-state restore keeps it open', await c.until(`!!${LIVE} && ${LIVE}.open && ${OWN}.open`, 3000));
-// the result lands: the step becomes today's finished view in place
-const topOf = `${OWN}.closest('.ln').offsetTop`;
-const top0 = await ev(topOf);
+await ev(`${LIVE}.click()`);
+check('a click on the live line opens its shell view', await until(`__synopia.view() === 'toolu_live1'`, 3000));
+const rv = await ev(`({ head: document.querySelector('.c-head').textContent.replace(/\\s+/g, ' '), note: document.querySelector('#log .bg-run .res.note')?.textContent, cmd: document.querySelector('#log .bg-run .cmd')?.textContent, live: document.querySelector('#log .liveln')?.textContent.trim() })`);
+check('its view: "Shell in Claude\'s turn", what it can show and how to see more, Running', /Running, .*\. Shell in Claude's turn, started/.test(rv.head) && /Claude waits for it/.test(rv.head) && /^Output shows when it finishes\. b, b sends it to the background/.test(rv.note || '') && /npm test/.test(rv.cmd || '') && /^Running/.test(rv.live || ''), JSON.stringify(rv));
+await ev(`document.querySelector('.rail .main-row').click()`);
+await until(`__synopia.view() === null`, 3000);
+await ev(`${OWN}.click()`);
+check('its row opens the same view', await until(`__synopia.view() === 'toolu_live1'`, 3000));
+// the result lands while its view is open
 fs.appendFileSync(fileOf(claude, S), rec(S, { timestamp: fresh(60), type: 'user', uuid: 's-r1', toolUseResult: { stdout: 'built 3 modules\n12 passing', stderr: '', interrupted: false },
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_live1', content: 'built 3 modules\n12 passing' }] } }));
-check('the result arrives', await c.until(`__synopia.cur().items.some(i => i.id === 'toolu_live1' && i.state === 'done')`, 8000));
+check('its result lands in the open shell view: the output, then how it ended', await until(`/12 passing/.test(document.querySelector('#log .bg-run')?.textContent || '') && /^Finished after/.test(document.querySelector('#log .bg-end')?.textContent.trim() || '')`, 8000), await ev(`document.getElementById('log').textContent`));
+await ev(`document.querySelector('[data-back]').click()`);
+await until(`__synopia.view() === null`, 3000);
 await sleep(200);
-const done = await ev(`${OWN}?.open ? ${OWN}.querySelector('.step-out').innerText : ''`);
-check('it is the finished view: the command, then the result under the guide', done.includes('npm run build') && done.includes('12 passing') && !done.includes('Running')
-  && await ev(`!!${OWN}.querySelector('.res > .lcorner + .out')`), JSON.stringify(done));
-check('in place, no jump', (await ev(topOf)) === top0, `${top0} -> ${await ev(topOf)}`);
-check('the live line no longer expands a finished step', await ev(`!${LIVE}`));
-// a session Synopia doesn't drive: the command and "Running", no timer
+const done = await ev(`(() => { const r = ${OWN}; return r && { out: r.querySelector('.step-out .out')?.textContent, st: r.querySelector('.res.rst')?.textContent, note: !!r.querySelector('.res.note') }; })()`);
+check('the row ends in place: its last lines and "Finished"', !!done && done.out === 'built 3 modules\n12 passing' && /^Finished/.test(done.st || '') && !done.note, JSON.stringify(done));
+check('the live line no longer names it', !/Bash\(/.test(await ev(`${LIVE}?.textContent || ''`)));
+// a session Synopia doesn't drive: the command and "Running", no note
 await reload(`${url}#${N.slice(0, 8)}`, `__synopia.current() === '${N}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.id === 'toolu_ext1')`);
-const EXT = `document.querySelector('#log .ln.tool details.step[data-step="toolu_ext1"]')`;
-await ev(`${EXT}.querySelector('summary').click()`);
-await sleep(150);
-check('not driven: the command and "Running", nothing more', await ev(`${EXT}.open && ${EXT}.querySelector('.cmd').textContent === 'sleep 30; echo built'
-  && ${EXT}.querySelector('.res.running').textContent === 'Running' && !${EXT}.querySelector('.res.note')`), await ev(`${EXT}?.querySelector('.step-out')?.innerText`));
+const EXT = `document.querySelector('#log .ln.tool.runrow[data-bg="toolu_ext1"]')`;
+check('not driven: the command and "Running", no note', await until(`!!${EXT} && ${EXT}.querySelector('.cmd').textContent === 'sleep 30; echo built' && /^Running/.test(${EXT}.querySelector('.res.rst').textContent) && !${EXT}.querySelector('.res.note')`, 3000), await ev(`${EXT}?.textContent`));
 c.print();
 c.close();

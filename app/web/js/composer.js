@@ -13,6 +13,8 @@ import { IMAGE_TYPES, MAX_IMAGE_BYTES, MAX_TOTAL_IMAGE_BYTES } from "./protocol.
 import { rank, marked } from "./fuzzy.js";
 import { showFolderList } from "./folder-list.js";
 import { showMcp } from "./mcp-panel.js";
+import { shownBg } from "./bg-view.js";
+import { bgState } from "./runs.js";
 
 /* pasted images: { id, n (its [Image #n] tag in the text), mediaType, url (an object URL, for the thumbnail), data (its data: URL, for sending) } */
 export const attachments = [];
@@ -189,17 +191,20 @@ export function openModelPicker() {
   ta.focus(); ta.openModels?.();
 }
 
-/* ---------- the box's one prompt line (R9.4-R9.6, R9.8): Esc, Esc interrupts; b, b sends to the background; x, x closes;
-   f, f sends the queued messages now ----------
+/* ---------- the box's one prompt line (R9.4-R9.6, R9.8): Esc, Esc interrupts (in a run's shell view it stops that
+   run, 2026-11-26); b, b sends to the background; x, x closes; f, f sends the queued messages now ----------
    The first key asks in the box, the same key again does it; any other key or a click dismisses it, and
    another prompt's first key replaces it. A view switch, the turn's end or the steps' end take it away too. */
-let ask = null; // { kind: "interrupt" | "background" | "close" | "now", sid }
+let ask = null; // { kind: "interrupt" | "stop" | "background" | "close" | "now", sid, bg }
 export const prompt = () => ask?.kind || null;
-const AGAIN = { interrupt: "Escape", background: "b", close: "x", now: "f" };
-/* a running turn, or one waiting on a card, or a running `!` command (sessions.ts ends it first); never for
-   a session another process runs */
-const canInterrupt = s => Boolean(s) && s.state.driven && !termPid(s) && (s.state.light === "green" || s.state.light === "red" && s.state.status === "waiting" || bangRunning(s));
-const bangRunning = s => Boolean(s?.bang?.running);
+const AGAIN = { interrupt: "Escape", stop: "Escape", background: "b", close: "x", now: "f" };
+/* a running turn, or one waiting on a card; never for a session another process runs. Your `!` command keeps
+   running: it stops in its shell view (2026-11-26) */
+const canInterrupt = s => Boolean(s) && s.state.driven && !termPid(s) && (s.state.light === "green" || s.state.light === "red" && s.state.status === "waiting");
+/* the run whose shell view is shown and that Esc, Esc stops there (R9.4, 2026-11-26): your `!` command, the
+   refresh, or Claude's background shell or monitor in a session Synopia drives. Claude's foreground step is the
+   turn: its view asks "Interrupt?" */
+const stoppable = s => { const b = shownBg(); return b && !b.step && bgState(b) === "running" && (b.own || b.creds || (s.state.driven && !termPid(s))) ? b : null; };
 /* the main conversation's steps that can go: a running foreground Bash or Agent (the backend's `fg`), in a
    running turn of a session Synopia drives */
 const bgSteps = s => !s || !s.state.driven || termPid(s) || view || s.state.light !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
@@ -225,7 +230,10 @@ function dismiss() {
 }
 /* the first Esc */
 export function askInterrupt() {
-  return canInterrupt(cur()) && askInBox("interrupt", `<b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.`);
+  const s = cur(), b = s && stoppable(s);
+  if (b) { const what = b.kind === "monitor" ? "monitor" : "shell"; if (!askInBox("stop", `<b>Stop this ${what}?</b> <kbd>Esc</kbd> again to stop it. Any other key to keep it running.`)) return false; ask.bg = b.toolUseId; return true; }
+  if (view && !shownBg()?.step) return false; // a subagent's or an ended run's view: nothing of its own to stop
+  return canInterrupt(s) && askInBox("interrupt", `<b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.`);
 }
 /* the first b: the steps that can go are marked in the transcript; false when nothing can go */
 export function askBackground() {
@@ -256,6 +264,7 @@ function confirm() {
   const a = ask; dismiss();
   const s = cur(); if (!a || a.sid !== current || !s) return;
   if (a.kind === "interrupt" && canInterrupt(s)) act({ t: "interrupt", sid: s.id });
+  else if (a.kind === "stop") { const b = stoppable(s); if (b && b.toolUseId === a.bg) act(b.own ? { t: "bangStop", sid: s.id, bg: b.toolUseId } : b.creds ? { t: "credsCancel", sid: s.id } : { t: "stopTask", sid: s.id, bg: b.toolUseId }, { done: (ok, error) => { if (!ok && error) toast(error); } }); }
   else if (a.kind === "background" && bgSteps(s).length) act({ t: "background", sid: s.id });
   else if (a.kind === "close") closeSession(s);
   else if (a.kind === "now" && canSendNow(s)) sendNow(s);
@@ -275,6 +284,7 @@ export function syncPrompt() {
   const s = cur(), log = document.getElementById("log");
   if (ask.sid !== current || !conv().querySelector(".composer.asking")
     || ask.kind === "interrupt" && !canInterrupt(s)
+    || ask.kind === "stop" && stoppable(s)?.toolUseId !== ask.bg
     || ask.kind === "background" && (!bgSteps(s).length || !log?.classList.contains("bg-asking"))
     || ask.kind === "now" && (!canSendNow(s) || !log?.classList.contains("now-asking"))) dismiss();
 }
@@ -471,7 +481,7 @@ function mountBash(s, ta) {
 /* Enter in bash mode: one command at a time per session */
 function runBang(s, ta) {
   const cmd = ta.value; if (!cmd.trim()) return;
-  if (bangRunning(cur())) { toast("A shell command is still running in this session. Wait for it, or Esc, Esc to end it."); return; }
+  if (cur()?.bang?.running) { toast("A shell command is still running in this session. Wait for it, or stop it in its shell view."); return; }
   const done = ok => { if (!ok) giveBack(s.id, ["!" + cmd]); };
   if (!act({ t: "bang", sid: s.id, command: cmd, uuid: newUuid() }, { done, refused: "Not connected to the Synopia backend. Your command is still in the box." })) return;
   ta.value = ""; ta.style.height = "auto"; setBash(ta, false);

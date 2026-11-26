@@ -8,7 +8,7 @@
 #   app/web/dev/cdp/run.sh earlier loading earlier items, on a long transcript generated into the temp state
 #   app/web/dev/cdp/run.sh csp     the page under its CSP, the H1 payload, an injected handler blocked
 #   app/web/dev/cdp/run.sh files   files changed with a Bash command's edits (R5.9), with a shot
-#   app/web/dev/cdp/run.sh steps   a tool step expanded to its command and result, show all, a live update, a running step from the live line and its own line (R5.6), with shots
+#   app/web/dev/cdp/run.sh steps   a Bash step as a run row ( the gutter, 3 lines, state line; the same shape as a ! row; opens its shell view), its card after 3 s, its result landing in the open view, other steps expanded with show all and a live update (R5.6, R7.1, R7.2), with shots
 #   app/web/dev/cdp/run.sh preview the file preview (R5.9) on a generated session pointing at a repo file, a binary and HTML, with --dry-run
 #   app/web/dev/cdp/run.sh tween   sidebar sub-lines: height then fade, fade then height, no jump, guides aligned, instant with reduced motion (R8.1, R4.3)
 #   app/web/dev/cdp/run.sh images  image thumbnails, the viewer and pasted images (R5.13), on made-up images generated into the temp state, with shots
@@ -20,7 +20,7 @@
 #   app/web/dev/cdp/run.sh dark    dark mode (section 11): follows the system live, the switch stored and kept over a reload, no light background left, with shots
 #   app/web/dev/cdp/run.sh titles  title changes in the transcript (R5.12c): two Retitled lines in place, kept over a reload and a backend restart, with a shot
 #   app/web/dev/cdp/run.sh queued  the pane as one panel and messages sent during a turn (R5, R5.5): the box as the last row under its line, the band edge whole and edge to edge, clock bands below the live line, pinned when scrolled up, the box counts them, they land with nothing moving, a send scrolls to the end only from the end, an interrupt puts one back in the box, long tokens wrap, with shots
-#   app/web/dev/cdp/run.sh bang    bash mode (R5.13): ! enters it, Backspace leaves it, a command's output, stderr and exit, Show all, one at a time, Esc, Esc ends a sleep, a command that waits for Enter in its pty (in place, in the panel, the shell view and its input line), with shots
+#   app/web/dev/cdp/run.sh bang    bash mode (R5.13) and the run row (R5.6, R7.1, 2026-11-26): ! enters it, Backspace leaves it, output, stderr and exit in a 3-line row with no field, the row opens the shell view, no card for an instant command and one after 3 s, Esc, Esc stops a sleep in its shell view only, a command that waits for Enter is needs you (row, red card, sidebar) and takes the Enter in the shell view's ! band, with shots
 #   app/web/dev/cdp/run.sh close  x, x closes the session (R3.6, R9): the prompt and what will stop, cancel by a key, a click or a switch, close, back from the Open list in its group, with a shot
 #   app/web/dev/cdp/run.sh folders  New session and Open session in any folder (R3.3, R3.11-R3.14, R9.7): n and o, the folder list, Tab, the create row, gone folders and continue as a fork, the matcher in four lists, no open session, with shots
 #   app/web/dev/cdp/run.sh viewswitch  back from a subagent the view renders once (R3.9): one view message, one reset, no other range first, on the earlier transcript
@@ -31,13 +31,14 @@
 #   app/web/dev/cdp/run.sh agenttools  Synopia's tools for agents (R3.15): a scripted session calls start_session, the permission card, the new session under the caller in its group or a new group, shown only when you look at the caller, Always allow, the step's link, with shots (also in /tmp/synopia-start-session/)
 #   app/web/dev/cdp/run.sh mcp     /mcp opens the MCP panel (R5.15): statuses with their marks, Sign in waits for the browser then Connected, Sign out, Reconnect, Disable and Enable, a failed sign-in's sentence, Esc, the / menu, a terminal's session; /unknowncmd works only in a terminal (R5.16), with shots (also in /tmp/synopia-mcp/shots/)
 #   app/web/dev/cdp/run.sh creds   retried requests and the credential refresh (R8.2): the retry's attempt, sentence and countdown, needs you with the sign-in expired, the guessed command, Save runs it in a pseudo-terminal shared by the folder, its output live, a typed line, exit 0 clears, a later expiry runs it by itself, a failure's editable line, with shots
+#   app/web/dev/cdp/run.sh find    find in the transcript (R5.12e, R9.9) on a generated long transcript: ⌘F in both modes, the count, Enter and Shift+Enter, ⌘G, a match in an earlier page, one in a collapsed group, Esc keeps the place, a subagent's own transcript, no long task over 200 ms, with a shot (also in /tmp/synopia-find/)
 # SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders tables scroll stream agenttools sendnow mcp creds)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders tables scroll stream agenttools sendnow mcp creds find)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -82,7 +83,7 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 if [ "$name" = viewswitch ]; then fix="$state/claude"; node "$here/earlier.mjs" make "$fix" || exit 1; fi
-if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ] || [ "$name" = scroll ] || [ "$name" = stream ] || [ "$name" = agenttools ] || [ "$name" = sendnow ] || [ "$name" = mcp ] || [ "$name" = creds ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ] || [ "$name" = scroll ] || [ "$name" = stream ] || [ "$name" = agenttools ] || [ "$name" = sendnow ] || [ "$name" = mcp ] || [ "$name" = creds ] || [ "$name" = find ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-run); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
@@ -106,7 +107,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shots: $state/steps*.png" ;;
-  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders|tables|scroll|agenttools|sendnow|mcp|creds) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders|tables|scroll|agenttools|sendnow|mcp|creds|find) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

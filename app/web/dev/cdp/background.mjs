@@ -5,8 +5,10 @@
 // one) and turns the message box into the prompt; another key, a click or the turn ending cancels it; the
 // second b sends `background {sid}`; Esc and b replace each other's prompt; nothing in a session Synopia
 // doesn't drive; b types in insert mode; a step the live line names is marked there only, not on its group
-// row, also expanded and when the live line re-renders; the live line names a subagent by its kind tag and
-// name, a Bash as Bash(…), never a background subagent while the turn runs, and that one once the turn ended. Writes background-asking.png and background-live.png.
+// run row, also after a redraw and when the live line re-renders; the live line names a subagent by its kind tag and
+// name, a Bash as Bash(…), never a background subagent while the turn runs; once the main turn is over there is no
+// live line at all, even with a background shell and subagent running: the transcript ends with "Worked for"
+// (2026-11-26). Writes background-asking.png and background-live.png.
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, fresh, keyTable, spySent, writeScript, running, shot } from './helpers.mjs';
@@ -112,26 +114,25 @@ check('j cancels it, nothing sent', (await asking()) === null && (await sent()).
 await K.esc(); await K.l();
 check('Esc then l:the interrupt prompt alone, still nothing sent', (await asking()) === null && (await sent()).length === 1);
 
-// the live line names a foreground Bash (the newest step, in a group with a finished Read): the mark is on
-// the live line only, not on the group row holding it; the earlier Bash and the subagent the live line
-// doesn't name keep theirs where they are shown
+// the live line names a foreground Bash (the newest step, after a finished Read): the mark is on the live line
+// only, not on its own run row; the earlier Bash and the subagent the live line doesn't name keep theirs where they are shown
 const step = (o) => `(s => { const b = s.items.find(i => i.id === 'toolu_bsleep'); return { ...b, ...${JSON.stringify(o)} }; })(__synopia.cur())`;
 const addLive = (o = {}) => ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total + ['toolu_bread', 'toolu_blive'].filter(id => !s.items.some(i => i.id === id)).length, upsert: [${step({ id: 'toolu_bread', name: 'Read', verb: 'Read', obj: 'README.md', state: 'done', fg: false })}, ${step({ id: 'toolu_blive', obj: 'npm run build', ...o })}] }))(__synopia.cur())`);
 await addLive();
 await c.until(`!!document.querySelector('#log .liveln') && /Bash\\(npm run build\\)/.test(document.querySelector('#log .liveln').textContent)`);
-const where = () => ev(`(() => { const g = document.querySelector('#log [data-key="run:toolu_bread"]'), sum = g?.querySelector('details.fold > summary'); return {
-  live: document.querySelector('#log .liveln')?.hasAttribute('data-fg'), group: !!g && (sum.hasAttribute('data-fg') || !!g.querySelector('[data-fg]')),
+const where = () => ev(`(() => { const g = document.querySelector('#log .runrow[data-bg="toolu_blive"]'); return {
+  live: document.querySelector('#log .liveln')?.hasAttribute('data-fg'), group: !g || g.hasAttribute('data-fg') || !!g.querySelector('[data-fg]'),
   sleep: !!document.querySelector('#log .ln.tool[data-fg]:not(.liveln)') && /sleep 40/.test(document.querySelector('#log .ln.tool[data-fg]:not(.liveln)').textContent), agent: !!document.querySelector('#log .wgrid [data-fg]'),
   n: document.querySelectorAll('#log [data-fg]').length }; })()`);
 const w0 = await where();
-check('live line names the foreground Bash: the mark is on the live line, not its group row', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 3, JSON.stringify(w0));
+check('live line names the foreground Bash: the mark is on the live line, not its own run row', w0.live === true && w0.group === false && w0.sleep === true && w0.agent === true && w0.n === 3, JSON.stringify(w0));
 await K.b();
 check('first b: the prompt, the live line ringed', (await asking()) === PROMPT && (await ev(`(cs => /0px 0px 0px 4px/.test(cs.boxShadow))(getComputedStyle(document.querySelector('#log .liveln')))`)) === true);
 const m2 = await marked();
 check('first b: three steps marked once each, the live line one of them', m2.length === 3 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Working/.test(m2[2]), JSON.stringify(m2));
-await ev(`document.querySelector('#log [data-key="run:toolu_bread"] details.fold').open = true`);
+await ev(`__synopia.redraw()`);
 const w1 = await where();
-check('the group expanded: its row of that step is not marked, the live line still is', w1.live === true && w1.group === false && (await ev(`!!document.querySelector('#log [data-key="run:toolu_bread"] details.fold[open]')`)), JSON.stringify(w1));
+check('after a redraw: its run row is not marked, the live line still is', w1.live === true && w1.group === false, JSON.stringify(w1));
 await addLive({ obj: 'npm run build:all' }); // the live line re-renders under the prompt
 await c.until(`/build:all/.test(document.querySelector('#log .liveln')?.textContent || '')`);
 const w2 = await where();
@@ -174,15 +175,16 @@ await K.i(); await K.b();
 check('insert mode: b types', (await ev('document.getElementById("msg").value')) === 'b' && (await asking()) === null);
 await ev('document.getElementById("msg").value = ""'); await K.esc();
 
-// the main turn over, only the background subagent running: the live line names it as the panel does
+// the main turn over, a background subagent and shell running: no live line at all (2026-11-26); the panel and
+// the sidebar show them, and the transcript ends with the turn's "Worked for" line
+const bgShell = { toolUseId: 'toolu_bgsh', taskId: 'bgsh1', kind: 'shell', description: 'Serve the demo', command: 'npm run dev', timeout: 0, persistent: false, start: iso, status: 'running', summary: '', end: null, cardAt: Date.parse(iso) + 3000, tail: '' };
 const bgAgent = { id: 'abbg1', type: 'general-purpose', fork: false, description: 'Draft the notes', toolUseId: 'toolu_bbg', model: null, depth: 0, finished: false, running: true, review: false, stopped: false, start: iso, end: null, total: 0 };
-await ev(`(s => __synopia.inject({ t: 'session', id: '${A}', agents: [...(s.agents || []).filter(a => a.toolUseId !== 'toolu_bbg'), ${JSON.stringify(bgAgent)}].map(a => a.toolUseId === 'toolu_bbg' || a.finished ? a : { ...a, finished: true, running: false }), background: [],
+await ev(`(s => __synopia.inject({ t: 'session', id: '${A}', agents: [...(s.agents || []).filter(a => a.toolUseId !== 'toolu_bbg'), ${JSON.stringify(bgAgent)}].map(a => a.toolUseId === 'toolu_bbg' || a.finished ? a : { ...a, finished: true, running: false }), background: [${JSON.stringify(bgShell)}],
   state: { ...s.state, status: 'idle', light: 'amber', tone: 'amber', word: 'Your turn', mark: 'stopped', since: Date.now() } }))(__synopia.cur())`);
-check('the turn over, a background subagent running: Working, its kind tag and name', await c.until(`document.querySelector('#log .liveln')?.textContent.trim().replace(/\\s+/g, ' ') === 'Working subagent Draft the notes'`)
-  && JSON.stringify(await liveKind()) === JSON.stringify(['kind kd-sub:subagent']) && (await ev(`document.querySelector('#log .liveln').dataset.state`)) === 'green'
-  && (await ev(`!!document.querySelector('#log .liveln > .g .ind .rot')`)), // the subagent's own moving mark
-  JSON.stringify([await liveText(), await liveKind()]));
-await ruleClear('the turn over, a background subagent');
+await ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total, upsert: [...s.items.filter(i => i.k === 'tool' && i.state === 'running').map(i => ({ ...i, state: 'done', fg: false })), { ...s.items.filter(i => i.k === 'you').pop(), workedMs: 42000 }] }))(__synopia.cur())`); // its turn_duration
+check('the main turn over, a background shell and subagent running: no live line, the transcript ends with "Worked for"', await c.until(`!document.querySelector('#log .liveln') && /^Worked for /.test([...document.querySelectorAll('#log .log-inner > *')].filter(e => e.textContent.trim()).pop()?.textContent.trim() || '')`),
+  JSON.stringify([await liveText(), await ev(`[...document.querySelectorAll('#log .log-inner > *')].slice(-2).map(e => e.className + ': ' + e.textContent.trim().slice(0, 80))`)]));
+check('the panel shows what runs: Main conversation counts them (the shell once its card is due)', await c.until(`(document.querySelector('.rail .main-row .m')?.textContent || '') === '2 running in the background'`, 5000), await ev(`document.querySelector('.rail .main-row')?.textContent || ''`));
 
 // a session Synopia doesn't drive: the first b does nothing. Its Bash runs in the other process's
 // foreground (no SDK task of Synopia's marks it `fg`: task_started reaches only the process that runs it)

@@ -197,10 +197,12 @@ export function qaKeys(e) {
 }
 /* The dock's line when Claude needs you without a card: the sign-in expired or its credentials are being
    refreshed (creds-line.js), a red state whose request isn't here, or a turn that failed with a sentence.
-   Working and your turn have no status line (R5.5). */
+   Working and your turn have no status line (R5.5); nor does a command of yours that waits for input: its row, its
+   card and the sidebar say so, and its shell view takes the input (R5.13, 2026-11-26). */
 const credsState = s => s.state.status === "signedout" || s.state.status === "refreshing"; // status.ts: a card wins over both
 function statusLine(s) {
   if (credsState(s)) return credsHTML(s);
+  if (s.state.needsYou === "input") return "";
   if (s.state.status === "failed" && s.state.light !== "red") return `<div class="status" data-state="amber"><b>${ind("failed")} Failed</b><span>${esc(s.state.detail.error)}</span></div>`;
   const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something", blocked: "A step was blocked or denied and Claude needs you to continue" }[s.state.needsYou] || "Claude is waiting for a permission";
   return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
@@ -208,7 +210,7 @@ function statusLine(s) {
 /* The credential line's fields (creds-line.js) across a redraw (its output grows while you type): what you
    typed, the caret and the focus come back on the field with the same id. */
 function keepFields(dock) {
-  const was = [...dock.querySelectorAll("#creds-cmd, #creds-in")].map(el => ({ id: el.id, value: el.value, focus: document.activeElement === el, a: el.selectionStart, b: el.selectionEnd, typed: el.dataset.typed === "1" }));
+  const was = [...dock.querySelectorAll("#creds-cmd")].map(el => ({ id: el.id, value: el.value, focus: document.activeElement === el, a: el.selectionStart, b: el.selectionEnd, typed: el.dataset.typed === "1" }));
   return () => { for (const w of was) { const el = document.getElementById(w.id); if (!el || !w.typed && !w.focus) continue;
     el.value = w.value; el.dataset.typed = "1"; if (w.focus) { el.focus(); el.setSelectionRange(w.a, w.b); } } };
 }

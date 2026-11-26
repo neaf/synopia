@@ -25,3 +25,7 @@ State on 2026-11-24, after the rearchitecture (branch `rearch`, worktree `~/dev/
 - Merge `rearch` into `main` once the user agrees. Done 2026-11-24; history scrubbed, tag `rearch-base` kept (scrubbed) for the upgrade test.
 - Everything else open is in `docs/functional-requirements.md` "Known gaps": three item-level status derivations still in the page (the backend fields they need are listed there), shell behaviours only a real window can show, and low-risk tooling and backend items.
 - Checks in the real window that no automated check covers: the confirm sheets' text, a real ⌘V image, drag and drop with a trackpad, the title bar strip, the bundle swap while the app runs, the slow-daemon view.
+
+## 2026-11-26: every shell command one way
+
+Built from `prototype/shell-storyboard.html` (approved). Run rows (`web/js/runs.js`), the card rule (`backend/src/runs.ts` `cardAt`), the waiting rule (`backend/src/pty.ts` `InputWatch`, live run IN-1 in docs/Claude Code terminals.md), every run's shell view with input and Esc, Esc stop (`bg-view.js`, `composer.js`, `bangStop`, `stopTask`), the refresh as a run, and the author's motion rule (no live line after the main turn; background work alone is your turn). Open items: docs/functional-requirements.md "Known gaps", "Runs".

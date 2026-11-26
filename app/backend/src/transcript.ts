@@ -20,7 +20,9 @@ export type Patch = {
 };
 // A tool result's preview: its first PREVIEW_LINES lines, PREVIEW_BYTES at most; `lines` counts all
 // of them, `cut` says the preview isn't all (the page asks for the rest with `toolOutput`).
-export type Output = { text: string; lines: number; cut: boolean; interrupted?: boolean };
+// `at`: the result's time (its record's), where the run row's duration ends (R5.6, 2026-11-26).
+// `tail`: a cut result's last 3 lines, which the run row shows (the preview has its first lines).
+export type Output = { text: string; lines: number; cut: boolean; interrupted?: boolean; at?: string; tail?: string };
 // An image block in a record (a pasted image in your prompt, or one in a tool's result): only where it
 // is, never its bytes. `ref` is `<record id>:<block path>` (`3`, or `1.0` for a block in a tool_result's
 // content); the page loads it from `GET /api/image`. `w` and `h` come from the image's header when cheap.
@@ -187,7 +189,7 @@ export function previewOf(text: string): Output {
 // The input of a tool as an expanded step shows it: a Bash command in full (4 KB at most), else one
 // `key: value` line per short field. Edit and Write show nothing here: their diff is the way to see them.
 export function inputOf(name: string, input: JsonRecord): string {
-  if (name === 'Bash') return clip(str(input.command), PREVIEW_BYTES);
+  if (name === 'Bash' || name === 'Monitor') return clip(str(input.command), PREVIEW_BYTES); // a run row's command line (R5.6, 2026-11-26)
   if (name === 'Edit' || name === 'Write' || name === 'NotebookEdit' || name === 'AskUserQuestion' || name === 'ExitPlanMode') return '';
   const out: string[] = [];
   for (const [k, v] of Object.entries(input)) {
@@ -591,7 +593,8 @@ export class Transcript {
         if (r.asks.has(tid)) r.answers.set(tid, clip(res.text, 2000));
         else {
           const interrupted = r.interrupted.has(tid) || (res === u.results[0] && tu?.interrupted === true);
-          r.outs.set(tid, { ...previewOf(res.text), ...(interrupted ? { interrupted } : {}) });
+          const pv = previewOf(res.text);
+          r.outs.set(tid, { ...pv, ...(interrupted ? { interrupted } : {}), ...(u.ts ? { at: u.ts } : {}), ...(pv.cut ? { tail: res.text.replace(/\n+$/, '').split('\n').slice(-3).join('\n').slice(-1200) } : {}) });
           if (r.span) r.outSpans.set(tid, r.span);
           const imgs = imageRefs(uuid, res.images, `${res.index}.`);
           if (imgs.length) {

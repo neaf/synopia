@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, splitBash, BANG_CAP } from '../src/bang.ts';
 import type { BangRun, BangOptions } from '../src/bang.ts';
-import { plainText } from '../src/pty.ts';
+import { InputWatch, looksLikePrompt, plainText } from '../src/pty.ts';
+import { cardAt, CARD_AFTER_MS } from '../src/runs.ts';
+import { sessionState } from '../src/status.ts';
 import { Transcript } from '../src/transcript.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
@@ -161,14 +163,67 @@ test('bang: Esc, Esc ends a command that waits for Enter (TERM to its group)', a
   assert.doesNotMatch(r.out, /never/);
 });
 
-test('bang: quiet once it goes a while with no output, so the page offers the input line', async () => {
+// The waiting rule (pty.ts InputWatch, live run IN-1): a prompt-shaped last line and a quiet while; silence alone
+// is only a hint. The shapes are those IN-1 ran; the counter-examples are its false positives of plain silence.
+test('waits for input: the prompt shapes IN-1 saw, and the quiet lines that are no prompt', () => {
+  for (const t of ['Password: ', 'Continue? [y/N] ', 'Project name? ', 'Enter the MFA code for demo: ', '> ', 'Signed in.\r\nPick one [1-2]: ',
+    'Open the page and sign in.\nPress Enter when done\n', 'Delete 3 files (y/n)', 'Press any key to go on…']) assert.equal(looksLikePrompt(t), true, t);
+  for (const t of ['', 'Building the bundle… ', '\rDownloading 30%', '[####      ] 41%', 'Waiting for the server on :4999\n', 'Randomized with seed 4012\n......',
+    '6 examples, 0 failures\n', 'Total: \n']) assert.equal(looksLikePrompt(t), false, t);
+});
+
+test('waits for input: after the quiet time with a prompt open, cleared by output; quiet alone is a hint, never waiting', async () => {
+  const seen: string[] = [];
+  const w = new InputWatch({ promptMs: 40, hintMs: 120, onChange: (s) => seen.push(s.waiting ? 'waits' : s.quiet ? 'quiet' : 'runs') });
+  w.take('out', 'Found 2 profiles.\r\n');
+  w.take('err', 'Pick one [1-2]: '); // Python writes input()'s prompt to stderr: the stream written last counts
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(w.state.waiting, true);
+  const at = w.state.waitedAt;
+  assert.equal(typeof at, 'number');
+  w.take('out', '1\r\nok\r\n');
+  assert.equal(w.state.waiting, false, 'output again: no longer waiting');
+  await new Promise((r) => setTimeout(r, 160));
+  assert.equal(w.state.waiting, false, 'a closed line is no prompt');
+  assert.equal(w.state.quiet, true, 'a long quiet only hints');
+  assert.equal(w.state.waitedAt, at, 'it keeps when it first waited');
+  w.stop();
+  assert.deepEqual(seen, ['waits', 'runs', 'quiet']);
+});
+
+test('bang: a run that prints a prompt and goes quiet waits for input, and an Enter typed in ends it', async () => {
   const seen: boolean[] = [];
+  let bang!: Bang;
   const r = await new Promise<BangRun>((resolve) => {
-    new Bang({ id: ID, cmd: 'echo a; sleep 0.4; echo b', cwd: tmp(), shell: '/bin/sh', tickMs: 5, quietMs: 150, onUpdate: (run) => seen.push(run.quiet), onDone: (run) => resolve({ ...run }) });
+    bang = new Bang({ id: ID, cmd: 'printf "Press Enter when done… "; read x; echo "got $x"', cwd: tmp(), shell: '/bin/sh', tickMs: 5, promptMs: 60, hintMs: 5000,
+      onUpdate: (run) => { seen.push(run.waiting); if (run.waiting) bang.input(''); }, onDone: (run) => resolve({ ...run }) });
   });
   assert.equal(seen.includes(true), true);
-  assert.equal(r.quiet, true, 'it stays set');
-  assert.equal(r.out, 'a\nb\n');
+  assert.equal(r.waiting, false, 'not once it ended');
+  assert.match(r.out, /got/);
+  assert.equal(typeof r.waitedAt, 'number');
+  assert.equal(r.cardAt, r.waitedAt, 'waiting gives it its card at once');
+});
+
+// The card rule (runs.ts, R7.1): 3 s after the start, or as soon as it waits; none for a run over sooner.
+test('card: 3 s after the start, at once when it waits, none for a run that ended sooner', () => {
+  assert.equal(CARD_AFTER_MS, 3000);
+  assert.equal(cardAt(1000, null), 4000, 'running: due at 3 s');
+  assert.equal(cardAt(1000, 1200), null, '! open . ends in 0.2 s: no card, no Past line');
+  assert.equal(cardAt(1000, 3999), null);
+  assert.equal(cardAt(1000, 4000), 4000, 'lasted 3 s');
+  assert.equal(cardAt(1000, null, 1500), 1500, 'waits at 0.5 s: its card then');
+  assert.equal(cardAt(1000, 1800, 1500), 1500, 'waited, then ended at once: it had its card');
+  assert.equal(cardAt(1000, 9000, 6000), 4000, 'waited after 3 s: the 3 s card stands');
+  assert.equal(cardAt(null, null), null);
+});
+
+test('status: your waiting command needs you, over Claude working; a card of Claude\'s comes first', () => {
+  const facts = { pending: [], ask: null, interrupted: false, blocked: false, review: 0, driven: true };
+  const st = sessionState({ status: 'busy', at: 0 }, { ...facts, input: true });
+  assert.deepEqual([st.light, st.word, st.mark, st.needsYou], ['red', 'Needs you, a command waits for input', 'pause', 'input']);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, { ...facts, input: false }).light, 'amber');
+  assert.equal(sessionState({ status: 'waiting', at: 0 }, { ...facts, pending: ['permission'], input: true }).needsYou, 'permission');
 });
 
 test('pty plainText: CRLF as LF, escapes out, a rewritten line as it ended', () => {
@@ -300,7 +355,7 @@ test('delivery: the command and its output go as shouldQuery:false user messages
     ['<bash-stdout>hi\n</bash-stdout><bash-stderr>err\nExit code 3</bash-stderr>', false, null],
   ]);
   assert.equal(inputs[0].uuid, ID, 'the input record carries the run id, so it lands in place');
-  assert.deepEqual({ ...last()?.bang, at: 0, end: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0, end: 0, quiet: false });
+  assert.deepEqual({ ...last()?.bang, at: 0, end: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0, end: 0, waiting: false, quiet: false, waitedAt: null, cardAt: null });
   // A process started only for this: its init starts no turn.
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
   await new Promise((r) => setTimeout(r, 20));
@@ -331,13 +386,17 @@ test('delivery: the shown run lands as the item of the one record the CLI joins 
   assert.equal(items[0].sh?.out, 'hi\n');
 });
 
-test('delivery: one command at a time, Esc, Esc ends it, not in a session a terminal holds', async () => {
+test('delivery: one command at a time, Esc, Esc in its shell view ends it (not in the main view), not in a session a terminal holds', async () => {
   const { sessions, SID, inputs, last } = setup();
   assert.equal(sessions.get(SID)!.runBang('sleep 30').ok, true);
   const second = sessions.get(SID)!.runBang('echo again');
   assert.equal(second.ok, false);
   assert.match((second as { error: string }).error, /still running/);
   await sessions.get(SID)!.interrupt();
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(last()?.bang?.running, true, 'Esc, Esc in the main view stops only the turn');
+  assert.equal(sessions.get(SID)!.stopBang('another id').ok, false);
+  assert.equal(sessions.get(SID)!.stopBang(String(last()?.bang?.id)).ok, true);
   await until(() => last()?.bang?.running === false);
   assert.equal(last()?.bang?.interrupted, true);
   assert.equal(last()?.bang?.exit, 143);

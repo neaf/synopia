@@ -32,6 +32,7 @@ export type QueryLike = AsyncIterable<SDKMessage> & {
   setModel?: (model?: string) => Promise<void>;
   applyFlagSettings?: (settings: { effortLevel?: EffortLevel | null }) => Promise<void>;
   backgroundTasks?: (toolUseId?: string) => Promise<boolean>;
+  stopTask?: (taskId: string) => Promise<void>;
   mcpServerStatus?: () => Promise<McpServerStatus[]>;
   reconnectMcpServer?: (name: string) => Promise<void>;
   toggleMcpServer?: (name: string, enabled: boolean) => Promise<void>;
@@ -293,6 +294,13 @@ export class SessionProcess {
   async backgroundTasks(toolUseId?: string): Promise<boolean> {
     if (this.done || !this.q.backgroundTasks) throw new Error('no running process');
     return toolUseId ? this.q.backgroundTasks(toolUseId) : this.q.backgroundTasks();
+  }
+
+  // Esc, Esc in a background shell's or monitor's shell view (R9.4, 2026-11-26): the typed Query.stopTask.
+  // Its task_notification `stopped` follows at once (docs/Agent SDK.md, "stopTask").
+  async stopTask(taskId: string): Promise<void> {
+    if (this.done || !this.q.stopTask) throw new Error('no running process');
+    await this.q.stopTask(taskId);
   }
 }
 

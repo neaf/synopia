@@ -22,10 +22,10 @@
 //              (assistant or stream_event), a `system/status`, or the turn's end.
 //   compacting `system/status` with status `compacting`. Clears on a `system/status` with any
 //              other status, a `system/compact_boundary`, or the turn's end.
-// Background subagents and forks (requirements R8.2, 2026-11-23): with the main turn over, a
-// session whose subagents or forks still run (the transcript's running rule) is working, not
-// your turn; shells and monitors alone are not. When the last one finishes, the turn's outcome
-// comes back, its age counted from then.
+// Background work (requirements R8.2, 2026-11-26; was working while subagents ran, 2026-11-23): with the
+// main turn over the session is your turn, whatever still runs in the background (subagents, forks,
+// shells, monitors). Working, with its moving mark, means the main turn itself runs: motion means an
+// agent is doing something. The panel's Main conversation card and the sidebar's sub-lines show what runs.
 // A turn in another process (2026-11-23): with no process of Synopia's, a main turn the transcript
 // shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
 // and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
@@ -137,7 +137,6 @@ export class SessionStatus {
   private flag = false; // a session_state_changed event was seen
   private outcome: Outcome;
   private pending = 0;
-  private agents = 0; // background subagents and forks running, from the transcript
   private external = false; // a main turn running in another process, from the transcript
   private ask: PendingAsk | null = null; // a question or plan waiting in another process, from the transcript
   private stopping = false; // an interrupt was sent and its result hasn't come yet
@@ -279,7 +278,6 @@ export class SessionStatus {
   // What runs by the transcript changed. `external`: the caller has no process for the session, so
   // a running main turn there is another process's. One starting makes the old outcome history.
   setRunning(r: Running, external: boolean): void {
-    this.agents = r.agents;
     this.apiError = r.apiError ?? null;
     // the sentence can tell an authentication failure the retry's fields didn't (isAuthFailure's fallback)
     if (this.retry && this.running && isAuthFailure(this.retry.error, this.retry.status, this.apiError)) this.signedOut = true;
@@ -356,14 +354,14 @@ export class SessionStatus {
   }
 
   // Needs you wins; then signed out; then, while a turn runs: no updates, rate limited,
-  // compacting, working. After the turn: working while subagents or forks run, else the outcome.
+  // compacting, working. After the turn: the outcome (a turn in another process is working).
   private update(): void {
     const now = this.now();
     const silentFor = this.staleMs + (this.retry ? Math.max(0, this.retry.at - this.last) : 0);
     const stale = this.running && this.pending === 0 && now - this.last >= silentFor;
     const next: Status = this.pending > 0 || this.ask ? 'waiting'
       : this.signedOut ? (this.refreshing ? 'refreshing' : 'signedout')
-        : !this.running ? (this.agents > 0 || this.external ? 'busy' : this.outcome)
+        : !this.running ? (this.external ? 'busy' : this.outcome)
           : stale ? 'stale' : this.retry ? 'retrying' : this.compacting ? 'compacting' : 'busy';
     const detail: StatusDetail = {};
     if (next === 'busy' && this.queued.length) detail.queued = this.queued.length;
@@ -406,10 +404,10 @@ export function queuesBehind(s: Status): boolean {
   return s === 'busy' || s === 'retrying' || s === 'compacting';
 }
 
-// The status of a session no process of ours set (the transcript alone): working while its subagents or
-// forks or its main turn run, else your turn. A question or plan waiting there is needs you.
+// The status of a session no process of ours set (the transcript alone): working while its main turn
+// runs, else your turn (background work aside, 2026-11-26). A question or plan waiting there is needs you.
 export function transcriptStatus(r: Running): Status {
-  return r.ask ? 'waiting' : r.agents > 0 || r.turn ? 'busy' : 'idle';
+  return r.ask ? 'waiting' : r.turn ? 'busy' : 'idle';
 }
 
 function num(v: unknown): number {
@@ -435,18 +433,19 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
 //            ("No updates", "Retrying, attempt 4 of 10", "Compacting", "Refreshing credentials…").
 //            "Needs you, blocked": your turn after a main turn with a step denied and not retried
-//            (blockedLast). "Needs you, sign-in expired": signed out (2026-11-26).
+//            (blockedLast). "Needs you, sign-in expired": signed out (2026-11-26). "Needs you, a command waits
+//            for input": your `!` command waits for input (bang.ts, pty.ts InputWatch; R8.2, 2026-11-26).
 //   mark     the session mark's key (marks.js).
 //   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
 //            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
 //            `Interrupt`; a turned-down tool is not one).
 //   needsYou what the session waits on: the oldest request's kind, or the question or plan
-//            another process asks, or `blocked`; null when it waits on nothing.
+//            another process asks, `signin`, `input` or `blocked`; null when it waits on nothing.
 //   review   finished "For review: …" subagents not marked reviewed (R10.1).
 //   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
 //            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
 export type Light = 'red' | 'amber' | 'green';
-export type Needs = 'question' | 'permission' | 'plan' | 'blocked' | 'signin';
+export type Needs = 'question' | 'permission' | 'plan' | 'blocked' | 'signin' | 'input';
 export type SessionState = {
   status: Status; since: number; detail: StatusDetail;
   light: Light; tone: Light | 'grey'; word: string; mark: string;
@@ -457,6 +456,7 @@ export type StateFacts = {
   ask: { kind: 'question' | 'plan' } | null; // a card another process waits on
   interrupted: boolean; // the latest item (titles aside) is a `stop` interrupt marker
   blocked: boolean; // the latest main turn has a denied step it didn't retry (blockedLast)
+  input?: boolean; // your running `!` command waits for input (bang.ts BangRun.waiting)
   review: number;
   driven: boolean;
 };
@@ -471,7 +471,7 @@ const PHASE: Partial<Record<Status, { word: string; mark: string }>> = {
   compacting: { word: 'Compacting', mark: 'compact' },
   refreshing: { word: 'Refreshing credentials…', mark: 'work' },
 };
-const NEEDS_WORD: Partial<Record<Needs, string>> = { blocked: 'Needs you, blocked', signin: 'Needs you, sign-in expired' };
+const NEEDS_WORD: Partial<Record<Needs, string>> = { blocked: 'Needs you, blocked', signin: 'Needs you, sign-in expired', input: 'Needs you, a command waits for input' };
 // "Retrying, attempt 4 of 10"
 const retryWord = (r: Retry | undefined): string => !r || !r.attempt ? 'Retrying' : `Retrying, attempt ${r.attempt}${r.max ? ` of ${r.max}` : ''}`;
 
@@ -479,7 +479,7 @@ export function sessionState(e: { status: Status; at: number; detail?: StatusDet
   const status = e.status, detail = e.detail ?? {};
   // your turn after a turn whose step was blocked or denied: Claude can't go on without you
   const blocked = status === 'idle' && f.blocked && !f.interrupted;
-  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : status === 'signedout' ? 'signin' : blocked ? 'blocked' : null);
+  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : status === 'signedout' ? 'signin' : f.input ? 'input' : blocked ? 'blocked' : null);
   const light: Light = needsYou ? 'red' : LIGHT[status];
   const phase = light === 'red' ? undefined : PHASE[status];
   const stopped = light === 'amber' && !phase && status !== 'failed' && (status === 'stopped' || f.interrupted);
