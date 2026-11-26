@@ -16,7 +16,7 @@ import type { ReadChanges } from './transcripts.ts';
 import type { Client } from './server.ts';
 import { displayPath } from './paths.ts';
 import { resolveModel } from './session.ts';
-import type { ModelChoice, QueuedMessage, ShownBang } from './session.ts';
+import type { BangMeta, ModelChoice, QueuedMessage, ShownBang } from './session.ts';
 import type { PendingRequest } from './cards.ts';
 import type { Returned } from './sdk.ts';
 import { VERSION } from '../../web/js/protocol.js';
@@ -29,7 +29,7 @@ export const RECHECK_MS = 60_000;
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   state: SessionState; model: unknown; effort: unknown;
-  ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null;
+  ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null; bangs: BangMeta[];
   gone: boolean; // its folder was checked and isn't there (R3.11)
 };
 
@@ -38,6 +38,8 @@ export type SessionMeta = {
 export type Shown = {
   outbox(): QueuedMessage[];
   bang(): ShownBang | null;
+  bangs(): BangMeta[]; // its `!` runs for the background panel
+  bangOutput(id: string): { cmd: string; out: string; err: string; running: boolean } | null; // one run's, for its shell view
   landed(items: Item[]): void;
 };
 
@@ -74,6 +76,7 @@ export type Hello = { code: string; layout: unknown; menu: unknown; ui: unknown;
 type Sub = {
   sid: string; agent: string | null; from: number;
   bg?: string | null; out?: { file: string | null; from: number; to: number } | null;
+  own?: string; // a `!` run of the session (session.ts bangOutput): the signature of the output last sent
   chain?: Promise<void>; more?: boolean; // its output reads, one after the other; a look for more queued
 };
 type Pub = {
@@ -317,9 +320,15 @@ export class Publisher {
   // session (a monitor's events, a shell's file named) and each outputMs (a shell's file growing).
   // `lost`: "unnamed" when the transcript names no output file, "gone" when it can't be read.
   // Returns when the reset went (tests).
+  // A `!` run of yours (R5.13, 2026-11-26) has its output in the session, not a file: each frame is a reset
+  // with all of it, stdout as `text` and stderr as `err`, sent again when it changed.
   viewOutput(client: Client, sid: string, bg: string, from?: string | null): Promise<void> {
     const sub: Sub = { sid, agent: null, from: 0, bg, out: null };
     this.subs.set(client, sub);
+    if (this.pubs.get(sid)?.shown?.bangOutput(bg)) {
+      sub.own = '';
+      return this.outRun(client, sub, async () => this.ownFrame(sub));
+    }
     this.outTimers();
     const at = from && /^\d+$/.test(from) ? Number(from) : null;
     return this.outRun(client, sub, () => this.outReset(sub, at));
@@ -339,9 +348,22 @@ export class Publisher {
     });
   }
 
+  private ownFrame(sub: Sub): object | null {
+    const o = this.pubs.get(sub.sid)?.shown?.bangOutput(sub.bg as string);
+    if (!o) return null;
+    const sig = `${o.running}|${o.out.length}|${o.err.length}|${o.out.slice(-64)}|${o.err.slice(-64)}`;
+    if (sig === sub.own) return null;
+    sub.own = sig;
+    return { t: 'output', sid: sub.sid, bg: sub.bg, text: o.out, err: o.err, from: 0, to: o.out.length, total: o.out.length, reset: true };
+  }
+
   // A look for more output of each shown shell or monitor of the session (all sessions: the timer's).
   private outMore(sid: string | null): void {
     for (const [client, sub] of this.liveSubs()) {
+      if (sub.bg && sub.own !== undefined) {
+        if (sid === null || sub.sid === sid) void this.outRun(client, sub, async () => this.ownFrame(sub));
+        continue;
+      }
       if (!sub.bg || (sid !== null && sub.sid !== sid) || sub.more) continue;
       sub.more = true;
       void this.outRun(client, sub, async () => {
@@ -651,6 +673,7 @@ export class Publisher {
       ...resolveModel(p.choice, { model: typeof t.requestedModel === 'string' ? t.requestedModel : null, effort: effortOf(t.effort) }, this.opts.defaultModel?.()),
       outbox: p.shown?.outbox() ?? [],
       bang: p.shown?.bang() ?? null,
+      bangs: p.shown?.bangs() ?? [],
       gone: p.gone,
     };
   }

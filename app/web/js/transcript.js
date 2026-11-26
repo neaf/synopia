@@ -2,7 +2,7 @@
    Claude Code CLI shows a conversation: prompts, Claude's text, tool steps and runs, subagent waves and
    reports, files changed, the turn's "Worked for" line, the live line, queued and held messages, `!`
    commands. renderLog patches the blocks by key, so open steps, diffs and folds stay as they are. */
-import { store, current, view, cur, isViewed, selectView, requestsOf, waitingOf, queuedOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs } from "./state.js";
+import { store, current, view, cur, isViewed, selectView, requestsOf, waitingOf, queuedOf, mounted, setMounted, nowish, agentsOf, agentById, agentMs, ownBg } from "./state.js";
 import { request, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import { openSteps } from "./ui-state.js";
@@ -10,7 +10,7 @@ import { esc, took, hhmm, day, live, age, until, still } from "./format.js";
 import { md, parseAnswers, parseNotes, linkText } from "./md.js";
 import { ind, kind } from "./marks.js";
 import { bgOf, bgState, renderRail } from "./rail.js";
-import { shownBg, bgHeaderHTML, bgLogEntries, loadEarlierOutput } from "./bg-view.js";
+import { shownBg, bgHeaderHTML, bgLogEntries, loadEarlierOutput, bangInputHTML } from "./bg-view.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
@@ -278,8 +278,14 @@ export function itemsHTML(items, sessionBusy, s) {
     if (it.k === "you") { const mid = !!it.queued && !!turnStart && !turnMs; prompt(youBody(it, view), it.ts, it.id, null, mid); turnMs = it.workedMs || (mid ? turnMs : null); lastTs = it.ts; continue; }
     /* a bash-mode command: on your prompt's band, but no turn of Claude's (the next prompt doesn't end one) */
     if (it.k === "bang") {
+      const b = it.live && s?.bang;
+      if (b) { // the run Synopia shows until its records land (placeBangs put it where it started)
+        prompt(null, it.ts, it.id, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b, !!ownOf(s, b.id)));
+        if (b.running && b.quiet) out.push([`bangin:${b.id}`, bangInputHTML(b.id)]); // it may wait for you: its input line
+        lastTs = it.ts; continue;
+      }
       if (!it.sh && bangLiveOf(s)?.id === it.id) continue; // its output isn't in yet: the live run shows it
-      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null)); lastTs = it.ts; continue;
+      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null, !!ownOf(s, it.id))); lastTs = it.ts; continue;
     }
     /* the shown title changed (R5.x): a quiet line in place, like a day separator */
     if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }
@@ -319,24 +325,45 @@ export function itemsHTML(items, sessionBusy, s) {
    run from Synopia (while it runs and until its records land: the session's `bang`) or recorded by the CLI. */
 /* Its whole output is on the page (30,000 characters at most), so the 20-line cut is made here, and "Show all"
    (data-full, key `bang:<id>`) opens it in place instead of asking the server (showAll). */
-const BANG_LINES = 20, openBangs = new Set();
+/* While it runs the row stays compact (R5.13, 2026-11-26): the last BANG_TAIL lines, and the command opens
+   the whole output in the shell view (bg-view.js), as does its row in the panel (rail.js). `opens`: a run the
+   panel lists (state.js ownBg). */
+const BANG_LINES = 20, BANG_TAIL = 5, openBangs = new Set();
 const bangKey = id => `bang:${id}`;
-function bangHTML(id, cmd, sh, run) {
+function bangHTML(id, cmd, sh, run, opens = false) {
   const lines = t => t ? String(t).replace(/\n$/, "").split("\n") : [];
   const o = lines(sh?.out), e = lines(sh?.err), total = o.length + e.length;
-  const cut = total > BANG_LINES && !openBangs.has(stepKey(bangKey(id)));
-  const out = !sh ? null : cut ? o.slice(0, BANG_LINES).join("\n") : o.join("\n");
-  const err = cut ? e.slice(0, Math.max(0, BANG_LINES - o.length)).join("\n") : e.join("\n");
   const running = Boolean(run?.running);
+  const cut = !running && total > BANG_LINES && !openBangs.has(stepKey(bangKey(id)));
+  const eTail = running ? e.slice(-Math.min(e.length, 2)) : e, oTail = running ? o.slice(-(BANG_TAIL - eTail.length)) : o;
+  const out = !sh ? null : cut ? o.slice(0, BANG_LINES).join("\n") : oTail.join("\n");
+  const err = cut ? e.slice(0, Math.max(0, BANG_LINES - o.length)).join("\n") : eTail.join("\n");
   const view = runView({ key: bangKey(id), input: "", desc: "", out: running && !out ? null : out ?? "", err, truncatedTotal: cut ? total : 0, running, startedAt: run ? run.at : null,
     note: running ? "Esc, Esc to end it" : "", exit: sh?.exit ?? run?.exit ?? null, stopped: Boolean(run?.interrupted || sh?.interrupted) });
   const capped = sh?.cut ? `<div class="res"><span></span><span>Output cut at 30,000 characters</span></div>` : "";
   const note = run?.error ? `<div class="res failed"><span></span><span>${esc(run.error)}</span></div>` : "";
-  return `<div class="bang" data-bang="${esc(id)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd">${esc(cmd)}</div></div><div class="bang-res">${view}${capped}${note}</div></div>`;
+  const link = opens ? ` data-bg="${esc(run?.id || id)}" title="Open its whole output"` : "";
+  return `<div class="bang${running ? " running" : ""}" data-bang="${esc(id)}"><div class="prompt bang-cmd"><span class="g">!</span><div class="cmd${opens ? " opens" : ""}"${link}>${esc(cmd)}</div></div><div class="bang-res">${view}${capped}${note}</div></div>`;
+}
+/* the panel's run for a bash item: by the run's id, or the item it landed as */
+const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed === id) : null;
+/* Your `!` runs stay where they ran, in time order (R5.13, 2026-11-26): the live one (an item `live`), and one
+   whose records landed after messages sent while it ran, go before the first item stamped after its start. */
+function placeBangs(items, s) {
+  const runs = s.bangs || [], live = bangLiveOf(s); if (!runs.length && !live) return items;
+  const startOf = new Map(runs.map(r => [r.landed || r.id, r.at]));
+  const moved = items.filter(i => i.k === "bang" && i.sh && startOf.has(i.id) && i.id !== live?.id).map(i => [i, startOf.get(i.id)]);
+  if (live) moved.push([{ id: live.id, k: "bang", ts: new Date(live.at).toISOString(), cmd: live.cmd, live: true }, live.at]);
+  if (!moved.length) return items;
+  const list = items.filter(i => !moved.some(([m]) => m === i));
+  for (const [m, at] of moved.sort((p, q) => p[1] - q[1])) {
+    const n = list.findIndex(i => i.ts && !i.live && Date.parse(i.ts) > at);
+    list.splice(n < 0 ? list.length : n, 0, m);
+  }
+  return list;
 }
 /* the command that runs or just ran, until its records are in the transcript */
 const bangLiveOf = s => { const b = s.bang; return b && !s.items.some(i => i.id === (b.landed || b.id) && i.k === "bang" && i.sh) ? b : null; };
-const bangLiveHTML = s => { const b = bangLiveOf(s); return b ? [[`bang:${b.id}`, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b)]] : []; };
 const notAnswered = () => `<div class="ln"><span class="g dim">○</span><div class="dim">Not answered (Synopia quit)</div></div>`;
 /* messages sent while a card waits: held behind it, sent once you answer */
 export const heldHTML = s => (s.held || []).map((t, i) => [`held:${i}:${t.length}`, `<div class="prompt"><span class="g">❯</span><div class="md">${md(t)}<p class="dim">Queued until you answer the card above</p></div></div>`]);
@@ -466,7 +493,7 @@ export function renderHeader() {
 /* a new session before its first turn: the header has the title and folder, the transcript nothing yet */
 const isEmpty = s => !s.total && !s.items.length && !s.stream && !s.now;
 function logEntries(s, A) {
-  const items = A ? (A.items || []) : withPending(s.items, requestsOf(s), extAsk(s));
+  const items = A ? (A.items || []) : placeBangs(withPending(s.items, requestsOf(s), extAsk(s)), s);
   const hidden = A ? (A.total || 0) - (A.items || []).length : s.total - s.items.length;
   const out = [];
   onLive = A ? null : liveFg(s);
@@ -475,7 +502,6 @@ function logEntries(s, A) {
   if (!A) out.push(...heldHTML(s));
   if (!A && s.stream) out.push(["stream", `<div class="ln claude"><span class="g">●</span><div class="md">${md(s.stream)}</div></div>`]);
   if (!A) out.push(...sentHTML(s)); // sent while idle: the new turn's prompt, at once, until its record lands
-  if (!A) out.push(...bangLiveHTML(s));
   /* the live line closes the transcript: a message the turn took in from its queue lands above it (R5.5) */
   out.push(["live", liveLine(s, A)]);
   if (!A) out.push(...queuedHTML(s)); // last: the block sticks to the log's bottom

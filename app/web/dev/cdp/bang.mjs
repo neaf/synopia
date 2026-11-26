@@ -8,7 +8,7 @@
 // `echo hi; echo err >&2; exit 3` runs: the command on the band, stdout, stderr apart, "Exit code 3", landed
 // once as the transcript's item; 45 lines cut at 20 with "Show all 45 lines"; one command at a time; Esc, Esc
 // ends a `sleep 30` ("Stopped"); a `!` followed by a prompt stays above it, over a reload, two in a row, and one a
-// running turn takes in (two queued_command records) is one row, not a queued message, with nothing left at the end; a session Synopia doesn't drive gets no bash mode. Writes bang-*.png.
+// running turn takes in (two queued_command records) is one row, not a queued message, with nothing left at the end; a session Synopia doesn't drive gets no bash mode; a command that waits for Enter runs in a terminal (isatty), stays in place while a message goes after it, is a panel shell started by you that opens the shell view, ends on an empty Enter in its input line and moves to Past (2026-11-26). Writes bang-*.png (and, with SYNOPIA_SHOTS, row, panel and view shots there).
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, writeScript, terminal, outPanel, shot as shotTo } from './helpers.mjs';
@@ -32,6 +32,14 @@ if (process.argv[2] === 'make') {
   writeScript(process.argv[3], 'bang.mjs: made up', { [D]: { start: true, state: { status: 'idle', ago: 58000 }, onSend } });
   terminal(process.argv[3], 90002, N, '/tmp/synopia-bang'); // N: a terminal's Claude Code holds it
   fs.mkdirSync('/tmp/synopia-bang', { recursive: true }); // the command really runs in the session's folder
+  // a made-up sign-in helper that prints what to do and waits for Enter (R5.13, 2026-11-26: a terminal for the run)
+  fs.writeFileSync('/tmp/synopia-bang/wait-enter.mjs', [
+    'console.log("Open the demo page and sign in as demo-user.");',
+    'console.log(`isatty ${process.stdin.isTTY === true} ${process.stdout.isTTY === true}`);',
+    'for (let i = 1; i <= 6; i++) console.log(`step ${i} of 6 noted`);',
+    'process.stdout.write("Press Enter when the sign-in is done... ");',
+    'process.stdin.once("data", () => { console.log("Thanks, carrying on."); process.exit(0); });',
+  ].join("\n") + "\n");
   process.exit(0);
 }
 
@@ -173,6 +181,71 @@ check('the turn after it lands', await c.until(`__synopia.cur().items.some(i => 
 await sleep(300);
 o = await order('echo mid', 'And after that.');
 check('the mid-turn ! stays in place, once, nothing left at the end', o.before && !o.lastBang && (await rowsOf('echo mid')) === 1, JSON.stringify(o));
+
+// a terminal for the run (R5.13, R7.1, 2026-11-26): a command that prints a prompt and waits for Enter stays where it
+// ran while a message goes after it, shows in the panel as yours, opens in the shell view, and Enter in its input line
+// ends it; then it moves to Past
+{
+  const shots = process.env.SYNOPIA_SHOTS, theme = process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light';
+  const keep = async (name, sel) => {
+    await shot(`bang-pty-${name}.png`);
+    if (!shots) return;
+    fs.mkdirSync(shots, { recursive: true });
+    const r = sel && await ev(`(() => { const es = [...document.querySelectorAll(${JSON.stringify(sel)})].map(e => e.getBoundingClientRect()); if (!es.length) return null; const x = Math.min(...es.map(b => b.left)), y = Math.min(...es.map(b => b.top)), r = Math.max(...es.map(b => b.right)), btm = Math.max(...es.map(b => b.bottom)); return { x: Math.max(0, x - 12), y: Math.max(0, y - 12), width: r - x + 24, height: btm - y + 24 }; })()`);
+    await shotTo(c, path.join(shots, `${name}-${theme}.png`), r || undefined);
+  };
+  await idle();
+  const cmd = 'node wait-enter.mjs';
+  await ev(`(() => { const ta = document.getElementById('msg'); ta.value = ''; ta.dispatchEvent(new Event('input')); ta.focus(); })()`);
+  if ((await box()).bash) await key('Backspace', { code: 'Backspace', vk: 8 });
+  await key('!', { code: 'Digit1', shift: true, vk: 49 });
+  await type(cmd);
+  await enter();
+  const waits = await c.until(`!!__synopia.cur().bang?.running && /Press Enter/.test(__synopia.cur().bang.out) && !!document.querySelector('#log .bang-in input')`, 8000);
+  check('a command that waits for Enter: it runs, and its row gets an input line', waits, await ev(`JSON.stringify(__synopia.cur().bang)`));
+  const id = await ev(`__synopia.cur().bang.id`);
+  check('it runs in a terminal: isatty is true for stdin and stdout', await ev(`/isatty true true/.test(__synopia.cur().bang.out)`), await ev(`__synopia.cur().bang.out`));
+  check('the CRLF of the pty and escapes are gone from its output', await ev(`!/[\\r\\x1b]/.test(__synopia.cur().bang.out)`));
+  const compact = await ev(`(() => { const b = document.querySelector('#log .bang[data-bang="${id}"]'); if (!b) return null; const o = [...b.querySelectorAll('.step-out .out')].map(x => x.textContent).join('\\n'); return { lines: o.split('\\n').length, last: o.split('\\n').pop(), run: b.querySelector('.res.running')?.textContent, note: b.querySelector('.res.note')?.textContent, opens: !!b.querySelector('.bang-cmd .cmd.opens[data-bg]') }; })()`);
+  check('compact while it runs: the last 5 lines, Running, Esc, Esc', !!compact && compact.lines === 5 && /Press Enter/.test(compact.last) && /^Running, \d+s$/.test(compact.run || '') && /Esc, Esc/.test(compact.note || '') && compact.opens, JSON.stringify(compact));
+  await keep('row', `#log .bang[data-bang="${id}"], #log .bang-in`);
+  // a message sent after it goes below it
+  await sendText('Sent while the helper waits.');
+  check('the message lands', await c.until(`__synopia.cur().items.some(i => i.k === 'you' && i.text === 'Sent while the helper waits.')`, 8000));
+  const top0 = await ev(`document.querySelector('#log .bang[data-bang="${id}"]').getBoundingClientRect().top + document.getElementById('log').scrollTop`);
+  o = await order(cmd, 'Sent while the helper waits.');
+  check('the running row stays where it ran: the later message is below it, the log does not end with it', o.before && !o.lastBang, JSON.stringify(o));
+  // the panel: a shell row marked as yours, and its click opens the shell view
+  const row = await ev(`(() => { const r = document.querySelector('.rail .now [data-bg="${id}"]'); return r ? r.textContent : null; })()`);
+  check('it shows in the panel as a running shell started by you', !!row && row.includes(cmd) && /shell, started by you/.test(row), String(row));
+  await keep('panel', `.rail .now`);
+  await ev(`document.querySelector('.rail [data-bg="${id}"]').click()`);
+  const opened = await c.until(`__synopia.view() === '${id}' && /Press Enter/.test(document.querySelector('#log .bang .step-out')?.textContent || '') && !!document.querySelector('#log .bang-in input')`, 5000);
+  check('the click opens the shell view: its whole output and an input line', opened, await ev(`document.getElementById('log').textContent.slice(0, 400)`));
+  check('the view shows all of it, not the compact tail', await ev(`/Open the demo page/.test(document.querySelector('#log .bang .step-out').textContent) && /step 6 of 6/.test(document.querySelector('#log .bang .step-out').textContent)`));
+  check('its header says it is yours', await ev(`/Your shell command/.test(document.querySelector('.c-head').textContent)`), await ev(`document.querySelector('.c-head').textContent`));
+  await ev(`document.querySelector('#log .bang-in input').focus()`);
+  await keep('view', null);
+  // Enter (empty) in the input line: the helper reads it and ends
+  await ev('__synopia.spy()');
+  await enter();
+  check('Enter sends one bangInput with an empty line', await c.until(`__synopia.sent('bangInput').length === 1 && __synopia.sent('bangInput')[0].text === ''`, 3000));
+  check('the helper got its Enter and finished', await c.until(`(__synopia.cur().bangs || []).some(r => r.id === '${id}' && !r.running && r.exit === 0) && /Finished after/.test(document.getElementById('log').textContent) && /Thanks, carrying on/.test(document.getElementById('log').textContent)`, 6000), await ev(`JSON.stringify(__synopia.cur().bangs)`));
+  check('no input line once it ended', await ev(`!document.querySelector('#log .bang-in')`));
+  check('it moves to Past', await c.until(`!!document.querySelector('.rail .past [data-bg="${id}"]') && !document.querySelector('.rail .now [data-bg="${id}"]')`, 9000));
+  check('its Past row says by you', await ev(`/by you/.test(document.querySelector('.rail .past [data-bg="${id}"]').textContent)`));
+  await ev(`document.querySelector('[data-back]').click()`);
+  check('back in the conversation, its records land once, still above the later message', await c.until(`__synopia.view() === null && __synopia.cur().items.some(i => i.k === 'bang' && i.cmd === '${cmd}' && i.sh) && document.querySelectorAll('#log .bang .bang-cmd .cmd').length > 0`, 8000));
+  await sleep(300);
+  o = await order(cmd, 'Sent while the helper waits.');
+  check('the landed row is where it ran, once', o.before && (await rowsOf(cmd)) === 1, JSON.stringify(o));
+  check('the landed row keeps the output after Enter: the last line of the helper', await ev(`/Thanks, carrying on/.test([...document.querySelectorAll('#log .bang')].find(x => x.querySelector('.bang-cmd .cmd').textContent === '${cmd}').textContent)`));
+  await ev(`[...document.querySelectorAll('#log .bang .bang-cmd .cmd.opens')].find(x => x.textContent === '${cmd}')?.click()`);
+  check('the command on the transcript row opens the shell view too', await c.until(`__synopia.view() === '${id}'`, 3000));
+  await ev(`document.querySelector('[data-back]').click()`);
+  await c.until(`__synopia.view() === null`, 3000);
+  void top0;
+}
 
 // a session Synopia doesn't drive: no bash mode
 await ev(`document.querySelector('.row[data-id="${N}"]').click()`);

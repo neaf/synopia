@@ -30,9 +30,9 @@ export function rowHTML(s) {
   </button>`;
 }
 /* the main thread's shells and monitors as one line: a count while any runs; once the last finishes, its final
-   status for the grace (tween.js), then the line leaves. A subagent's own stay in the panel. */
+   status for the grace (tween.js), then the line leaves. A subagent's own, and your `!` runs, stay in the panel. */
 function bgLine(s) {
-  const own = bgOf(s).filter(b => !b.agentId), n = own.filter(b => bgState(b) === "running").length;
+  const own = bgOf(s).filter(b => !b.agentId && !b.own), n = own.filter(b => bgState(b) === "running").length;
   const many = c => `${c} shell${c > 1 ? "s" : ""} or monitor${c > 1 ? "s" : ""}`;
   if (n) return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${many(n)} running</span>`;
   const gr = own.filter(b => inGrace(s.id, b.toolUseId)).sort((p, q) => new Date(p.end || 0) - new Date(q.end || 0)), b = gr.at(-1);

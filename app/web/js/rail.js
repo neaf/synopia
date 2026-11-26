@@ -2,12 +2,12 @@
    subagents, shells and monitors as a tree, To review, and Past. Rebuilt whole on each render; its cards
    tween in and out (tween.js). Every row opens its item in the pane: a subagent or fork its transcript, a
    shell or monitor its output (bg-view.js). */
-import { store, cur, view, mounted, nowish, agentsOf, agentById, bgById, agentMs } from "./state.js";
+import { store, cur, view, mounted, nowish, agentsOf, agentById, bgById, bgAll, agentMs } from "./state.js";
 import { esc, live, took, hhmm } from "./format.js";
 import { ind, kind, KG, kindKey, bgMarkKey, sessionMark } from "./marks.js";
 import { lineTweens, graceScan, inGrace } from "./tween.js";
 
-export const bgOf = s => s.background || [];
+export const bgOf = bgAll; // Claude's shells and monitors, then your `!` runs (state.js ownBg)
 const hasBackground = s => agentsOf(s).length || bgOf(s).length;
 export function bgState(b) {
   if (b.status && b.status !== "running") return b.status === "completed" ? "done" : b.status;
@@ -45,14 +45,14 @@ export function railHTML(s, A, B = null) { // exported for the escape test
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
       <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running).length)}</span><span class="w">${esc(s.state.word)}</span></button>
-      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}" ${attrs(x)}>${x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
+      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}" ${attrs(x)}>${x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${x.bg && x.bg.own ? "by you " : ""}${hhmm(x.start)}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
         <button class="btn quiet rv-done" data-reviewed="${esc(x.agent.id)}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
     <div class="past" id="past">
       ${past.length ? `<h3>Past <span class="cnt">${past.length}</span></h3>` : ""}
-      ${past.filter(x => bgMarkKey(x) !== "review").map(x => `<button class="pr ${x.failed ? "failed" : ""}" ${attrs(x)}><span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span><span class="n">${esc(x.name)}${x.st === "timed out" ? ` <span class="k">timed out</span>` : x.failed ? ` <span class="k">failed</span>` : ""}${x.bg && x.bg.agentId ? ` <span class="in">in ${esc(nameOfAgent(x.bg.agentId))}</span>` : ""}</span><span class="d">${took(x.ms)}</span></button>`).join("")}
+      ${past.filter(x => bgMarkKey(x) !== "review").map(x => `<button class="pr ${x.failed ? "failed" : ""}" ${attrs(x)}><span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span><span class="n">${esc(x.name)}${x.st === "timed out" ? ` <span class="k">timed out</span>` : x.failed ? ` <span class="k">failed</span>` : ""}${x.bg && x.bg.agentId ? ` <span class="in">in ${esc(nameOfAgent(x.bg.agentId))}</span>` : ""}${x.bg && x.bg.own ? ` <span class="in">by you</span>` : ""}</span><span class="d">${took(x.ms)}</span></button>`).join("")}
     </div>
   </aside>`;
 }

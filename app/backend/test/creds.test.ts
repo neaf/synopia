@@ -16,7 +16,7 @@ function harness(commands: Record<string, string> = {}, prefill = '') {
     const done = new Promise<PtyEnd>((r) => { end = r; });
     const run = { command, cwd: o.cwd, typed: [] as string[], print: o.onData, end };
     runs.push(run);
-    return { write: (t) => run.typed.push(t), kill: () => end({ code: null, timedOut: false }), done };
+    return { write: (t) => run.typed.push(t), kill: () => end({ code: null, timedOut: false, killed: true }), group: () => null, done };
   };
   const frames: CredsFrame[] = [];
   const refreshing: [string[], boolean][] = [];
@@ -44,7 +44,7 @@ test('creds: a saved command runs on an expiry, its output is shown live, input 
   assert.equal(h.frames.at(-1)?.phase, 'running');
   assert.deepEqual(h.c.input('s1', 'yes'), { ok: true });
   assert.deepEqual(h.runs[0].typed, ['yes\n']);
-  h.runs[0].end({ code: 0, timedOut: false });
+  h.runs[0].end({ code: 0, timedOut: false, killed: false });
   await h.tick();
   assert.deepEqual(h.refreshed, [['s1']]);
   assert.deepEqual(h.refreshing.at(-1), [['s1'], false]);
@@ -59,7 +59,7 @@ test('creds: two sessions in one folder share one run', async () => {
   assert.equal(h.runs.length, 1, 'one run per folder');
   assert.deepEqual(h.refreshing.at(-1), [['s2'], true]);
   assert.deepEqual(h.frames.at(-1)?.sids, ['s1', 's2']);
-  h.runs[0].end({ code: 0, timedOut: false });
+  h.runs[0].end({ code: 0, timedOut: false, killed: false });
   await h.tick();
   assert.deepEqual(h.refreshed, [['s1', 's2']]);
 });
@@ -68,7 +68,7 @@ test('creds: a failure shows the editable line with the command and the sentence
   const h = harness({ '/repo': 'bin/aws-login' });
   await h.c.signedOut('s1', '/repo', true);
   h.runs[0].print('Error: no such profile\r\n');
-  h.runs[0].end({ code: 1, timedOut: false });
+  h.runs[0].end({ code: 1, timedOut: false, killed: false });
   await h.tick();
   const f = h.frames.at(-1);
   assert.deepEqual([f?.phase, f?.command, f?.error, f?.output], ['failed', 'bin/aws-login', 'The refresh command ended with exit code 1: Error: no such profile.', '']);
@@ -87,7 +87,7 @@ test('creds: no command saved asks with the guess; Save stores and runs it; savi
   assert.deepEqual([h.frames.at(-1)?.phase, h.frames.at(-1)?.command], ['ask', 'bin/aws-login']);
   await h.c.save('s1', '/repo', '  bin/aws-login ');
   assert.deepEqual([h.commands['/repo'], h.saves(), h.runs.length], ['bin/aws-login', 1, 1]);
-  h.runs[0].end({ code: 0, timedOut: false });
+  h.runs[0].end({ code: 0, timedOut: false, killed: false });
   await h.tick();
   await h.c.save('s1', '/repo', '');
   assert.equal('/repo' in h.commands, false);
@@ -97,7 +97,7 @@ test('creds: no command saved asks with the guess; Save stores and runs it; savi
 test('creds: an expiry right after a refresh that succeeded doesn\'t run it again (no loop); Cancel stops a run', async () => {
   const h = harness({ '/repo': 'bin/aws-login' });
   await h.c.signedOut('s1', '/repo', true);
-  h.runs[0].end({ code: 0, timedOut: false });
+  h.runs[0].end({ code: 0, timedOut: false, killed: false });
   await h.tick();
   await h.c.signedOut('s1', '/repo', true);
   assert.equal(h.runs.length, 1);
