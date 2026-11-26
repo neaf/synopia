@@ -7,9 +7,9 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | Command | Runs |
 |---|---|
 | `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script and the page unit tests (`node --test app/web/test/*.test.js`); one pass or fail line each |
-| `app/check.sh --page` | the above, then `run.sh all` (29 suites); four pass lines |
+| `app/check.sh --page` | the above, then `run.sh all` (31 suites); four pass lines |
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
-| `app/web/dev/cdp/run.sh all` | every suite one after the other, a table of suite and result, failures under it; each suite's full output stays in the folder it prints |
+| `app/web/dev/cdp/run.sh all` | every suite, 4 at a time (`SYNOPIA_CDP_JOBS`), a table of suite and result in suite order, failures under it; each suite's full output stays in the folder it prints |
 | `SYNOPIA_CDP_THEME=dark app/web/dev/cdp/run.sh <suite>` | the suite with the system appearance dark |
 | `app/dev.sh --script` | the backend on the scripted SDK over a copy of the fixture tree below (`--claude-dir <tree>` for another), for looking at the page by hand; prints the URL to open |
 | `app/web/dev/compare.sh` | screenshots of `prototype/app.html` and the port side by side in `/tmp/synopia-compare/shots/` |
@@ -94,6 +94,8 @@ A script added with `Page.addScriptToEvaluateOnNewDocument` is not subject to th
 ### One browser at a time for animation suites
 
 Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames, so they are steadier with one browser running. Source: runs on the baseline machine, 2026-11-24.
+
+`run.sh all` runs 4 suites at a time: about 80 s for 31 suites, against about 270 s one after the other; 3 runs passed. At 6 at a time it takes about 64 s, but `steps` "Shell in Claude's turn" (a timing check) failed once in 2 runs, so 4 is the default. Source: runs on the baseline machine (8 cores), 2026-11-26.
 
 ## Writing a check
 

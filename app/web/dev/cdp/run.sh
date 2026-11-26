@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs a page check over CDP against the scripted SDK (app/backend/dev/scripted-sdk.ts), in a fresh state folder.
-#   app/web/dev/cdp/run.sh all     every check below, one after the other: a table of check and result, the failures under it
+#   app/web/dev/cdp/run.sh all     every check below, 4 at a time (SYNOPIA_CDP_JOBS): a table of check and result, the failures under it
 #   app/web/dev/cdp/run.sh dnd     drop rules (R4.5), then a backend restart and the restored layout
 #   app/web/dev/cdp/run.sh keys    keys and modes (R9)
 #   app/web/dev/cdp/run.sh menu    slash menu and model picker (R5.14, R3.7)
@@ -44,9 +44,16 @@ name="${1:-}"
 if [ "$name" = all ]; then
   logs="$(mktemp -d "${TMPDIR:-/tmp}/synopia-cdp-all.XXXXXX")"
   failed=0; fails=""
+  # SYNOPIA_CDP_JOBS suites at a time (default 4): each run has its own Chrome, backend and state
+  jobs="${SYNOPIA_CDP_JOBS:-4}"
+  for s in "${SUITES[@]}"; do
+    while [ "$(jobs -rp | wc -l)" -ge "$jobs" ]; do sleep 0.2; done
+    ( "$here/run.sh" "$s" > "$logs/$s.log" 2>&1; echo $? > "$logs/$s.code" ) &
+  done
+  wait
   printf '%-10s %s\n' check result
   for s in "${SUITES[@]}"; do
-    "$here/run.sh" "$s" > "$logs/$s.log" 2>&1; code=$?
+    code="$(cat "$logs/$s.code" 2>/dev/null || echo 1)"
     pass=0; total=0
     while read -r a b; do pass=$((pass + a)); total=$((total + b)); done < <(sed -n 's/^\([0-9]*\)\/\([0-9]*\) pass$/\1 \2/p' "$logs/$s.log")
     if [ $code -eq 0 ] && [ "$total" -gt 0 ] && [ "$pass" -eq "$total" ]; then r="pass $pass/$total"

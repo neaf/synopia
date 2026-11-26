@@ -9,6 +9,7 @@ Read first:
 
 Commands (Node 22.13+ on PATH; `(cd app/backend && npm ci)` once):
 - `app/check.sh --page`: must print four pass lines before any change is done. `app/check.sh` alone skips the page checks.
+- While you work, run `app/check.sh` and only the page suites your change touches (`app/web/dev/cdp/run.sh <suite>`). Run the full `--page` once, before the merge; after a rebase, again only when the incoming commits touch the files you changed.
 - `app/web/dev/cdp/run.sh <suite>`: one page check. `app/build.sh`: the app. `app/dev.sh [--script]`: the backend for a browser.
 
 Rules for every change:
