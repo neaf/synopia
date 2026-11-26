@@ -432,7 +432,14 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-KEY-05 | composer.js, session.ts |
 | FR-KEY-06 | composer.js, keys.js |
 | FR-KEY-07 | keys.js, folder-list.js, open-list.js |
-| FR-REV-01 | status.ts, store.ts, router.ts, publisher.ts, transcript.js, rail.js |
+| FR-REV-01 | replaced by FR-ITEM-03; until it lands status.ts, store.ts, router.ts, publisher.ts, transcript.js, rail.js |
+| FR-ITEM-01 | none yet (planned: ledger.ts, transcript.ts, open-items.ts) |
+| FR-ITEM-02 | none yet (planned: open-items.ts, ledger.ts, store.ts) |
+| FR-ITEM-03 | none yet (planned: open-items.ts, router.ts, publisher.ts, status.ts, rail.js, transcript.js) |
+| FR-ITEM-04 | none yet (planned: ledger.ts, transcript.ts, open-items.ts, rail.js) |
+| FR-ITEM-05 | none yet (planned: publisher.ts, protocol.js, state.js, open-items.js, rail.js, composer.js) |
+| FR-ITEM-06 | none yet (planned: open-items.ts, status.ts, sidebar.js, tween.js) |
+| FR-ITEM-07 | none yet (planned: open-items.ts, keys.js, ui-state.js, rail.js) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |
 | FR-LOOK-03 | all page modules, prototype/app.html |
