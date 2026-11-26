@@ -301,9 +301,10 @@ export class Transcripts {
     this.edit(sid, (t) => t.processEnded(new Date(at).toISOString(), failed));
   }
 
-  // The SDK's task_notification for one of the session's background tasks (its tool use id).
-  taskEnded(sid: string, toolUseId: string, status: string, summary: string): void {
-    this.edit(sid, (t) => t.taskEnded(toolUseId, status, summary, new Date().toISOString()));
+  // The SDK's task_notification for one of the session's background tasks (its tool use id; its task id
+  // names a resumed subagent, whose tool use id is then the SendMessage's).
+  taskEnded(sid: string, toolUseId: string, status: string, summary: string, taskId = ''): void {
+    this.edit(sid, (t) => t.taskEnded(toolUseId, status, summary, new Date().toISOString(), taskId));
   }
 
   // The SDK's task_started: a task id by tool use id, matched against background_tasks_changed.

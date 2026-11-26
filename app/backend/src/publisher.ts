@@ -8,7 +8,7 @@
 // and sets the status) marks the session dirty and flushes again after, so the frames of one flush
 // always go in this order: `session`, `agents`, `background`, `items`.
 import os from 'node:os';
-import { transcriptStatus, sessionState, badgeOf, blockedLast } from './status.ts';
+import { transcriptStatus, sessionState, badgeOf, blockedLast, blockedSubagent, turnStartMs } from './status.ts';
 import type { BadgeCounter, Running, SessionState, Needs, Status, StatusDetail } from './status.ts';
 import type { Agent, Background, Item, PendingAsk, Transcript } from './transcript.ts';
 import { cardAtIso } from './runs.ts';
@@ -748,7 +748,7 @@ export class Publisher {
         pending: p.pending.map((r) => needsOf(r.kind)),
         ask,
         interrupted: interruptedLast(t.items),
-        blocked: blockedLast(t.items),
+        blocked: this.blocked(p.id, t),
         input: Boolean(p.shown?.bang()?.running && p.shown.bang()?.waiting),
         review: t.agents().filter((a) => a.finished && this.toReview(a)).length,
         // a status from Synopia's own process, not the transcript alone nor a terminal that holds it
@@ -797,6 +797,14 @@ export class Publisher {
     const clients = this.opts.clients();
     for (const c of this.subs.keys()) if (!clients.has(c)) this.subs.delete(c);
     return [...this.subs];
+  }
+
+  // Blocked (R8.2, FR-STAT-02): the main turn, or a subagent run since your last message (2026-11-26),
+  // has a step auto mode blocked or a permission denied that wasn't redone.
+  private blocked(sid: string, t: Transcript): boolean {
+    if (blockedLast(t.items)) return true;
+    const since = turnStartMs(t.items);
+    return t.agents().some((a) => blockedSubagent(this.transcripts.get(sid, a.id)?.items ?? [], t.runEnds(a.id), since));
   }
 
   // A "For review: …" subagent not marked reviewed yet (R10.1).

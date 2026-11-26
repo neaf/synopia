@@ -617,7 +617,7 @@ export class Session {
       // A task ended. The CLI writes its notification to the JSONL only when a turn runs, so
       // between turns this is the only sign that it ended (docs/Agent SDK.md, "Task notifications").
       log('session.task', { sid: this.id, status: String(m.status) });
-      transcripts.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
+      transcripts.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '', typeof m.task_id === 'string' ? m.task_id : '');
     } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {
       // A subagent's shell or monitor: its file has no task id when the SDK drives the CLI (docs/Agent SDK.md).
       transcripts.taskStarted(this.id, m.tool_use_id, m.task_id);

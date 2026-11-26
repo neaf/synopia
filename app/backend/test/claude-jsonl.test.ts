@@ -107,6 +107,10 @@ test('toolUseResult: background task ids, an async Agent, edits and shell edits'
   assert.equal(res({ taskId: 'm1' })?.taskId, 'm1');
   assert.deepEqual([res({ status: 'async_launched', agentId: 'a1' })?.asyncLaunched, res({ status: 'async_launched', agentId: 'a1' })?.taskId], [true, 'a1']);
   assert.equal(res({ agentId: 'a1' })?.taskId, '', 'an agent id is a task id only for an async launch');
+  // docs/Claude Code transcripts.md#a-subagent-resumed-by-sendmessage (invented values)
+  const resume = res({ success: true, message: 'Resuming agent a1 in the background.', resumedAgentId: 'a1', revivedAgentId: 'a1', pin: { id: 'a1', name: 'n', ref: 'r' } });
+  assert.deepEqual([resume?.resumedAgentId, resume?.taskId, resume?.asyncLaunched], ['a1', '', false], 'a SendMessage that resumed a subagent');
+  assert.equal(res({ success: true, message: 'Message sent.' })?.resumedAgentId, '');
   assert.equal(res({ stdout: '', interrupted: true })?.interrupted, true);
   assert.deepEqual(res({ filePath: '/Users/fixture/a.md', structuredPatch: [{ oldStart: 3, newStart: 3, lines: [' a', '-b', '+c'] }] })?.edit,
     { filePath: '/Users/fixture/a.md', created: false, hunks: [{ oldStart: 3, newStart: 3, lines: [' a', '-b', '+c'] }] });

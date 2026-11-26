@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary, blockedLast } from '../src/status.ts';
+import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary, blockedLast, blockedSubagent } from '../src/status.ts';
 import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
@@ -463,6 +463,20 @@ test('blockedLast: a denied step in the latest turn, not retried, blocks it; you
   assert.equal(blockedLast([you(), step('denied'), claude, { id: 'b', k: 'bang', ts: null, cmd: 'git push' }]), false, 'you ran a command');
   assert.equal(blockedLast([you(), step('denied'), you({ turnedDown: true }), claude]), true, 'a turned-down marker is not your message');
   assert.equal(blockedLast([you(), step('failed'), claude]), false);
+});
+
+test('blockedSubagent: a subagent run that ended after a denied step it did not redo blocks; your message, a stop or a redo clears it', () => {
+  let n = 0;
+  const at = (s: number) => `2026-11-24T09:00:${String(s).padStart(2, '0')}.000Z`;
+  const step = (s: number, state: string, input = 'npm run migrate'): Item => ({ id: `s${n++}`, k: 'tool', ts: at(s), name: 'Bash', input, state });
+  const end = (s: number, stopped = false) => ({ at: Date.parse(at(s)), stopped });
+  assert.equal(blockedSubagent([step(10, 'denied'), step(20, 'done', 'ls')], [end(30)], null), true);
+  assert.equal(blockedSubagent([step(10, 'denied')], [], null), false, 'still in its first run: it may redo it');
+  assert.equal(blockedSubagent([step(10, 'denied')], [end(30)], Date.parse(at(40))), false, 'you wrote since');
+  assert.equal(blockedSubagent([step(10, 'denied')], [end(30, true)], null), false, 'that run was stopped');
+  assert.equal(blockedSubagent([step(10, 'denied'), step(45, 'done')], [end(30)], null), false, 'resumed, it redid the step');
+  assert.equal(blockedSubagent([step(10, 'denied'), step(45, 'running', 'ls')], [end(30)], null), true, 'resumed, the step not redone yet');
+  assert.equal(blockedSubagent([step(10, 'failed')], [end(30)], null), false);
 });
 
 test('state: the badge share is needs you plus the deliverables to review (R2.6)', () => {
