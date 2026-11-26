@@ -772,6 +772,24 @@ test('a foreground Bash moved to the background (backgroundTaskId) is a backgrou
   assert.equal(t.getBackground('toolu_fg')?.status, 'completed');
 });
 
+test('setAside (f, f, R9.8): names the running main step, and marks the cut message\'s text landed before or after', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('sa-u1', 'Go', ago(5)),
+    { ...replied('sa-a1', ago(4), [{ type: 'text', text: 'Reading it first.' }]), message: { role: 'assistant', id: 'msg_sa', content: [{ type: 'text', text: 'Reading it first.' }] } },
+    replied('sa-a2', ago(4), [{ type: 'tool_use', id: 'toolu_sar', name: 'Read', input: { file_path: '/tmp/x' } }]),
+  ]);
+  t.takeChanges();
+  t.setAside(ago(3), 'msg_sa');
+  const aside = t.items.find((i) => i.k === 'aside')!;
+  assert.equal(aside.step, 'toolu_sar', 'the running Read it named');
+  assert.equal(t.items.find((i) => i.k === 'claude')!.aside, aside.id, 'text of the message that landed before');
+  assert.ok(t.takeChanges().items.includes('sa-a1:0'), 'and it is sent again');
+  t.pushAll([{ ...toolResult('sa-r1', ago(2), 'toolu_sar', { content: 'x' }) }]);
+  t.setAside(ago(1), null);
+  assert.equal(t.items.filter((i) => i.k === 'aside').at(-1)!.step, undefined, 'a finished step is not named');
+});
+
 test('background_tasks_changed: a foreground Bash or Agent in the live set is background work, by task id, once; leaving it ends it', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([

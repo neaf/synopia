@@ -5,13 +5,20 @@
 // queued bands (selection tint, 1px blue ring) and turns the box into the prompt; another key keeps them queued
 // and sends nothing; Esc and f replace each other's prompt; with a draft, f, f sends one `sendNow` with it and
 // the box empties; the backend's route (a foreground Bash: backgroundTasks) takes the queue in, and the bands
-// land; insert mode types f; a session Synopia doesn't drive asks nothing. Writes sendnow-asking-<theme>.png.
+// land, and the Bash row keeps b, b's "in the background" mark, not struck through; insert mode types f; a
+// session Synopia doesn't drive asks nothing. The interrupt route (2026-11-26, Claude only writing): the live
+// line stays as a still record, struck through and greyed, "set aside for your messages", the reply it cut
+// short greyed above it, and the queued message lands below it. Writes sendnow-asking-<theme>.png and
+// sendnow-aside-<theme>.png.
 import fs from 'node:fs';
 import path from 'node:path';
 import { records, keyTable, spySent, writeScript, running, shot } from './helpers.mjs';
 
 const A = 'f0f0f0f0-0000-4000-8000-0000000000a1'; // driven: Synopia's process runs its turn, a foreground Bash
 const B = 'f0f0f0f0-0000-4000-8000-0000000000b2'; // not driven: its turn runs in another process
+const C = 'f0f0f0f0-0000-4000-8000-0000000000c3'; // driven: Claude only writes a reply (the interrupt route)
+const CUT = 'The notes cover the build, and the demo';
+const LATER = 'Skip the notes, list the demo folders.';
 const { you, said, tool } = records('/tmp/synopia-sendnow');
 const FIRST = 'Also check the demo notes when you are done.';
 const SECOND = 'And then rename the demo folder.';
@@ -23,8 +30,12 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${A}.jsonl`), you(A, 'n-u1', 0, 'Build the demo, then run its tests.') + said(A, 'n-a1', 1, 'Building it first.')
     + tool(A, 'n-a2', 2, 'toolu_nbuild', 'Bash', { command: 'sleep 40; npm run build', description: 'Build the demo' }));
   fs.writeFileSync(path.join(dir, `${B}.jsonl`), you(B, 'm-u1', 0, 'Run the slow tests.') + tool(B, 'm-a1', 1, 'toolu_mother', 'Bash', { command: 'sleep 60', description: 'Run the slow tests' }));
+  fs.writeFileSync(path.join(dir, `${C}.jsonl`), you(C, 'w-u1', 0, 'Write up the demo notes.'));
+  const se = (event) => ({ message: { type: 'stream_event', parent_tool_use_id: null, event } });
   const task = { message: { type: 'system', subtype: 'task_started', tool_use_id: 'toolu_nbuild', task_id: 'nbl1', description: 'made-up' } };
-  writeScript(process.argv[3], 'sendnow.mjs: made up', { [A]: { start: true, steps: [running(58000), task] } });
+  writeScript(process.argv[3], 'sendnow.mjs: made up', { [A]: { start: true, steps: [running(58000), task] },
+    [C]: { start: true, steps: [running(9000), se({ type: 'message_start', message: { id: 'msg_wcut' } }), se({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+      se({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: CUT } })] } });
   process.exit(0);
 }
 
@@ -94,11 +105,39 @@ check('the queued messages land as your prompts', await c.until(`(s => [${JSON.s
 check('their bands leave the queue; the draft waits as a queued band', await c.until(`(b => b.length === 1 && b[0].textContent.trim() === ${JSON.stringify(DRAFT)})([...document.querySelectorAll('${Q}')])`),
   JSON.stringify(await ev(`[...document.querySelectorAll('${Q}')].map(e => e.textContent.trim())`)));
 
+// the background route: the Bash row keeps b, b's mark, not struck through, and nothing is set aside
+const BUILD = `#log .runrow`;
+check('background route: the Bash row reads "in the background", as b, b leaves it', await c.until(`[...document.querySelectorAll('${BUILD}')].some(e => /Build the demo/.test(e.textContent) && /Running, .*in the background|Running in the background/.test(e.querySelector('.rst')?.textContent || ''))`),
+  JSON.stringify(await ev(`[...document.querySelectorAll('${BUILD}')].map(e => e.querySelector('.rst')?.textContent)`)));
+check('background route: no set-aside line, nothing struck through', (await ev(`document.querySelectorAll('#log .asideln').length`)) === 0
+  && (await ev(`[...document.querySelectorAll('#log *')].every(e => !/line-through/.test(getComputedStyle(e).textDecorationLine))`)));
+
+// the interrupt route: Claude only writes, one message queued
+await ev(`document.querySelector('.row[data-id="${C}"]').click()`); await ev('document.activeElement?.blur()');
+await c.until(`__synopia.current() === '${C}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().state.status === 'busy' && !!document.querySelector('#log .liveln.rule')`);
+await c.until(`(document.querySelector('#log')?.textContent || '').includes(${JSON.stringify(CUT)})`);
+await sendText(LATER); await ev('document.activeElement?.blur()');
+await c.until(`document.querySelectorAll('${Q}').length === 1`);
+await K.f(); await K.f();
+const s2 = await sent();
+check('interrupt route: f, f sends one sendNow, no draft', s2.length === 2 && s2[1].sid === C && !s2[1].draft, JSON.stringify(s2));
+check('interrupt route: the queued message lands as your prompt', await c.until(`__synopia.cur().items.some(i => i.k === 'you' && i.text === ${JSON.stringify(LATER)})`));
+check('interrupt route: the live line stays as a set-aside record', await c.until(`!!document.querySelector('#log .asideln')`));
+const aside = await ev(`(() => { const e = document.querySelector('#log .asideln'), st = e.querySelector('s'), all = [...document.querySelectorAll('#log > .log-inner > *')];
+  const txt = all.findIndex(x => x.matches('.ln.claude.aside')), you = all.findIndex(x => x.textContent.includes(${JSON.stringify(LATER)}));
+  return { text: e.textContent.replace(/\\s+/g, ' ').trim(), struck: !!st && getComputedStyle(st).textDecorationLine.includes('line-through'), why: !/line-through/.test(getComputedStyle(e.querySelector('.why')).textDecorationLine),
+    grey: getComputedStyle(e).color, anim: e.getAnimations({ subtree: true }).length, rule: e.classList.contains('rule'),
+    reply: txt >= 0 && all[txt].textContent.includes(${JSON.stringify(CUT)}) ? getComputedStyle(all[txt].querySelector('.md')).color : null, order: [txt, all.indexOf(e), you] }; })()`);
+check('interrupt route: "Working", struck through, then "set aside for your messages", not struck', aside.text === 'Working set aside for your messages' && aside.struck && aside.why, JSON.stringify(aside));
+check('interrupt route: still (no animation) and greyed, not the live line\'s rule', aside.anim === 0 && !aside.rule && aside.grey === aside.reply && aside.grey === (await ev(`(() => { const x = document.createElement('i'); x.style.color = 'var(--ink-3)'; document.getElementById('log').append(x); const v = getComputedStyle(x).color; x.remove(); return v; })()`)), JSON.stringify(aside));
+check('interrupt route: the cut reply greyed above it, your message below it', aside.reply !== null && aside.order[0] < aside.order[1] && aside.order[1] < aside.order[2], JSON.stringify(aside.order));
+await shot(c, path.join(stateDir, `sendnow-aside-${theme}.png`));
+
 // a session Synopia doesn't drive: f asks nothing
 await ev(`document.querySelector('.row[data-id="${B}"]').click()`); await ev('document.activeElement.blur()');
 await c.until(`__synopia.current() === '${B}' && __synopia.cur().state.driven === false`);
 await ev(`(() => { const ta = document.getElementById('msg'); if (ta) { ta.value = 'draft'; ta.dispatchEvent(new Event('input')); ta.blur(); } })()`);
 await K.f();
-check('not driven: f asks nothing and sends nothing', (await asking()) === null && (await sent()).length === 1);
+check('not driven: f asks nothing and sends nothing', (await asking()) === null && (await sent()).length === 2);
 await sleep(50);
 c.print(); c.close();

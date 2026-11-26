@@ -67,11 +67,13 @@ export function md(src) {
       continue;
     }
     const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h4>${inline(h[2])}</h4>`); i++; continue; }
-    if (/^\s*([-*]|\d+\.)\s+/.test(l)) {
+    if (/^\s*([-*]|\d+\.)(\s+|$)/.test(l)) {
       /* A list, as CommonMark reads one: an item's own content is every line indented past its marker
          (a nested list, a second paragraph, code), rendered recursively; blank lines between items keep
-         the list going; an ordered list starts at the number written. */
-      const mk = /^(\s*)([-*]|\d+)(\.)?(\s+)/;
+         the list going; an ordered list starts at the number written. An item may start with a blank line
+         (a bare `-`), its content on the indented lines under it, one space past the marker; a blank line
+         right after such a marker leaves the item empty. */
+      const mk = /^(\s*)([-*]|\d+)(\.)?(\s+|$)/;
       const m0 = l.match(mk), base = m0[1].length, ordered = /\d/.test(m0[2]);
       const isItem = x => { const m = x.match(mk); return m && m[1].length <= base + 1 && /\d/.test(m[2]) === ordered && (ordered ? !!m[3] : !m[3]); };
       const items = []; let cur = null, pad = 0;
@@ -79,10 +81,15 @@ export function md(src) {
         const x = lines[i];
         if (!x.trim()) { // a blank line: the list goes on if the next text is an item or an item's content
           let j = i + 1; while (j < lines.length && !lines[j].trim()) j++;
-          if (j < lines.length && (isItem(lines[j]) || (cur && lines[j].search(/\S/) >= pad))) { if (cur) cur.push(""); i++; continue; }
+          const bare = cur && cur.length === 1 && cur[0] === ""; // an item started blank ends at a blank line, empty
+          if (j < lines.length && (isItem(lines[j]) || (cur && !bare && lines[j].search(/\S/) >= pad))) { if (cur && !bare) cur.push(""); i++; continue; }
           break;
         }
-        if (isItem(x)) { const m = x.match(mk); pad = m[0].length; cur = [x.slice(pad)]; items.push({ n: +m[2], lines: cur }); i++; continue; }
+        if (isItem(x)) {
+          const m = x.match(mk), blank = !x.slice(m[0].length).trim();
+          pad = blank ? m[1].length + m[2].length + (m[3] ? 1 : 0) + 1 : m[0].length;
+          cur = [blank ? "" : x.slice(pad)]; items.push({ n: +m[2], lines: cur }); i++; continue;
+        }
         const ind = x.search(/\S/);
         if (cur && (ind >= Math.min(pad, base + 2) || !/^\s*([-*]|\d+\.)\s|^(```|#{1,4}\s|>|\s*\|)/.test(x))) { cur.push(x.slice(Math.min(ind, pad))); i++; continue; }
         break;

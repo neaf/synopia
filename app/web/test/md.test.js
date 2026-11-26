@@ -79,10 +79,23 @@ test("a question card's answers and notes, from the CLI's tool result", () => {
   assert.deepEqual(parseAnswers(null), []);
 });
 
+/* a list item may start with a blank line, its content on the indented lines under it (CommonMark): a bare
+   `-` before an indented sub-heading and its nested list once showed as a lone dash */
+test("a list item that starts blank: a bare dash, its content indented under it", () => {
+  assert.equal(md("- Merged.\n-\n  **Pushed (all signed):**\n  - one\n  - two"),
+    "<ul><li>Merged.</li><li><p><b>Pushed (all signed):</b></p><ul><li>one</li><li>two</li></ul></li></ul>");
+  assert.equal(md("-\n  **Pushed:**\n  - one"), "<ul><li><p><b>Pushed:</b></p><ul><li>one</li></ul></li></ul>", "as the list's first item");
+  assert.equal(md("1.\n   Step one"), "<ol><li>Step one</li></ol>", "an ordered one, content one space past its marker");
+});
+test("a list item that starts blank, then a blank line: the item is empty and the text after it is not its", () => {
+  assert.equal(md("- Merged.\n- \n\n  **Pushed:**\n\n  - one"), "<ul><li>Merged.</li><li></li></ul><p>  <b>Pushed:</b></p><ul><li>one</li></ul>");
+  assert.equal(md("- a\n-\n\n- b"), "<ul><li>a</li><li></li><li>b</li></ul>", "the list goes on after an empty item");
+});
+
 /* a streamed reply is rendered at every delta, so every prefix of it must render: a table row cut before its
    closing pipe ("| a | b") once looped for ever and froze the page */
 test("every prefix of a reply renders, a half-written table row as text", () => {
-  const src = "Intro:\n\n| Name | Count | Note |\n|:--|--:|---|\n| `a` | 12 | short |\n| b | 3 ms | x |\n\n> quote\n- item\n  1. sub\n\n```js\nx\n```\n#### Head\n| p | q";
+  const src = "Intro:\n\n| Name | Count | Note |\n|:--|--:|---|\n| `a` | 12 | short |\n| b | 3 ms | x |\n\n> quote\n- item\n  1. sub\n-\n  **Sub:**\n  - x\n\n```js\nx\n```\n#### Head\n| p | q";
   for (let n = 0; n <= src.length; n++) md(src.slice(0, n));
   assert.equal(md("text\n| a | b"), "<p>text</p><p>| a | b</p>");
   assert.equal(md("| a | b"), "<p>| a | b</p>");
