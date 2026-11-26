@@ -216,6 +216,18 @@ export class Transcripts {
     return this.live.get(id)?.t.ledger ?? null;
   }
 
+  // When you last wrote to the session (ms): your last message, not an interrupt marker; null when none.
+  lastYouAt(id: string): number | null {
+    const items = this.live.get(id)?.t.items ?? [];
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.k !== 'you' || it.interrupted || it.turnedDown) continue;
+      const ms = it.ts ? Date.parse(it.ts) : NaN;
+      return Number.isFinite(ms) ? ms : null;
+    }
+    return null;
+  }
+
   // The open-item ids an Agent tool use's brief owns (FR-ITEM-04).
   ownsOf(id: string, toolUseId: string): string[] {
     return this.live.get(id)?.t.ownsOf(toolUseId) ?? [];

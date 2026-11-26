@@ -107,6 +107,10 @@ function onMessage(m) {
       render("side", ...(isCurrent(m.sid) ? ["rail", "card", ...(shown ? ["header", "log"] : [])] : []));
       break;
     }
+    case "openItems": {
+      if (state.applyOpenItems(m) && isCurrent(m.sid)) render("rail");
+      break;
+    }
     case "pending": {
       state.applyPending(m);
       render("side", ...(isCurrent(m.sid) ? ["log", "card", "rail"] : []));

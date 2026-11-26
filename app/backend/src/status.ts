@@ -451,7 +451,9 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //            `Interrupt`; a turned-down tool is not one).
 //   needsYou what the session waits on: the oldest request's kind, or the question or plan
 //            another process asks, `signin`, `input` or `blocked`; null when it waits on nothing.
-//   review   finished "For review: …" subagents not marked reviewed (R10.1).
+//   review   open review items (R10.1, open-items.ts counts): finished "For review: …" subagents not marked reviewed.
+//   waiting  open Y items, review items apart, not answered and not `later` (FR-ITEM-06); due: A items that are due.
+//            A shared ledger counts under one session. Open items never make a session needs you.
 //   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
 //            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
 export type Light = 'red' | 'amber' | 'green';
@@ -459,7 +461,7 @@ export type Needs = 'question' | 'permission' | 'plan' | 'blocked' | 'signin' | 
 export type SessionState = {
   status: Status; since: number; detail: StatusDetail;
   light: Light; tone: Light | 'grey'; word: string; mark: string;
-  stopped: boolean; needsYou: Needs | null; review: number; driven: boolean;
+  stopped: boolean; needsYou: Needs | null; review: number; waiting: number; due: number; driven: boolean;
 };
 export type StateFacts = {
   pending: Needs[]; // the session's requests' kinds, oldest first
@@ -468,6 +470,8 @@ export type StateFacts = {
   blocked: boolean; // the latest main turn, or a subagent run that ended since your last message, has a denied step not redone (blockedLast, blockedSubagent)
   input?: boolean; // your running `!` command waits for input (bang.ts BangRun.waiting)
   review: number;
+  waiting?: number; // open-items.ts counts (FR-ITEM-06)
+  due?: number;
   driven: boolean;
 };
 
@@ -499,7 +503,7 @@ export function sessionState(e: { status: Status; at: number; detail?: StatusDet
   // your turn shows the grey square, whether or not background work runs
   const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (detail.queued ? 'queued' : 'work')
     : status === 'failed' ? 'failed' : 'stopped';
-  return { status, since: e.at, detail, light, tone, word, mark, stopped, needsYou, review: f.review, driven: f.driven };
+  return { status, since: e.at, detail, light, tone, word, mark, stopped, needsYou, review: f.review, waiting: f.waiting ?? 0, due: f.due ?? 0, driven: f.driven };
 }
 
 // Blocked (R8.2, FR-STAT-02): the latest main turn (from your last message, a `!` command or a message a

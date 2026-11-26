@@ -1,4 +1,4 @@
-// state.json: the open sessions, the layout, reviewed marks, models, session
+// state.json: the open sessions, the layout, open items, models, session
 // rules, written text, settings and the page's ui state. Loaded once, kept in memory, and written
 // atomically (temp file, then rename) at most once per second.
 import { chmodSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
@@ -17,8 +17,6 @@ export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: n
 // A `newSessionCwd` an older state.json has is dropped: New session asks for the folder (R3.3).
 export type Settings = { writerModel: string; model?: string };
 
-// The subagents marked reviewed (R10.2), newest last: the oldest go past this many.
-export const REVIEWED_MAX = 1000;
 // The answer labels and answered plans kept, newest last: the oldest go past these.
 // They label tool items of open or reopened sessions; a plan can be long.
 export const ANSWERS_MAX = 2000;
@@ -37,7 +35,6 @@ export type State = {
   version: 1;
   open: OpenEntry[];
   layout: Layout;
-  reviewed: string[];
   models: Record<string, { model: string; effort?: string | null }>;
   rules: Record<string, string[]>;
   answers: Record<string, string>;
@@ -66,7 +63,6 @@ export function defaultState(): State {
     version: 1,
     open: [],
     layout: { groups: [], others: [] },
-    reviewed: [],
     models: {},
     rules: {},
     answers: {},
@@ -113,7 +109,6 @@ export function normalize(raw: unknown): State {
     }));
   }
   s.layout = cleanLayout(raw.layout);
-  if (isStrArr(raw.reviewed)) s.reviewed = raw.reviewed.slice(-REVIEWED_MAX);
   // Each entry checked: a wrong-shaped one is dropped, not passed on.
   s.models = entries(raw.models, (v) => isObj(v) && typeof v.model === 'string'
     ? { model: v.model, ...(typeof v.effort === 'string' || v.effort === null ? { effort: v.effort } : {}) } : undefined);
@@ -134,7 +129,7 @@ export function normalize(raw: unknown): State {
     }
     return w;
   });
-  // the old `reviewed` marks are carried into `items` (FR-ITEM-03)
+  // the old `reviewed` marks (phase 1) are carried into `items` once (FR-ITEM-03); the field is not written again
   s.items = cleanItems(raw.items, raw.reviewed);
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
@@ -223,28 +218,4 @@ export function openStore(stateDir: string, opts: { log?: Log; minIntervalMs?: n
     },
   };
   return store;
-}
-
-// "Mark reviewed" (R10.2): the marks in state.json `reviewed`, with a set to look them up.
-export class ReviewedMarks {
-  private store: Store;
-  private set: Set<string>;
-
-  constructor(store: Store) {
-    this.store = store;
-    this.set = new Set(store.state.reviewed);
-  }
-
-  has(agentId: string): boolean {
-    return this.set.has(agentId);
-  }
-
-  // Stores the mark; false when it was there already. The oldest go past REVIEWED_MAX.
-  mark(agentId: string): boolean {
-    if (this.set.has(agentId)) return false;
-    this.store.state.reviewed = [...this.store.state.reviewed, agentId].slice(-REVIEWED_MAX);
-    this.set = new Set(this.store.state.reviewed);
-    this.store.changed();
-    return true;
-  }
 }

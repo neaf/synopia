@@ -5,7 +5,7 @@
    `ack {id, ok, error}` back, to the page that sent it.
 
    Field types: "str", "num", "bool", "obj", "arr", "any"; a trailing "?" also takes a missing field or null. */
-export const VERSION = 3;
+export const VERSION = 4;
 
 /* page to backend */
 export const PAGE = {
@@ -50,7 +50,9 @@ export const PAGE = {
   openSession: { id: "str?", sid: "str" },
   cancelTakeover: { id: "str?", sid: "str" },
   setModel: { id: "str?", sid: "str", model: "str", effort: "str?" },
-  reviewed: { id: "str?", agentId: "str" },
+  /* an open item of the session's list (open-items.ts, FR-ITEM-03): act "reviewed" is Mark reviewed on a review item;
+     refused for an item no open session's list holds */
+  item: { id: "str?", sid: "str", item: "str", act: "str" },
   /* the sidebar's layout, which the backend owns (layout.ts): a session moves before or after another, or last
      into a group ("others" is Not in a group); a new group of a session not in a group and the one dropped on it */
   moveSession: { id: "str?", sid: "str", before: "str?", after: "str?", group: "str?" },
@@ -77,17 +79,18 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "bangInput", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel", "bangStop", "stopTask"]);
+export const ACTIONS = new Set(["send", "bang", "bangInput", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "item", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel", "bangStop", "stopTask"]);
 
 /* backend to page */
 export const SERVER = {
   hello: { v: "num", code: "str", sessions: "arr", pending: "arr", layout: "obj", menu: "obj", ui: "obj?", update: "bool?" },
   /* a session's meta; `replaces` once when its id changed, with the layout that holds the new id; `{id, held}`
-     alone for the messages held behind a card. hello's sessions also carry agents, background and stream. */
+     alone for the messages held behind a card. hello's sessions also carry agents, background, stream and openItems
+     (the `openItems` frame's fields). */
   session: {
     id: "str", replaces: "str?", title: "str?", name: "str?", now: "str?", cwd: "str?", prs: "arr?", state: "obj?",
     model: "any", effort: "any", ask: "obj?", outbox: "arr?", bang: "obj?", bangs: "arr?", held: "arr?",
-    agents: "arr?", background: "arr?", stream: "str?", layout: "obj?", gone: "bool?",
+    agents: "arr?", background: "arr?", stream: "str?", openItems: "obj?", layout: "obj?", gone: "bool?",
   },
   /* a session started another (Synopia's start_session tool, R3.15): a page viewing `from` shows `sid` */
   started: { sid: "str", from: "str" },
@@ -131,6 +134,10 @@ export const SERVER = {
      expired there, `phase` (ask: no command saved; running; failed; idle: nothing to show), the command saved
      (or the guess to confirm), the running command's output so far (16 KB at most), the last failure's sentence */
   creds: { root: "str", sids: "arr", phase: "str", command: "str", output: "str", error: "str" },
+  /* the session's open items (open-items.ts, FR-ITEM-05), to every page, whole on each change: `items` the open Y items
+     (review items among them, kind "review", with the subagent's `agent` id), `checks` the open A items, `closed` the
+     items closed this turn, `unread` the ledger lines Synopia can't read, `note` why nothing could be read */
+  openItems: { sid: "str", items: "arr", checks: "arr", closed: "arr", unread: "num", note: "str?" },
   ack: { id: "str", ok: "bool", error: "str?" },
 };
 

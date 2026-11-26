@@ -100,7 +100,7 @@ export function setConnected(on) { store.ui.connected = on; }
 
 /* ---------- applying server messages ---------- */
 /* a session the server hasn't described yet: shown as your turn until its `session` frame */
-const blankState = () => ({ status: "idle", since: Date.now(), detail: {}, light: "amber", tone: "amber", word: "Your turn", mark: "stopped", stopped: false, needsYou: null, review: 0, driven: false });
+const blankState = () => ({ status: "idle", since: Date.now(), detail: {}, light: "amber", tone: "amber", word: "Your turn", mark: "stopped", stopped: false, needsYou: null, review: 0, waiting: 0, due: 0, driven: false });
 const blankSession = id => ({ id, title: "", now: "", cwd: "", prs: [], state: blankState(), items: [], total: 0, agents: [], background: [], stream: null, outbox: [] });
 function upsertById(list, upsert, keep) {
   const at = new Map(list.map((x, i) => [x.id ?? x.toolUseId, i]));
@@ -157,6 +157,13 @@ export function applyAgents(m) {
   upsertById(s.agents, m.upsert, true);
   s.agents.forEach(a => { a.items ||= []; });
   if (m.sid === current && view && !viewable(s, view)) view = null;
+  return s;
+}
+/* the session's open items (the backend's `openItems`, whole): kept as they came, for To review's Mark reviewed */
+export function applyOpenItems(m) {
+  const s = store.sessions.get(m.sid); if (!s) return null;
+  const { t, sid, ...items } = m;
+  s.openItems = items;
   return s;
 }
 export function applyBackground(m) { const s = store.sessions.get(m.sid); if (s) upsertById(s.background, m.upsert); return s; }

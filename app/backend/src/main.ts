@@ -9,7 +9,8 @@ import { chmodSync, mkdirSync, readFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { openLog } from './log.ts';
-import { openStore, ReviewedMarks } from './store.ts';
+import { openStore } from './store.ts';
+import { OpenItems } from './open-items.ts';
 import { startServer } from './server.ts';
 import { Transcripts } from './transcripts.ts';
 import { Publisher } from './publisher.ts';
@@ -119,7 +120,6 @@ const pages = () => (quiet ? noClients : server?.clients ?? noClients);
 // The Dock badge (requirements R2.6): status.ts keeps the count as sessions change; the shell polls
 // GET /api/badge, and each change is logged.
 const badge = new BadgeCounter((n) => log('badge', { n }));
-const marks = new ReviewedMarks(store);
 // The reading set (every open transcript) and the one sender of frames to the pages.
 const transcripts = new Transcripts({
   claudeDir, home, log,
@@ -128,11 +128,23 @@ const transcripts = new Transcripts({
   answerOf: (toolUseId) => store.state.answers[toolUseId],
   planOf: (toolUseId) => store.state.plans[toolUseId],
 });
+// The open-items lists (open-items.ts): read from each session's ledger and transcript; a change flushes the
+// sessions that show the list.
+const openItems = new OpenItems({
+  store, home, log,
+  facts: {
+    ledgerOf: (sid) => transcripts.ledgerOf(sid),
+    ownsOf: (sid, toolUseId) => transcripts.ownsOf(sid, toolUseId),
+    agents: (sid) => transcripts.get(sid)?.agents() ?? [],
+    lastYouAt: (sid) => transcripts.lastYouAt(sid),
+  },
+  onChange: (sids) => { for (const sid of sids) publisher.changed(sid); },
+});
 const publisher = new Publisher({
   transcripts, clients: pages, home,
   written: (sid) => store.state.written[sid],
   defaultModel: () => store.state.settings.model,
-  reviewed: (id) => marks.has(id),
+  openItems,
   badge,
   onRunning: (sid, r) => sessions.runningChanged(sid, r),
   onWorkEnded: (sid) => writer.workEnded(sid),
@@ -171,6 +183,8 @@ const sessions = new Sessions({
   },
   onSignedOut: (sid, cwd, on) => void creds.signedOut(sid, cwd, on),
   onGone: (sid) => creds.forget(sid),
+  onClosed: (sid) => openItems.close(sid),
+  onRekeyed: (from, to) => openItems.rekey(from, to),
 });
 
 // The credential refresh of a session's folder when its model sign-in expires (creds.ts): the folder's saved
@@ -195,7 +209,7 @@ const mcp = new Mcp({ runner: scripted?.mcpRunner ?? cliRunner, probe: (cwd) => 
 
 // Page frames (router.ts): checked, one module acts, actions acked.
 const fileRefs = new FileRefs({ home });
-const router = new Router({ sessions, transcripts, publisher, menus, mcp, creds, store, marks, bat, home, log, dryRun, fileRefs });
+const router = new Router({ sessions, transcripts, publisher, menus, mcp, creds, store, openItems, bat, home, log, dryRun, fileRefs });
 
 try {
   server = await startServer({
@@ -237,6 +251,7 @@ await daemon.ready({
     creds.stop();
     terminals.stop();
     sessions.stop();
+    openItems.stop();
     publisher.stop();
     transcripts.stop();
   },

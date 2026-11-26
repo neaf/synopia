@@ -59,6 +59,9 @@ export type SessionsOptions = {
   // A session's model sign-in expired, or works again (creds.ts); a session closed or took another id.
   onSignedOut?: (sid: string, cwd: string, signedOut: boolean) => void;
   onGone?: (sid: string) => void;
+  // A session closed, or its id changed (open-items.ts moves or drops its `session:` list).
+  onClosed?: (sid: string) => void;
+  onRekeyed?: (from: string, to: string) => void;
   // The terminals that hold sessions (cli-terminals.ts); none without it.
   terminals?: TerminalSource;
   folders?: Folders; // the disk side of the folder list (tests count its reads); else the real one
@@ -271,6 +274,7 @@ export class Sessions {
     this.layout.sync(); // a placeholder's id goes; a stored one keeps its place, hidden
     this.transcripts.close(id); // the pages get `removed` (publisher.ts)
     this.opts.onGone?.(id);
+    this.opts.onClosed?.(id);
     this.log('sessions.close', { sid: id, running });
     return { ok: true, sid: id };
   }
@@ -390,6 +394,7 @@ export class Sessions {
     this.layout.rename(old, newId); // before the `session` frame with `replaces`, which carries it
     st.status[newId] = { status: s.status.status, at: s.status.at };
     rekeyUi(this.store, old, newId); // the page's state for it moves too (R3.9)
+    this.opts.onRekeyed?.(old, newId);
     this.store.changed();
     this.transcripts.rekey(old, newId); // the reading starts again; the pages follow (publisher.ts)
     this.log('sessions.swap', { from: old, to: newId, why });

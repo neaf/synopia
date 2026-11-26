@@ -7,6 +7,8 @@ import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, bad
 import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
+import { openStore } from '../src/store.ts';
+import { OpenItems } from '../src/open-items.ts';
 import type { Client } from '../src/server.ts';
 import type { Item } from '../src/transcript.ts';
 
@@ -547,11 +549,18 @@ const AGENTS = '44444444-0000-4000-8000-000000000004';
 const REVIEW = 'aaaa0004'; // "For review: Draft the demo release notes", finished in the fixture
 const tick = () => new Promise((r) => setImmediate(r));
 
-function badgeReading(claudeDir = CLAUDE, reviewed: Set<string> = new Set()) {
+function badgeReading(claudeDir = CLAUDE) {
   const badge = new BadgeCounter();
   const transcripts = new Transcripts({ claudeDir, home: '/Users/fixture', pollMs: 0, watch: false });
-  const publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, reviewed: (id) => reviewed.has(id) });
-  return { badge, transcripts, publisher, reviewed };
+  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-badge-')), { minIntervalMs: 0 });
+  let publisher: Publisher | null = null;
+  const openItems = new OpenItems({
+    store, home: '/Users/fixture', lookMs: 0,
+    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid) },
+    onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
+  });
+  publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, openItems });
+  return { badge, transcripts, publisher, openItems };
 }
 
 test('badge: needs-you sessions and deliverables to review, open sessions only', async () => {
@@ -559,7 +568,7 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   // records are older, so its file counts as just changed, whenever it was checked out.
   const now = new Date();
   fs.utimesSync(path.join(CLAUDE, 'projects', '-tmp-fixture', `${ASKS}.jsonl`), now, now);
-  const { transcripts, publisher, badge, reviewed } = badgeReading();
+  const { transcripts, publisher, badge, openItems } = badgeReading();
   transcripts.open(IDLE);
   transcripts.open(ASKS);
   transcripts.open(AGENTS);
@@ -577,8 +586,8 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   publisher.setStatus(IDLE, 'waiting');
   assert.equal(badge.count, 3, 'the status waiting alone');
 
-  reviewed.add(REVIEW);
-  publisher.reviewed(REVIEW);
+  const item = openItems.view(AGENTS).items.find((i) => i.agent === REVIEW)!;
+  assert.equal(openItems.markReviewed(AGENTS, item.id), true);
   assert.equal(badge.count, 2, 'marked reviewed drops it');
   assert.equal(publisher.meta(AGENTS)?.state.review, 0);
 

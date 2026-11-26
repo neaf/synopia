@@ -1,6 +1,6 @@
 {
   "t": "hello",
-  "v": 3,
+  "v": 4,
   "code": "<code>",
   "sessions": [
     {
@@ -26,6 +26,8 @@
         "stopped": false,
         "needsYou": null,
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -38,7 +40,14 @@
       "agents": [],
       "background": [],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "22222222-0000-4000-8000-000000000002",
@@ -58,6 +67,8 @@
         "stopped": false,
         "needsYou": "question",
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -70,7 +81,14 @@
       "agents": [],
       "background": [],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "33333333-0000-4000-8000-000000000003",
@@ -90,6 +108,8 @@
         "stopped": false,
         "needsYou": "permission",
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -140,7 +160,14 @@
         }
       ],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "44444444-0000-4000-8000-000000000004",
@@ -160,6 +187,8 @@
         "stopped": false,
         "needsYou": null,
         "review": 1,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -275,7 +304,25 @@
       ],
       "background": [],
       "stream": "Two subagents are still running. I'll merge their changes when both report back.",
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [
+          {
+            "id": "Y1",
+            "kind": "review",
+            "text": "Review: Draft the demo release notes",
+            "source": "synopia",
+            "at": 1795180319000,
+            "minute": true,
+            "subagent": "Draft the demo release notes",
+            "agent": "aaaa0004"
+          }
+        ],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "55555555-0000-4000-8000-000000000005",
@@ -295,6 +342,8 @@
         "stopped": false,
         "needsYou": "plan",
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -307,7 +356,14 @@
       "agents": [],
       "background": [],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     }
   ],
   "pending": [

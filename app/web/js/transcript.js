@@ -616,11 +616,16 @@ conv.addEventListener("click", e => {
     selectView(t.dataset.agent); renderConv();
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { selectView(null); renderConv(); }
-  else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
+  else if (t.dataset.reviewed) { e.stopPropagation(); markReviewed(t.dataset.reviewed); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { if (e.target.closest("a[href]")) return; selectView(t.dataset.bg); renderConv(); } // a shell or monitor opens in the pane, as a subagent does (R7.2)
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });
+/* Mark reviewed on a To review card: the open review item of that subagent (the backend's `openItems`, FR-ITEM-03) */
+function markReviewed(agentId) {
+  const s = cur(), it = s?.openItems?.items.find(i => i.kind === "review" && i.agent === agentId);
+  if (it) act({ t: "item", sid: s.id, item: it.id, act: "reviewed" });
+}
 /* A "To review" card (R7.1): Main conversation, scrolled so that subagent's "Report from" block is near the top,
    briefly marked; its own transcript when this session's transcript has no report from it. Nothing is marked
    reviewed. */
