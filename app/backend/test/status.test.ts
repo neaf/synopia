@@ -556,7 +556,7 @@ function badgeReading(claudeDir = CLAUDE) {
   let publisher: Publisher | null = null;
   const openItems = new OpenItems({
     store, home: '/Users/fixture', lookMs: 0,
-    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid) },
+    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
     onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
   });
   publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, openItems });

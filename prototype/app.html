@@ -834,7 +834,7 @@ function applyDemo() {
   const now = new Date().toISOString();
   if (DEMO === "items") { // open items in the panel (R7.1, app/web/js/open-items.js), invented
     const at = Date.now() - 4 * 60_000;
-    s.openItems = { unread: 1, note: null,
+    s.openItems = { unread: 1, note: null, focus: "Y1", // the focused item (J/K, R9.1): the blue ring
       items: [{ id: "Y1", kind: "decision", text: "Run `bin/schema-lint --fix` now, or look at the 14 warnings first?", at, options: ["Run it", "Look first"], recommended: "Look first" },
         { id: "Y2", kind: "your task", text: "Answer the 2 review threads from Mira on #812.", at },
         { id: "Y4", kind: "default", text: "Mark #812 to #815 ready in this order: #812, #814, #813, #815.", at, goesAhead: "when CI is green on all four, unless you object" },
@@ -1353,7 +1353,7 @@ function oiChips(i) {
   const out = i.kind === "decision" ? (i.options || []).map(o => b(o, o === i.recommended)) : i.kind === "your task" ? [b("Done")] : i.kind === "default" ? [b("Object")] : [];
   return out.length ? `<span class="oi-acts">${out.join("")}</span>` : "";
 }
-const oiItem = i => `<div class="oi${i.state === "answered" ? " ans" : ""}">${oiId(i.id)}<span class="oi-k">${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}</span><span class="oi-age">${oiAge(i)}</span><button class="oi-t">${oiText(i.text)}</button>${i.goesAhead ? `<span class="oi-w">Goes ahead ${esc(i.goesAhead)}</span>` : ""}${oiChips(i)}</div>`;
+const oiItem = (i, f) => `<div class="oi${i.state === "answered" ? " ans" : ""}${f === i.id ? " focus" : ""}">${oiId(i.id)}<span class="oi-k">${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}</span><span class="oi-age">${oiAge(i)}</span><button class="oi-t">${oiText(i.text)}</button>${i.goesAhead ? `<span class="oi-w">Goes ahead ${esc(i.goesAhead)}</span>` : ""}${oiChips(i)}</div>`;
 function oiReview(s) {
   const rv = OI(s).items.filter(i => i.kind === "review"); if (!rv.length) return "";
   return `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>${rv.map(i => `<div class="rv"><button class="rv-open">${ind("review")}<span class="n">${oiId(i.id)}${esc(i.subagent || i.text)}</span><span class="m">${kind("sub")} handed over</span></button><button class="btn quiet rv-done">Mark reviewed</button></div>`).join("")}</div>`;
@@ -1361,7 +1361,7 @@ function oiReview(s) {
 function oiGroups(s) {
   const o = OI(s), wait = o.items.filter(i => i.kind !== "review" && !i.with);
   const bad = o.unread ? `<div class="oi bad"><span class="oi-id q">?</span><span class="oi-k">${o.unread} line${o.unread > 1 ? "s" : ""} Synopia can't read, in open-items.md</span></div>` : "";
-  return (wait.length || bad ? `<section class="oi-group oi-wait"><h3>Waiting on you <span class="cnt">${wait.length}</span></h3>${wait.map(oiItem).join("")}${bad}</section>` : "")
+  return (wait.length || bad ? `<section class="oi-group oi-wait"><h3>Waiting on you <span class="cnt">${wait.length}</span></h3>${wait.map(i => oiItem(i, o.focus)).join("")}${bad}</section>` : "")
     + (o.checks.length ? `<section class="oi-group oi-check"><h3>Claude will check <span class="cnt">${o.checks.length}</span></h3>${o.checks.map(a => `<div class="oi-fu">${oiId(a.id)}<button class="oi-t">${oiText(a.text)}</button><span class="oi-w"><span>${esc(a.trigger || "")}</span></span></div>`).join("")}</section>` : "")
     + (o.closed.length ? `<section class="oi-group oi-closed"><h3>Closed this turn <span class="cnt">${o.closed.length}</span></h3>${o.closed.map(c => `<div class="pr oi-cl"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${oiId(c.id)}${esc((c.how[0].toUpperCase() + c.how.slice(1)) + (c.note ? `: ${c.note}` : ""))}</span><span class="d">${hhmm(c.at)}</span></div>`).join("")}</section>` : "");
 }

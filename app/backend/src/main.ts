@@ -137,6 +137,7 @@ const openItems = new OpenItems({
     ownsOf: (sid, toolUseId) => transcripts.ownsOf(sid, toolUseId),
     agents: (sid) => transcripts.get(sid)?.agents() ?? [],
     lastYouAt: (sid) => transcripts.lastYouAt(sid),
+    replies: (sid) => transcripts.replies(sid),
   },
   onChange: (sids) => { for (const sid of sids) publisher.changed(sid); },
 });

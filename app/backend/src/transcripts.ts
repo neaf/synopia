@@ -16,6 +16,7 @@ import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { QUIET_MS, ASK_STALE_MS } from './status.ts';
 import type { Running } from './status.ts';
+import type { Reply } from './open-items.ts';
 
 export const WINDOW = 160; // the items a view gets, and an `earlier` page
 
@@ -226,6 +227,17 @@ export class Transcripts {
       return Number.isFinite(ms) ? ms : null;
     }
     return null;
+  }
+
+  // The main conversation's Claude blocks and subagent reports, in transcript order, for the reply an open
+  // item came from (open-items.ts, FR-ITEM-07); none when the session isn't open.
+  replies(id: string): Reply[] {
+    const out: Reply[] = [];
+    for (const i of this.live.get(id)?.t.items ?? []) {
+      if (i.k === 'claude') out.push({ id: i.id, k: 'claude', ts: i.ts, text: i.text ?? '' });
+      else if (i.k === 'report') out.push({ id: i.id, k: 'report', ts: i.ts, text: '', ...(i.agent ? { agent: i.agent } : {}) });
+    }
+    return out;
   }
 
   // The open-item ids an Agent tool use's brief owns (FR-ITEM-04).

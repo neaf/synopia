@@ -39,6 +39,7 @@ export type ItemView = {
   state?: string; options?: string[]; recommended?: string; trigger?: string; goesAhead?: string; watch?: string;
   subagent?: string; raisedBy?: string; answer?: string; agent?: string;
   with?: { agent: string; name: string };
+  reply?: string; // the block key of the reply it came from (FR-ITEM-07): a Claude block, or a raised item's report
 };
 export type ClosedView = { id: string; kind: string; text: string; how: string; at: number; note: string; by: 'agent' | 'synopia' };
 export type View = { items: ItemView[]; checks: ItemView[]; closed: ClosedView[]; unread: number; note: string | null };
@@ -50,7 +51,13 @@ export type ItemFacts = {
   ownsOf(sid: string, toolUseId: string): string[];
   agents(sid: string): Agent[];
   lastYouAt(sid: string): number | null; // your last message (ms), for Closed this turn
+  replies(sid: string): Reply[]; // the main conversation's Claude blocks and subagent reports, in transcript order
 };
+// One block of the main conversation an item can come from: Claude's text (`claude`) or a subagent's report.
+// `id` is the item id, which is the page's block key.
+export type Reply = { id: string; k: 'claude' | 'report'; ts: string | null; text: string; agent?: string };
+// What the scan for an item's reply found so far, over the first `n` replies (FR-ITEM-07).
+type Link = { n: number; quote: string | null; time: string | null; report: string | null };
 export type FileIo = {
   stat(p: string): Promise<{ size: number; mtimeMs: number }>;
   read(p: string): Promise<string>;
@@ -122,6 +129,7 @@ export class OpenItems {
   private uses = new Map<string, Use>(); // open session -> the list it uses
   private reads = new Map<string, Read>(); // ledger path -> its last read
   private timer: NodeJS.Timeout | null = null;
+  private links = new Map<string, Map<string, Link>>(); // open session -> item -> its reply scan (never stored)
 
   constructor(o: {
     store: Store; facts: ItemFacts; io?: FileIo; home?: string; log?: Log; now?: () => number;
@@ -172,6 +180,7 @@ export class OpenItems {
     const key = `session:${sid}`;
     const l = this.state.lists[key];
     this.uses.delete(sid);
+    this.links.delete(sid);
     if (l) {
       for (const h of l.items) if (h.agent && h.closed) this.carry(h.agent);
       delete this.state.lists[key];
@@ -190,6 +199,9 @@ export class OpenItems {
     }
     const u = this.uses.get(from);
     this.uses.delete(from);
+    const links = this.links.get(from);
+    this.links.delete(from);
+    if (links) this.links.set(to, links);
     if (u) this.uses.set(to, u.key === `session:${from}` ? { ...u, key: `session:${to}` } : u);
   }
 
@@ -231,12 +243,17 @@ export class OpenItems {
     const briefs = this.briefs(sid);
     const youAt = this.facts.lastYouAt(sid);
     const since = youAt === null ? null : Math.floor(youAt / 60_000) * 60_000;
+    const replies = this.facts.replies(sid), was = this.links.get(sid), links = new Map<string, Link>();
+    this.links.set(sid, links); // the scans of the items shown now, kept for the next view
     for (const h of l.items) {
       if (h.closed) {
         if (since !== null && h.closed.at >= since) out.closed.push({ id: h.id, kind: h.kind, text: h.text, how: h.closed.how, at: h.closed.at, note: h.closed.note, by: h.closed.by });
         continue;
       }
-      (h.prefix === 'Y' ? out.items : out.checks).push(this.itemView(h, briefs));
+      const v = this.itemView(h, briefs);
+      const reply = this.replyOf(sid, h, replies, was, links);
+      if (reply) v.reply = reply;
+      (h.prefix === 'Y' ? out.items : out.checks).push(v);
     }
     out.closed.sort((a, b) => a.at - b.at);
     return out;
@@ -501,6 +518,35 @@ export class OpenItems {
     return best?.[0] ?? null;
   }
 
+  // The reply an item came from (FR-ITEM-07), as the page's block key: for an item a subagent raised, that
+  // subagent's latest report; else the first Claude block holding the `from` quote word for word (runs of
+  // white space aside); else the last Claude block at or before the `from` minute; else none. A date-only
+  // stamp names no minute, so it has no time match. The scan goes on from where the last view left it, so each
+  // reply is read once per item, not once per view; a shorter transcript (a reset) scans again.
+  private replyOf(sid: string, h: Held, replies: Reply[], was: Map<string, Link> | undefined, links: Map<string, Link>): string | undefined {
+    const raised = h.fields['raised by'], from = h.source === 'agent' ? fromOf({ fields: h.fields } as OpenItem) : null;
+    if (!raised && !from) return undefined;
+    const key = `${h.id}\n${h.fields.from ?? ''}\n${raised ?? ''}`;
+    let l = was?.get(key);
+    if (!l || l.n > replies.length) l = { n: 0, quote: null, time: null, report: null };
+    const quote = from?.quote ? squash(from.quote) : null, st = from ? stampTime(from.at) : null;
+    const limit = st?.minute ? st.ms + 60_000 : null;
+    const named = raised ? new Set(this.facts.agents(sid).filter((a) => nameOf(a) === raised).map((a) => a.id)) : null;
+    for (let i = l.n; i < replies.length; i++) {
+      const r = replies[i];
+      if (r.k === 'report') {
+        if (named && r.agent && named.has(r.agent)) l.report = r.id;
+        continue;
+      }
+      if (quote && !l.quote && squash(r.text).includes(quote)) l.quote = r.id;
+      const ms = r.ts ? Date.parse(r.ts) : NaN;
+      if (limit !== null && ms < limit) l.time = r.id;
+    }
+    l.n = replies.length;
+    links.set(key, l);
+    return l.report ?? l.quote ?? l.time ?? undefined;
+  }
+
   private briefs(sid: string): Brief[] {
     return this.facts.agents(sid).map((a) => ({ agent: a.id, name: nameOf(a), ids: a.toolUseId ? this.facts.ownsOf(sid, a.toolUseId) : [], running: a.running }));
   }
@@ -538,6 +584,9 @@ export class OpenItems {
     for (const p of this.reads.keys()) if (!used.has(p)) this.reads.delete(p);
   }
 }
+
+// Text compared for a quote: runs of white space as one space.
+const squash = (t: string): string => t.replace(/\s+/g, ' ').trim();
 
 // A subagent's name as the ledger's `subagent` field holds it: its description without `For review: `.
 export const nameOf = (a: Pick<Agent, 'description'>): string => a.description.replace(REVIEW_PREFIX, '').trim();

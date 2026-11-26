@@ -213,6 +213,7 @@ if (withAgents) {
   const seen = [];
   for (let i = 0; i <= n; i++) { await K.J(); await sleep(150); seen.push(await ev('__synopia.view()')); }
   check('J follows the panel top to bottom, then back to Main conversation', JSON.stringify(seen.slice(0, n)) === JSON.stringify(shown) && seen[n] === null, JSON.stringify([shown, seen]));
+  check('a session with nothing waiting on you: J/K cycle the cards only, no item focused (FR-ITEM-07)', (await ev(`document.querySelectorAll('.rail .oi-wait [data-oi]').length`)) === 0);
   await K.K(); await sleep(150);
   check('K from Main conversation wraps to the last one', (await ev('__synopia.view()')) === seen[n - 1]);
   await K.K(); await sleep(150);

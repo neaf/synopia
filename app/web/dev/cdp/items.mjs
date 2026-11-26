@@ -5,12 +5,14 @@
 // Checks: the groups in order and their counts; solid id boxes; an option, Done and Object write their line into
 // the box in insert mode and send nothing; Y5 under its subagent's card, "with <name>", not in its group; the line
 // Synopia can't read; the handed-over review item with its id and Mark reviewed, a click only focusing it; Mark
-// reviewed sends one `item` and the card leaves; a rewritten ledger shows within 3 s; shots light and dark.
+// reviewed sends one `item` and the card leaves; J/K into the items, Enter and a click on an item's text going to the reply it
+// came from, the sidebar line's click focusing the first item, an item with no reply only focused (R9.1, FR-ITEM-07);
+// a rewritten ledger shows within 3 s; shots light and dark.
 // usage: node items.mjs make <claude-dir>   writes the tree, the script and the ledger (run.sh does this first)
 //        node items.mjs <url> <state-dir>   writes items-light.png and items-dark.png
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, writeScript, line, spySent, shot as shotTo } from './helpers.mjs';
+import { records, writeScript, line, spySent, keyTable, shot as shotTo } from './helpers.mjs';
 
 const S = 'e1e1e1e1-0000-4000-8000-0000000000e1';
 const CWD = '/tmp/synopia-items/shop';
@@ -165,11 +167,43 @@ check('Mark reviewed: the card leaves', await c.until(`!document.querySelector('
 const marks = await sent('item');
 check('Mark reviewed sends one item act, by the item\'s id', marks.length === 1 && marks[0].item === 'Y9' && marks[0].act === 'reviewed', JSON.stringify(marks));
 
+// ---------- focus, J/K into the items, Enter and a click to the reply it came from (R9.1, FR-ITEM-07) ----------
+const K = keyTable(c.key);
+const REPLY = 'i-a3:0'; // Claude's reply that asks Y1 and Y5: its block key
+const at = () => J(`({ view: __synopia.view(), focus: document.querySelector('.rail [data-oi].focus')?.dataset.oi || null, mark: document.querySelector('#log .jump-mark')?.dataset.key || null })`);
+const reply = (id) => ev(`__synopia.cur().openItems.items.find(i => i.id === '${id}')?.reply || null`);
+check('the backend puts the reply each item came from in it: the quote for Y1, the minute for Y2', (await reply('Y1')) === REPLY && (await reply('Y2')) === REPLY, JSON.stringify([await reply('Y1'), await reply('Y2')]));
+await ev(`document.querySelector('.rail [data-back-main]').click()`); await sleep(200);
+await K.K(); await sleep(150);
+let p = await at();
+check('K from Main conversation focuses the last Waiting on you item, Main conversation still shown', p.view === null && p.focus === 'Y4', JSON.stringify(p));
+await K.J(); await sleep(150);
+p = await at();
+check('J past the last item wraps to Main conversation, no item focused', p.view === null && p.focus === null, JSON.stringify(p));
+await K.J(); await sleep(250); const v1 = (await at()).view;
+await K.J(); await sleep(250); const v2 = (await at()).view;
+await K.J(); await c.until(`__synopia.view() === null && !!document.querySelector('.rail .oi.focus')`, 3000);
+p = await at();
+check('J goes through the cards (the subagent, the To review card), then on to the first item', v1 === REBASE && v2 === RCPT && p.view === null && p.focus === 'Y1', JSON.stringify({ v1, v2, p }));
+await K.enter();
+check('Enter on the focused item scrolls Main conversation to its reply and marks it', await c.until(`!!document.querySelector('#log [data-key="${REPLY}"].jump-mark')`, 5000), JSON.stringify(await at()));
+await c.until(`!document.querySelector('#log .jump-mark')`, 4000);
+await ev(`document.querySelector('.rail .oi[data-oi="Y2"] .oi-t').click()`);
+check('a click on an item\'s text focuses it and jumps to its reply', await c.until(`!!document.querySelector('#log [data-key="${REPLY}"].jump-mark') && document.querySelector('.rail .oi.focus')?.dataset.oi === 'Y2'`, 5000), JSON.stringify(await at()));
+await ev(`document.querySelector('#groups .row[data-id="${S}"] [data-line="waiting"]').click()`); await sleep(300);
+p = await at();
+check('a click on the sidebar\'s line opens the session with its first Waiting on you item focused', p.view === null && p.focus === 'Y1', JSON.stringify(p));
+
 // ---------- the ledger changes: the panel follows ----------
-fs.writeFileSync(LEDGER, ledger().replace('- Y8 ask Mira about the refund flow??\n', '').replace('## Claude will check', '- [ ] Y11 · your task · Approve the copy change on the receipt email.\n  - from: Claude, "Ship checkout M2", 2026-11-26 14:30\n\n## Claude will check'));
+fs.writeFileSync(LEDGER, ledger().replace('- Y8 ask Mira about the refund flow??\n', '').replace('## Claude will check', `- [ ] Y11 · your task · Approve the copy change on the receipt email.\n  - from: Claude, "Ship checkout M2", ${stamp(now0 - 2 * 86400_000)}\n\n## Claude will check`));
 const t0 = Date.now();
 const follows = await c.until(`!!document.querySelector('.rail .oi[data-oi="Y11"]') && !document.querySelector('.rail .oi.bad')`, 3000);
 check('a rewritten ledger shows in the panel within 3 s', follows, `${Date.now() - t0} ms`);
 check('the sidebar line follows: 5 waiting on you', await c.until(`(document.querySelector('#groups .row[data-id="${S}"] [data-line="waiting"]')?.textContent || '').trim() === '5 waiting on you'`, 3000));
+await c.until(`!document.querySelector('#log .jump-mark')`, 4000);
+const top = await ev(`document.getElementById('log').scrollTop`);
+await ev(`document.querySelector('.rail .oi[data-oi="Y11"] .oi-t').click()`); await sleep(400);
+p = await at();
+check('an item with no reply in this transcript: a click only focuses it', (await reply('Y11')) === null && p.focus === 'Y11' && p.mark === null && p.view === null && (await ev(`document.getElementById('log').scrollTop`)) === top, JSON.stringify(p));
 c.print();
 c.close();

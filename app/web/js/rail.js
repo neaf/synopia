@@ -10,7 +10,7 @@ import { bgState, cardDue, whoHTML } from "./runs.js";
 import { esc, live, took, hhmm } from "./format.js";
 import { ind, KG, kindKey, bgMarkKey, sessionMark } from "./marks.js";
 import { lineTweens, graceScan, inGrace } from "./tween.js";
-import { hasItems, reviewHTML, ownedHTML, groupsHTML } from "./open-items.js";
+import { hasItems, reviewHTML, ownedHTML, groupsHTML, takeReveal } from "./open-items.js";
 
 export const bgOf = bgAll; // Claude's shells and monitors and foreground Bash steps, your `!` runs, the refresh (state.js); the steps get no card
 export { bgState };
@@ -93,4 +93,9 @@ export function renderRail() {
   conv.classList.toggle("no-rail", !hasBackground(s));
   if (log && atEnd && was !== conv.classList.contains("no-rail")) log.scrollTop = log.scrollHeight;
   const rail = conv.querySelector(".rail"); if (rail) railTw.run(rail, before); // its children tween in and out
+  if (takeReveal()) rail?.querySelector("[data-oi].focus")?.scrollIntoView({ block: "nearest" }); // an item J/K or the sidebar's line focused
+}
+/* the panel's Waiting on you items in its order (J/K go on to them, R9.1) */
+export function waitingIds() {
+  return [...document.querySelectorAll(".rail .oi-wait .oi[data-oi]")].map(el => el.dataset.oi);
 }

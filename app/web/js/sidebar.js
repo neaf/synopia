@@ -7,6 +7,7 @@ import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
 import { lineTweens, inGrace } from "./tween.js";
+import { focusItem, firstWaiting } from "./open-items.js";
 import { bgOf, bgState, scanGrace } from "./rail.js";
 
 /* the sessions in sidebar order (Ctrl+J/K, keys.js) */
@@ -104,7 +105,8 @@ export function renderSide() {
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
   rendered.forEach(f => f(el));
-  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); picked(); }; });
+  /* a click on the "○ N waiting on you" line opens the session with its first Waiting on you item focused (R4.2) */
+  el.querySelectorAll(".row").forEach(b => { b.onclick = e => { select(b.dataset.id); if (e.target.closest('[data-line="waiting"]')) focusItem(b.dataset.id, firstWaiting(store.sessions.get(b.dataset.id))?.id, true); picked(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
   if (inp) {

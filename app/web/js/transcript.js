@@ -16,7 +16,7 @@ import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
 import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent, writeLine } from "./composer.js";
-import { focusItem } from "./open-items.js";
+import { focusItem, itemOf } from "./open-items.js";
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
 import { fitTables, watchTables } from "./table-fit.js";
@@ -615,10 +615,13 @@ conv.addEventListener("click", e => {
   /* an open item's button writes its line into the box and sends nothing (R7.1); a click elsewhere on the item focuses it */
   const chip = e.target.closest(".rail [data-write]");
   if (chip) { e.preventDefault(); e.stopPropagation(); writeItemLine(chip.dataset.write); return; }
+  const open = e.target.closest(".rail [data-oi-open]"); // its text: to the reply it came from (FR-ITEM-07)
+  if (open) { e.preventDefault(); e.stopPropagation(); openItem(open.dataset.oiOpen); return; }
   const oi = e.target.closest(".rail [data-oi]");
   if (oi && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); focusItem(cur()?.id, oi.dataset.oi); renderRail(); return; }
   const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], [data-session], #model-label");
   if (!t || t.closest(".qa-card")) return;
+  if (t.closest(".rail") && (t.dataset.agent || t.dataset.bg || t.hasAttribute("data-back-main"))) focusItem(null); // a panel row's view: no item focused
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
   else if (t.matches(".fc")) {
@@ -654,6 +657,16 @@ function toReport(id) {
     if (found) markJump(`report:${id}`);
     else if (cur()?.id === s.id) { selectView(id); renderConv(); }
   });
+}
+/* An open item's text, or Enter on the focused item (R7.1, R9.1): the item takes the focus, and Main conversation
+   scrolls to the reply it came from (the backend's `reply`, a block key) and marks it, as a To review card does.
+   With no such reply it only focuses. */
+export function openItem(id) {
+  const s = cur(); if (!s || !id) return;
+  focusItem(s.id, id);
+  const key = itemOf(s, id)?.reply;
+  if (key && view) { selectView(null); renderConv(); } else renderRail();
+  if (key) ui.jumpTo(`${s.id}|`, key, found => { if (found) markJump(key); });
 }
 /* the block a jump landed on: the selection tint with the 1px blue ring of b, b, held, then faded (css .jump-mark) */
 const JUMP_HOLD = 1500, JUMP_FADE = 600;

@@ -19,9 +19,15 @@ export const waitingItems = (s, shown = new Set()) => itemsOf(s).items.filter(i 
 const held = (i, shown) => !!i.with && shown.has(i.with.agent);
 
 /* ---------- the focused item (R9.1): one per page, never stored, so a reload has none ---------- */
-let focus = null; // { sid, id }
+let focus = null, reveal = false; // { sid, id }; whether the next panel render scrolls it into view
 export const focusedItem = sid => focus && focus.sid === sid ? focus.id : null;
-export function focusItem(sid, id) { focus = sid && id ? { sid, id } : null; }
+/* `show`: the next render of the panel scrolls the item into view (J/K, the sidebar's line) */
+export function focusItem(sid, id, show = false) { focus = sid && id ? { sid, id } : null; reveal = !!focus && show; }
+export function takeReveal() { const r = reveal; reveal = false; return r; }
+/* an open item of the session by its id: its `reply` is the block key of the reply it came from (FR-ITEM-07) */
+export const itemOf = (s, id) => { const o = itemsOf(s); return o.items.find(i => i.id === id) || o.checks.find(i => i.id === id) || null; };
+/* the first Waiting on you item, for a click on the sidebar's line (R4.2): none a running subagent holds */
+export const firstWaiting = s => itemsOf(s).items.find(i => i.kind !== "review" && !i.with) || null;
 
 /* ---------- pieces ---------- */
 /* an item's text: plain, with its `code` spans as code */

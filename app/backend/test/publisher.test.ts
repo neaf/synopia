@@ -221,7 +221,7 @@ test('review: a finished "For review: …" subagent is sent with review while it
   const transcripts = new Transcripts({ claudeDir: CLAUDE, home: HOME, pollMs: 0, watch: false });
   const openItems = new OpenItems({
     store, home: HOME, lookMs: 0,
-    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid) },
+    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
     onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
   });
   publisher = new Publisher({ transcripts, clients: () => clients, home: HOME, recheckMs: 0, openItems });

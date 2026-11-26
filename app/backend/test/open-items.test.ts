@@ -8,7 +8,7 @@ import path from 'node:path';
 import { openStore } from '../src/store.ts';
 import type { Store } from '../src/store.ts';
 import { OpenItems, NOTES, cleanItems, AGENT_CLOSED_MAX } from '../src/open-items.ts';
-import type { ItemFacts, FileIo } from '../src/open-items.ts';
+import type { ItemFacts, FileIo, Reply } from '../src/open-items.ts';
 import type { Agent, LedgerFact } from '../src/transcript.ts';
 
 const FIX = path.join(import.meta.dirname, 'fixtures', 'ledger');
@@ -28,9 +28,9 @@ const agent = (id: string, description: string, running = false, toolUseId: stri
   review: /^for review:/i.test(description), stopped: false, waiting: false, start: '2026-11-26T15:00:00.000Z', end: '2026-11-26T15:30:00.000Z', total: 3,
 });
 
-type Fake = { ledger: Map<string, LedgerFact | null>; agents: Map<string, Agent[]>; owns: Map<string, string[]>; you: Map<string, number | null> };
+type Fake = { ledger: Map<string, LedgerFact | null>; agents: Map<string, Agent[]>; owns: Map<string, string[]>; you: Map<string, number | null>; replies: Map<string, Reply[]> };
 function fakeFacts(): { f: Fake; facts: ItemFacts } {
-  const f: Fake = { ledger: new Map(), agents: new Map(), owns: new Map(), you: new Map() };
+  const f: Fake = { ledger: new Map(), agents: new Map(), owns: new Map(), you: new Map(), replies: new Map() };
   return {
     f,
     facts: {
@@ -38,6 +38,7 @@ function fakeFacts(): { f: Fake; facts: ItemFacts } {
       ownsOf: (_sid, tid) => f.owns.get(tid) ?? [],
       agents: (sid) => f.agents.get(sid) ?? [],
       lastYouAt: (sid) => f.you.get(sid) ?? null,
+      replies: (sid) => f.replies.get(sid) ?? [],
     },
   };
 }
@@ -248,4 +249,35 @@ test('subagent ties, and a shared ledger counted once under the session that nam
   assert.equal(items.holds('s1', 'Y6'), false, 'closed');
   items.rekey('s2', 's3');
   assert.deepEqual(items.sessionsOf(p).sort(), ['s1', 's3']);
+});
+
+test('the reply an item came from: the quote word for word, else the last reply by its minute, a raised item\'s report, none', async () => {
+  const { dir, f, items } = setup();
+  const p = ledgerIn(dir);
+  f.ledger.set('s1', fact(p));
+  const at = (h: number, m: number, s = 0) => new Date(2026, 10, 26, h, m, s).toISOString(); // the ledger's stamps are local time
+  const said = (id: string, ts: string, text: string): Reply => ({ id, k: 'claude', ts, text });
+  f.replies.set('s1', []);
+  await items.sync('s1');
+  const reply = (sid: string, id: string) => { const v = items.view(sid); return [...v.items, ...v.checks].find((i) => i.id === id)?.reply; };
+  assert.equal(reply('s1', 'Y1'), undefined, 'no reply yet');
+  f.replies.set('s1', [
+    said('c1', at(13, 50), 'Earlier: Should I run it?'),
+    said('c2', at(14, 1, 30), 'Rebased. Should I run\n  `bin/schema-lint --fix` now, or look first?'),
+    said('c3', at(14, 2, 20), 'Can I remove these two worktrees? Both are merged.'),
+    said('c4', at(14, 10), 'Later: Should I run `bin/schema-lint --fix` again?'),
+  ]);
+  assert.equal(reply('s1', 'Y1'), 'c2', 'a reply that lands later is found: the first holding the quote, white space aside');
+  assert.equal(reply('s1', 'Y5'), 'c3', 'its own quote');
+  assert.equal(reply('s1', 'Y2'), 'c3', 'no quote: the last reply at or before the minute 14:02');
+  assert.equal(reply('s1', 'A1'), 'c3', 'a check too');
+  f.replies.set('s1', [said('c4', at(14, 10), 'Later.')]);
+  assert.equal(reply('s1', 'Y2'), undefined, 'a shorter transcript scans again: no reply by 14:02, none');
+  // an item a subagent raised: that subagent's report
+  const q = ledgerIn(dir, 'sub', fixture('subagent.md'));
+  f.ledger.set('s2', fact(q));
+  f.agents.set('s2', [agent('ag-r', 'Rebase #820 on main', false, 'toolu_r2')]);
+  f.replies.set('s2', [said('c9', at(16, 50), 'Started it.'), { id: 'report:ag-r', k: 'report', ts: at(16, 51), text: '', agent: 'ag-r' }]);
+  await items.sync('s2');
+  assert.equal(reply('s2', 'Y7'), 'report:ag-r');
 });

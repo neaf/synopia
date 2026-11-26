@@ -7,7 +7,9 @@ import { current, cur, view, select, selectView, agentById, bgById } from "./sta
 import { mode, setMode, paintMode } from "./mode.js";
 import { KEYS, renderSide } from "./sidebar.js";
 import { drag, dragKey } from "./dnd.js";
-import { renderConv, loadEarlier, toEnd } from "./transcript.js";
+import { renderConv, loadEarlier, toEnd, openItem } from "./transcript.js";
+import { renderRail, waitingIds } from "./rail.js";
+import { focusedItem, focusItem } from "./open-items.js";
 import { promptKey, askInterrupt, askBackground, askClose, askNow } from "./composer.js";
 import { qaKeys } from "./card.js";
 import { openListShown, openListKey, showOpenList } from "./open-list.js";
@@ -65,7 +67,10 @@ function sessionKey(e) {
   switch (e.key) {
     case "n": e.preventDefault(); openNewSession(); break; // New session (R9.7)
     case "o": e.preventDefault(); showOpenList(); break; // Open session (R9.7)
-    case "Enter": if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); } break; // Continue in a folder (R3.11)
+    case "Enter": // Continue in a folder (R3.11); else the focused open item, as a click on its text (R9.1); a focused button acts itself
+      if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); }
+      else if (!view && focusedItem(current) && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); openItem(focusedItem(current)); }
+      break;
     case "J": e.preventDefault(); stepView(1); break; // the next or previous conversation inside the session
     case "K": e.preventDefault(); stepView(-1); break;
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;
@@ -92,15 +97,20 @@ function stepSession(step) {
   if (was === "insert" && mode !== "insert" && document.getElementById("msg")) setMode("insert");
 }
 /* J/K: Main conversation, then the subagents, forks, shells and monitors as the background panel shows
-   them, top to bottom (each opens in the pane, R7.2); past the last one it wraps to Main conversation */
+   them, top to bottom (each opens in the pane, R7.2), then the Waiting on you items (R9.1: focused, with
+   Main conversation shown); past the last one it wraps to Main conversation */
 function stepView(step) {
   const s = cur(); if (!s) return;
   const ids = [...new Set([...document.querySelectorAll(".rail [data-agent], .rail [data-bg]")].map(el => el.dataset.agent || el.dataset.bg))].filter(id => agentById(s, id) || bgById(s, id));
-  const order = [null, ...ids];
-  const i = order.indexOf(view || null);
+  const items = waitingIds().map(id => ({ item: id }));
+  const order = [null, ...ids, ...items];
+  const f = !view && focusedItem(s.id), at = f ? order.findIndex(x => x?.item === f) : -1;
+  const i = at >= 0 ? at : order.indexOf(view || null);
   /* a view with no row in the panel (a `!` run under 3 s opened from its row, Claude's foreground Bash opened from
      the live line) steps back to Main conversation either way, as its header's crumb does (2026-11-26) */
-  if (i < 0) { selectView(null); renderConv(); return; }
+  if (i < 0) { focusItem(null); selectView(null); renderConv(); return; }
   if (order.length < 2) return;
-  selectView(order[(i + step + order.length) % order.length]); renderConv();
+  const next = order[(i + step + order.length) % order.length];
+  if (next && next.item) { focusItem(s.id, next.item, true); if (view) { selectView(null); renderConv(); } else renderRail(); return; }
+  focusItem(null); selectView(next); renderConv();
 }
