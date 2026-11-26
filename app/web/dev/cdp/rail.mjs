@@ -151,6 +151,7 @@ const head = () => ev(`(() => {
 await ev(`document.querySelector('.rail .card[data-agent="bbbb0001"]').click()`);
 await sleep(300);
 const hSub = await head();
+check('a subagent view: "‹ <session title>" at the start of the title line, the only back link in the header', await ev(`(() => { const t = document.querySelector('.c-head > .c-title'), b = t.firstElementChild; return b.matches('.c-crumb[data-back]') && b.textContent === '‹ ' + __synopia.cur().title && document.querySelectorAll('.c-head [data-back]').length === 1 && Math.abs(b.getBoundingClientRect().bottom - t.querySelector('.c-name').getBoundingClientRect().bottom) < 6; })()`));
 await ev(`document.querySelector('[data-back-main]').click()`);
 await sleep(300);
 const hMain = await head();
@@ -165,7 +166,7 @@ const tasks = path.join(state, 'tasks');
 const open = async (q) => { await ev(`document.querySelector(${JSON.stringify(q)}).click()`); await sleep(400); };
 const logText = () => ev(`document.querySelector('#log .bg-run')?.textContent || ''`);
 const view = () => ev(`(() => { const h = document.querySelector('.c-head'), t = (q) => h.querySelector(q)?.textContent || '';
-  return { view: __synopia.view(), title: t('.c-title'), now: t('.c-now'), meta: t('.c-meta'), cur: [...document.querySelectorAll('.rail [aria-current="true"]')].map((e) => e.dataset.bg || e.dataset.agent || 'main'),
+  return { view: __synopia.view(), title: t('.c-title .c-name') || t('.c-title'), crumb: t('.c-title > .c-crumb[data-back]'), metaBack: !!h.querySelector('.c-meta [data-back]'), now: t('.c-now'), meta: t('.c-meta'), cur: [...document.querySelectorAll('.rail [aria-current="true"]')].map((e) => e.dataset.bg || e.dataset.agent || 'main'),
     expanded: !!document.querySelector('.rail .bw-detail, .rail [aria-expanded]'), cmd: document.querySelector('#log .bg-run .cmd')?.textContent || '', out: document.querySelector('#log .bg-run .out')?.textContent || '',
     live: !!document.querySelector('#log .liveln'), moving: (document.querySelector('#log .liveln .g')?.getAnimations({ subtree: true }) || []).filter((a) => a.playState === 'running').length,
     end: document.querySelector('#log .bg-end')?.textContent || '', earlier: document.querySelector('#log [data-earlier]')?.textContent || '' }; })()`);
@@ -173,7 +174,9 @@ await open('.rail .card[data-bg="toolu_rsh"]');
 await c.until(`(document.querySelector('#log .bg-run .out')?.textContent || '').includes('Serving!')`, 5000);
 let v = await view();
 check('a shell row opens its view in the pane, not in the panel: it alone is selected, nothing expands', v.view === 'toolu_rsh' && JSON.stringify(v.cur) === '["toolu_rsh"]' && !v.expanded, JSON.stringify(v));
-check('its header names it, says it runs and whose it is', v.title === 'Serve the demo' && /^Running, \d+.*\. Background shell, started /.test(v.now) && /^Claude hears when it ends\. Shell in ‹ /.test(v.meta), JSON.stringify(v));
+check('its header names it, says it runs and whose it is', v.title === 'Serve the demo' && /^Running, \d+.*\. Background shell, started /.test(v.now) && /^Claude hears when it ends\. Shell in “/.test(v.meta), JSON.stringify(v));
+check('its way back is the crumb at the start of the title line, as in a subagent view: "‹ <session title>"', /^‹ ./.test(v.crumb) && !v.metaBack, JSON.stringify(v));
+{ const hShell = await head(); check('the shell view keeps the header shape of the main conversation (R5.1)', Math.abs(hMain.h - hShell.h) <= 0.5 && near(hMain.tops, hShell.tops) && near(hMain.hs, hShell.hs) && near(hMain.bases, hShell.bases), JSON.stringify({ hMain, hShell })); }
 check('its log is the command, then the whole output as plain text (no escape sequences), then the moving running mark',
   v.cmd === 'npx serve demo' && v.out.startsWith('   ┌') && v.out.includes('- Local:    http://localhost:3000') && v.out.includes('HTTP  13:00:12') && !/\x1b|\[0m|\[32m/.test(v.out) && v.live && v.moving > 0 && !v.end, JSON.stringify(v));
 check('its log is monospace', await ev(`getComputedStyle(document.querySelector('#log .bg-run .out')).fontFamily.includes('JetBrains Mono')`));
@@ -187,7 +190,7 @@ await shot('rail-shell-running');
 // a monitor of a subagent: its events
 await open('.rail .card[data-bg="toolu_bmon1"]');
 v = await view();
-check("a subagent's monitor opens with its events and names the subagent", v.view === 'toolu_bmon1' && v.title === 'Watch the resize log' && /^Claude hears each event\. Monitor of the subagent Build image thumbnails in ‹ /.test(v.meta)
+check("a subagent's monitor opens with its events and names the subagent", v.view === 'toolu_bmon1' && v.title === 'Watch the resize log' && /^Claude hears each event\. Monitor of the subagent Build image thumbnails in “/.test(v.meta)
   && v.out === 'resized 12 of 48: hero.png, team.jpg\nresized 30 of 48\nskipped logo.svg (vector)' && v.live, JSON.stringify(v));
 { const p = await outPanel(c, "#log .bg-run .step-out .out"); check("a monitor's events go in the same output panel", !!p && p.ok, JSON.stringify(p)); }
 // a finished shell from Past: its output, a carriage-returned line as it ended, how it ended

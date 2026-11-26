@@ -91,6 +91,13 @@ kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid var(--line)
 /* the header keeps one shape in every view (title, Now or status, meta; one line each), so switching
    between the session and a subagent never moves the panels below it */
 .c-head > .c-title, .c-head > .c-now, .c-head > .c-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* the way back from a subagent, fork, shell or monitor view: "‹ <session title>" at the start of the title's line
+   (2026-11-26), the prototype's crumb on the title's baseline instead of a line of its own, so the line keeps its
+   height (R5.1). The session title gives way first, down to a third of the line. */
+.c-head > .c-title:has(> .c-crumb) { display: flex; align-items: baseline; gap: 9px; }
+.c-crumb { flex: 0 1 auto; max-width: 60%; min-width: 2em; line-height: 16px; font-weight: 400; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.c-crumb:focus-visible { outline-offset: 1px; }
+.c-title > .c-name { flex: 1 1 auto; min-width: 33%; overflow: hidden; text-overflow: ellipsis; }
 .c-acts { grid-row: 1 / 6; grid-column: 2; display: flex; gap: 7px; align-items: center; }
 .missing { padding: 27px; max-width: 60ch; }
 

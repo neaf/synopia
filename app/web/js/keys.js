@@ -97,7 +97,10 @@ function stepView(step) {
   const s = cur(); if (!s) return;
   const ids = [...new Set([...document.querySelectorAll(".rail [data-agent], .rail [data-bg]")].map(el => el.dataset.agent || el.dataset.bg))].filter(id => agentById(s, id) || bgById(s, id));
   const order = [null, ...ids];
+  const i = order.indexOf(view || null);
+  /* a view with no row in the panel (a run under 3 s, opened from its transcript row) steps back to Main
+     conversation either way, as its header's crumb does (2026-11-26) */
+  if (i < 0) { selectView(null); renderConv(); return; }
   if (order.length < 2) return;
-  const i = Math.max(0, order.indexOf(view || null));
   selectView(order[(i + step + order.length) % order.length]); renderConv();
 }
