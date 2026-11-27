@@ -99,7 +99,7 @@ Dev and test only (not loaded in production):
 | `js/table-fit.js` | Fits a markdown table in the log to its reply (only the long text wraps, then the first column, then it scrolls in its box), again when the log resizes or a fold opens. |
 | `js/marks.js` | Mark drawing per mark key and the animation phase pin (CON-WK-05). |
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
-| `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
+| `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. A row's sub-lines draw rail.js `mainTree`, the panel's own Main conversation tree, so the two can't drift (R4.2). |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
 | `js/rail.js` | Background work panel: agents, Claude's background shells and monitors as cards from their start, your runs and the refresh once due (`cardAt`), no card for Claude's foreground Bash; who started each by its sign, the waiting card. |
 | `js/runs.js` | Runs (R5.13, R7.1, 2026-11-26): your `!` command and the refresh in one shape (`ownRowHTML` on the `!` band in the transcript, `credsRunHTML` in the dock), their state line; `bgState` and the who sign for the panel; draws only what the backend sent. Claude's Bash and Monitor steps are steps (`transcript.js`). |

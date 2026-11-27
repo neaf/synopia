@@ -30,35 +30,44 @@ export function scanGrace() {
     ...bgOf(s).map(b => [s.id + "|" + b.toolUseId, bgState(b) === "running"]),
   ]));
 }
-/* No Stop row (author, 2026-11-24): it moved the panel when switching subagents. A key comes when it's
-   needed; until then a runaway background task ends with its session. */
-/* A: the subagent shown, B: the shell or monitor shown (R7.2: each opens in the pane, no card expands) */
-export function railHTML(s, A, B = null) { // exported for the escape test
-  if (!hasBackground(s)) return "";
-  scanGrace();
+/* The panel's items for one session (R7.1): every subagent and fork, and each run with a card. `tree` is the Main
+   conversation tree, each item with its `kids`: a subagent's own shells, monitors and subagents (2026-11-27) under it,
+   the main thread's (or an orphan's) at the top, in the panel's order (forks, subagents, shells, monitors, then oldest
+   first). One that just finished stays in it for its grace; a run shows once its card is due. A subagent waiting on its
+   own background work runs: it stays with the still kind mark, its shells under it (docs/Claude Code transcripts.md,
+   "A subagent waiting on its own background work"). `past`: the rest, newest first. The sidebar's sub-lines draw this
+   same tree (R4.2, 2026-11-27), so the two can't drift apart. */
+const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
+function itemsOf(s) {
   const all = [
     ...agentsOf(s).map(a => ({ key: a.id, agent: a, name: a.description, kind: a.fork ? "fork" : (a.type || "subagent"), start: a.start, end: a.finished ? a.end : null, running: !a.finished, waiting: !!a.waiting, failed: false, st: a.stopped ? "stopped" : "done", ms: agentMs(a) })),
     ...bgOf(s).filter(carded).map(b => { const st = bgState(b); return { key: b.toolUseId, bg: b, name: b.own || b.creds ? b.command : b.description || b.command, kind: b.kind, start: b.start,
       end: st === "running" ? null : (b.end || new Date(new Date(b.start).getTime() + (b.timeout || 0)).toISOString()), running: st === "running", failed: st === "failed", st, ms: bgMs(b),
       who: whoOf(b), waits: st === "running" && !!b.waiting, due: due(b) }; })
   ];
-  /* one that just finished stays in the tree for its grace; a run shows once its card is due */
   for (const x of all) x.shown = x.bg ? (x.running ? x.due : inGrace(s.id, x.key)) : x.running || inGrace(s.id, x.key);
   const past = all.filter(x => !x.shown && !(x.bg && x.running)).sort((p, q) => new Date(q.end) - new Date(p.end));
-  const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
   const running = all.filter(x => x.shown).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  /* a subagent's own shells, monitors and subagents (2026-11-27) hang under its card; the main thread's (or an orphan's)
-     under Main conversation. A subagent waiting on its own background work runs: its card stays here with the still kind
-     mark and says so, its shells move under it (docs/Claude Code transcripts.md, "A subagent waiting on its own background work") */
   const up = x => x.bg ? x.bg.agentId : x.agent ? x.agent.parent : null;
   const parentOf = x => up(x) && running.some(y => y.agent && y.agent.id === up(x)) ? up(x) : null;
-  const now = running.filter(x => !parentOf(x)), kidsOf = x => x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
+  for (const x of running) x.kids = x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
+  return { tree: running.filter(x => !parentOf(x)), past };
+}
+/* the Main conversation tree of a session (the sidebar's sub-lines, R4.2) */
+export const mainTree = s => itemsOf(s).tree;
+/* No Stop row (author, 2026-11-24): it moved the panel when switching subagents. A key comes when it's
+   needed; until then a runaway background task ends with its session. */
+/* A: the subagent shown, B: the shell or monitor shown (R7.2: each opens in the pane, no card expands) */
+export function railHTML(s, A, B = null) { // exported for the escape test
+  if (!hasBackground(s)) return "";
+  scanGrace();
+  const { tree: now, past } = itemsOf(s);
   const nameOfAgent = id => agentsOf(s).find(a => a.id === id)?.description || "a subagent";
   const attrs = x => x.agent ? `data-agent="${esc(x.agent.id)}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${esc(x.key)}" aria-current="${!!(B && B.toolUseId === x.key)}"`;
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
       <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running && (!x.bg || isClaudeBg(x.bg))).length)}</span><span class="w">${esc(s.state.light === "red" ? "Needs you" : s.state.resting ? "Idle" : s.state.word)}</span></button>
-      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}${x.waiting ? " waiting" : ""}${x.waits ? " waits" : ""}" ${attrs(x)}>${x.waits ? ind("pause") : x.waiting ? ind("s_" + kindKey(x)) : x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${whoHTML(x.who)}${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, ${x.waits ? "waits for input" : `started ${x.who === "you" ? "by you " : x.who === "synopia" ? "by Synopia " : ""}${hhmm(x.start)}`}${x.waiting ? ", waiting on its background work" : ""}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
+      ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = x.kids; return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}${x.waiting ? " waiting" : ""}${x.waits ? " waits" : ""}" ${attrs(x)}>${x.waits ? ind("pause") : x.waiting ? ind("s_" + kindKey(x)) : x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${whoHTML(x.who)}${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, ${x.waits ? "waits for input" : `started ${x.who === "you" ? "by you " : x.who === "synopia" ? "by Synopia " : ""}${hhmm(x.start)}`}${x.waiting ? ", waiting on its background work" : ""}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
