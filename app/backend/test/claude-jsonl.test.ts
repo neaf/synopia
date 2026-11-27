@@ -20,6 +20,15 @@ test('interrupt markers: a stop, and a tool you turned down', () => {
   assert.deepEqual(bodyOf('Request interrupted by user'), { kind: 'prompt' }, 'only at the start, in brackets');
 });
 
+// docs/Claude Code transcripts.md#error-results: the CLI's tag around an error result is left out (invented text).
+test('tool results: an error result wrapped in <tool_use_error> reads as the sentence inside', () => {
+  const textOf = (content: string, isError = true) => user([{ type: 'tool_result', tool_use_id: 't1', is_error: isError, content }]).results[0].text;
+  assert.equal(textOf('<tool_use_error>File has not been read yet. Read it first before writing to it.</tool_use_error>'), 'File has not been read yet. Read it first before writing to it.');
+  assert.equal(textOf('<tool_use_error>line one\nline two</tool_use_error>\n'), 'line one\nline two', 'several lines, a trailing newline');
+  assert.equal(textOf('<tool_use_error>x</tool_use_error>', false), '<tool_use_error>x</tool_use_error>', 'only an error result');
+  assert.equal(textOf('Exit code 1 <tool_use_error>x</tool_use_error>'), 'Exit code 1 <tool_use_error>x</tool_use_error>', 'only a tag around the whole text');
+});
+
 // docs/Claude Code transcripts.md#denied-tool-calls: one user record per denied call (invented text).
 test('tool results: a call auto mode blocked, or you turned down at a terminal, is a denial; a hook block or a failure is not', () => {
   const blocked = (kind: string | undefined, content: string, isError = true) => user([{ type: 'tool_result', tool_use_id: 't1', is_error: isError, content }], kind ? { toolDenialKind: kind } : {}).results[0].denial;

@@ -178,6 +178,12 @@ Code: `claude-jsonl.ts` `classify` (`api-error`), `transcript.ts` `apiError`, `t
 - Synopia reads the first marker as a stop (item `interrupted`) and the second as a turned-down tool (item `turnedDown`). Either closes the turn until Claude writes again; the error results just before the marker read as stopped. A turned-down marker isn't a prompt: the turn's time still counts from yours.
 - Code: `claude-jsonl.ts` `CUT_SHORT`, `bodyOf`; `transcript.ts` `user`. Test: `transcript.test.ts` "a turned-down tool is not a stop …", `transcripts.test.ts` "turns".
 
+## Error results
+
+Some error results come wrapped in a tag: `is_error: true` and the whole `content` is `<tool_use_error>…</tool_use_error>` (a failed Edit's "File has not been read yet. Read it first before writing to it.", a hook or rule block below). The tag is the CLI's, not Claude's text, so a step shows only the sentence inside (2026-11-27). A result with text around the tag, or a result that isn't an error, is shown as written.
+
+- Code: `claude-jsonl.ts` `ERROR_TAG`, `toolResultOf`. Test: `claude-jsonl.test.ts` "an error result wrapped in <tool_use_error> …".
+
 ## Denied tool calls
 
 A tool call a permission check said no to never runs. The CLI writes its `tool_result` with `is_error: true` and a string `content`, in a `user` record that also carries `toolDenialKind` and, for most, `permissionDecision`. `toolUseResult` is the string `"Error: "` plus the content.

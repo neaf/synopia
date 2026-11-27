@@ -167,9 +167,13 @@ export type ToolResult = { index: number; toolUseId: string; isError: boolean; t
 const OUTPUT_FILE = /Output is being written to: (\/\S+?\.output)(?=\s|$)/;
 const TASK_ID = /^(?:Command running in background with ID: |Command was manually backgrounded by user with ID: |Command was moved to the background \(ID: |Monitor started \(task )([A-Za-z0-9]+)/;
 
+// The CLI wraps some error results in a tag ("<tool_use_error>File has not been read yet…</tool_use_error>",
+// docs/Claude Code transcripts.md#error-results): the step shows the sentence inside, not the tag.
+const ERROR_TAG = /^\s*<tool_use_error>([\s\S]*?)<\/tool_use_error>\s*$/;
+
 function toolResultOf(b: JsonRecord, index: number, denialKind: unknown): ToolResult {
-  const text = textOf(b.content);
   const isError = Boolean(b.is_error);
+  const raw = textOf(b.content), text = isError ? raw.replace(ERROR_TAG, '$1') : raw;
   const denial = !isError ? null : DENIAL_KINDS.get(str(denialKind)) ?? (text.trimStart().startsWith(AUTO_MODE_BLOCKED) ? 'auto' : null);
   return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), denial, images: imageBlocks(b.content), outputFile: OUTPUT_FILE.exec(text)?.[1] ?? '', taskId: isError ? '' : TASK_ID.exec(text.trimStart())?.[1] ?? '' };
 }
