@@ -74,6 +74,10 @@ Test: "ownedIds: ...", "ownerOf: ..."; `transcript.test.ts` "open items: the las
 
 Test: `ledger.test.ts` "serialize: …": a fixture read and written unchanged keeps every block and is stable; Synopia's items and closes; the 30-line rule; and, when the skill's `ledger.py` is on the Mac (`~/dev/agent-harness/…`, or `LEDGER_PY`), every text the tests wrote passes `ledger.py check` (a dev check: `check.sh` doesn't depend on it, and skips it elsewhere).
 
+### When Synopia writes it
+
+`open-items.ts` `writeBack` (FR-ITEM-11): only a ledger whose list Synopia changed (a keeper op, `d`, Undo, Mark reviewed, a review item it opened); only when no session using it has a turn running (Synopia's process working, or the transcript's open turn for a terminal's session); after reading and merging the file again, so the agent's changes come first; only a file whose version 1 comment is there (plan question 5: only the skill and `ledger.py init` write it; a file without it, or another version, is never written) and that has no line Synopia can't read (a rewrite would lose it); and not when the file's size or mtime changed since that read (a terminal's turn wrote it: the next look reads it and tries again). The write is a temporary file beside it renamed over it, with the file's mode. Test: `open-items.test.ts` "the write-back: …", "the write-back leaves alone …".
+
 ## Quirks
 
 ### Quirk: stamps have no zone, and some have no time

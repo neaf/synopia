@@ -6,9 +6,10 @@
 // file in phase 2. Review items come from finished `For review: ` subagents. Kept in state.json `items`.
 // Everything shown (with <name>, Closed this turn, the counts) is derived here and never stored.
 import fs from 'node:fs/promises';
+import path from 'node:path';
 import os from 'node:os';
-import { parse, blockOf, fromOf, optionsOf, stampTime, ownerOf, FIELDS } from './ledger.ts';
-import type { OpenItem, ClosedItem, Prefix, Brief } from './ledger.ts';
+import { parse, blockOf, fromOf, optionsOf, stampTime, ownerOf, serialize, FIELDS } from './ledger.ts';
+import type { OpenItem, ClosedItem, Prefix, Brief, Doc, SerialClosed } from './ledger.ts';
 import { isProtected } from './folders.ts';
 import type { Agent, LedgerFact } from './transcript.ts';
 import type { Store } from './store.ts';
@@ -78,10 +79,25 @@ type Link = { n: number; quote: string | null; time: string | null; report: stri
 export type FileIo = {
   stat(p: string): Promise<{ size: number; mtimeMs: number }>;
   read(p: string): Promise<string>;
+  write?(p: string, text: string): Promise<void>; // the write-back: the whole file at once (default: tmp and rename)
 };
+// A temporary file beside it, renamed over it, so a reader sees the old file or the new one, never half.
+async function writeAtomic(p: string, text: string): Promise<void> {
+  const tmp = path.join(path.dirname(p), `.open-items.md.synopia-${process.pid}.tmp`);
+  let mode = 0o644;
+  try { mode = (await fs.stat(p)).mode & 0o777; } catch { /* a new mode then */ }
+  try {
+    await fs.writeFile(tmp, text, { mode });
+    await fs.rename(tmp, p);
+  } catch (e) {
+    await fs.rm(tmp, { force: true });
+    throw e;
+  }
+}
 const realIo: FileIo = {
   stat: (p) => fs.stat(p),
   read: (p) => fs.readFile(p, 'utf8'),
+  write: writeAtomic,
 };
 
 // ---------- state.json `items` ----------
@@ -166,6 +182,8 @@ export class OpenItems {
   private ask: ((sid: string, kind: ExchangeKind, key: string) => void) | null;
   private startedAt: number;
   private cursors = new Map<string, { you: string | null; turn: string | null }>(); // the exchanges asked about
+  private pending = new Set<string>(); // ledgers whose list Synopia changed since the file was written (FR-ITEM-11)
+  private writing = new Map<string, Promise<boolean>>(); // the write-back running per ledger
 
   constructor(o: {
     store: Store; facts: ItemFacts; io?: FileIo; home?: string; log?: Log; now?: () => number;
@@ -488,8 +506,95 @@ export class OpenItems {
     this.written(key);
   }
 
-  // The list changed in Synopia: the write-back looks (FR-ITEM-11, step 3.5).
-  private written(_key: string): void {}
+  // The list changed in Synopia: the ledger is written back when it can be (FR-ITEM-11). A `session:` list never is.
+  private written(key: string): void {
+    if (key.startsWith('session:')) return;
+    this.pending.add(key);
+    void this.writeBack(key);
+  }
+
+  // ---------- the write-back (FR-ITEM-11) ----------
+
+  // Writes the ledger from its list, when the list changed in Synopia and no session using the ledger has a turn
+  // running; else it stays pending, and the 2 s look tries again. The file is read and merged first (its changes
+  // win), and written only when it reads as version 1 with the comment and has no line Synopia can't read. True
+  // when it wrote.
+  writeBack(file: string): Promise<boolean> {
+    const running = this.writing.get(file);
+    if (running) return running.then(() => this.writeBack(file)); // a change during a write: written after it
+    if (!this.pending.has(file) || this.busy(file)) return Promise.resolve(false);
+    const w = this.writeOnce(file).finally(() => this.writing.delete(file));
+    this.writing.set(file, w);
+    return w;
+  }
+
+  // The write-backs running now, done (tests, and before a quit).
+  async flushWrites(): Promise<void> {
+    while (this.writing.size) await Promise.all([...this.writing.values()]);
+  }
+
+  private async writeOnce(file: string): Promise<boolean> {
+    try {
+      await this.read(file);
+      const rd = this.reads.get(file), l = this.state.lists[file];
+      const skip = (why: string) => { this.pending.delete(file); this.log('items.notWritten', { why }); return false; };
+      if (!rd || !l) return skip('no list');
+      if (rd.note) return skip(rd.note);
+      if (rd.unread) return skip('unread lines');
+      let text: string;
+      try { text = await this.io.read(file); } catch { return skip('gone'); }
+      const led = parse(text);
+      const comment = text.split(/\r\n|\n|\r/).find((x) => x.startsWith('<!-- open-items v1.'));
+      if (led.version !== 1 || !comment) return skip('no version 1 comment');
+      if (led.unread.length) return skip('unread lines');
+      const out = serialize(this.docOf(file, l, led.area ?? '', comment));
+      if (out === text) { this.pending.delete(file); return false; }
+      if (this.busy(file)) return false; // a turn began meanwhile: after it
+      // the file changed since it was read (a terminal's turn wrote it): read it again on the next look first
+      const now = await this.io.stat(file).catch(() => null);
+      if (!now || now.size !== rd.size || now.mtimeMs !== rd.mtimeMs) return false;
+      await (this.io.write ?? writeAtomic)(file, out);
+      const back = parse(out), blocks = new Map([...back.items, ...back.closed].map((f) => [f.id, blockOf(f)]));
+      for (const h of l.items) {
+        const b = blocks.get(h.id);
+        if (b !== undefined) { h.block = b; delete h.mine; }
+      }
+      try { const st = await this.io.stat(file); rd.size = st.size; rd.mtimeMs = st.mtimeMs; } catch { /* the look reads it */ }
+      this.pending.delete(file);
+      this.store.changed();
+      this.log('items.written', { open: back.items.length, closed: back.closed.length });
+      return true;
+    } catch (e) {
+      this.log('items.writeFailed', { error: (e as NodeJS.ErrnoException).code ?? 'error' });
+      return false;
+    }
+  }
+
+  // A turn of a session using the ledger runs (Synopia's process works, or the transcript shows a turn open).
+  private busy(file: string): boolean {
+    return this.sessionsOf(file).some((sid) => this.facts.turnRunning?.(sid) ?? false);
+  }
+
+  // The list as ledger.ts writes it: an item Synopia didn't change keeps its lines as read.
+  private docOf(file: string, l: List, area: string, comment: string): Doc {
+    const doc: Doc = { area, comment, open: [], closed: [] };
+    const title = this.sessionsOf(file).map((sid) => this.facts.title?.(sid) ?? '').find(Boolean) ?? '';
+    for (const h of l.items) {
+      const lines = h.block !== undefined && !h.mine ? h.block.split('\n') : undefined;
+      if (!h.closed) {
+        const fields = h.fields.from ? h.fields : withField(h.fields, 'from', fromField(title, h.at ?? this.now(), ''));
+        doc.open.push({ id: h.id, kind: h.kind, text: h.text, fields, ...(lines ? { lines } : {}) });
+        continue;
+      }
+      const c = h.closed;
+      const box: SerialClosed['box'] = c.how === 'dropped' ? '-' : c.how === 'superseded' ? '>' : 'x';
+      const to = c.to ?? /^superseded by ([YA]\d+)/.exec(c.note)?.[1];
+      if (box === '>' && !to && !lines) continue; // no successor to name: not a line the format has
+      const notes = box === '>' ? [] : [c.note].filter(Boolean);
+      doc.closed.push({ id: h.id, box, how: c.how, when: stampOf(c.at), notes, at: c.at, ...(to ? { by: to } : {}), ...(lines ? { lines } : {}) });
+    }
+    return doc;
+  }
 
   // ---------- reading the ledger ----------
 
@@ -503,6 +608,7 @@ export class OpenItems {
       try { st = await this.io.stat(p); } catch { st = null; }
       if (!st ? rd.note !== 'gone' : st.size !== rd.size || st.mtimeMs !== rd.mtimeMs) await this.read(p);
     }));
+    await Promise.all([...this.pending].map((p) => this.writeBack(p))); // a turn ended since: the write waits no more
   }
 
   // Reads the ledger and merges it into its list. One read per file at a time; a read asked for during one runs
@@ -546,6 +652,8 @@ export class OpenItems {
       rd.unread = led.unread.length;
       rd.note = led.version !== null && led.version !== 1 ? 'version' : null;
       if (rd.note === null) dirty = this.merge(file, led.items, led.closed);
+      // changes of Synopia's not in the file yet (made before a restart, say): the write-back looks again
+      if (rd.note === null && this.state.lists[file]?.items.some((h) => h.mine)) this.pending.add(file);
     } else rd.unread = 0;
     if (dirty || JSON.stringify([rd.unread, rd.note]) !== before) this.touch(file);
   }

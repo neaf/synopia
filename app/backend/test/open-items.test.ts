@@ -89,8 +89,10 @@ test('Mark reviewed holds over an unchanged line and loses to a changed one', as
   assert.equal(items.markReviewed('s1', 'Y8'), true);
   assert.equal(items.markReviewed('s1', 'Y8'), false, 'once');
   assert.equal(items.reviewOpen('s1', 'ag-r'), false);
+  await items.flushWrites(); // phase 3: the mark is written back between turns (FR-ITEM-11)
+  assert.match(fs.readFileSync(p, 'utf8'), /^- \[x\] Y8 · done \d{4}-\d\d-\d\d \d\d:\d\d · marked reviewed$/m);
   // the agent edits another item: Y8's lines are unchanged, so the mark holds
-  rewrite(p, fixture('subagent.md').replace('options: 12% | 15%', 'options: 12% | 15% | Ask Mira'));
+  rewrite(p, fs.readFileSync(p, 'utf8').replace('options: 12% | 15%', 'options: 12% | 15% | Ask Mira'));
   await items.look();
   v = items.view('s1');
   assert.deepEqual(ids(v.items), ['Y7']);
@@ -290,13 +292,14 @@ function keeperSetup(dir = tmp()) {
   const { f, facts } = fakeFacts();
   const keys = new Map<string, Keys>();
   const asked: string[] = [];
+  const running = { on: false };
   let now = Date.parse('2026-11-26T17:00:00.000Z');
   const items = new OpenItems({
     store, home: path.join(dir, 'home'), lookMs: 0, now: () => now,
-    facts: { ...facts, exchangeKeys: (sid) => keys.get(sid) ?? { you: null, turn: null }, title: () => 'Ship "checkout" M2', turnRunning: () => false },
+    facts: { ...facts, exchangeKeys: (sid) => keys.get(sid) ?? { you: null, turn: null }, title: () => 'Ship "checkout" M2', turnRunning: () => running.on },
     ask: (sid, kind, key) => asked.push(`${sid} ${kind} ${key}`),
   });
-  return { dir, store, f, items, keys, asked, tick: (ms: number) => { now += ms; return now; }, get now() { return now; } };
+  return { dir, store, f, items, keys, asked, running, tick: (ms: number) => { now += ms; return now; }, get now() { return now; } };
 }
 const ex = (text: string, src: 'you' | 'claude' = 'you') => ({ kind: src === 'you' ? 'you' as const : 'turn' as const, key: 'k', segments: [{ src, text }] });
 
@@ -391,4 +394,52 @@ test('the keeper\'s list: open items with their fields, the newest closed ones',
   assert.deepEqual(l.open[0].options, ['Run it', 'Look first']);
   assert.equal(l.open[2].trigger, 'when CI is green on all four, unless you object');
   assert.equal(k.items.keeperList('nope'), null);
+});
+
+const LEDGER_PY = path.join(os.homedir(), 'dev', 'agent-harness', 'skills', 'open-items', 'scripts', 'ledger.py');
+test('the write-back: only between turns, the file read first, what ledger.py accepts; found stays found', async () => {
+  const k = keeperSetup();
+  const p = ledgerIn(k.dir);
+  k.f.ledger.set('s1', fact(p));
+  await k.items.sync('s1');
+  k.running.on = true;
+  await k.items.applyOps('s1', ex('Can I remove the two worktrees?', 'claude'), [
+    { op: 'open', kind: 'decision', text: 'Can I remove the two worktrees?', options: ['Yes', 'Keep them'], quote: 'Can I remove the two worktrees?', src: 'claude' },
+    { op: 'close', id: 'Y2', as: 'done', quote: 'the two worktrees', src: 'claude' },
+  ], k.tick(1000));
+  await k.items.flushWrites();
+  assert.equal(fs.readFileSync(p, 'utf8'), fixture('checkout-m2.md'), 'not during a turn');
+  // the agent edits the file meanwhile: read and merged before the write
+  rewrite(p, fixture('checkout-m2.md').replace('Re-check #820, which', 'Re-check #820 and #821, which'));
+  k.running.on = false;
+  await k.items.look();
+  await k.items.flushWrites();
+  const text = fs.readFileSync(p, 'utf8');
+  assert.match(text, /^- \[ \] Y8 · decision · Can I remove the two worktrees\?\n {2}- options: Yes \| Keep them\n {2}- from: Synopia, "Ship 'checkout' M2", 2026-11-26 \d\d:\d\d, "Can I remove the two worktrees\?"$/m);
+  assert.match(text, /^- \[x\] Y2 · done \d{4}-\d\d-\d\d \d\d:\d\d · closed by Synopia: “the two worktrees”$/m);
+  assert.match(text, /Re-check #820 and #821/, 'the agent\'s change kept');
+  assert.ok(text.includes(fixture('checkout-m2.md').split('\n').slice(6, 10).join('\n')), 'an unchanged item keeps its lines');
+  if (fs.existsSync(LEDGER_PY)) {
+    const { execFileSync } = await import('node:child_process');
+    assert.match(execFileSync('/usr/bin/python3', ['-I', LEDGER_PY, 'check', p], { encoding: 'utf8' }), /^ok: /);
+  }
+  // read back: unchanged, so still Synopia's find and still closed by Synopia
+  await k.items.read(p);
+  const v = k.items.view('s1');
+  assert.equal(v.items.find((i) => i.id === 'Y8')?.found, true);
+  assert.ok(!v.items.some((i) => i.id === 'Y2'));
+  assert.equal(await k.items.writeBack(p), false, 'nothing more to write');
+});
+
+test('the write-back leaves alone a file with no version comment, or with a line Synopia can\'t read', async () => {
+  for (const text of [fixture('checkout-m2.md').replace(/^<!--.*-->$/m, ''), fixture('two-bad-lines.md')]) {
+    const k = keeperSetup();
+    const p = ledgerIn(k.dir, 'checkout-m2', text);
+    k.f.ledger.set('s1', fact(p));
+    await k.items.sync('s1');
+    const open = k.items.view('s1').items.find((i) => i.kind !== 'review')!;
+    assert.ok(k.items.notItem('s1', open.id));
+    await k.items.flushWrites();
+    assert.equal(fs.readFileSync(p, 'utf8'), text);
+  }
 });
