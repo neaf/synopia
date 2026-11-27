@@ -248,7 +248,8 @@ export function filesHTML(patches, key, more = 0, ts = null) { // key: stable di
     body += `</div>`;
   }
   if (more) body += `<div class="root">and ${more} more file${more > 1 ? "s" : ""}</div>`;
-  return `<div class="ln tool files"><span class="g"${markAt(ts)}>●</span><div><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}, click one to see the diff</span>${body}</div></div>`;
+  /* folded by default, like a run of steps (R5.9, 2026-11-27: "Should be collapsed by default") */
+  return `<div class="ln tool files"><span class="g"${markAt(ts)}>●</span><details class="fold"><summary><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}</span> <span class="hint">(click to expand)</span></summary>${body}</details></div>`;
 }
 
 /* ---------- subagents ---------- */

@@ -16,13 +16,17 @@ const c = await connect();
 const { ev, check, until } = c;
 await c.load(url + '#11111111', `__synopia.current()?.startsWith('11111111')`);
 check('the files block shows', await until(`!!document.querySelector('.ln.files')`));
+// folded by default (R5.9, 2026-11-27): one line, opened by a click on it
+check('Files changed is folded by default', await ev(`(() => { const d = document.querySelector('.ln.files details.fold'); return !!d && !d.open && /\\(click to expand\\)/.test(d.querySelector('summary').textContent); })()`));
+await ev(`document.querySelectorAll('.ln.files details.fold').forEach(d => d.querySelector('summary').click())`);
+check('a click opens it', await ev(`[...document.querySelectorAll('.ln.files details.fold')].every(d => d.open)`));
 const rows = await ev(`[...document.querySelectorAll('.ln.files .frow')].map(r => [r.querySelector('.fp').textContent, r.querySelector('.fc')?.textContent.replace(/\\s+/g, ' ').trim() || ''])`);
 const row = (f) => (rows.find((r) => r[0] === f) || [])[1];
 check('notes.md once, edit and shell counts summed', rows.filter((r) => r[0] === 'notes.md').length === 1 && row('notes.md') === '+3 −2', JSON.stringify(rows));
 check('the created script reads new', row('scripts/tidy.sh') === 'new +2 −0', JSON.stringify(rows));
 check('a changed file with no diff has no counts', row('.tidy-stamp') === '', JSON.stringify(rows));
 check('and 2 more files', await ev(`[...document.querySelectorAll('.ln.files .root')].pop().textContent`) === 'and 2 more files');
-check('the total counts the more files', /^7 files,/.test(await ev(`document.querySelector('.ln.files .name + .dim').textContent`)));
+check('the total counts the more files', /^7 files$/.test(await ev(`document.querySelector('.ln.files .name + .dim').textContent`)));
 check('the Bash step is a step line, Bash(…), not a run row (R5.6, 2026-11-26)', await ev(`!document.querySelector('#log .runrow') && [...document.querySelectorAll('#log details.step > summary')].some(r => r.textContent.includes('Bash(Reword the second idea and add the tidy script)'))`));
 await ev(`[...document.querySelectorAll('.ln.files .frow')].find(r => r.querySelector('.fp').textContent === 'notes.md').querySelector('.fc').click()`);
 const diff = await ev(`(() => { const b = [...document.querySelectorAll('.ln.files .frow')].find(r => r.querySelector('.fp').textContent === 'notes.md').querySelector('.fc'); const d = document.getElementById(b.getAttribute('aria-controls')); return d.hidden ? '' : d.textContent; })()`);
@@ -113,6 +117,6 @@ const turn = [
 await ev(`(s => __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + ${turn.length}, upsert: ${JSON.stringify(turn)} }))(__synopia.cur())`);
 await until(`!!document.querySelector('#log .ln.claude') && [...document.querySelectorAll('#log .ln.claude')].some(l => l.textContent.includes('The merge is undone.'))`);
 const net = await ev(`(() => { const f = [...document.querySelectorAll('#log .ln.files')].pop(); return f ? { rows: [...f.querySelectorAll('.frow .fp')].map(a => a.textContent), total: f.querySelector('.name + .dim').textContent } : null; })()`);
-check('a merge and its abort leave no file in Files changed; the real change stays', !!net && JSON.stringify(net.rows) === '["NOTES.md"]' && /^1 file,/.test(net.total), JSON.stringify(net));
+check('a merge and its abort leave no file in Files changed; the real change stays', !!net && JSON.stringify(net.rows) === '["NOTES.md"]' && /^1 file$/.test(net.total), JSON.stringify(net));
 c.print();
 c.close();

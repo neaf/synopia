@@ -275,6 +275,7 @@ export function promptKey(e) {
   if (/^(Shift|Meta|Control|Alt|CapsLock)$/.test(e.key)) return true;
   e.preventDefault();
   if (e.key === AGAIN[ask.kind]) confirm();
+  else if (e.key === "Escape") dismiss(); // Esc under another prompt only cancels it (2026-11-27), never asks to interrupt
   else if (!((e.key === "Escape" && askInterrupt()) || (e.key === "b" && askBackground()) || (e.key === "x" && askClose()) || (e.key === "f" && askNow()))) dismiss();
   return true;
 }

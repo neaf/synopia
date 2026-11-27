@@ -60,7 +60,7 @@ test("files changed group by repo and align their counts", () => {
   const p = (file, add, del) => ({ file, abs: file.replace("~", "/Users/fixture"), add, del, hunks: [{ o: 1, n: 1, lines: ["+x"] }] });
   const html = filesHTML([p("~/dev/app/src/a.ts", 3, 1), p("~/dev/app/b.ts", 1, 0), p("~/dev/lib/c.ts", 0, 2)], "k");
   assert.deepEqual([...html.matchAll(/<div class="root">([^<]*)<\/div>/g)].map(m => m[1]), ["~/dev/app", "~/dev/lib"]);
-  assert.match(html, /3 files, click one to see the diff/);
+  assert.match(html, /<details class="fold"><summary><span class="name">Files changed<\/span> <span class="dim">3 files<\/span> <span class="hint">\(click to expand\)<\/span><\/summary>/); // folded (R5.9, 2026-11-27)
   assert.match(html, /<span class="add">\+3<\/span> <span class="del">−1<\/span>/);
 });
 

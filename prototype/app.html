@@ -1153,7 +1153,7 @@ function filesHTML(patches) {
     }
     body += `</div>`;
   }
-  return `<div class="ln tool files"><span class="g">●</span><div><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}, click one to see the diff</span>${body}</div></div>`;
+  return `<div class="ln tool files"><span class="g">●</span><details class="fold"><summary><span class="name">Files changed</span> <span class="dim">${total} file${total > 1 ? "s" : ""}</span> <span class="hint">(click to expand)</span></summary>${body}</details></div>`;
 }
 
 /* ---------- status marks and kind tags (from status-storyboard.html) ---------- */

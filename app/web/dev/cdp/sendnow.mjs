@@ -81,7 +81,9 @@ check('another key: the prompt and the marks go, nothing sent, the bands still w
 
 // one prompt at a time
 await K.f(); await K.esc();
-check('Esc under it: "Interrupt?" replaces it, the marks go', /^Interrupt\?/.test(await asking() || '') && (await marked()).length === 0);
+check('Esc under it only cancels it (2026-11-27), the marks go', (await asking()) === null && (await marked()).length === 0);
+await K.esc();
+check('a second Esc asks "Interrupt?"', /^Interrupt\?/.test(await asking() || ''));
 await K.f();
 check('f under "Interrupt?": this prompt replaces it', (await asking()) === PROMPT && (await marked()).length === 2);
 await K.b();

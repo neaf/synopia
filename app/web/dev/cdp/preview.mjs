@@ -67,6 +67,7 @@ const clickAt = async (sel, opts = {}) => {
 };
 
 check('the session shows its files changed', await until(`document.querySelectorAll('.frow .fp').length === 3`), await ev(`document.querySelectorAll('.frow .fp').length`));
+await ev(`document.querySelectorAll('.ln.files details.fold:not([open])').forEach(d => d.querySelector('summary').click())`); // folded by default (R5.9)
 await clickAt(row(SRC));
 check('a source file opens the preview', await until(`__synopia.preview().shown`));
 check('it asked for a preview, not open', await ev(`__synopia.sent().some(m => m.t === 'preview') && !__synopia.sent().some(m => m.t === 'open')`));

@@ -107,7 +107,9 @@ check('a click cancels it', (await asking()) === null && (await marked()).length
 
 // one prompt at a time: the newest replaces the other
 await K.b(); await K.esc();
-check('Esc under it: "Interrupt?" replaces it, the highlight goes', /^Interrupt\?/.test(await asking() || '') && (await marked()).length === 0);
+check('Esc under it only cancels it (2026-11-27), the highlight goes', (await asking()) === null && (await marked()).length === 0 && (await sent()).length === 1);
+await K.esc();
+check('a second Esc asks "Interrupt?"', /^Interrupt\?/.test(await asking() || ''));
 await K.b();
 check('b under "Interrupt?": the background prompt replaces it', (await asking()) === PROMPT && (await marked()).length === 3);
 await K.j();

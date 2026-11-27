@@ -76,7 +76,9 @@ check('back on the working session', await c.until(`__synopia.current() === '${A
 await K.x();
 check('the prompt there again, not carried over: one x asks', (await asking())?.startsWith(ASK), await asking());
 await K.esc();
-check('Esc under it: "Interrupt?" replaces it', /^Interrupt\?/.test(await asking() || ''));
+check('Esc under it only cancels it (2026-11-27)', (await asking()) === null);
+await K.esc();
+check('a second Esc asks "Interrupt?"', /^Interrupt\?/.test(await asking() || ''));
 await K.x();
 check('x under "Interrupt?": the close prompt replaces it', (await asking())?.startsWith(ASK) && (await ev('__synopia.prompt()')) === 'close');
 await K.b();
