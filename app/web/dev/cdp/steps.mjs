@@ -257,8 +257,11 @@ check('J from it too', await until(`__synopia.view() === null`, 3000), await ev(
 await until(`!!${LIVE}`, 3000);
 await ev(`${LIVE}.click()`);
 await until(`__synopia.view() === 'toolu_live1'`, 3000);
-const rv = await ev(`({ head: document.querySelector('.c-head').textContent.replace(/\\s+/g, ' '), note: document.querySelector('#log .bg-run .res.note')?.textContent, cmd: document.querySelector('#log .bg-run .cmd')?.textContent, live: document.querySelector('#log .liveln')?.textContent.trim() })`);
-check('its view: "Shell in Claude\'s turn", what it can show and how to see more, Running', /Running, .*\. Shell in Claude's turn, started/.test(rv.head) && /Claude waits for it/.test(rv.head) && /^Output shows when it finishes\. b, b sends it to the background/.test(rv.note || '') && /npm test/.test(rv.cmd || '') && /^Running/.test(rv.live || ''), JSON.stringify(rv));
+// the view switches at once, but its log is built from the backend's reply to its `view` request, which comes later
+// under load: wait for the whole view, not for the switch
+const RV = `({ head: document.querySelector('.c-head')?.textContent.replace(/\\s+/g, ' ') || '', note: document.querySelector('#log .bg-run .res.note')?.textContent, cmd: document.querySelector('#log .bg-run .cmd')?.textContent, live: document.querySelector('#log .liveln')?.textContent.trim() })`;
+const rvOk = `(rv => /Running, .*\\. Shell in Claude's turn, started/.test(rv.head) && /Claude waits for it/.test(rv.head) && /^Output shows when it finishes\\. b, b sends it to the background/.test(rv.note || '') && /npm test/.test(rv.cmd || '') && /^Running/.test(rv.live || ''))(${RV})`;
+check('its view: "Shell in Claude\'s turn", what it can show and how to see more, Running', await until(rvOk, 8000), JSON.stringify(await ev(RV)));
 // the result lands while its view is open
 fs.appendFileSync(fileOf(claude, S), rec(S, { timestamp: fresh(60), type: 'user', uuid: 's-r1', toolUseResult: { stdout: 'built 3 modules\n12 passing', stderr: '', interrupted: false },
   message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_live1', content: 'built 3 modules\n12 passing' }] } }));
