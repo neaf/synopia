@@ -281,3 +281,114 @@ test('the reply an item came from: the quote word for word, else the last reply 
   await items.sync('s2');
   assert.equal(reply('s2', 'Y7'), 'report:ag-r');
 });
+
+// ---------- phase 3: the keeper, d and Undo (FR-ITEM-08 to -10) ----------
+
+type Keys = { you: { key: string; ms: number } | null; turn: { key: string; ms: number } | null };
+function keeperSetup(dir = tmp()) {
+  const store = openStore(path.join(dir, 'state'), { minIntervalMs: 0 });
+  const { f, facts } = fakeFacts();
+  const keys = new Map<string, Keys>();
+  const asked: string[] = [];
+  let now = Date.parse('2026-11-26T17:00:00.000Z');
+  const items = new OpenItems({
+    store, home: path.join(dir, 'home'), lookMs: 0, now: () => now,
+    facts: { ...facts, exchangeKeys: (sid) => keys.get(sid) ?? { you: null, turn: null }, title: () => 'Ship "checkout" M2', turnRunning: () => false },
+    ask: (sid, kind, key) => asked.push(`${sid} ${kind} ${key}`),
+  });
+  return { dir, store, f, items, keys, asked, tick: (ms: number) => { now += ms; return now; }, get now() { return now; } };
+}
+const ex = (text: string, src: 'you' | 'claude' = 'you') => ({ kind: src === 'you' ? 'you' as const : 'turn' as const, key: 'k', segments: [{ src, text }] });
+
+test('the keeper is asked once per message and once per ended turn, never about what came before the daemon', async () => {
+  const k = keeperSetup();
+  const t0 = k.now;
+  k.keys.set('s1', { you: { key: 'u0', ms: t0 - 3_600_000 }, turn: { key: 'u0:c0', ms: t0 - 3_500_000 } });
+  await k.items.sync('s1');
+  assert.deepEqual(k.asked, [], 'history read at open asks nothing');
+  k.keys.set('s1', { you: { key: 'u1', ms: t0 + 1000 }, turn: null });
+  await k.items.sync('s1');
+  await k.items.sync('s1');
+  k.keys.set('s1', { you: { key: 'u1', ms: t0 + 1000 }, turn: { key: 'u1:c3', ms: t0 + 9000 } });
+  await k.items.sync('s1');
+  assert.deepEqual(k.asked, ['s1 you u1', 's1 turn u1:c3']);
+});
+
+test('keeper ops: found items with a dashed box and a from field, closes with Undo, the order you, agent, keeper', async () => {
+  const k = keeperSetup();
+  const p = ledgerIn(k.dir);
+  k.f.ledger.set('s1', fact(p));
+  await k.items.sync('s1');
+  k.f.you.set('s1', k.now);
+  const began = k.tick(1000);
+  await k.items.applyOps('s1', ex('Y1 run it. Can I remove the worktrees? Can I remove the worktrees?'), [
+    { op: 'close', id: 'Y1', as: 'answered', answer: 'Run it', quote: 'Y1 run it', src: 'you' },
+    { op: 'open', kind: 'decision', text: 'Can I remove the worktrees?', options: ['Yes', 'Keep them'], quote: 'Can I remove the worktrees?', src: 'claude' },
+    { op: 'open', kind: 'decision', text: 'can I  remove the worktrees?', quote: 'Can I remove the worktrees?', src: 'claude' },
+  ], began);
+  const v = k.items.view('s1');
+  const found = v.items.find((i) => i.id === 'Y8')!;
+  assert.ok(found, 'the next number past every open and closed id (Y7 closed in the file)');
+  assert.deepEqual([found.found, found.source, found.options], [true, 'synopia', ['Yes', 'Keep them']]);
+  assert.equal(v.items.filter((i) => /^can i remove the worktrees\?$/i.test(i.text)).length, 1, 'a duplicate text is dropped');
+  assert.deepEqual(v.closed.map((c) => [c.id, c.how, c.note, c.by, c.undo]), [['Y1', 'answered', 'you said “Run it”', 'synopia', true]]);
+  assert.match(k.store.state.items.lists[p].items.find((h) => h.id === 'Y8')!.fields.from, /^Synopia, "Ship 'checkout' M2", 2026-11-26 \d\d:\d\d, "Can I remove the worktrees\?"$/);
+  // an op begun before the agent changed the item loses
+  const old = k.now - 10_000;
+  rewrite(p, fixture('checkout-m2.md').replace('Answer the 2 review threads', 'Answer the 3 review threads'));
+  await k.items.read(p);
+  await k.items.applyOps('s1', ex('done with the threads'), [{ op: 'close', id: 'Y2', as: 'done', quote: 'done with the threads', src: 'you' }], old);
+  assert.ok(k.items.view('s1').items.some((i) => i.id === 'Y2'), 'the agent came first');
+});
+
+test('d says not an item, never opened again; Undo reopens for one turn and keeps the keeper off', async () => {
+  const k = keeperSetup();
+  k.f.you.set('s1', k.now);
+  await k.items.sync('s1'); // no ledger: a session list, Synopia's only
+  await k.items.applyOps('s1', ex('Should the tax table be cached?', 'claude'), [
+    { op: 'open', kind: 'decision', text: 'Should the tax table be cached?', quote: 'Should the tax table be cached?', src: 'claude' },
+  ], k.tick(1000));
+  assert.deepEqual(ids(k.items.view('s1').items), ['Y1']);
+  assert.ok(k.items.notItem('s1', 'Y1'));
+  assert.deepEqual(k.items.view('s1').closed.map((c) => [c.id, c.how, c.note, c.undo, c.found]), [['Y1', 'dropped', 'not an item: you said so', true, true]]);
+  await k.items.applyOps('s1', ex('Should the tax table be cached?', 'claude'), [
+    { op: 'open', kind: 'decision', text: 'Should the  TAX table be cached?', quote: 'Should the tax table be cached?', src: 'claude' },
+  ], k.tick(1000));
+  assert.deepEqual(ids(k.items.view('s1').items), [], 'a dismissed text stays gone');
+  assert.ok(k.items.undo('s1', 'Y1'));
+  const back = k.items.view('s1').items[0];
+  assert.deepEqual([back.id, back.found], ['Y1', true]);
+  await k.items.applyOps('s1', ex('drop it'), [{ op: 'close', id: 'Y1', as: 'dropped', quote: 'drop it', src: 'you' }], k.tick(1000));
+  assert.deepEqual(ids(k.items.view('s1').items), ['Y1'], 'after Undo the keeper stays off it');
+  assert.equal(k.items.undo('s1', 'Y1'), false, 'not closed');
+  assert.equal(k.items.notItem('s1', 'Y9'), false);
+});
+
+test('an item the keeper closed and reopened twice stays as it is; Undo lasts one turn', async () => {
+  const k = keeperSetup();
+  k.f.you.set('s1', k.now);
+  await k.items.sync('s1');
+  await k.items.applyOps('s1', ex('I will review it tonight'), [{ op: 'open', kind: 'your task', text: 'Review the receipt copy tonight.', quote: 'I will review it tonight', src: 'you' }], k.tick(1000));
+  const close = () => k.items.applyOps('s1', ex('done'), [{ op: 'close', id: 'Y1', as: 'done', quote: 'done', src: 'you' }], k.tick(1000));
+  const reopen = () => k.items.applyOps('s1', ex('not done'), [{ op: 'reopen', id: 'Y1', quote: 'not done', src: 'you' }], k.tick(1000));
+  await close(); await reopen();
+  await close();
+  assert.equal(k.items.view('s1').items.length, 0);
+  await reopen();
+  assert.equal(k.items.view('s1').items.length, 0, 'the third flip is refused');
+  k.f.you.set('s1', k.tick(120_000)); // your next message: the close is no longer this turn's
+  assert.equal(k.items.undo('s1', 'Y1'), false);
+  assert.equal(k.items.view('s1').closed.length, 0);
+});
+
+test('the keeper\'s list: open items with their fields, the newest closed ones', async () => {
+  const k = keeperSetup();
+  const p = ledgerIn(k.dir);
+  k.f.ledger.set('s1', fact(p));
+  await k.items.sync('s1');
+  const l = k.items.keeperList('s1')!;
+  assert.deepEqual(l.open.map((i) => i.id), ['Y1', 'Y2', 'Y4', 'Y5', 'A1']);
+  assert.deepEqual(l.open[0].options, ['Run it', 'Look first']);
+  assert.equal(l.open[2].trigger, 'when CI is green on all four, unless you object');
+  assert.equal(k.items.keeperList('nope'), null);
+});

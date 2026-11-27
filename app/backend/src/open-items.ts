@@ -7,28 +7,40 @@
 // Everything shown (with <name>, Closed this turn, the counts) is derived here and never stored.
 import fs from 'node:fs/promises';
 import os from 'node:os';
-import { parse, blockOf, fromOf, optionsOf, stampTime, ownerOf } from './ledger.ts';
+import { parse, blockOf, fromOf, optionsOf, stampTime, ownerOf, FIELDS } from './ledger.ts';
 import type { OpenItem, ClosedItem, Prefix, Brief } from './ledger.ts';
 import { isProtected } from './folders.ts';
 import type { Agent, LedgerFact } from './transcript.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import type { Exchange, ExchangeKind, ListItem, Op } from './keeper.ts';
 
 export const MAX_LEDGER_BYTES = 256 * 1024;
 export const LOOK_MS = 2000; // the size and mtime look while an open session uses a ledger
 export const AGENT_CLOSED_MAX = 1000; // closed items with an agent id (and carried marks), the reviewed marks' old cap
 export const CLOSED_MAX = 30; // other closed items, per list
+export const DISMISSED_MAX = 200; // the texts `d` dismissed, per list
+export const FRESH_MS = 60_000; // the keeper asks only about exchanges at most this much older than the daemon
+export const KEEPER_CLOSED = 10; // the newest closed items the keeper's prompt lists
 const REVIEW_PREFIX = /^for review:\s*/i;
 
 // One item as Synopia holds it. `block`: its lines as last read from the file (none: Synopia's own, never in
 // the file). `agent`: the subagent a review item is for. `closed`: how it closed, when (ms), and a note.
+// Phase 3 (FR-ITEM-09, -10): `found`, the keeper opened it and neither you nor the agent touched it since (a
+// dashed box); `mine`, Synopia changed it since the file was last read or written (the write-back writes it);
+// `touched`, when the agent's record or your action last changed it (ms; a keeper op that began before loses);
+// `flips`, the keeper's closes and reopens since then (a fourth is refused: closed and reopened twice); `kept`, you undid the keeper's close: it stays off the item
+// until the agent touches it. A close Synopia made carries `undo`, the item as it was, and `to`, a successor.
+export type Snapshot = { kind: string; text: string; fields: Record<string, string>; found?: true };
 export type Held = {
   id: string; prefix: Prefix; n: number; kind: string; text: string; fields: Record<string, string>;
   source: 'agent' | 'synopia'; block?: string; agent?: string; at: number | null;
-  closed?: { how: string; at: number; note: string; by: 'agent' | 'synopia' };
+  closed?: { how: string; at: number; note: string; by: 'agent' | 'synopia'; undo?: Snapshot; to?: string };
+  found?: true; mine?: true; touched?: number; flips?: number; kept?: true;
 };
-export type List = { top: Record<Prefix, number>; items: Held[] };
+// `dismissed`: the texts `d` said are not items, as compared (case and spacing aside), never opened again here.
+export type List = { top: Record<Prefix, number>; items: Held[]; dismissed?: string[] };
 // state.json `items`: the lists, and `carried`, agent ids marked reviewed whose item is in no list (the old
 // `reviewed` marks until their subagent shows again, and the closed review items of a closed session's list).
 export type ItemsState = { lists: Record<string, List>; carried: string[] };
@@ -37,11 +49,11 @@ export type ItemsState = { lists: Record<string, List>; carried: string[] };
 export type ItemView = {
   id: string; kind: string; text: string; source: 'agent' | 'synopia'; at: number | null; minute: boolean;
   state?: string; options?: string[]; recommended?: string; trigger?: string; goesAhead?: string; watch?: string;
-  subagent?: string; raisedBy?: string; answer?: string; agent?: string;
+  subagent?: string; raisedBy?: string; answer?: string; agent?: string; found?: true;
   with?: { agent: string; name: string };
   reply?: string; // the block key of the reply it came from (FR-ITEM-07): a Claude block, or a raised item's report
 };
-export type ClosedView = { id: string; kind: string; text: string; how: string; at: number; note: string; by: 'agent' | 'synopia' };
+export type ClosedView = { id: string; kind: string; text: string; how: string; at: number; note: string; by: 'agent' | 'synopia'; found?: true; undo?: true };
 export type View = { items: ItemView[]; checks: ItemView[]; closed: ClosedView[]; unread: number; note: string | null };
 export type Counts = { review: number; waiting: number; due: number };
 
@@ -52,6 +64,11 @@ export type ItemFacts = {
   agents(sid: string): Agent[];
   lastYouAt(sid: string): number | null; // your last message (ms), for Closed this turn
   replies(sid: string): Reply[]; // the main conversation's Claude blocks and subagent reports, in transcript order
+  // Phase 3: where the keeper's exchanges are (transcripts.ts exchangeKeys), the session's title for a `from`
+  // field, and whether a turn of it runs (no write-back then).
+  exchangeKeys?(sid: string): { you: { key: string; ms: number } | null; turn: { key: string; ms: number } | null };
+  title?(sid: string): string;
+  turnRunning?(sid: string): boolean;
 };
 // One block of the main conversation an item can come from: Claude's text (`claude`) or a subagent's report.
 // `id` is the item id, which is the page's block key.
@@ -87,8 +104,23 @@ function cleanHeld(v: unknown): Held | undefined {
   if (c !== undefined) {
     if (!isObj(c) || !isStr(c.how) || !isNum(c.at) || !isStr(c.note) || (c.by !== 'agent' && c.by !== 'synopia')) return undefined;
     h.closed = { how: c.how, at: c.at, note: c.note, by: c.by };
+    const snap = cleanSnapshot(c.undo);
+    if (snap) h.closed.undo = snap;
+    if (isStr(c.to) && ID.test(c.to)) h.closed.to = c.to;
   }
+  if (v.found === true) h.found = true;
+  if (v.mine === true) h.mine = true;
+  if (v.kept === true) h.kept = true;
+  if (isNum(v.touched)) h.touched = v.touched;
+  if (isNum(v.flips)) h.flips = v.flips;
   return h;
+}
+
+function cleanSnapshot(v: unknown): Snapshot | undefined {
+  if (!isObj(v) || !isStr(v.kind) || !isStr(v.text)) return undefined;
+  const fields: Record<string, string> = {};
+  if (isObj(v.fields)) for (const [k, x] of Object.entries(v.fields)) if (isStr(x)) fields[k] = x;
+  return { kind: v.kind, text: v.text, fields, ...(v.found === true ? { found: true as const } : {}) };
 }
 
 // Every list and entry checked on load (store.ts normalize); a wrong one is dropped. The old `reviewed` marks
@@ -105,6 +137,7 @@ export function cleanItems(raw: unknown, reviewed: unknown): ItemsState {
       }
       const top = isObj(l.top) ? l.top : {};
       out.lists[key] = { top: { Y: isNum(top.Y) ? top.Y : 0, A: isNum(top.A) ? top.A : 0 }, items };
+      if (Array.isArray(l.dismissed)) out.lists[key].dismissed = l.dismissed.filter(isStr).slice(-DISMISSED_MAX);
     }
   }
   if (isObj(raw) && Array.isArray(raw.carried)) out.carried = raw.carried.filter(isStr);
@@ -130,10 +163,14 @@ export class OpenItems {
   private reads = new Map<string, Read>(); // ledger path -> its last read
   private timer: NodeJS.Timeout | null = null;
   private links = new Map<string, Map<string, Link>>(); // open session -> item -> its reply scan (never stored)
+  private ask: ((sid: string, kind: ExchangeKind, key: string) => void) | null;
+  private startedAt: number;
+  private cursors = new Map<string, { you: string | null; turn: string | null }>(); // the exchanges asked about
 
   constructor(o: {
     store: Store; facts: ItemFacts; io?: FileIo; home?: string; log?: Log; now?: () => number;
     onChange?: (sids: string[]) => void; lookMs?: number;
+    ask?: (sid: string, kind: ExchangeKind, key: string) => void; // the keeper (keeper.ts ask)
   }) {
     this.store = o.store;
     this.facts = o.facts;
@@ -142,6 +179,8 @@ export class OpenItems {
     this.log = o.log ?? nullLog;
     this.now = o.now ?? Date.now;
     this.changed = o.onChange ?? (() => {});
+    this.ask = o.ask ?? null;
+    this.startedAt = this.now();
     const ms = o.lookMs ?? LOOK_MS;
     if (ms > 0) {
       this.timer = setInterval(() => { void this.look(); }, ms);
@@ -172,6 +211,25 @@ export class OpenItems {
     if (this.uses.get(sid)?.key !== key) return; // closed or moved on meanwhile
     dirty = this.openReviews(sid, key) || dirty;
     if (dirty || !prev || prev.key !== key) this.touch(key, sid);
+    this.askKeeper(sid);
+  }
+
+  // FR-ITEM-08: a new message of yours asks the keeper once, and so does a main turn that is over; an
+  // exchange older than the daemon (a transcript read at open) asks nothing.
+  private askKeeper(sid: string): void {
+    const k = this.ask && this.facts.exchangeKeys?.(sid);
+    if (!k) return;
+    const c = this.cursors.get(sid) ?? { you: null, turn: null };
+    this.cursors.set(sid, c);
+    const fresh = (ms: number) => ms >= this.startedAt - FRESH_MS;
+    if (k.you && k.you.key !== c.you) {
+      c.you = k.you.key;
+      if (fresh(k.you.ms)) this.ask!(sid, 'you', k.you.key);
+    }
+    if (k.turn && k.turn.key !== c.turn) {
+      c.turn = k.turn.key;
+      if (fresh(k.turn.ms)) this.ask!(sid, 'turn', k.turn.key);
+    }
   }
 
   // The session closed: a `session:` list goes, its closed review items carried as marks, so a reopened session's
@@ -181,6 +239,7 @@ export class OpenItems {
     const l = this.state.lists[key];
     this.uses.delete(sid);
     this.links.delete(sid);
+    this.cursors.delete(sid);
     if (l) {
       for (const h of l.items) if (h.agent && h.closed) this.carry(h.agent);
       delete this.state.lists[key];
@@ -202,6 +261,9 @@ export class OpenItems {
     const links = this.links.get(from);
     this.links.delete(from);
     if (links) this.links.set(to, links);
+    const cur = this.cursors.get(from);
+    this.cursors.delete(from);
+    if (cur) this.cursors.set(to, cur);
     if (u) this.uses.set(to, u.key === `session:${from}` ? { ...u, key: `session:${to}` } : u);
   }
 
@@ -217,8 +279,8 @@ export class OpenItems {
     const h = this.find(sid, id);
     if (!h || h.closed || h.kind !== 'review') return false;
     h.closed = { how: 'done', at: this.now(), note: 'marked reviewed', by: 'synopia' };
-    this.prune();
-    this.touch(this.uses.get(sid)!.key, sid);
+    this.yours(h);
+    this.after(sid);
     return true;
   }
 
@@ -247,7 +309,11 @@ export class OpenItems {
     this.links.set(sid, links); // the scans of the items shown now, kept for the next view
     for (const h of l.items) {
       if (h.closed) {
-        if (since !== null && h.closed.at >= since) out.closed.push({ id: h.id, kind: h.kind, text: h.text, how: h.closed.how, at: h.closed.at, note: h.closed.note, by: h.closed.by });
+        if (since !== null && h.closed.at >= since) {
+          const c: ClosedView = { id: h.id, kind: h.kind, text: h.text, how: h.closed.how, at: h.closed.at, note: h.closed.note, by: h.closed.by };
+          if (h.closed.by === 'synopia' && h.closed.undo) { c.undo = true; if (h.closed.undo.found) c.found = true; }
+          out.closed.push(c);
+        }
         continue;
       }
       const v = this.itemView(h, briefs);
@@ -274,6 +340,156 @@ export class OpenItems {
     }
     return zero;
   }
+
+  // ---------- the keeper, d and Undo (FR-ITEM-08 to -10) ----------
+
+  // The list as the keeper reads it: the open items, and the newest closed ones (to catch a wrong reopen).
+  keeperList(sid: string): { open: ListItem[]; closed: ListItem[] } | null {
+    if (!this.uses.has(sid)) return null;
+    const l = this.listOf(sid);
+    const open: ListItem[] = [], closed: ListItem[] = [];
+    for (const h of l?.items ?? []) {
+      const f = h.fields, i: ListItem = { id: h.id, kind: h.kind, text: h.text };
+      if (h.closed) { if (h.text) closed.push({ ...i, closed: h.closed.how }); continue; }
+      if (f.state) i.state = f.state;
+      const options = optionsOf({ fields: f } as OpenItem);
+      if (options.length) i.options = options;
+      if (f.recommended) i.recommended = f.recommended;
+      if (f.trigger || f['goes ahead']) i.trigger = f.trigger || f['goes ahead'];
+      open.push(i);
+    }
+    const at = (id: string) => l!.items.find((h) => h.id === id)!.closed!.at;
+    return { open, closed: closed.sort((a, b) => at(b.id) - at(a.id)).slice(0, KEEPER_CLOSED) };
+  }
+
+  // The keeper's checked ops for an exchange (keeper.ts), applied in the order you, the agent, the keeper: the
+  // ledger is read first, so the agent's record of the same exchange is in; an op on an item the agent or you
+  // changed since the call `began` is dropped, as are the keeper's ops on an item you undid, or one that
+  // flipped twice. Each drop is logged.
+  async applyOps(sid: string, ex: Exchange, ops: Op[], began: number): Promise<void> {
+    const u0 = this.uses.get(sid);
+    if (!u0) return;
+    if (u0.path) await this.read(u0.path);
+    const u = this.uses.get(sid);
+    if (!u) return;
+    const l = this.list(u.key); // a session with no ledger gets its `session:` list here
+    const now = this.now(), drop = (op: Op, why: string) => this.log('items.keeperDropped', { sid, op: op.op, id: 'id' in op ? op.id : null, why });
+    let dirty = false;
+    for (const op of ops) {
+      if (op.op === 'open') {
+        const k = textKey(op.text);
+        if (l.dismissed?.includes(k)) { drop(op, 'dismissed'); continue; }
+        if (l.items.some((h) => !h.closed && textKey(h.text) === k)) { drop(op, 'already open'); continue; }
+        const prefix: Prefix = op.kind === 'follow-up' ? 'A' : 'Y';
+        l.top[prefix] += 1;
+        const fields: Record<string, string> = {};
+        if (op.options?.length) fields.options = op.options.join(' | ');
+        if (op.recommended) fields.recommended = op.recommended;
+        if (op.trigger) fields[op.kind === 'default' ? 'goes ahead' : 'trigger'] = op.trigger;
+        if (op.raisedBy) fields['raised by'] = op.raisedBy;
+        fields.from = fromField(this.facts.title?.(sid) ?? '', now, op.quote);
+        l.items.push({ id: `${prefix}${l.top[prefix]}`, prefix, n: l.top[prefix], kind: op.kind, text: op.text, fields, source: 'synopia', at: now, found: true, mine: true });
+        dirty = true;
+        continue;
+      }
+      const h = l.items.find((x) => x.id === op.id);
+      if (!h) { drop(op, 'gone'); continue; }
+      if ((h.touched ?? 0) >= began) { drop(op, 'the agent or you came first'); continue; }
+      if (h.kept) { drop(op, 'you undid the keeper here'); continue; }
+      if (op.op === 'update') {
+        if (h.closed || h.fields.state === op.state) { drop(op, 'closed or unchanged'); continue; }
+        h.fields = withField(h.fields, 'state', op.state);
+        h.mine = true;
+        dirty = true;
+        continue;
+      }
+      if ((h.flips ?? 0) >= 3) { drop(op, 'flipped twice'); this.log('items.flipping', { sid, id: h.id }); continue; }
+      if (op.op === 'reopen') {
+        if (!h.closed || !h.text) { drop(op, 'not closed'); continue; }
+        if (h.closed.undo) this.restore(h, h.closed.undo);
+        delete h.closed;
+        h.flips = (h.flips ?? 0) + 1;
+        h.mine = true;
+        dirty = true;
+        continue;
+      }
+      if (h.closed) { drop(op, 'closed already'); continue; }
+      const said = op.src === 'you' ? `you said “${op.answer ?? op.quote}”` : `“${op.quote}”`;
+      const note = op.as === 'answered' ? `you said “${op.answer ?? op.quote}”`
+        : op.as === 'superseded' ? `superseded by ${op.by}`
+          : `${op.as === 'done' ? 'closed' : op.as} by Synopia: ${op.why ?? said}`;
+      h.closed = { how: op.as, at: now, note, by: 'synopia', undo: this.snapshot(h), ...(op.by ? { to: op.by } : {}) };
+      if (op.as === 'answered' && op.answer) h.fields = withField(h.fields, 'answer', `"${op.answer}"`);
+      h.flips = (h.flips ?? 0) + 1;
+      h.mine = true;
+      dirty = true;
+    }
+    if (!dirty) return;
+    this.prune();
+    this.store.changed();
+    this.touch(u.key, sid);
+    this.written(u.key);
+  }
+
+  // `d` (FR-ITEM-10): an open item that isn't a review item is not an item. It closes as dropped with Undo, and
+  // its text is never opened again in this list.
+  notItem(sid: string, id: string): boolean {
+    const h = this.find(sid, id), l = this.listOf(sid);
+    if (!h || !l || h.closed || h.kind === 'review') return false;
+    h.closed = { how: 'dropped', at: this.now(), note: 'not an item: you said so', by: 'synopia', undo: this.snapshot(h) };
+    l.dismissed = [...(l.dismissed ?? []).filter((t) => t !== textKey(h.text)), textKey(h.text)].slice(-DISMISSED_MAX);
+    this.yours(h);
+    this.after(sid);
+    return true;
+  }
+
+  // Undo (FR-ITEM-10): a line under Closed this turn that Synopia closed reopens as it was; the keeper stays off
+  // it until the agent touches it. False for anything else.
+  undo(sid: string, id: string): boolean {
+    const h = this.find(sid, id), l = this.listOf(sid);
+    const youAt = this.facts.lastYouAt(sid), since = youAt === null ? null : Math.floor(youAt / 60_000) * 60_000;
+    if (!h || !l || !h.closed?.undo || h.closed.by !== 'synopia' || since === null || h.closed.at < since) return false;
+    this.restore(h, h.closed.undo);
+    delete h.closed;
+    if (l.dismissed) l.dismissed = l.dismissed.filter((t) => t !== textKey(h.text));
+    this.yours(h);
+    h.kept = true;
+    this.after(sid);
+    return true;
+  }
+
+  // Whether an open session's list holds this item, open or closed (router.ts, for Undo).
+  holdsAny(sid: string, id: string): boolean {
+    return !!this.find(sid, id);
+  }
+
+  private snapshot(h: Held): Snapshot {
+    return { kind: h.kind, text: h.text, fields: { ...h.fields }, ...(h.found ? { found: true as const } : {}) };
+  }
+
+  private restore(h: Held, s: Snapshot): void {
+    h.kind = s.kind; h.text = s.text; h.fields = { ...s.fields };
+    if (s.found) h.found = true; else delete h.found;
+  }
+
+  // Your action on an item: it counts as touched (a keeper op begun before loses), and the flips start again.
+  private yours(h: Held): void {
+    h.touched = this.now();
+    h.mine = true;
+    delete h.flips;
+    delete h.kept;
+  }
+
+  private after(sid: string): void {
+    this.prune();
+    this.store.changed();
+    const key = this.uses.get(sid)!.key;
+    this.touch(key, sid);
+    this.written(key);
+  }
+
+  // The list changed in Synopia: the write-back looks (FR-ITEM-11, step 3.5).
+  private written(_key: string): void {}
 
   // ---------- reading the ledger ----------
 
@@ -363,6 +579,8 @@ export class OpenItems {
       if (!h) { l.items.push(this.fromFile(f, block)); continue; }
       if (h.block === block) continue; // unchanged: not a record, Synopia's state stays
       const fresh = this.fromFile(f, block);
+      fresh.touched = this.now(); // the agent's record: a keeper op begun before it loses (FR-ITEM-09)
+      delete fresh.found; // the agent touched it: no longer only Synopia's find
       if (h.agent) fresh.agent = h.agent;
       if (fresh.closed && !fresh.text) Object.assign(fresh, { kind: h.kind, text: h.text, fields: h.fields, at: h.at }); // a closed line has no text
       l.items[l.items.indexOf(h)] = fresh; // the agent's record wins
@@ -385,7 +603,9 @@ export class OpenItems {
   private fromFile(f: OpenItem | ClosedItem, block: string): Held {
     if ('kind' in f) {
       const from = fromOf(f);
-      return { id: f.id, prefix: f.prefix, n: f.n, kind: f.kind, text: f.text, fields: { ...f.fields }, source: 'agent', block, at: from ? stampTime(from.at)?.ms ?? null : null };
+      const h: Held = { id: f.id, prefix: f.prefix, n: f.n, kind: f.kind, text: f.text, fields: { ...f.fields }, source: 'agent', block, at: from ? stampTime(from.at)?.ms ?? null : null };
+      if (from?.who === 'Synopia' && f.kind !== 'review') h.found = true; // a find of Synopia's this list didn't hold (a restore, another Mac)
+      return h;
     }
     const when = stampTime(f.when)?.ms ?? this.now();
     const note = f.how === 'superseded' ? `superseded by ${f.by}` : f.notes.join(' · ');
@@ -567,6 +787,7 @@ export class OpenItems {
     if (f['raised by']) v.raisedBy = f['raised by'];
     if (f.answer) v.answer = f.answer;
     if (h.agent) v.agent = h.agent;
+    if (h.found) v.found = true;
     const owner = ownerOf({ id: h.id, fields: f } as OpenItem, briefs);
     if (owner) v.with = { agent: owner, name: briefs.find((b) => b.agent === owner)!.name };
     return v;
@@ -583,6 +804,28 @@ export class OpenItems {
     const used = new Set([...this.uses.values()].map((u) => u.path));
     for (const p of this.reads.keys()) if (!used.has(p)) this.reads.delete(p);
   }
+}
+
+// An item's text as compared for a duplicate or a dismissed text: case and runs of white space aside.
+export const textKey = (t: string): string => t.replace(/\s+/g, ' ').trim().toLowerCase();
+
+// The fields with one set, in the ledger's field order (ledger.ts FIELDS).
+function withField(fields: Record<string, string>, key: string, value: string): Record<string, string> {
+  const all = { ...fields, [key]: value };
+  return Object.fromEntries(FIELDS.filter((k) => k in all).map((k) => [k, all[k]]).concat(Object.entries(all).filter(([k]) => !FIELDS.includes(k))));
+}
+
+// A `from` field for an item Synopia found: `Synopia, "<title>", <local stamp>, "<quote>"` (docs/Open items.md).
+export function fromField(title: string, ms: number, quote: string): string {
+  const t = (title || 'Session').replace(/\s+/g, ' ').replace(/"/g, "'").trim();
+  const q = quote.replace(/\s+/g, ' ').replace(/"/g, "'").trim().slice(0, 120);
+  return `Synopia, "${t}", ${stampOf(ms)}${q ? `, "${q}"` : ''}`;
+}
+const pad = (n: number) => String(n).padStart(2, '0');
+// A local `YYYY-MM-DD HH:MM`, as the skill writes stamps (no zone).
+export function stampOf(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 // Text compared for a quote: runs of white space as one space.

@@ -24,6 +24,7 @@ import { loadBat } from './preview.ts';
 import { Router } from './router.ts';
 import { loadLoginEnv } from './login-env.ts';
 import { Writer } from './writer.ts';
+import { Keeper } from './keeper.ts';
 import { Menus } from './menu.ts';
 import { BadgeCounter, quitSummary } from './status.ts';
 import { startDaemon } from './daemon.ts';
@@ -138,8 +139,24 @@ const openItems = new OpenItems({
     agents: (sid) => transcripts.get(sid)?.agents() ?? [],
     lastYouAt: (sid) => transcripts.lastYouAt(sid),
     replies: (sid) => transcripts.replies(sid),
+    exchangeKeys: (sid) => transcripts.exchangeKeys(sid),
+    title: (sid) => publisher.meta(sid)?.title ?? '',
+    // a turn runs: Synopia's process works, else the transcript shows a turn open (a terminal's)
+    turnRunning: (sid) => Boolean(sessions.get(sid)?.working) || transcripts.running(sid).turn,
   },
   onChange: (sids) => { for (const sid of sids) publisher.changed(sid); },
+  ask: (sid, kind, key) => keeper.ask(sid, kind, key),
+});
+// The open-items keeper (keeper.ts): a one-shot call per exchange open-items.ts asks for; its ops go back there.
+const keeper = new Keeper({
+  store, stateDir, log, sdk,
+  source: {
+    exchange: (sid, kind) => transcripts.exchange(sid, kind),
+    list: (sid) => openItems.keeperList(sid),
+    work: (sid) => publisher.work(sid),
+    resolve: (sid) => sessions.resolve(sid),
+    apply: (sid, ex, ops, began) => openItems.applyOps(sid, ex, ops, began),
+  },
 });
 const publisher = new Publisher({
   transcripts, clients: pages, home,
@@ -247,6 +264,7 @@ await daemon.ready({
   refuse: () => { router.stop(); quiet = true; }, // actions still running are acked first
   stop: () => {
     writer.stop();
+    keeper.stop();
     menus.stop();
     mcp.stop();
     creds.stop();
