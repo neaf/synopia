@@ -315,13 +315,29 @@ test('transcript: a command a running turn takes in comes as two queued_command 
     queued('q-2', '<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
     { type: 'assistant', uuid: 'a-2', timestamp: ts2, message: { id: 'msg-2', role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
   ]);
-  assert.deepEqual(t.items.filter((i) => i.k === 'you' || i.k === 'bang').map((i) => [i.id, i.k, i.queued]), [['p-1', 'you', undefined], ['q-1', 'bang', undefined]]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'you' || i.k === 'bang').map((i) => [i.id, i.k, i.queued]), [['p-1', 'you', undefined], ['q-1', 'bang', true]]);
   assert.deepEqual(t.get('q-1')?.sh, { out: '', err: '', cut: false, exit: null });
   const ids = t.items.map((i) => i.id);
   assert.ok(ids.indexOf('q-1') < ids.indexOf('a-2:0'), 'in place, before the reply after it');
 });
 
-// ---------- the delivery: two shouldQuery:false user messages in the CLI's format ----------
+// R5.13, 2026-11-27: Synopia's `!` command end is one querying message, so the CLI writes it as a prompt
+// (no queueTranscriptOnly) when idle, and as one queued_command holding both during a turn (perf/bang-turn.mjs).
+test('transcript: a command sent as a turn opens it (the turn\'s time is its), and one a turn takes in is queued', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  t.pushAll([
+    { type: 'user', uuid: 'b-1', timestamp: ts0, promptSource: 'sdk', message: { role: 'user', content: '<bash-input>make fixture</bash-input>\n<bash-stdout>built\n</bash-stdout><bash-stderr></bash-stderr>' } },
+    { type: 'assistant', uuid: 'a-1', timestamp: ts1, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: 'It built.' }] } },
+    { type: 'system', subtype: 'turn_duration', durationMs: 4000, timestamp: ts1 },
+    { type: 'user', uuid: 'p-2', timestamp: ts1, message: { role: 'user', content: 'Now test it.' } },
+    { type: 'attachment', uuid: 'q-2', timestamp: ts2, attachment: { type: 'queued_command', commandMode: 'prompt', source_uuid: 'b-2', delivery_id: 'd-2', timestamp: ts2,
+      prompt: '<bash-input>ls out</bash-input>\n<bash-stdout>app\n</bash-stdout><bash-stderr></bash-stderr>' } },
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'you' || i.k === 'bang').map((i) => [i.id, i.k, i.queued ?? false, i.workedMs]), [['b-1', 'bang', false, 4000], ['p-2', 'you', false, undefined], ['q-2', 'bang', true, undefined]]);
+  assert.equal(t.get('q-2')?.sh?.out, 'app\n');
+});
+
+// ---------- the delivery: one message in the CLI's format that starts a turn (R5.13, 2026-11-27) ----------
 function setup() {
   const root = tmp();
   const claudeDir = path.join(root, 'claude');
@@ -344,45 +360,62 @@ function setup() {
 }
 const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 
-test('delivery: the command and its output go as shouldQuery:false user messages, and no turn starts', async () => {
-  const { sessions, SID, inputs, q, last } = setup();
+test('delivery: the command and its output go as one client_composed message that starts a turn', async () => {
+  const { sessions, SID, inputs, q, last, got } = setup();
   const r = sessions.get(SID)!.runBang('echo hi; echo err >&2; exit 3', ID);
   assert.equal(r.ok, true);
   assert.equal(last()?.bang?.running, true, 'the page sees it running');
-  await until(() => inputs.length === 2);
-  assert.deepEqual(inputs.map((m) => [m.message.content, m.shouldQuery, m.parent_tool_use_id]), [
-    ['<bash-input>echo hi; echo err >&2; exit 3</bash-input>', false, null],
-    ['<bash-stdout>hi\n</bash-stdout><bash-stderr>err\nExit code 3</bash-stderr>', false, null],
+  await until(() => inputs.length === 1);
+  assert.deepEqual(inputs.map((m) => [m.message.content, m.shouldQuery, m.client_composed, m.parent_tool_use_id]), [
+    ['<bash-input>echo hi; echo err >&2; exit 3</bash-input>\n<bash-stdout>hi\n</bash-stdout><bash-stderr>err\nExit code 3</bash-stderr>', undefined, true, null],
   ]);
-  assert.equal(inputs[0].uuid, ID, 'the input record carries the run id, so it lands in place');
+  assert.equal(inputs[0].uuid, ID, 'the record carries the run id, so it lands in place');
   assert.deepEqual({ ...last()?.bang, at: 0, end: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0, end: 0, waiting: false, quiet: false, waitedAt: null, cardAt: null });
-  // A process started only for this: its init starts no turn.
+  // Claude's turn runs: the session works, with nothing queued, and no message band of its own.
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
-  await new Promise((r) => setTimeout(r, 20));
-  assert.notEqual(last()?.state.status, 'busy');
-  // The next message goes as usual and starts the turn.
-  assert.equal(sessions.get(SID)!.send('what did it print?').ok, true);
-  await until(() => inputs.length === 3);
-  assert.equal(inputs[2].shouldQuery, undefined);
-  assert.equal(last()?.state.status, 'busy');
+  await until(() => last()?.state.status === 'busy');
+  assert.equal((last()?.state as { detail?: { queued?: number } }).detail?.queued, undefined);
+  assert.ok(!got.some((m) => JSON.stringify(m).includes('"outbox":[{')), 'no queued message shows for it');
   sessions.stop();
 });
 
-test('delivery: the shown run lands as the item of the one record the CLI joins it into, and leaves the end of the log', async () => {
+test('delivery: one that ends during a turn is queued as your message is; an interrupt that cancels it still gives it to Claude, with no turn', async () => {
+  const { sessions, SID, inputs, q, last, got } = setup();
+  assert.equal(sessions.get(SID)!.send('Build the fixture.').ok, true);
+  await until(() => inputs.length === 1);
+  emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID, capabilities: ['interrupt_cancel_queued_v1'] });
+  await until(() => last()?.state.status === 'busy');
+  assert.equal(sessions.get(SID)!.runBang('echo ok', ID).ok, true);
+  await until(() => inputs.length === 2);
+  assert.equal(inputs[1].client_composed, true);
+  assert.equal(inputs[1].shouldQuery, undefined);
+  await until(() => (last()?.state as { detail?: { queued?: number } }).detail?.queued === 1);
+  // Esc, Esc: the CLI cancels it; it doesn't go back to the box, it goes in as context
+  q.calls[0].reply = { still_queued: [], cancelled: [ID] };
+  await sessions.get(SID)!.interrupt();
+  await until(() => inputs.length === 3);
+  assert.equal(inputs[2].shouldQuery, false);
+  assert.equal(inputs[2].message.content, inputs[1].message.content);
+  assert.notEqual(inputs[2].uuid, ID);
+  assert.ok(!got.some((m) => m.t === 'restore'), 'nothing goes back to the message box');
+  sessions.stop();
+});
+
+test('delivery: the shown run lands as the item of the prompt record the CLI writes for it, and leaves the end of the log', async () => {
   const { sessions, SID, cwd, inputs, last, transcripts, claudeDir } = setup();
   assert.equal(sessions.get(SID)!.runBang('echo hi', ID).ok, true);
-  await until(() => inputs.length === 2 && last()?.bang?.running === false);
+  await until(() => inputs.length === 1 && last()?.bang?.running === false);
   const dir = path.join(claudeDir, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
   fs.mkdirSync(dir, { recursive: true });
   const at = new Date().toISOString();
   fs.writeFileSync(path.join(dir, `${SID}.jsonl`), [
-    { ...joined(ID, at, `${inputs[0].message.content}\n${inputs[1].message.content}`, [String(inputs[1].uuid)]), sessionId: SID, cwd },
-    { type: 'user', uuid: 'p-next', timestamp: at, sessionId: SID, cwd, message: { role: 'user', content: 'What did it print?' } },
+    { type: 'user', uuid: ID, timestamp: at, sessionId: SID, cwd, promptSource: 'sdk', message: { role: 'user', content: inputs[0].message.content } },
+    { type: 'assistant', uuid: 'a-reply', timestamp: at, sessionId: SID, cwd, message: { id: 'msg-r', role: 'assistant', content: [{ type: 'text', text: 'It printed hi.' }] } },
   ].map((r) => JSON.stringify(r)).join('\n') + '\n');
   transcripts.poll();
   try { await until(() => last()?.bang?.landed === ID); } finally { sessions.stop(); }
   const items = transcripts.get(SID)!.items;
-  assert.deepEqual(items.map((i) => [i.id, i.k]), [[ID, 'bang'], ['p-next', 'you']], 'in place, before the next prompt');
+  assert.deepEqual(items.map((i) => [i.id, i.k]), [[ID, 'bang'], ['a-reply:0', 'claude']], 'one row for it, then Claude\'s reply');
   assert.equal(items[0].sh?.out, 'hi\n');
 });
 
@@ -400,9 +433,9 @@ test('delivery: one command at a time, Esc, Esc in its shell view ends it (not i
   await until(() => last()?.bang?.running === false);
   assert.equal(last()?.bang?.interrupted, true);
   assert.equal(last()?.bang?.exit, 143);
-  await until(() => inputs.length === 2);
-  assert.match(String(inputs[1].message.content), /<bash-stderr>Interrupted by the user, exit code 143<\/bash-stderr>$/);
-  assert.deepEqual(parseBashOutput(String(inputs[1].message.content)), { out: '', err: '', cut: false, exit: 143, interrupted: true });
+  await until(() => inputs.length === 1);
+  assert.match(String(inputs[0].message.content), /<bash-stderr>Interrupted by the user, exit code 143<\/bash-stderr>$/);
+  assert.deepEqual(splitBash(String(inputs[0].message.content))?.runs[0].out, { out: '', err: '', cut: false, exit: 143, interrupted: true });
   assert.equal(sessions.get(SID)!.runBang('  ').ok, false);
   sessions.stop();
 });

@@ -9,8 +9,8 @@
 // group, SIGKILL 3 s later. It waits for input by pty.ts InputWatch's rule (live run IN-1), and gets its panel
 // card by runs.ts cardAt. The
 // command and its output then go to the session in the CLI's format (`<bash-input>`, `<bash-stdout>`,
-// `<bash-stderr>`), as user messages with `shouldQuery: false` (sdk.d.ts SDKUserMessage.shouldQuery:
-// appended to the transcript without a turn, merged into the next user message that queries).
+// `<bash-stderr>`), joined with "\n" into one user message that starts a turn (R5.13, 2026-11-27:
+// session.ts shareBang, sdk.ts pushBang), so Claude reacts to it without a follow-up of yours.
 import { groupAlive } from './macos.ts';
 import { InputWatch, plainText, shellPty } from './pty.ts';
 import type { PtyRun, PtyStart } from './pty.ts';

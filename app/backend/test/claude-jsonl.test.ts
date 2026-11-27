@@ -49,7 +49,8 @@ test('user text prefixes', () => {
   assert.deepEqual(bodyOf('<local-command-stdout>x</local-command-stdout>'), { kind: 'system' });
   assert.deepEqual(user([{ type: 'text', text: '<note>' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }]).body, { kind: 'prompt' }, 'a `<` text with an image is a prompt');
   assert.deepEqual(bodyOf('[Image: source: /tmp/x.png]', { isMeta: true }), { kind: 'meta' });
-  assert.deepEqual(bodyOf('<bash-input>ls</bash-input>'), { kind: 'bash-input', runs: [{ cmd: 'ls', out: null }], rest: '', then: null });
+  assert.deepEqual(bodyOf('<bash-input>ls</bash-input>'), { kind: 'bash-input', runs: [{ cmd: 'ls', out: null }], rest: '', then: null, context: false }, 'a querying send: a turn');
+  assert.equal((bodyOf('<bash-input>ls</bash-input>', { queueTranscriptOnly: true }) as { context?: boolean }).context, true, 'a shouldQuery: false send: context');
   assert.deepEqual(bodyOf('<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>'), { kind: 'bash-output', out: { out: 'a', err: '', cut: false, exit: null } });
   assert.deepEqual(bodyOf('Tidy the notes.'), { kind: 'prompt' });
 });

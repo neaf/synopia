@@ -89,14 +89,16 @@ export function nowRoute(o: { driven: boolean; working: boolean; cards: number; 
 export const NOW_WAIT_MS = 8000;
 const NOW_POLL_MS = 100;
 
-// A message for the process: your prompt (a turn), or bash mode's context (`shouldQuery: false`, no
-// turn). `inBox`: the page still holds the prompt (a take-over), so a refusal leaves it there.
+// A message for the process: your prompt (a turn), a `!` command's end (a turn too, R5.13,
+// 2026-11-27: sdk.ts pushBang), or context (`shouldQuery: false`, no turn). `inBox`: the page
+// still holds the prompt (a take-over), so a refusal leaves it there.
 // `by`: the page that sent it, which gets it back in its box if it can't go.
 // `images`: the pasted images the content carries, which go back with the text. `now`: f, f's draft
 // with nothing queued, pushed as `priority: 'now'` (R9.8).
 type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By; now?: boolean };
 type Context = { kind: 'context'; text: string; uuid: string };
-type Input = Prompt | Context;
+type BangEnd = { kind: 'bang'; text: string; uuid: string };
+type Input = Prompt | Context | BangEnd;
 
 // The model and effort you chose (state.json `models`). `default` is the CLI's default model; an
 // effort of null or missing is the model's default effort.
@@ -155,6 +157,7 @@ export class Session {
   private proc: SessionProcess | null = null;
   private queue: Input[] = []; // sent while it starts or ends: the next process takes them, in order
   private held: Prompt[] = []; // sent while a card waits
+  private heldBangs: BangEnd[] = []; // `!` commands that ended while a card waits: they go with the held messages
   private takeover: Prompt | null = null; // your message that takes it back from a terminal
   private terminal: Terminal | null = null; // the terminal's CLI that holds it (read-only while set)
   private stream = new StreamPreview();
@@ -296,7 +299,7 @@ export class Session {
   // The one way into the process. Starting or ending: kept for the next process, in order.
   private input(list: Input[]): void {
     if (!list.length) return;
-    const prompt = list.some((m) => m.kind === 'prompt');
+    const prompt = list.some((m) => m.kind !== 'context'); // a turn: yours, or a `!` command's end
     if (this.state === 'starting' || this.state === 'ending') {
       this.queue.push(...list);
       if (prompt && this.state === 'ending') { this.clearIdle(); this.status.turnStarted(); } // shown working meanwhile
@@ -307,6 +310,7 @@ export class Session {
     if (!proc) return;
     for (const m of list) {
       if (m.kind === 'prompt') proc.push(m.content, m.uuid, m.images, m.now);
+      else if (m.kind === 'bang') proc.pushBang(m.text, m.uuid);
       else proc.pushQuiet(m.text, m.uuid);
     }
     if (prompt) {
@@ -319,20 +323,30 @@ export class Session {
 
   // No card waits any more, or the turn ended: the messages held behind the cards go to Claude.
   private releaseHeld(): void {
-    if (this.cards.size || this.interrupting || !this.proc || this.proc.done || this.state !== 'running' || !this.held.length) return;
-    const held = this.held.splice(0);
+    if (this.cards.size || this.interrupting || !this.proc || this.proc.done || this.state !== 'running' || !(this.held.length || this.heldBangs.length)) return;
+    const held: Input[] = [...this.heldBangs.splice(0), ...this.held.splice(0)];
     this.d.publisher.setHeld(this.id, []);
     this.input(held);
     this.d.log('sessions.released', { sid: this.id, n: held.length });
   }
 
   // The turn ended with requests or held messages left (an interrupt, the process ending): the
-  // requests end and the held messages go back to the message box.
+  // requests end and the held messages go back to the message box. A held `!` command's end goes to
+  // Claude as context with no turn, as one the interrupt cancelled (quietBangs).
   private endCards(): void {
     this.cards.abortAll();
     const held = this.held.splice(0);
     if (held.length) this.d.publisher.setHeld(this.id, []);
     this.giveBack(held);
+    this.quietBangs(this.heldBangs.splice(0));
+  }
+
+  // `!` command ends that won't run as a turn (an interrupt cancelled them, or the turn ended on the card
+  // they waited behind): Claude still gets them, with no turn, and sees them with your next message.
+  private quietBangs(list: { text: string; uuid: string }[]): void {
+    if (!list.length) return;
+    this.input(list.map((b) => ({ kind: 'context', text: b.text, uuid: randomUUID() })));
+    this.d.log('bang.quiet', { sid: this.id, n: list.length });
   }
 
   // Prompts that didn't go, back to the box of the page that sent each (and out of the outbox).
@@ -378,7 +392,7 @@ export class Session {
 
   // ---------- bash mode (R5.13): `!` runs a shell command in the session's folder ----------
   // The output streams to the page (setBang) and, once the command ends, the command and its
-  // output go to the session as context that starts no turn (bang.ts). Not in a session a terminal
+  // output go to the session as a turn, queued behind a running one (shareBang). Not in a session a terminal
   // holds (one writer), and one command at a time.
   runBang(cmd: string, uuid?: string, by: By = null): SendResult {
     if (!cmd.trim()) return { ok: false, error: 'Type a shell command after the !.' };
@@ -434,8 +448,11 @@ export class Session {
     return r ? { cmd: r.cmd, out: r.out, err: r.err, running: r.running } : null;
   }
 
-  // The command and its output go to Claude in the CLI's format, as two user messages that start
-  // no turn: into the running process, after the ending one, or a process started for them.
+  // The command and its output go to Claude in the CLI's format, as one message that starts a turn
+  // (R5.13, 2026-11-27): Claude reacts to it without your follow-up. During a turn it is queued as your
+  // message is ("1 message queued"); behind a waiting card it goes with the held messages. Into the
+  // running process, after the ending one, or a process started for it. The page shows its run row
+  // only: the message has no band of its own (no outbox entry).
   private shareBang(run: BangRun, cap: number): void {
     if (this.terminalHolds) { run.error = 'Not shared with Claude: a terminal took the session meanwhile.'; return; }
     const fresh = this.state === 'idle';
@@ -443,8 +460,10 @@ export class Session {
       const why = this.start();
       if (why) { run.error = `Not shared with Claude: ${why === 'terminal' ? 'a terminal holds this session' : why}.`; return; }
     }
-    this.input([{ kind: 'context', text: bashInput(run.cmd), uuid: run.id }, { kind: 'context', text: bashOutput(run, cap), uuid: randomUUID() }]);
-    this.d.log('bang.shared', { sid: this.id, newProcess: fresh });
+    const m: BangEnd = { kind: 'bang', text: `${bashInput(run.cmd)}\n${bashOutput(run, cap)}`, uuid: run.id };
+    if (this.cards.size) this.heldBangs.push(m);
+    else this.input([m]);
+    this.d.log('bang.shared', { sid: this.id, newProcess: fresh, held: this.cards.size > 0 });
   }
 
   // ---------- its folder (R3.11) ----------
@@ -723,6 +742,7 @@ export class Session {
     this.d.log('session.interrupt', { sid: this.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
     this.endCards();
     this.restore(r.restored, by);
+    this.quietBangs(r.bangs ?? []);
     if (r.stillQueued) {
       const n = r.stillQueued;
       this.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`, by);
@@ -1110,6 +1130,7 @@ export class Session {
     this.state = 'idle';
     this.queue = [];
     this.held = [];
+    this.heldBangs = [];
     this.bang?.kill();
     this.bang = null;
     this.cards.close();

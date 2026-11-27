@@ -421,6 +421,17 @@ class ScriptedSession implements QueryLike {
       if (m.type === 'stream_event') this.wrote(m.event as { type?: string; message?: { id?: string }; delta?: { type?: string; text?: string } });
       if (m.type === 'result') this.writing = null;
       if (m.type === 'result') this.queued = this.queued.filter((q) => !this.landed(q));
+      // Messages still queued when the turn would end: the turn takes them in and Claude replies to them
+      // before its result (perf/bang-turn.mjs: one result, the uuid in it), so the session's onSend
+      // plays on in place of this result and what came after it.
+      if (m.type === 'result' && this.queued.length && !t.cancelled) {
+        const taken = this.queued.splice(0);
+        this.takeIn(taken);
+        await this.out.deliver({ type: 'system', subtype: 'status', status: null, user_message_uuids: taken.map((q) => q.uuid), uuid: randomUUID(), session_id: this.sid } as unknown as SDKMessage);
+        this.cancel(t);
+        void this.play(this.env.script.sessions[this.sid]?.onSend ?? this.env.script.onSend ?? [], false);
+        return { answer: null };
+      }
       if (m.type === 'system' && m.subtype === 'task_started' && typeof m.task_id === 'string' && typeof m.tool_use_id === 'string') this.tasks.set(m.task_id, m.tool_use_id);
       await this.out.deliver(m as unknown as SDKMessage);
     }

@@ -52,6 +52,22 @@ Code: `sdk.ts` `buildOptions`. Test: `sdk.test.ts`.
 - `shouldQuery: false` user messages join the transcript without a turn and merge into the next user message that queries (sdk.d.ts 7033). Code: `sdk.ts` `SessionProcess.pushQuiet`.
 - A message pushed during a running tool is queued, then folded into the same turn. Its uuid appears in `user_message_uuids` on the next `system/status` and on the `result`, not on any `assistant` or `stream_event`.
 
+### A `!` command's end as a turn
+
+R5.13 (the user's decision, 2026-11-27): when your `!` command ends, its command and output go to Claude as a turn, so Claude reacts without a follow-up of yours.
+
+- Documented surface: `SDKUserMessage.client_composed?: true` (sdk.d.ts 7046): the client composed the turn from content the user did not type; the CLI takes its text as written, with no `@path` expansion and no slash-command dispatch, and skips its turn-start attachment pass. Output a command printed is such content, so Synopia sets it.
+- What Synopia sends: one user message, `<bash-input>CMD</bash-input>\n<bash-stdout>OUT</bash-stdout><bash-stderr>ERR</bash-stderr>` (the text the CLI wrote for the two `shouldQuery: false` sends before), with the run's id as its uuid and `client_composed: true`. During a turn it is pushed like your message and counted as queued (`status.ts` `pushed`), with no outbox band. Behind a waiting card it waits with the held messages. If an interrupt cancels it (`cancelled` lists its uuid) or the turn ends on the card it waited behind, it goes in as `shouldQuery: false` context instead, never back to the message box.
+- Settled by one scripted check (`app/backend/perf/bang-turn.mjs`, SDK 0.3.330, 2026-11-27, haiku, one fresh session per phase), shapes only:
+
+| Phase | Messages | Transcript records holding it |
+|---|---|---|
+| Idle, the message alone | one `system/init`, assistant replies, one `result` (`success`, `queued_turn_count: 0`) whose `user_message_uuids` lists the uuid | `queue-operation` enqueue, then one `user` record, string content as sent, `uuid` the message's, `promptSource`, `promptId`, `turnOrigin`, `turnPosition`, `queueSkipAttachments`, `queueSkipSlashCommands`; no `queueTranscriptOnly` |
+| Pushed during a running Bash | one `result` for the whole turn (folded in, as any queued message), the uuid in its `user_message_uuids` and on no `system/status` | `queue-operation` enqueue, one `attachment` `queued_command` (`commandMode`, `delivery_id`, `prompt` the whole text as sent, `source_uuid` the message's uuid, `timestamp`), then `queue-operation` remove |
+
+- What reads it: `claude-jsonl.ts` `bodyOf` (`context` is `queueTranscriptOnly`: a `!` record without it started a turn), `transcript.ts` `user` (such a record is the turn's start for its "Worked for"; one taken in from the queue is `queued`), the page's `transcript.js` `itemsHTML` (a queued one is `mid`: no "Worked for" before it).
+- Code: `sdk.ts` `SessionProcess.pushBang`, `session.ts` `shareBang`, `quietBangs`. Test: `bang.test.ts` ("delivery: …"), page check `bang`.
+
 ### Quirk: `interrupt()` takes no argument in the typings
 
 - Symptom: a plain `interrupt()` leaves queued messages; they run after the abort as their own turn (spike row 10, `still_queued: [uuid]`).
@@ -432,7 +448,7 @@ Source: `app/backend/perf/transcripts.mjs`, `processes.mjs` (2026-11-23, 16 GB m
 `app/backend/dev/scripted-sdk.ts` implements the `Sdk` pair (`query`, `listSessions`) that `sdk.ts` consumes, from a script instead of a CLI. `main.ts --sdk-script <file>` passes it to `Sessions`, `Menus` and `Writer`; the page checks and `dev.sh --script` run on it, so they reach the real Sessions, status, writer and menu code with no model call. It reproduces these SDK facts:
 - A query is told apart by its options: `canUseTool` set is a session's process, `persistSession: false` the writer's call, neither the idle menu probe.
 - A turn starts with `system/init` (with `capabilities: ["interrupt_cancel_queued_v1"]`) and `session_state_changed: running`, and ends with `result`, then `session_state_changed: idle` ("State events need an undocumented flag"; with a background task the real CLI sends `idle` later, see "Session state and background tasks").
-- A user message sent during a turn is queued. `interrupt({cancelQueued: true})` lists under `cancelled` the queued uuids not yet in the transcript, and the turn ends `result/error_during_execution` with `terminal_reason: aborted_streaming`.
+- A user message sent during a turn is queued. Still queued when the turn's `result` step comes, the turn takes it in ("A `!` command's end as a turn"): a `queued_command` attachment, a `system/status` with its uuid in `user_message_uuids`, then the session's `onSend` plays again in place of that result and the steps after it (2026-11-27). `interrupt({cancelQueued: true})` lists under `cancelled` the queued uuids not yet in the transcript, and the turn ends `result/error_during_execution` with `terminal_reason: aborted_streaming`.
 - For f, f ("Sending queued messages now"): `backgroundTasks(id)` (f, f's call) sends `background_tasks_changed` with that step's task, then takes the queued messages into the running turn as `queued_command` attachments, in order (`backgroundTasks()`, b, b's call, takes them in but moves no step, so `background.mjs` keeps its steps in the foreground); an interrupt while `stream_event` steps were writing a reply appends that reply's partial `assistant` record first, as the CLI does (2026-11-26); a plain `interrupt()` ends the turn the same way, then runs them next as one turn; a message with `priority: 'now'` during a turn is taken in at once.
 - A `shouldQuery: false` message joins the transcript and starts no turn ("Streaming input and control calls"). A message that starts a turn is written to the transcript as the CLI writes a prompt.
 - `supportedCommands` and `supportedModels` return the script's `menu` in the SDK's shapes, HTML-escaped hints included ("Command and model list shapes").

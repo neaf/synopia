@@ -285,15 +285,20 @@ export function itemsHTML(items, sessionBusy, s) {
     /* Synopia resumed a turn the credentials failed (R8.2, 2026-11-26): a quiet line, not your band, that opens Claude's turn */
     if (it.k === "resumed") { prompt(null, it.ts, it.id, `<div class="done retitle resumed">Resumed after the credential refresh</div>`); turnMs = it.workedMs || null; lastTs = it.ts; continue; }
     if (it.k === "you") { const mid = !!it.queued && !!turnStart && !turnMs; prompt(youBody(it, view), it.ts, it.id, null, mid); turnMs = it.workedMs || (mid ? turnMs : null); lastTs = it.ts; continue; }
-    /* a bash-mode command: on your prompt's band, but no turn of Claude's (the next prompt doesn't end one) */
+    /* a bash-mode command: on your prompt's band. Synopia's end of one starts Claude's turn (R5.13, 2026-11-27),
+       so its row is that turn's start; one a running turn took in from its queue (or that runs during a turn)
+       is `mid`, as a queued message is: the turn goes on through it */
     if (it.k === "bang") {
       const b = it.live && s?.bang;
       if (b) { // the run Synopia shows until its records land (placeBangs put it where it started)
-        prompt(null, it.ts, it.id, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b, !!ownOf(s, b.id), it.ts));
+        const mid = !!sessionBusy && !!turnStart && !turnMs;
+        prompt(null, it.ts, it.id, bangHTML(b.id, b.cmd, { out: b.out, err: b.err, cut: b.cut, exit: b.exit }, b, !!ownOf(s, b.id), it.ts), mid);
         lastTs = it.ts; continue;
       }
       if (!it.sh && bangLiveOf(s)?.id === it.id) continue; // its output isn't in yet: the live run shows it
-      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null, !!ownOf(s, it.id), it.ts)); lastTs = it.ts; continue;
+      const mid = !!it.queued && !!turnStart && !turnMs;
+      prompt(null, it.ts, it.id, bangHTML(it.id, it.cmd || "", it.sh, null, !!ownOf(s, it.id), it.ts), mid);
+      turnMs = it.workedMs || (mid ? turnMs : null); lastTs = it.ts; continue;
     }
     /* the shown title changed (R5.x): a quiet line in place, like a day separator */
     if (it.k === "title") { titles.push([it.id, `<div class="done retitle">Retitled “<span class="t">${esc(it.title)}</span>”${it.by === "you" ? " by you" : ""}</div>`]); continue; }

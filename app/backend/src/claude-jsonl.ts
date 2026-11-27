@@ -201,8 +201,10 @@ export function taskNotes(text: string): TaskNote[] {
 export type Interrupt = 'stop' | 'toolUse';
 export type UserBody =
   | { kind: 'results' } // tool results only
-  // `!` commands (splitBash): `then` is the body of the text after them (`rest`), as one record can hold the next prompt too
-  | { kind: 'bash-input'; runs: BashRun[]; rest: string; then: UserBody | null }
+  // `!` commands (splitBash): `then` is the body of the text after them (`rest`), as one record can hold the next prompt too.
+  // `context`: written with no turn (`queueTranscriptOnly`, a `shouldQuery: false` send); else it started one
+  // (Synopia's since 2026-11-27, docs/Claude Code transcripts.md "Bash mode records").
+  | { kind: 'bash-input'; runs: BashRun[]; rest: string; then: UserBody | null; context: boolean }
   | { kind: 'bash-output'; out: BashOutput | null }
   | { kind: 'meta' } // an isMeta note: skipped
   | { kind: 'notification' } // task notifications only (in `notes`)
@@ -272,8 +274,9 @@ function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolea
   if (onlyResults) return { kind: 'results' };
   if (text.startsWith('<bash-input>')) {
     const b = splitBash(text);
-    if (!b) return { kind: 'bash-input', runs: [], rest: '', then: null };
-    return { kind: 'bash-input', ...b, then: b.rest ? bodyOf(d, b.rest, images, false) : null };
+    const context = d.queueTranscriptOnly === true;
+    if (!b) return { kind: 'bash-input', runs: [], rest: '', then: null, context };
+    return { kind: 'bash-input', ...b, then: b.rest ? bodyOf(d, b.rest, images, false) : null, context };
   }
   if (text.startsWith('<bash-stdout>')) return { kind: 'bash-output', out: parseBashOutput(text) };
   if (d.isMeta && !text.startsWith(REPORT_PREFIX)) return { kind: 'meta' };

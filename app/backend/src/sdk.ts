@@ -86,7 +86,8 @@ export type ProcessEvents = {
 export type Returned = { text: string; images: Image[] };
 // What an interrupt did: the messages it cancelled (they go back to the message box) and how many
 // of our queued messages still run, as the SDK lists them.
-export type InterruptResult = { cancelQueued: boolean; restored: Returned[]; stillQueued: number };
+// `bangs`: the `!` command turns it cancelled (pushBang), their texts and uuids.
+export type InterruptResult = { cancelQueued: boolean; restored: Returned[]; stillQueued: number; bangs?: { text: string; uuid: string }[] };
 
 // The menu calls of a query: a running process's, or the idle probe's.
 export type MenuSource = { supportedCommands(): Promise<SlashCommand[]>; supportedModels(): Promise<ModelInfo[]> };
@@ -157,6 +158,7 @@ export class SessionProcess {
   private partial = '';
   private ended = false;
   private sent = new Map<string, Returned>();
+  private bangSent = new Map<string, string>(); // pushBang's texts by uuid, so a cancelled one still goes to Claude
   capabilities: string[] = []; // from system/init
   done = false;
 
@@ -179,9 +181,19 @@ export class SessionProcess {
     this.events.onPush?.(uuid);
   }
 
-  // Bash mode (bang.ts): context for Claude that starts no turn (docs/Agent SDK.md, "Streaming input
-  // and control calls": `shouldQuery: false`). Not counted as queued, and an interrupt has nothing
-  // of it to give back.
+  // Bash mode (R5.13, 2026-11-27): a `!` command's input and output as one message that starts a turn,
+  // or waits in the running one's queue as your message does (counted as queued). `client_composed`: the
+  // CLI takes its text as written, with no `@path` expansion and no slash command (docs/Agent SDK.md, "A
+  // `!` command's end as a turn"). An interrupt hands a cancelled one back in `bangs`, never to the box.
+  pushBang(text: string, uuid: string): void {
+    this.bangSent.set(uuid, text);
+    if (this.bangSent.size > KEEP_SENT) this.bangSent.delete(this.bangSent.keys().next().value as string);
+    this.input.push({ ...userMessage(text, uuid), client_composed: true });
+    this.events.onPush?.(uuid);
+  }
+
+  // Context for Claude that starts no turn (docs/Agent SDK.md, "Streaming input and control calls":
+  // `shouldQuery: false`). Not counted as queued, and an interrupt has nothing of it to give back.
   pushQuiet(text: string, uuid: string): void {
     this.input.push({ ...userMessage(text, uuid), shouldQuery: false });
   }
@@ -193,7 +205,8 @@ export class SessionProcess {
     const cancelQueued = this.capabilities.includes(CANCEL_QUEUED);
     const r = await this.q.interrupt?.(cancelQueued ? { cancelQueued: true } : undefined);
     const restored = (r?.cancelled ?? []).map((u) => this.sent.get(u)).filter((m): m is Returned => Boolean(m && (m.text.trim() || m.images.length)));
-    return { cancelQueued, restored, stillQueued: (r?.still_queued ?? []).filter((u) => this.sent.has(u)).length };
+    const bangs = (r?.cancelled ?? []).flatMap((u) => { const text = this.bangSent.get(u); return text === undefined ? [] : [{ text, uuid: u }]; });
+    return { cancelQueued, restored, stillQueued: (r?.still_queued ?? []).filter((u) => this.sent.has(u)).length, ...(bangs.length ? { bangs } : {}) };
   }
 
   // f, f with messages queued and nothing that can move (R9.8): the plain interrupt, without

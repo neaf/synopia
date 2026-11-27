@@ -37,8 +37,8 @@ export type Item = {
   cwd?: string; // moved: the folder the session continues in (R3.11), as the page shows it
   cmd?: string; sh?: BashOutput; // bang: a bash-mode command (`!`) and its output, from Synopia or the CLI (R5.13)
   title?: string; by?: 'claude' | 'you'; // title: the shown title changed to this, renamed by you (custom-title) or by Claude
-  text?: string; images?: number; workedMs?: number; // you
-  queued?: boolean; // you: a message a running turn took in from its queue (a `queued_command`), not a turn's start
+  text?: string; images?: number; workedMs?: number; // you (workedMs also a bang that started a turn)
+  queued?: boolean; // you, bang: a message a running turn took in from its queue (a `queued_command`), not a turn's start
   // you: an interrupt marker. `interrupted`: you stopped the turn; `turnedDown`: you turned a tool
   // down and Claude carries on (docs/Claude Code transcripts.md#interrupts).
   interrupted?: boolean; turnedDown?: boolean;
@@ -659,13 +659,20 @@ export class Transcript {
     // Bash mode (R5.13), as the CLI records it: a `<bash-input>` record, then one with its output, or
     // one record with both, several commands, or the next prompt after them (docs/Claude Code
     // transcripts.md, "Bash mode records"). Each command is an item of its own, in place; the record's
-    // uuid goes to its only command, or to the prompt after them. None is a turn.
+    // uuid goes to its only command, or to the prompt after them. One a running turn took in from its
+    // queue is `queued` (the turn goes on through it). One Synopia sent as a turn (R5.13, 2026-11-27:
+    // not `context`) counts the turn's time from it, as your prompt does.
     if (body.kind === 'bash-input') {
       const { runs, then } = body;
       for (let n = 0; n < runs.length; n++) {
         const out = runs[n].out;
         r.lastBang = this.put({ id: n || then ? `${uuid}:bang${n}` : uuid, k: 'bang', ts: u.ts, cmd: clip(runs[n].cmd, MAX_BANG_CMD),
-          ...(out ? { sh: { ...out, out: clip(out.out, BANG_CAP), err: clip(out.err, BANG_CAP) } } : {}) });
+          ...(out ? { sh: { ...out, out: clip(out.out, BANG_CAP), err: clip(out.err, BANG_CAP) } } : {}), ...(queued ? { queued } : {}) });
+      }
+      if (!then && !queued && !body.context && r.lastBang && runs.length === 1) {
+        r.afterMarker = false;
+        r.lastErrors = [];
+        r.lastYou = r.lastBang;
       }
       if (!then) return;
       text = body.rest;
