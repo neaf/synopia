@@ -62,7 +62,61 @@ test('code hash: every src .ts file, package-lock.json and the page\'s protocol.
   assert.notEqual(h4, h3, 'the page\'s protocol.js counts');
   writeFileSync(join(dir, '..', 'web', 'js', 'protocol.js'), 'export const VERSION = 3;\n');
   assert.notEqual(await codeHash(dir), h4, 'a protocol.js change alone is new code');
+  const h5 = (await codeHash(dir))!;
+  writeFileSync(join(dir, '..', 'web', 'index.html'), '<p>a</p>');
+  assert.notEqual(await codeHash(dir), h5, 'every page file counts: the daemon serves them');
+  const h6 = (await codeHash(dir))!;
+  for (const d of ['dev', 'test', join('js', '.cache')]) mkdirSync(join(dir, '..', 'web', d), { recursive: true });
+  writeFileSync(join(dir, '..', 'web', 'dev', 'check.mjs'), '');
+  writeFileSync(join(dir, '..', 'web', 'test', 'a.test.js'), '');
+  writeFileSync(join(dir, '..', 'web', 'js', '.cache', 'x'), '');
+  writeFileSync(join(dir, '..', 'web', '.DS_Store'), '');
+  assert.equal(await codeHash(dir), h6, 'dev/, test/ and dot files are not the page');
   assert.match((await codeHash(new URL('..', import.meta.url).pathname))!, /^[0-9a-f]{16}$/, 'the backend itself');
+});
+
+test('code hash snapshot: the page files\' bytes behind the same hash', async () => {
+  const dir = join(tmp(), 'backend');
+  mkdirSync(join(dir, 'src'), { recursive: true });
+  mkdirSync(join(dir, '..', 'web', 'js'), { recursive: true });
+  mkdirSync(join(dir, '..', 'web', 'dev'), { recursive: true });
+  writeFileSync(join(dir, 'src', 'a.ts'), 'export const a = 1;\n');
+  writeFileSync(join(dir, 'package-lock.json'), '{}\n');
+  writeFileSync(join(dir, '..', 'web', 'index.html'), '<p>a</p>');
+  writeFileSync(join(dir, '..', 'web', 'js', 'protocol.js'), 'export const VERSION = 4;\n');
+  writeFileSync(join(dir, '..', 'web', 'dev', 'check.mjs'), '');
+  const hasher = new CodeHasher(dir);
+  const s = (await hasher.snapshot())!;
+  assert.equal(s.code, await codeHash(dir), 'the hash a reading gives');
+  assert.deepEqual([...s.page.keys()].sort(), ['index.html', join('js', 'protocol.js')], 'the page files only');
+  assert.equal(String(s.page.get(join('js', 'protocol.js'))), 'export const VERSION = 4;\n');
+  writeFileSync(join(dir, '..', 'web', 'js', 'protocol.js'), 'export const VERSION = 5;\n');
+  assert.notEqual(await hasher.read(), s.code, 'the checkout moved on');
+  assert.equal(String(s.page.get(join('js', 'protocol.js'))), 'export const VERSION = 4;\n', 'the snapshot did not');
+  assert.equal(await new CodeHasher(join(tmp(), 'none')).snapshot(), null, 'unreadable: no snapshot');
+});
+
+test('under the app a daemon serves the page it started with; under app/dev.sh the page on disk', async () => {
+  const get = async (i: DaemonInfo, p: string) => { const r = await fetch(`http://127.0.0.1:${i.port}${p}`); return { status: r.status, type: r.headers.get('content-type'), body: await r.text() }; };
+  for (const parent of [true, false]) {
+    const { main, dir } = backendCopy({ web: 'copy' });
+    const index = join(dir, '..', 'web', 'index.html');
+    const before = readFileSync(index, 'utf8');
+    const d = await shellDaemon([...scripted(), ...(parent ? [] : ['--no-parent'])], main);
+    try {
+      const first = await get(d.info, '/');
+      assert.equal(first.body, before);
+      assert.equal(first.type, 'text/html; charset=utf-8');
+      writeFileSync(index, before + '<!-- newer -->\n');
+      assert.equal((await get(d.info, '/index.html')).body, parent ? before : before + '<!-- newer -->\n',
+        parent ? 'the page of its own code' : 'live page edits');
+      assert.equal((await get(d.info, '/js/protocol.js')).type, 'text/javascript; charset=utf-8');
+      assert.equal((await get(d.info, '/nope.js')).status, 404);
+      assert.equal((await get(d.info, '/dev/cdp/run.sh')).status, parent ? 404 : 200, 'dev/ under app/dev.sh only');
+    } finally {
+      await d.stop();
+    }
+  }
 });
 
 test('code hash: async, and an unchanged file is not read again (NFR-06)', async () => {

@@ -207,6 +207,7 @@ try {
     port,
     token,
     webRoot: fileURLToPath(new URL('../../web/', import.meta.url)),
+    page: daemon.page ?? undefined,
     log,
     onAuthed: (client) => {
       publisher.hello(client, { code: CODE, layout: sessions.layout.get(), menu: menus.all(), ui: store.state.ui, update: daemon.updatePending });

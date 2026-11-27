@@ -88,15 +88,17 @@ export async function connectPage(info: Pick<DaemonInfo, 'port' | 'token'>): Pro
   };
 }
 
-// A copy of app/backend/{src, dev, package.json, package-lock.json, node_modules} beside a link to app/web,
-// as main.ts finds them: a test can change its code (an update, a new daemon that fails, a crash).
-export function backendCopy(): { main: string; dir: string } {
+// A copy of app/backend/{src, dev, package.json, package-lock.json, node_modules} beside a link to app/web
+// (or a copy of it, `web: 'copy'`), as main.ts finds them: a test can change its code (an update, a new
+// daemon that fails, a crash, a page edit).
+export function backendCopy(o: { web?: 'link' | 'copy' } = {}): { main: string; dir: string } {
   const app = join(tmp('backend'), 'app'), dir = join(app, 'backend');
   mkdirSync(dir, { recursive: true });
   for (const d of ['src', 'dev']) cpSync(join(BACKEND, d), join(dir, d), { recursive: true });
   for (const f of ['package.json', 'package-lock.json']) cpSync(join(BACKEND, f), join(dir, f));
   symlinkSync(join(BACKEND, 'node_modules'), join(dir, 'node_modules'));
-  symlinkSync(WEB, join(app, 'web'));
+  if (o.web === 'copy') cpSync(WEB, join(app, 'web'), { recursive: true });
+  else symlinkSync(WEB, join(app, 'web'));
   return { main: join(dir, 'src', 'main.ts'), dir };
 }
 

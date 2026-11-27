@@ -4,12 +4,14 @@
 // with no page connected and nothing running. It records a hash of its own code at start and hands
 // over to a new daemon once the checkout's code differs and nothing runs (at once on "Restart
 // Backend Now…"). An uncaught error flushes state.json and ends it with exit 1; the shell restarts
-// it once. Under app/dev.sh (`parent: false`) there is no idle exit, update or restart.
+// it once. Under the app it serves the page files it read with that hash, so a reload never meets a
+// page newer than its daemon. Under app/dev.sh (`parent: false`) there is no idle exit, update or
+// restart, and the page is read from disk.
 import { closeSync, openSync } from 'node:fs';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 import { alive } from './macos.ts';
 import {
   DAEMON_LOG, EXIT, LockedError, acquireLock, clearStaleDaemonInfo, markHandover, ownStart, removeDaemonInfo, rotateLog, writeDaemonInfo,
@@ -42,26 +44,34 @@ export class IdleExit {
 }
 
 type HashIo = {
+  // every regular file under dir (no directory, no symlink), relative to it
   readdir: (dir: string) => Promise<string[]>;
   stat: (file: string) => Promise<{ size: number; mtimeMs: number; ctimeMs: number; ino: number }>;
   readFile: (file: string) => Promise<Buffer>;
 };
 const realIo: HashIo = {
-  readdir: async (dir) => (await readdir(dir, { recursive: true })) as string[],
+  readdir: async (dir) => (await readdir(dir, { recursive: true, withFileTypes: true }))
+    .filter((e) => e.isFile()).map((e) => relative(dir, join(e.parentPath, e.name))),
   stat: (f) => stat(f),
   readFile: (f) => readFile(f),
 };
 
-// The page's protocol schema, which the backend imports too (main.ts, router.ts, publisher.ts): a
-// change to it alone is new backend code. Relative to the backend folder; a missing one is a state.
-export const PROTOCOL_FILE = '../web/js/protocol.js';
-// The page modules the backend imports besides it: the matcher (sessions.ts, the Open list).
-export const SHARED_FILES = [PROTOCOL_FILE, '../web/js/fuzzy.js'];
+// The page's files, relative to the backend folder: what a daemon under the app serves (server.ts),
+// protocol.js among them, which the backend imports too (main.ts, router.ts, publisher.ts). Not
+// WEB_SKIP (the page checks' and unit tests' files, served from disk under app/dev.sh only), nor a
+// dot file. A missing folder is a state (a test's copy of the backend).
+export const WEB_DIR = '../web';
+const WEB_SKIP = ['dev', 'test'];
+const isPageFile = (f: string) => !WEB_SKIP.includes(f.split(sep)[0]) && !f.split(sep).some((p) => p.startsWith('.'));
 
-// The backend's code version: a SHA-256 over `src/**/*.ts`, `package-lock.json` and SHARED_FILES
+// The page's files as a daemon read them at start, keyed by their path in WEB_DIR.
+export type PageFiles = ReadonlyMap<string, Buffer>;
+
+// The backend's code version: a SHA-256 over `src/**/*.ts`, `package-lock.json` and the page files
 // (each path and its content's digest), its first 16 hex digits. null while a file can't be read (a
 // save or a checkout in progress). Async, and a file whose size, times and inode are unchanged since
-// the last reading isn't read again (NFR-06).
+// the last reading isn't read again (NFR-06). `snapshot` reads the page files anew and keeps their
+// bytes: the page a daemon serves is the one its code hash describes.
 export class CodeHasher {
   private dir: string;
   private io: HashIo;
@@ -71,22 +81,33 @@ export class CodeHasher {
     this.io = io;
   }
   async read(): Promise<string | null> {
+    return this.reading(null);
+  }
+  async snapshot(): Promise<{ code: string; page: PageFiles } | null> {
+    const page = new Map<string, Buffer>();
+    const code = await this.reading(page);
+    return code === null ? null : { code, page };
+  }
+  private async reading(keep: Map<string, Buffer> | null): Promise<string | null> {
     try {
-      const files = (await this.io.readdir(join(this.dir, 'src'))).filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
+      const src = (await this.io.readdir(join(this.dir, 'src'))).filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
+      let web: string[] = [];
+      try {
+        web = (await this.io.readdir(join(this.dir, WEB_DIR))).filter(isPageFile).sort();
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+      }
       const h = createHash('sha256');
       const next = new Map<string, { key: string; digest: string }>();
-      for (const f of [...files, 'package-lock.json', ...SHARED_FILES]) {
-        let st;
-        try {
-          st = await this.io.stat(join(this.dir, f));
-        } catch (e) {
-          if (!SHARED_FILES.includes(f) || (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
-          h.update(f).update('\0-\0'); // a backend without the page beside it (a test's copy)
-          continue;
-        }
+      for (const f of [...src, 'package-lock.json', ...web.map((w) => join(WEB_DIR, w))]) {
+        const st = await this.io.stat(join(this.dir, f));
         const key = `${st.size}:${st.mtimeMs}:${st.ctimeMs}:${st.ino}`;
         let e = this.seen.get(f);
-        if (!e || e.key !== key) e = { key, digest: createHash('sha256').update(await this.io.readFile(join(this.dir, f))).digest('hex') };
+        if (keep && f.startsWith(WEB_DIR + sep)) {
+          const body = await this.io.readFile(join(this.dir, f));
+          keep.set(f.slice(WEB_DIR.length + 1), body);
+          e = { key, digest: createHash('sha256').update(body).digest('hex') };
+        } else if (!e || e.key !== key) e = { key, digest: createHash('sha256').update(await this.io.readFile(join(this.dir, f))).digest('hex') };
         next.set(f, e);
         h.update(f).update('\0').update(e.digest).update('\0');
       }
@@ -214,6 +235,10 @@ export type Parts = {
 
 export type Daemon = {
   readonly code: string;
+  // Under the app: the page files of `code`, read at start, which the server serves. null under
+  // app/dev.sh (the server reads app/web on each request, so page edits show on reload) or when they
+  // couldn't be read.
+  readonly page: PageFiles | null;
   readonly state: DaemonState;
   readonly updatePending: boolean;
   // The server listens: daemon.json is written and the timers start.
@@ -229,8 +254,10 @@ export type Daemon = {
 export async function startDaemon(o: DaemonOptions): Promise<Daemon> {
   const { stateDir, log } = o;
   const hasher = new CodeHasher(o.backendDir);
-  // The code this daemon runs: its modules are loaded by now (daemon.json, /api/ping, updates).
-  const code = (await hasher.read()) ?? 'unknown';
+  // The code this daemon runs: its modules are loaded by now (daemon.json, /api/ping, updates). Under
+  // the app its page too: a checkout that moves on while work runs doesn't change the page it serves.
+  const start = o.parent ? await hasher.snapshot() : null;
+  const code = (o.parent ? start?.code : await hasher.read()) ?? 'unknown';
   const successorMs = o.successorMs ?? SUCCESSOR_MS;
   const updateReadMs = o.updateReadMs ?? UPDATE_READ_MS;
   const exitIdleMs = o.exitIdleMs ?? IDLE_EXIT_MS;
@@ -373,6 +400,7 @@ export async function startDaemon(o: DaemonOptions): Promise<Daemon> {
 
   return {
     code,
+    page: start?.page ?? null,
     get state() { return state; },
     get updatePending() { return updates.pending; },
     ready,

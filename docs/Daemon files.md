@@ -103,7 +103,7 @@ Code: `daemon-files.ts` `EXIT`; `daemon.ts` `startDaemon` (3, 1), `cannotListen`
 
 | State | Entered | What runs |
 |---|---|---|
-| starting | `startDaemon`: the code hash read, a handover's old pid gone, the lock taken, a stale daemon.json removed, the exit and crash handlers set | the modules are wired, the server starts |
+| starting | `startDaemon`: the code hash read (under the app with the page files it serves), a handover's old pid gone, the lock taken, a stale daemon.json removed, the exit and crash handlers set | the modules are wired, the server starts |
 | ready | `ready`: daemon.json written | the idle exit (30 min, checked each minute) and the update check (a reading every 10 s, a busy check each second); neither under `--no-parent` |
 | stopping | `stop(reason)` | the shutdown order below, then exit 0 |
 
@@ -115,7 +115,7 @@ Code: `daemon.ts` `startDaemon`; `main.ts` (the module list for `Parts`). Test: 
 
 ## Handover
 
-An update (the checkout's code hash changed, read twice the same, nothing running; the hash covers `app/backend/src/**/*.ts`, `package-lock.json` and `app/web/js/protocol.js`, which the backend imports too) or "Restart Backend Now…" (`POST /api/restart`) replaces the daemon without the shell starting one.
+An update (the checkout's code hash changed, read twice the same, nothing running; the hash covers `app/backend/src/**/*.ts`, `package-lock.json` and the page files: `app/web/**` but `dev/`, `test/` and dot files, `protocol.js` among them, which the backend imports too) or "Restart Backend Now…" (`POST /api/restart`) replaces the daemon without the shell starting one.
 
 | Step | Old daemon | New daemon | Shell |
 |---|---|---|---|
@@ -128,7 +128,7 @@ An update (the checkout's code hash changed, read twice the same, nothing runnin
 - The successor inherits the merged login environment (`SYNOPIA_LOGIN_ENV=1`) and does not ask the login shell again.
 - An action sent while the old daemon stops is acked `{ok: false}`; the page keeps it and says so.
 - A successor that loads but fails later is a lost daemon: the shell starts one after its 20 s wait.
-- The daemon serves the page files from disk, so while an old daemon waits for its work to end it serves the new page. A page whose protocol version differs from its daemon's (`hello.v`, or no `v` at all) shows "Updating…" in place of "Reconnecting…", retries with the reconnect backoff, and reloads once a daemon of its own version answers; a newer daemon reloads it at once, once per version. The version is checked before the schema, which may differ too. Code: `connection.js` `receive`, `otherVersion`. Test: `app/web/test/connection.test.js`.
+- Under the app the daemon serves the page files it read at start with its code hash, so a reload while an old daemon waits for its work to end gets the old page, not a newer one it can't talk to; a page edit alone is an update. Under `--no-parent` it reads `app/web` (with `dev/`) on each request, so page edits show on reload. Code: `daemon.ts` `CodeHasher.snapshot`, `server.ts` `page`. Test: `daemon.test.ts` "under the app a daemon serves the page it started with…". A page whose protocol version differs from its daemon's (`hello.v`, or no `v` at all) shows "Updating…" in place of "Reconnecting…", retries with the reconnect backoff, and reloads once a daemon of its own version answers; a newer daemon reloads it at once, once per version. The version is checked before the schema, which may differ too. Code: `connection.js` `receive`, `otherVersion`. Test: `app/web/test/connection.test.js`.
 - The 10 s reading and the 20 s wait have test-only flags, `--update-read-ms` and `--successor-ms`; a successor inherits them.
 - Code: `daemon.ts` `successorArgs`, `startSuccessor`, `awaitHandover`, `UpdateCheck.defer`, `startDaemon` (`handOver`, `stop`); `daemon-files.ts` `markHandover`, `clearStaleDaemonInfo`; `DaemonFiles.swift` `handedOver`; `Backend.swift` `lost`. Test: `handover.test.ts` (a new daemon that exits, one that stays silent, the deferred update), `daemon.test.ts` and `shell-contract.test.ts` (a restart's `handover`).
 

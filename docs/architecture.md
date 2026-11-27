@@ -38,9 +38,9 @@ Rules the design keeps:
 | Module | One responsibility |
 |---|---|
 | `main.ts` | Composition root: parse flags, build modules, wire callbacks, start. No message handling, no state. |
-| `daemon.ts` | Daemon lifecycle as one `startDaemon()` with explicit states (starting, ready, stopping): idle exit, update check, handover orchestration, shutdown order, crash handler that flushes state. Pure units `IdleExit`, `UpdateCheck`; async `CodeHasher`. |
+| `daemon.ts` | Daemon lifecycle as one `startDaemon()` with explicit states (starting, ready, stopping): idle exit, update check, handover orchestration, shutdown order, crash handler that flushes state. Pure units `IdleExit`, `UpdateCheck`; async `CodeHasher`, whose start snapshot holds the page files the daemon serves under the app (`Daemon.page`, the one copy). |
 | `daemon-files.ts` | Adapter for Synopia's own on-disk daemon contract: `daemon.json` (incl. the `handover` field), `backend.lock` (an `O_EXLOCK` kernel lock), `daemon.log` rotation, exit codes. Swift's `DaemonFiles.swift` is the only other reader. |
-| `server.ts` | HTTP and WebSocket transport: 127.0.0.1, token, Host/Origin, CSP, static files, 32 MB cap, per-client backpressure (drop `stream` first), error handlers. No routing logic. |
+| `server.ts` | HTTP and WebSocket transport: 127.0.0.1, token, Host/Origin, CSP, static files (the daemon's `page` snapshot, or `app/web` from disk under `--no-parent`), 32 MB cap, per-client backpressure (drop `stream` first), error handlers. No routing logic. |
 | `router.ts` | Page-to-server dispatch table keyed by `t`: validates each frame against `protocol.js`, resolves id aliases once, calls one module, answers `ack {id, ok, error}`; one try/catch per frame. |
 | `publisher.ts` | Server-to-page, the only frame sender: per-client subscriptions, meta diffs, `items` reset/upsert/prepend, `agents`, `background`, `pending`, `stream` (viewer only), `layout`, `restore`/`toast` to the acting client; one re-entrancy-guarded flush with a fixed frame order. |
 | `store.ts` | `state.json`: load, validate every entry, cap growing maps, atomic write at most 1/s, retry after a failed write, sync flush on any exit, `.bad-<ms>` on corrupt; `ReviewedMarks`. |
