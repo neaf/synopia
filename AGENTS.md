@@ -22,5 +22,4 @@ Rules for every change:
 Privacy:
 - Never commit `prototype/transcripts.js`, `spike/logs/` or anything from `~/.claude/sessions/` or `~/.claude/projects/`: they are real work transcripts. Fixtures and examples hold invented data only. Never read `~/.claude/sessions/*.key`.
 - Don't resume, fork or message a session that a live Claude Code process has open (check `~/.claude/sessions/<pid>.json`).
-
-Use the `frontend-design` skill for UI work, and keep handover notes in `.ai-notes/`.
+- The repo is public (github.com/neaf/synopia) and builds on any machine: no hard-coded folders, no scans of the home folder, and nothing from the author's day job in code, fixtures, docs or notes (employer, repos, colleagues, tickets, PR numbers, endpoints, session titles).
