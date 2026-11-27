@@ -432,6 +432,11 @@ class ScriptedSession implements QueryLike {
         void this.play(this.env.script.sessions[this.sid]?.onSend ?? this.env.script.onSend ?? [], false);
         return { answer: null };
       }
+      // A turn that ends normally writes its turn end before its result, as the SDK-driven CLI does
+      // (docs/Claude Code transcripts.md, "Turn ends": stop_hook_summary; an interrupted turn writes none).
+      if (m.type === 'result' && m.is_error !== true && !t.cancelled) {
+        this.env.append(this.sid, this.cwd, [{ type: 'system', subtype: 'stop_hook_summary', isSidechain: false, hookCount: 0, hookInfos: [], hookErrors: [], preventedContinuation: false, stopReason: '', hasOutput: false }]);
+      }
       if (m.type === 'system' && m.subtype === 'task_started' && typeof m.task_id === 'string' && typeof m.tool_use_id === 'string') this.tasks.set(m.task_id, m.tool_use_id);
       await this.out.deliver(m as unknown as SDKMessage);
     }

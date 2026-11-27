@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Transcripts } from '../src/transcripts.ts';
+import { Transcript } from '../src/transcript.ts';
 import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import { Writer } from '../src/writer.ts';
@@ -190,6 +191,50 @@ test('scripted: a message that starts a turn and bash mode\'s context go to the 
     assert.deepEqual([joined.uuid, joined.queueTranscriptOnly, joined.mergedSendUuids, joined.message.content],
       ['0d0d0d0d-0000-4000-8000-00000000000d', true, ['0d0d0d0d-0000-4000-8000-00000000000e'], '<bash-input>ls</bash-input>\n<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>']);
     assert.equal(meta(S1).status, 'idle');
+  } finally { stop(); }
+});
+
+// R5.13: a `!` command's end starts a turn. Its reply can land in the same millisecond as the command's
+// record, so only the turn end the SDK-driven CLI writes (stop_hook_summary) gives it a time (bang.mjs "Worked for").
+test('scripted: a turn a `!` command woke ends with stop_hook_summary, and the command\'s row has its time', async () => {
+  const { claudeDir, sessions, transcripts, meta, stop } = await setup('claude', (s) => {
+    s.sessions = { [S1]: { start: true, onSend: [
+      { append: [{ type: 'assistant', message: { id: 'msg-woke', role: 'assistant', content: [{ type: 'text', text: 'Seen it.' }] } }] },
+      { after: 30, message: { type: 'result', subtype: 'success', is_error: false, result: '' } },
+      { message: { type: 'system', subtype: 'session_state_changed', state: 'idle' } },
+    ] } };
+  });
+  try {
+    const file = path.join(claudeDir, 'projects', '-tmp-fixture', `${S1}.jsonl`);
+    const uuid = '0e0e0e0e-0000-4000-8000-00000000000e';
+    const proc = (sessions as unknown as { live: Map<string, { proc: { pushBang(t: string, u: string): void } }> }).live.get(S1)!.proc;
+    proc.pushBang('<bash-input>ls demo</bash-input>\n<bash-stdout>notes.md\n</bash-stdout><bash-stderr></bash-stderr>', uuid);
+    await sleep(80);
+    transcripts.poll();
+    assert.equal(meta(S1).status, 'idle');
+    const recs = fs.readFileSync(file, 'utf8').trim().split('\n').flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } }); // the fixture holds a broken line
+    const at = recs.findIndex((r) => r.uuid === uuid);
+    assert.deepEqual(recs.slice(at).map((r) => r.subtype ?? r.type), ['user', 'assistant', 'stop_hook_summary'], 'the turn end after the reply');
+    const t = new Transcript({ home: '/Users/fixture' });
+    t.pushAll(recs);
+    const row = t.get(uuid);
+    assert.equal(row?.k, 'bang');
+    assert.ok((row?.workedMs ?? 0) >= 25, `the turn's time is the command's: ${row?.workedMs}`);
+  } finally { stop(); }
+});
+
+test('scripted: an interrupted turn writes no turn end', async () => {
+  const { claudeDir, sessions, transcripts, stop } = await setup('claude', (s) => {
+    s.sessions = { [S1]: { start: true, onSend: [{ after: 5000, message: { type: 'result', subtype: 'success', is_error: false, result: '' } }] } };
+  });
+  try {
+    const file = path.join(claudeDir, 'projects', '-tmp-fixture', `${S1}.jsonl`);
+    assert.equal(sessions.get(S1)!.send('Wait for it.', [], '0f0f0f0f-0000-4000-8000-00000000000f').ok, true);
+    await sleep(10);
+    await sessions.get(S1)!.interrupt();
+    await sleep(20);
+    transcripts.poll();
+    assert.ok(!fs.readFileSync(file, 'utf8').includes('stop_hook_summary'));
   } finally { stop(); }
 });
 
