@@ -4,8 +4,10 @@
 // a late `send` or `view` with an old id reaches the session, and `rekey` moves the whole record.
 // One session's process, cards, bash mode and take-over are session.ts; the router reaches it through
 // `get(id)`, which follows the aliases.
-// The Open list comes from the SDK's listSessions(); opening a past session adds it to the open
-// list, and it resumes on its first message.
+// The Open list comes from the SDK's listSessions(), searched whole with the page's matcher
+// (app/web/js/fuzzy.js); opening a past session adds it to the open list, and it resumes on its first
+// message. The folder list (R3.3) is the known folders (folders.ts); a session whose folder is gone
+// continues in another folder as a fork (R3.11).
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -18,16 +20,23 @@ import { IDLE_MS, Session, UUID } from './session.ts';
 import type { SendResult, TerminalSource } from './session.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Publisher } from './publisher.ts';
-import { newSessionFolder } from './store.ts';
 import type { Store, OpenEntry } from './store.ts';
+import { Folders, knownFolders } from './folders.ts';
+import type { Known } from './folders.ts';
+import { rank } from '../../web/js/fuzzy.js';
 import { Layouts } from './layout.ts';
+import { toolServer } from './agent-tools.ts';
+import { seedTitle } from './writer.ts';
+import type { Host as ToolHost } from './agent-tools.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
-import { displayPath } from './paths.ts';
+import { displayPath, isDir } from './paths.ts';
 import { pruneUi, pruneUiTo, rekeyUi } from './ui-state.ts';
 
 export const RECENT = 50;
 export type Recent = { id: string; title: string; cwd: string; lastModified: number; terminal?: number };
+// The Open list's reply: the rows, and the totals its header and last line give (R3.2).
+export type RecentPage = { rows: Recent[]; total: number; folders: number; matched: number };
 export type { TerminalSource } from './session.ts';
 
 export type SessionsOptions = {
@@ -42,13 +51,23 @@ export type SessionsOptions = {
   idleMs?: number;
   // The writer: a session's turn ended, and a stored session was opened.
   onTurnEnded?: (sid: string) => void;
+  items?: { toolOp(sid: string, input: Record<string, unknown>, cwd: string): Promise<{ ok: boolean; text: string }> }; // open_items (open-items.ts)
   onOpened?: (sid: string) => void;
   // A card waiting on you appeared or ended (ours, or one another process asks): the Now line follows.
   onWaiting?: (sid: string) => void;
   // A running process pushed a new command list (commands_changed).
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
+  // A session's model sign-in expired, or works again (creds.ts); a session closed or took another id.
+  onSignedOut?: (sid: string, cwd: string, signedOut: boolean) => void;
+  onGone?: (sid: string) => void;
+  // A session closed, or its id changed (open-items.ts moves or drops its `session:` list).
+  onClosed?: (sid: string) => void;
+  onRekeyed?: (from: string, to: string) => void;
   // The terminals that hold sessions (cli-terminals.ts); none without it.
   terminals?: TerminalSource;
+  folders?: Folders; // the disk side of the folder list (tests count its reads); else the real one
+  // Folders taken as there without a stat: the scripted SDK's made-up home (dev and checks only).
+  pretendFolder?: (abs: string) => boolean;
 };
 
 const gone: SendResult = { ok: false, error: "That session isn't open any more." };
@@ -64,8 +83,10 @@ export class Sessions {
   private live = new Map<string, Session>();
   private aliases = new Map<string, string>();
   private recent = new Map<string, Recent>(); // the last Open list, for openSession's folder
+  private idWaits = new Map<string, ((id: string) => void)[]>(); // a new session's id, awaited by start_session
   // The sidebar's layout (layout.ts): the open list gives it its ids.
   readonly layout: Layouts;
+  readonly folders: Folders;
 
   constructor(opts: SessionsOptions) {
     this.opts = opts;
@@ -75,6 +96,7 @@ export class Sessions {
     this.log = opts.log ?? nullLog;
     this.home = opts.home ?? os.homedir();
     this.now = opts.now ?? Date.now;
+    this.folders = opts.folders ?? new Folders(this.home, undefined, opts.pretendFolder);
     this.layout = new Layouts({ store: this.store, entries: () => this.layoutEntries(), publish: (l) => this.publisher.layout(l) });
   }
 
@@ -127,22 +149,42 @@ export class Sessions {
     return { running: this.running(), background };
   }
 
-  // An empty session in newSessionFolder's folder. It isn't stored until system/init gives its id.
-  newSession(): string {
+  // An empty session in `cwd` (absolute, or `~`-relative). It isn't stored until system/init gives its id.
+  // `title`: its first title (a session that start_session started, R3.15), stored as written text
+  // the writer replaces after a turn; never a custom-title record.
+  newSession(cwd: string, title = ''): string {
     const id = `new-${randomUUID()}`;
-    this.add(id, this.expand(newSessionFolder(this.store.state)), true, null);
+    if (title) seedTitle(this.store, id, title, this.now());
+    this.add(id, this.expand(cwd), true, null);
     this.layout.sync(); // last under Not in a group
     this.log('sessions.new', { sid: id });
     return id;
   }
 
-  // The Open list: past sessions from listSessions(), newest first, without the open ones,
-  // matching the filter on title or folder, at most RECENT. A session without a folder can't
-  // resume, so it isn't listed.
-  async listRecent(filter = ''): Promise<Recent[]> {
-    const q = filter.trim().toLowerCase();
+  // A new session in a folder the page names (R3.3): made first with `create` (mkdir -p, folders.ts), and
+  // refused when it isn't there.
+  async newSessionIn(folder: string, create = false): Promise<SendResult> {
+    const r = await this.folders.ready(folder, create);
+    if ('error' in r) return { ok: false, error: r.error };
+    if (create) this.log('folders.created', {});
+    return { ok: true, sid: this.newSession(r.abs) };
+  }
+
+  // The folder list (R3.3): every folder a known session ran in, Synopia's and listSessions()'s, newest
+  // first. No folder is read for it (R3.13).
+  async listFolders(): Promise<Known[]> {
+    const listed = await (this.opts.sdk ?? realSdk).listSessions();
+    return knownFolders(this.store.state.open, listed, this.home);
+  }
+
+  // The Open list: past sessions from listSessions(), without the open ones. No filter: the newest
+  // RECENT. A filter: every past session ranked by the matcher on "title folder", a tie to the one with
+  // more of the match in its title, then the newer; at most RECENT. With the totals (R3.2). A session
+  // without a folder can't resume, so it isn't listed.
+  async searchRecent(filter = ''): Promise<RecentPage> {
     const all = await (this.opts.sdk ?? realSdk).listSessions();
-    const out: Recent[] = [];
+    const past: Recent[] = [];
+    const folders = new Set<string>();
     for (const s of [...all].sort((x, y) => y.lastModified - x.lastModified)) {
       // Only an id that is open itself: after a /clear the old id is an alias of the new one, but
       // its conversation is a past session of its own (R3.2).
@@ -151,13 +193,34 @@ export class Sessions {
       // Open list names it as the sidebar did.
       const written = this.store.state.written[s.sessionId]?.title;
       const title = (!s.customTitle?.trim() && written?.trim()) || titleOf(s);
-      if (q && !title.toLowerCase().includes(q) && !this.tilde(s.cwd).toLowerCase().includes(q) && !s.cwd.toLowerCase().includes(q)) continue;
-      const term = this.opts.terminals?.holder(s.sessionId);
-      out.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified, ...(term ? { terminal: term.pid } : {}) });
-      if (out.length === RECENT) break;
+      past.push({ id: s.sessionId, title, cwd: s.cwd, lastModified: s.lastModified });
+      folders.add(s.cwd);
     }
+    const hits = rank(past, filter, (r) => `${r.title} ${this.tilde(r.cwd)}`, (r) => [...r.title].length);
+    const out = hits.slice(0, RECENT).map((h) => {
+      const term = this.opts.terminals?.holder(h.row.id);
+      return { ...h.row, ...(term ? { terminal: term.pid } : {}) };
+    });
     for (const r of out) this.recent.set(r.id, r);
-    return out.map((r) => ({ ...r, cwd: this.tilde(r.cwd) }));
+    return { rows: out.map((r) => ({ ...r, cwd: this.tilde(r.cwd) })), total: past.length, folders: folders.size, matched: hits.length };
+  }
+
+  async listRecent(filter = ''): Promise<Recent[]> {
+    return (await this.searchRecent(filter)).rows;
+  }
+
+  // R3.11: a session whose folder is gone goes on in another folder, as a fork with a new id; the old id
+  // stays a past session. The folder is made first with `create`.
+  async continueSession(sid: string, folder: string, create = false): Promise<SendResult> {
+    const s = this.get(sid);
+    if (!s) return gone;
+    if (!s.checkFolder()) return { ok: false, error: 'This session\'s folder is still there.' };
+    const r = await this.folders.ready(folder, create);
+    if ('error' in r) return { ok: false, error: r.error };
+    if (this.get(sid) !== s) return gone; // closed meanwhile
+    const res = s.continueIn(r.abs);
+    this.log('sessions.continue', { sid: s.id, ok: res.ok, created: create });
+    return res;
   }
 
   // Adds a past session to the open list (or reopens a closed one, which keeps its place in the
@@ -186,7 +249,8 @@ export class Sessions {
       st.open.push({ id, cwd: r.cwd, openedAt: this.now(), closedAt: null });
     }
     this.store.changed();
-    this.add(id, r.cwd, false, restored(st.status[id]) ?? { status: 'idle', at: r.lastModified });
+    const s = this.add(id, r.cwd, false, restored(st.status[id]) ?? { status: 'idle', at: r.lastModified });
+    s.checkFolder(); // the row you chose: gone or not (R3.11)
     this.layout.sync(); // a reopened one is back in its place
     this.log('sessions.open', { sid: id, reopened: Boolean(e) });
     return { ok: true, sid: id };
@@ -201,6 +265,7 @@ export class Sessions {
     if (!s) return gone;
     const running = s.close();
     this.live.delete(id);
+    if (s.placeholder && id in this.store.state.written) { delete this.store.state.written[id]; this.store.changed(); }
     const e = this.store.state.open.find((x) => x.id === id);
     if (e) {
       e.closedAt = this.now();
@@ -209,6 +274,8 @@ export class Sessions {
     pruneUi(this.store, id); // its scroll, draft and the rest of the page's state for it (R3.9)
     this.layout.sync(); // a placeholder's id goes; a stored one keeps its place, hidden
     this.transcripts.close(id); // the pages get `removed` (publisher.ts)
+    this.opts.onGone?.(id);
+    this.opts.onClosed?.(id);
     this.log('sessions.close', { sid: id, running });
     return { ok: true, sid: id };
   }
@@ -220,6 +287,16 @@ export class Sessions {
   }
 
   // From the transcripts: what runs by the transcript changed, and an assistant record landed.
+  // The folder's credential refresh runs, or no longer, or succeeded (creds.ts).
+  refreshing(sids: string[], on: boolean): void {
+    for (const sid of sids) this.live.get(sid)?.status.setRefreshing(on);
+  }
+
+  // Succeeded: each of them whose last turn failed on the credentials resumes once (session.ts).
+  refreshed(sids: string[]): void {
+    for (const sid of sids) this.live.get(sid)?.credentialsRefreshed();
+  }
+
   runningChanged(sid: string, r: Running): void {
     this.live.get(sid)?.runningChanged(r);
   }
@@ -227,6 +304,41 @@ export class Sessions {
   landed(sid: string, messageId: string, types: string[]): void {
     this.live.get(sid)?.landed(messageId, types);
   }
+
+  // ---------- Synopia's tools for agents (agent-tools.ts) ----------
+
+  // What the tools reach: the calling session, a new session with its first message, its place
+  // under the caller (layout.ts), the pages, and the new session's id once its init gives it.
+  readonly toolHost: ToolHost = {
+    caller: (id) => {
+      const s = this.get(id);
+      if (!s || s.placeholder || !s.hasProcess) return null;
+      return { id: s.id, cwd: s.cwd, title: this.publisher.meta(s.id)?.title || 'New session', gone: () => s.checkFolder() };
+    },
+    newSession: (cwd, prompt, title) => {
+      const id = this.newSession(cwd, title);
+      const r = this.live.get(id)?.send(prompt) ?? gone;
+      if (!r.ok) { this.close(id); return r; }
+      this.log('tools.startSession', { sid: id });
+      return { ok: true, sid: id };
+    },
+    placeUnder: (sid, caller, group) => this.layout.placeUnder(this.resolve(sid), this.resolve(caller), group),
+    started: (sid, caller) => this.publisher.started(this.resolve(sid), this.resolve(caller)),
+    idOf: (sid, ms) => {
+      if (this.resolve(sid) !== sid) return Promise.resolve(this.resolve(sid));
+      return new Promise((done) => {
+        const t = setTimeout(() => finish(), ms);
+        t.unref?.();
+        const finish = () => { clearTimeout(t); done(this.resolve(sid)); };
+        this.idWaits.set(sid, [...(this.idWaits.get(sid) ?? []), finish]);
+      });
+    },
+    tilde: (p) => this.tilde(p),
+    items: (caller, input) => {
+      const s = this.get(caller);
+      return this.opts.items?.toolOp(this.resolve(caller), input, s?.cwd ?? '') ?? Promise.resolve({ ok: false, text: 'Synopia can\'t keep open items here.' });
+    },
+  };
 
   // ---------- the set ----------
 
@@ -240,8 +352,11 @@ export class Sessions {
     const s = new Session(id, cwd, placeholder, init, {
       store: this.store, transcripts: this.transcripts, publisher: this.publisher, log: this.log, sdk: this.opts.sdk ?? realSdk, terminals: this.opts.terminals ?? null,
       now: this.now, timer: this.opts.timer, idleMs: this.opts.idleMs ?? IDLE_MS, tilde: (p) => this.tilde(p),
+      isDir: (p) => Boolean(this.opts.pretendFolder?.(p)) || isDir(p),
       onTurnEnded: this.opts.onTurnEnded, onWaiting: this.opts.onWaiting, onCommands: this.opts.onCommands,
+      onSignedOut: (x, on) => this.opts.onSignedOut?.(x.id, x.cwd, on),
       rekey: (x, newId, why) => this.rekey(x, newId, why),
+      tools: (caller) => toolServer(this.toolHost, caller),
     });
     this.live.set(id, s);
     s.open();
@@ -261,6 +376,7 @@ export class Sessions {
       return;
     }
     const st = this.store.state;
+    this.opts.onGone?.(old);
     this.aliases.set(old, newId);
     this.live.delete(old);
     s.id = newId;
@@ -270,8 +386,9 @@ export class Sessions {
       st.open.push({ id: newId, cwd: s.cwd, openedAt: this.now(), closedAt: null });
       if (s.choice) st.models[newId] = s.choice;
       s.choice = null;
+      if (old in st.written) { st.written[newId] = st.written[old]; delete st.written[old]; } // its first title (R3.15)
     } else {
-      for (const e of st.open) if (e.id === old) e.id = newId;
+      for (const e of st.open) if (e.id === old) { e.id = newId; e.cwd = s.cwd; } // a fork into another folder moves it (R3.11)
       for (const k of ['models', 'rules', 'status', 'ended', 'endedFailed'] as const) {
         const rec = st[k] as Record<string, unknown>;
         if (old in rec) { rec[newId] = rec[old]; delete rec[old]; }
@@ -282,9 +399,13 @@ export class Sessions {
     this.layout.rename(old, newId); // before the `session` frame with `replaces`, which carries it
     st.status[newId] = { status: s.status.status, at: s.status.at };
     rekeyUi(this.store, old, newId); // the page's state for it moves too (R3.9)
+    this.opts.onRekeyed?.(old, newId);
     this.store.changed();
     this.transcripts.rekey(old, newId); // the reading starts again; the pages follow (publisher.ts)
     this.log('sessions.swap', { from: old, to: newId, why });
+    const waits = this.idWaits.get(old);
+    this.idWaits.delete(old);
+    for (const w of waits ?? []) w(newId);
   }
 
   private expand(p: string): string {

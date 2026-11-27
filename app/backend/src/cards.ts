@@ -8,6 +8,7 @@ import type { CanUseTool, PermissionResult, PermissionUpdate } from '@anthropic-
 import { planApproval } from './sdk.ts';
 import { capRecord, ANSWERS_MAX, PLANS_MAX } from './store.ts';
 import type { Store } from './store.ts';
+import type { CardText } from './agent-tools.ts';
 
 export type Kind = 'question' | 'permission' | 'plan';
 export type PendingRequest = { id: string; kind: Kind; since: number; [k: string]: unknown };
@@ -51,6 +52,10 @@ export type CardsHooks = {
   // messages held behind it may go. Not called from abortAll.
   drained: () => void;
   now: () => number;
+  // The card's words for a call of one of Synopia's own tools (agent-tools.ts cardOf), else null.
+  own?: (toolName: string, input: Record<string, unknown>) => CardText | null;
+  // A call of one of Synopia's own tools answered with no card (agent-tools.ts answerOf, FR-ITEM-12), else null.
+  auto?: (toolName: string, input: Record<string, unknown>, agentID: string | undefined) => PermissionResult | null;
 };
 
 export class Cards {
@@ -69,7 +74,15 @@ export class Cards {
   // canUseTool: never returns null; the promise settles when you answer or the signal aborts.
   park(toolName: string, input: Record<string, unknown>, options: Options): Promise<PermissionResult> {
     const o = options as Options & Record<string, unknown>;
-    const suggestions = (Array.isArray(options.suggestions) ? options.suggestions : []) as PermissionUpdate[];
+    const now = this.hooks.auto?.(toolName, input, options.agentID) ?? null; // open_items: no card
+    if (now) return Promise.resolve(now);
+    // Synopia's own tools always ask and the CLI suggests no rule for them (docs/Agent SDK.md,
+    // "Synopia's tools for agents"): their "Always allow" is a session rule kept here, and a call
+    // it covers is allowed with no card.
+    const own = this.hooks.own?.(toolName, input) ?? null;
+    if (own && this.rules()?.includes(toolName)) return Promise.resolve({ behavior: 'allow', updatedInput: input });
+    const suggestions = own ? [{ type: 'addRules', rules: [{ toolName }], behavior: 'allow', destination: 'session' } as PermissionUpdate]
+      : (Array.isArray(options.suggestions) ? options.suggestions : []) as PermissionUpdate[];
     const ctx = this.hooks.context();
     const alwaysAllowed = suggestions.length > 0 && !options.suppressAlwaysAllowRule;
     const request: PendingRequest = {
@@ -87,7 +100,8 @@ export class Cards {
       defaultToNo: options.defaultToNo === true,
       suppressAlwaysAllowRule: options.suppressAlwaysAllowRule === true,
       suggestions,
-      always: alwaysAllowed ? alwaysText(suggestions, this.hooks.tilde) : null,
+      always: alwaysAllowed ? (own ? own.always : alwaysText(suggestions, this.hooks.tilde)) : null,
+      ...(own ? { own: { header: own.header, wants: own.wants, text: own.text, once: own.once } } : {}),
     };
     const asked: Asked = { toolName, input, suggestions, alwaysAllowed, modeBefore: ctx.modeBefore };
     return new Promise<PermissionResult>((resolve) => {

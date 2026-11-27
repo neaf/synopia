@@ -11,7 +11,9 @@
 import { randomUUID } from 'node:crypto';
 import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess, imageError, imagesIn, userContent } from './sdk.ts';
-import type { Content, Image, InterruptResult, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
+import type { Content, Image, InterruptResult, McpControl, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
+import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import { cardOf, answerOf } from './agent-tools.ts';
 import { SessionStatus, queuesBehind } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
@@ -20,12 +22,13 @@ import { Cards } from './cards.ts';
 import type { CardAnswer } from './cards.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Publisher } from './publisher.ts';
-import type { Item } from './transcript.ts';
+import type { ImageRef, Item } from './transcript.ts';
+import { imageSize } from './transcript.ts';
 import type { Client } from './server.ts';
 import type { Store } from './store.ts';
 import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
-import { isDir } from './paths.ts';
+import { movedContext, RESUME_TEXT } from './claude-jsonl.ts';
 import type { BangRun } from './bang.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
@@ -38,27 +41,64 @@ export type By = Client | null;
 
 // A message you sent while a turn ran, shown pending at the end of the transcript until it lands.
 // `landed`: the id of the prompt item it became; the page shows that item instead once it has it.
-// `queued`: sent during a turn.
-export type QueuedMessage = { id: string; text: string; images: number; landed?: string; queued?: boolean };
-type Outbox = QueuedMessage & { at: number };
+// `queued`: sent during a turn. `imgs`: its pasted images as the page loads them (`GET /api/image`
+// with ref `queued:<id>:<n>`, queuedImage), in the order the message sends them, so they show as a
+// posted prompt's do (R5.5, R5.13).
+export type QueuedMessage = { id: string; text: string; images: number; imgs?: ImageRef[]; landed?: string; queued?: boolean };
+type Outbox = QueuedMessage & { at: number; pics: Image[] };
 // A queued message that hasn't landed by this long after the turn stopped running is dropped (it
 // landed in a form the match missed, or it is gone).
 export const OUTBOX_GRACE_MS = 5000;
 // Bash mode (R5.13): the `!` command that runs, or ran, shown at the end of the transcript until
 // its records land. `landed`: the id of the bash item it became; the page shows that item instead.
 export type ShownBang = BangRun & { landed?: string };
+// The `!` runs of this session since the daemon started, newest last, as the background panel lists them
+// (R7.1, 2026-11-26): what ran, when and how it ended, without the output (bangOutput has it).
+// `waiting`, `quiet`, `cardAt`: bang.ts BangRun's (it waits for input, it may, when its card shows).
+export type BangMeta = { id: string; cmd: string; at: number; end: number | null; running: boolean; exit: number | null; interrupted: boolean; waiting: boolean; quiet: boolean; cardAt: number | null; landed?: string };
+const BANGS_KEPT = 10;
 
 // The process side of a session (the header comment's states). status.ts SessionState is what the page shows.
 export type Phase = 'idle' | 'starting' | 'running' | 'ending' | 'yielded' | 'takingOver';
 export type SendResult = { ok: true; sid: string } | { ok: false; error: string };
 
-// A message for the process: your prompt (a turn), or bash mode's context (`shouldQuery: false`, no
-// turn). `inBox`: the page still holds the prompt (a take-over), so a refusal leaves it there.
+// f, f (R9.8): how "send queued messages now" changes the turn, as the CLI's Ctrl+Enter does
+// (docs/Agent SDK.md, "Sending queued messages now", live runs PR-1 and PR-2). `queued`: messages in
+// the CLI's queue (pushed during the turn, not yet taken in); `fg`: the main conversation's running
+// foreground Bash and Agent steps, `ready` once their task_started came.
+//   send        the turn is over: the draft goes as any message
+//   now         nothing queued, a draft: it goes as `priority: 'now'` with a human origin
+//   background  messages queued, foreground main steps: backgroundTasks(id) for each, then the draft
+//   wait        messages queued, a main step not yet registered as a task: wait for it, then again
+//   interrupt   messages queued, Claude only writing or running a step that can't move: the plain
+//               interrupt (the queue stays and runs next), then the draft
+//   none        nothing it can do, and why: a card waits (it comes first), no process of ours, nothing queued
+// Never 'now' while anything is queued: it would overtake the queue.
+export type NowRoute = { kind: 'send' | 'now' | 'interrupt' } | { kind: 'background' | 'wait'; ids: string[] } | { kind: 'none'; error: string };
+export const NOTHING_QUEUED = 'Nothing is queued any more.';
+export function nowRoute(o: { driven: boolean; working: boolean; cards: number; queued: number; draft: boolean; fg: { ready: string[]; early: string[] } }): NowRoute {
+  if (!o.driven) return { kind: 'none', error: 'Synopia isn\'t running this session\'s turn.' };
+  if (o.cards) return { kind: 'none', error: 'Claude is waiting for your answer above. Answer it first.' };
+  if (!o.working) return o.draft ? { kind: 'send' } : { kind: 'none', error: NOTHING_QUEUED };
+  if (!o.queued) return o.draft ? { kind: 'now' } : { kind: 'none', error: NOTHING_QUEUED };
+  if (o.fg.early.length) return { kind: 'wait', ids: o.fg.early };
+  if (o.fg.ready.length) return { kind: 'background', ids: o.fg.ready };
+  return { kind: 'interrupt' };
+}
+// How long f, f waits for a just-started step's task_started (2 to 5 s for Bash, live run PR-2), and how often it looks.
+export const NOW_WAIT_MS = 8000;
+const NOW_POLL_MS = 100;
+
+// A message for the process: your prompt (a turn), a `!` command's end (a turn too, R5.13,
+// 2026-11-27: sdk.ts pushBang), or context (`shouldQuery: false`, no turn). `inBox`: the page
+// still holds the prompt (a take-over), so a refusal leaves it there.
 // `by`: the page that sent it, which gets it back in its box if it can't go.
-// `images`: the pasted images the content carries, which go back with the text.
-type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By };
+// `images`: the pasted images the content carries, which go back with the text. `now`: f, f's draft
+// with nothing queued, pushed as `priority: 'now'` (R9.8).
+type Prompt = { kind: 'prompt'; content: Content; uuid: string; text: string; images: Image[]; inBox?: boolean; by?: By; now?: boolean };
 type Context = { kind: 'context'; text: string; uuid: string };
-type Input = Prompt | Context;
+type BangEnd = { kind: 'bang'; text: string; uuid: string };
+type Input = Prompt | Context | BangEnd;
 
 // The model and effort you chose (state.json `models`). `default` is the CLI's default model; an
 // effort of null or missing is the model's default effort.
@@ -93,16 +133,23 @@ export type SessionDeps = {
   timer?: Timer;
   idleMs: number;
   tilde: (p: string) => string;
+  isDir: (abs: string) => boolean; // its folder is there (paths.ts isDir; the scripted SDK pretends its home's are)
   onTurnEnded?: (sid: string) => void;
   onWaiting?: (sid: string) => void;
   onCommands?: (sid: string, commands: SlashCommand[]) => void;
+  // Its sign-in expired, or works again (status.ts signed out): creds.ts refreshes the folder's credentials.
+  onSignedOut?: (s: Session, signedOut: boolean) => void;
   // The process reports another id (init of a new session, a reset): sessions.ts moves the record.
   rekey: (s: Session, newId: string, why: 'init' | 'reset' | 'moved') => void;
+  // Synopia's tools for agents (agent-tools.ts): a fresh server for each process, given the
+  // session's id as it is when a tool is called.
+  tools?: (caller: () => string) => Record<string, McpSdkServerConfigWithInstance>;
 };
 
 export class Session {
   id: string;
-  readonly cwd: string; // absolute
+  cwd: string; // absolute; another only when it continues in another folder (continueIn)
+  gone = false; // its folder was checked and isn't there (R3.11)
   placeholder: boolean;
   choice: ModelChoice | null = null; // a placeholder's model and effort, stored once it has its id
   readonly status: SessionStatus;
@@ -112,6 +159,7 @@ export class Session {
   private proc: SessionProcess | null = null;
   private queue: Input[] = []; // sent while it starts or ends: the next process takes them, in order
   private held: Prompt[] = []; // sent while a card waits
+  private heldBangs: BangEnd[] = []; // `!` commands that ended while a card waits: they go with the held messages
   private takeover: Prompt | null = null; // your message that takes it back from a terminal
   private terminal: Terminal | null = null; // the terminal's CLI that holds it (read-only while set)
   private stream = new StreamPreview();
@@ -120,13 +168,17 @@ export class Session {
   private interrupting = false; // an interrupt is on its way: held messages go back to the box
   private contextOnly = false; // the process took only bash mode's context: its init starts no turn
   private bang: Bang | null = null; // the `!` command that runs or ran last: one at a time
+  private wasSignedOut = false; // what onSignedOut last said
+  private resumed = false; // the latest turn is Synopia's resume after a credential refresh (credentialsRefreshed)
   private ownEnd = 0; // when a process of ours last ended (0: none yet), for feedRunning
   private askId = ''; // the tool use id of the question or plan another process asks (R6.8)
   private closed = false;
   private outbox: Outbox[] = []; // the messages the page shows queued (R5.5), until they land
   private outboxTimer: NodeJS.Timeout | null = null;
   private shownBang: ShownBang | null = null; // the `!` run the page shows, until its records land
+  private bangs: ShownBang[] = []; // the runs the panel lists (the last BANGS_KEPT), the shown one last while it is there
   private bangBy: By = null; // the page that ran it
+  private forkNext = false; // the next process forks it into `cwd` (continueIn)
 
   constructor(id: string, cwd: string, placeholder: boolean, init: StatusEntry | null, d: SessionDeps) {
     this.id = id;
@@ -142,6 +194,8 @@ export class Session {
       count: (n) => this.status.setPending(n),
       drained: () => this.releaseHeld(),
       context: () => ({ cwd: d.tilde(this.cwd), modeBefore: d.transcripts.facts(this.id)?.modeBeforePlan || 'auto' }),
+      own: (name, input) => cardOf(name, input, d.tilde(this.cwd)), // Synopia's own tools word their card
+      auto: answerOf, // and open_items has none (FR-ITEM-12)
       tilde: d.tilde,
       now: d.now,
     });
@@ -155,7 +209,7 @@ export class Session {
   open(): void {
     const { transcripts, publisher, store } = this.d;
     transcripts.open(this.id, { cwd: this.cwd });
-    publisher.attach(this.id, { outbox: () => this.shownOutbox(), bang: () => this.shownBang, landed: (items) => this.landedItems(items) });
+    publisher.attach(this.id, { outbox: () => this.shownOutbox(), bang: () => this.shownBang, bangs: () => this.bangList(), bangOutput: (id) => this.bangOutput(id), landed: (items) => this.landedItems(items) });
     this.terminal = this.placeholder ? null : this.d.terminals?.holder(this.id) ?? null;
     if (this.terminal) {
       this.state = 'yielded';
@@ -190,20 +244,40 @@ export class Session {
     return this.proc?.menuSource() ?? null;
   }
 
+  // The MCP control calls of its running process (mcp.ts), else null.
+  mcpControl(): McpControl | null {
+    return this.proc?.mcpControl() ?? null;
+  }
+
   // ---------- sending ----------
+
+  // The folder's credential refresh command succeeded (creds.ts, R8.2, 2026-11-26). A turn still retrying
+  // takes the new credentials at its next retry. A latest main turn that already failed on them is resumed
+  // once, with Synopia's fixed message (claude-jsonl.ts RESUME_TEXT) through the normal send path, never
+  // your prompt again: only with no message of yours since and nothing queued, held or waiting on a card,
+  // and not when that turn was itself the resume (no loop: it stays needs you, sign-in expired).
+  credentialsRefreshed(): void {
+    const failed = this.status.credentialsRefreshed();
+    if (!failed || this.resumed || this.closed || this.gone || this.terminalHolds) return;
+    if (this.cards.size || this.held.length || this.queue.length || this.status.queuedCount || this.outbox.some((o) => !o.landed)) return;
+    const r = this.send(RESUME_TEXT);
+    this.resumed = r.ok;
+    this.d.log('session.resume', { sid: this.id, ok: r.ok });
+  }
 
   // `uuid`: the page's id for the message; the page shows it at once (queued while a turn runs).
   // `by`: the page that sent it.
-  send(text: string, images: Image[] = [], uuid?: string, by: By = null): SendResult {
+  send(text: string, images: Image[] = [], uuid?: string, by: By = null, now = false): SendResult {
     const bad = imageError(images);
     if (bad) return { ok: false, error: bad };
     const content: Content = userContent(text, images); // the text, then the images whose tags it holds
     if (typeof content === 'string' && !text.trim()) return { ok: false, error: 'Nothing to send.' };
-    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, images: imagesIn(content, images), by };
+    const m: Prompt = { kind: 'prompt', content, uuid: uuid && UUID.test(uuid) ? uuid : randomUUID(), text, images: imagesIn(content, images), by, ...(now ? { now } : {}) };
     if (this.terminal) return this.queueTakeover(m);
     const queues = queuesBehind(this.status.status); // a turn runs: it shows queued until it lands (R5.5)
+    this.resumed = false; // a message of yours: a later credential failure may resume again
     const r = this.deliver(m);
-    if (r.ok && uuid && !this.terminalHolds && !this.held.includes(m)) this.sent(uuid, text, images.length, queues);
+    if (r.ok && uuid && !this.terminalHolds && !this.held.includes(m)) this.sent(uuid, text, images.length, sentImages(content), queues);
     return r;
   }
 
@@ -228,7 +302,7 @@ export class Session {
   // The one way into the process. Starting or ending: kept for the next process, in order.
   private input(list: Input[]): void {
     if (!list.length) return;
-    const prompt = list.some((m) => m.kind === 'prompt');
+    const prompt = list.some((m) => m.kind !== 'context'); // a turn: yours, or a `!` command's end
     if (this.state === 'starting' || this.state === 'ending') {
       this.queue.push(...list);
       if (prompt && this.state === 'ending') { this.clearIdle(); this.status.turnStarted(); } // shown working meanwhile
@@ -238,7 +312,8 @@ export class Session {
     const proc = this.proc;
     if (!proc) return;
     for (const m of list) {
-      if (m.kind === 'prompt') proc.push(m.content, m.uuid, m.images);
+      if (m.kind === 'prompt') proc.push(m.content, m.uuid, m.images, m.now);
+      else if (m.kind === 'bang') proc.pushBang(m.text, m.uuid);
       else proc.pushQuiet(m.text, m.uuid);
     }
     if (prompt) {
@@ -251,20 +326,30 @@ export class Session {
 
   // No card waits any more, or the turn ended: the messages held behind the cards go to Claude.
   private releaseHeld(): void {
-    if (this.cards.size || this.interrupting || !this.proc || this.proc.done || this.state !== 'running' || !this.held.length) return;
-    const held = this.held.splice(0);
+    if (this.cards.size || this.interrupting || !this.proc || this.proc.done || this.state !== 'running' || !(this.held.length || this.heldBangs.length)) return;
+    const held: Input[] = [...this.heldBangs.splice(0), ...this.held.splice(0)];
     this.d.publisher.setHeld(this.id, []);
     this.input(held);
     this.d.log('sessions.released', { sid: this.id, n: held.length });
   }
 
   // The turn ended with requests or held messages left (an interrupt, the process ending): the
-  // requests end and the held messages go back to the message box.
+  // requests end and the held messages go back to the message box. A held `!` command's end goes to
+  // Claude as context with no turn, as one the interrupt cancelled (quietBangs).
   private endCards(): void {
     this.cards.abortAll();
     const held = this.held.splice(0);
     if (held.length) this.d.publisher.setHeld(this.id, []);
     this.giveBack(held);
+    this.quietBangs(this.heldBangs.splice(0));
+  }
+
+  // `!` command ends that won't run as a turn (an interrupt cancelled them, or the turn ended on the card
+  // they waited behind): Claude still gets them, with no turn, and sees them with your next message.
+  private quietBangs(list: { text: string; uuid: string }[]): void {
+    if (!list.length) return;
+    this.input(list.map((b) => ({ kind: 'context', text: b.text, uuid: randomUUID() })));
+    this.d.log('bang.quiet', { sid: this.id, n: list.length });
   }
 
   // Prompts that didn't go, back to the box of the page that sent each (and out of the outbox).
@@ -310,15 +395,15 @@ export class Session {
 
   // ---------- bash mode (R5.13): `!` runs a shell command in the session's folder ----------
   // The output streams to the page (setBang) and, once the command ends, the command and its
-  // output go to the session as context that starts no turn (bang.ts). Not in a session a terminal
+  // output go to the session as a turn, queued behind a running one (shareBang). Not in a session a terminal
   // holds (one writer), and one command at a time.
   runBang(cmd: string, uuid?: string, by: By = null): SendResult {
     if (!cmd.trim()) return { ok: false, error: 'Type a shell command after the !.' };
     if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}). Run the command there.` };
     // one writer: a turn another process runs would get the command's context in the middle of it
     if (!this.proc && this.status.externalTurn) return { ok: false, error: 'Another Claude Code process is running this session\'s turn. Run the command once it ends.' };
-    if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or Esc, Esc to end it.' };
-    if (!isDir(this.cwd)) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
+    if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or stop it in its shell view.' };
+    if (this.checkFolder() || !this.cwd) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     const bang = new Bang({
       id, cmd, cwd: this.cwd, now: this.d.now,
@@ -333,13 +418,44 @@ export class Session {
     });
     this.bang = bang;
     this.bangBy = by;
+    this.bangs = [...this.bangs, bang.run].slice(-BANGS_KEPT);
     this.d.log('bang.start', { sid: this.id });
     this.setBang(bang.run);
     return { ok: true, sid: this.id };
   }
 
-  // The command and its output go to Claude in the CLI's format, as two user messages that start
-  // no turn: into the running process, after the ending one, or a process started for them.
+  // A line typed into the running `!` command (its shell view's box, R5.13): Enter sends it with a newline.
+  bangInput(text: string): SendResult {
+    if (!this.bang?.run.running || !this.bang.input(String(text ?? ''))) return { ok: false, error: 'No shell command is running in this session.' };
+    return { ok: true, sid: this.id };
+  }
+
+  // Esc, Esc in the shell view of your running `!` command (R5.13, 2026-11-26): only there, so stopping has one place.
+  stopBang(id: string): SendResult {
+    if (!this.bang?.run.running || this.bang.run.id !== id) return { ok: false, error: 'That shell command isn\'t running.' };
+    this.d.log('bang.stop', { sid: this.id });
+    this.bang.kill();
+    return { ok: true, sid: this.id };
+  }
+
+  // The panel's list of `!` runs, and one run's output for its shell view (publisher.ts viewOutput).
+  private bangList(): BangMeta[] {
+    return this.bangs.map((r) => {
+      const landed = this.shownBang?.id === r.id ? this.shownBang.landed : (r as ShownBang).landed;
+      return { id: r.id, cmd: r.cmd, at: r.at, end: r.end, running: r.running, exit: r.exit, interrupted: r.interrupted, waiting: r.waiting, quiet: r.quiet, cardAt: r.cardAt, ...(landed ? { landed } : {}) };
+    });
+  }
+
+  private bangOutput(id: string): { cmd: string; out: string; err: string; running: boolean } | null {
+    const r = this.bangs.find((b) => b.id === id);
+    return r ? { cmd: r.cmd, out: r.out, err: r.err, running: r.running } : null;
+  }
+
+  // The command and its output go to Claude in the CLI's format, as one message that starts a turn
+  // (R5.13, 2026-11-27): Claude reacts to it without your follow-up. During a turn it is queued as your
+  // message is ("1 message queued"); behind a waiting card it goes with the held messages. Into the
+  // running process, after the ending one, or a process started for it. The page shows its run row
+  // only: the message has no band of its own (no outbox entry).
   private shareBang(run: BangRun, cap: number): void {
     if (this.terminalHolds) { run.error = 'Not shared with Claude: a terminal took the session meanwhile.'; return; }
     const fresh = this.state === 'idle';
@@ -347,8 +463,51 @@ export class Session {
       const why = this.start();
       if (why) { run.error = `Not shared with Claude: ${why === 'terminal' ? 'a terminal holds this session' : why}.`; return; }
     }
-    this.input([{ kind: 'context', text: bashInput(run.cmd), uuid: run.id }, { kind: 'context', text: bashOutput(run, cap), uuid: randomUUID() }]);
-    this.d.log('bang.shared', { sid: this.id, newProcess: fresh });
+    const m: BangEnd = { kind: 'bang', text: `${bashInput(run.cmd)}\n${bashOutput(run, cap)}`, uuid: run.id };
+    if (this.cards.size) this.heldBangs.push(m);
+    else this.input([m]);
+    this.d.log('bang.shared', { sid: this.id, newProcess: fresh, held: this.cards.size > 0 });
+  }
+
+  // ---------- its folder (R3.11) ----------
+
+  // One stat of its folder (the session was chosen: opened, shown or sent to; R3.13). True when it is gone;
+  // the page then shows the gone line instead of the message field.
+  checkFolder(): boolean {
+    this.setGone(Boolean(this.cwd) && !this.d.isDir(this.cwd)); // no folder known (a record without one): not gone
+    return this.gone;
+  }
+
+  private setGone(gone: boolean): void {
+    if (this.gone === gone) return;
+    this.gone = gone;
+    this.d.publisher.setGone(this.id, gone);
+  }
+
+  // Its folder is gone: it goes on in `abs` as a fork (docs/Agent SDK.md, "Resume and fork in another
+  // folder"). The process starts now, resuming it with forkSession in the new folder, and takes one context
+  // line that starts no turn (the transcript shows "Continued in …"). Its system/init brings the fork's id,
+  // which takes this session's place (sessions.ts rekey); the old id stays a past session.
+  continueIn(abs: string): SendResult {
+    if (this.placeholder) return { ok: false, error: 'This session has nothing to continue yet.' };
+    if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}).` };
+    if (this.state !== 'idle') return { ok: false, error: 'This session is still running. Try again once it stops.' };
+    const from = this.cwd;
+    this.cwd = abs;
+    this.forkNext = true;
+    this.d.transcripts.moveCwd(this.id, abs);
+    this.setGone(false);
+    const why = this.start();
+    if (why) { // as it was
+      this.cwd = from;
+      this.forkNext = false;
+      this.d.transcripts.moveCwd(this.id, from);
+      this.checkFolder();
+      return { ok: false, error: why === 'terminal' ? 'A terminal holds this session.' : why };
+    }
+    this.input([{ kind: 'context', text: movedContext(this.d.tilde(abs), abs, this.d.tilde(from)), uuid: randomUUID() }]);
+    this.d.log('session.continue', { sid: this.id });
+    return { ok: true, sid: this.id };
   }
 
   // ---------- the process ----------
@@ -364,7 +523,7 @@ export class Session {
   // Starts the process, or says why not: '' (starting), 'terminal' (a live terminal holds it at the
   // last check; one writer), else the error for the toast. `anyFolder`: startIdle's.
   private start(anyFolder = false): string {
-    if (!anyFolder && !isDir(this.cwd)) {
+    if (!anyFolder && (this.checkFolder() || !this.cwd)) {
       this.status.failed();
       this.d.log('session.noFolder', { sid: this.id });
       return `Folder ${this.d.tilde(this.cwd)} no longer exists`;
@@ -414,6 +573,7 @@ export class Session {
       },
     }, this.d.sdk.query);
     this.proc = proc;
+    this.forkNext = false; // asked once: the fork's own id comes with its system/init
     this.state = 'running';
     this.contextOnly = true; // until a prompt goes in
     this.feedRunning(); // our process drives it now: the transcript's open turn is ours
@@ -429,10 +589,12 @@ export class Session {
     return {
       cwd: this.cwd,
       resume: this.placeholder ? undefined : this.id,
+      fork: this.forkNext && !this.placeholder,
       model: m.model && m.model !== 'default' ? m.model : undefined,
       effort: m.effort || undefined,
       plan: facts?.permissionMode === 'plan',
       allowedTools: this.cards.rules(),
+      mcpServers: this.d.tools?.(() => this.id),
     };
   }
 
@@ -477,7 +639,7 @@ export class Session {
       // A task ended. The CLI writes its notification to the JSONL only when a turn runs, so
       // between turns this is the only sign that it ended (docs/Agent SDK.md, "Task notifications").
       log('session.task', { sid: this.id, status: String(m.status) });
-      transcripts.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '');
+      transcripts.taskEnded(this.id, m.tool_use_id, String(m.status), typeof m.summary === 'string' ? m.summary : '', typeof m.task_id === 'string' ? m.task_id : '');
     } else if (m.type === 'system' && m.subtype === 'task_started' && typeof m.tool_use_id === 'string' && typeof m.task_id === 'string') {
       // A subagent's shell or monitor: its file has no task id when the SDK drives the CLI (docs/Agent SDK.md).
       transcripts.taskStarted(this.id, m.tool_use_id, m.task_id);
@@ -498,7 +660,8 @@ export class Session {
       if (this.stream.event(m as { event: unknown; parent_tool_use_id: string | null })) this.pushStream(false);
     } else if (m.type === 'result') {
       this.clearStream();
-      this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined });
+      this.status.result({ subtype: String(m.subtype), is_error: m.is_error === true, terminal_reason: typeof m.terminal_reason === 'string' ? m.terminal_reason : undefined, text: typeof m.result === 'string' ? m.result : undefined, queued: typeof m.queued_turn_count === 'number' ? m.queued_turn_count : undefined });
+      if (!this.status.signedOutNow) this.resumed = false; // the turn didn't fail on the credentials
       this.d.onTurnEnded?.(this.id);
       this.releaseHeld(); // held behind a card that is gone: they are the next turn
     }
@@ -522,6 +685,11 @@ export class Session {
   private statusChanged(e: StatusEntry): void {
     const { publisher, store } = this.d;
     publisher.setStatus(this.id, e.status, e.at, e.detail);
+    const out = this.status.signedOutNow;
+    if (out !== this.wasSignedOut) {
+      this.wasSignedOut = out;
+      this.d.onSignedOut?.(this, out);
+    }
     // the turn stopped with messages still queued: they go once they've had time to land
     if (!queuesBehind(e.status) && this.outbox.some((o) => !o.landed)) this.laterOutbox(OUTBOX_GRACE_MS);
     const kept = store.state.status[this.id];
@@ -555,15 +723,10 @@ export class Session {
 
   // ---------- controls ----------
 
-  // Esc, Esc: ends a running `!` command first; else stops the foreground turn, background work
-  // keeps running (perTaskStopAffordance). Messages the interrupt cancelled go back to the box. A
+  // Esc, Esc in the main view: stops the foreground turn; background work and your `!` command keep
+  // running (perTaskStopAffordance; a run stops in its shell view, R9.4, 2026-11-26). Messages the interrupt cancelled go back to the box. A
   // CLI without the cancel capability runs them afterwards, and the toast says so.
   async interrupt(by: By = null): Promise<void> {
-    if (this.bang?.run.running) {
-      this.d.log('bang.interrupt', { sid: this.id });
-      this.bang.kill();
-      return;
-    }
     const proc = this.proc;
     if (!proc || !this.status.working) return;
     this.status.interrupted();
@@ -582,6 +745,7 @@ export class Session {
     this.d.log('session.interrupt', { sid: this.id, cancelQueued: r.cancelQueued, restored: r.restored.length, stillQueued: r.stillQueued });
     this.endCards();
     this.restore(r.restored, by);
+    this.quietBangs(r.bangs ?? []);
     if (r.stillQueued) {
       const n = r.stillQueued;
       this.toast(`Interrupted. ${n === 1 ? 'Your queued message' : `${n} queued messages`} will still run: this Claude Code can't cancel ${n === 1 ? 'it' : 'them'}.`, by);
@@ -629,6 +793,66 @@ export class Session {
     }
     this.d.log('sessions.background', { sid: this.id, moved });
     return moved ? { ok: true, sid: this.id } : { ok: false, error: 'Nothing could go to the background.' };
+  }
+
+  // Esc, Esc in the shell view of Claude's background shell or monitor (R9.4, FR-BG-06, 2026-11-26): stopTask
+  // with its task id. The task_notification that follows ends it in the panel and the transcript row.
+  async stopTask(toolUseId: string): Promise<SendResult> {
+    const proc = this.proc, b = this.d.transcripts.get(this.id)?.getBackground(toolUseId);
+    if (!b || b.status !== 'running') return { ok: false, error: 'That shell or monitor isn\'t running.' };
+    if (!proc || proc.done || !b.taskId) return { ok: false, error: 'Synopia can\'t stop it: no process of Synopia\'s runs this session.' };
+    try {
+      await proc.stopTask(b.taskId);
+    } catch (e) {
+      return { ok: false, error: `Synopia couldn't stop it: ${String((e as Error)?.message ?? e).slice(0, 200)}` };
+    }
+    this.d.log('session.stopTask', { sid: this.id });
+    return { ok: true, sid: this.id };
+  }
+
+  // f, f (R9.8): the queued messages go now, the draft (if any) as from the box. The route is
+  // nowRoute's; the queued messages stay in the CLI's queue and the turn changes so it drains. A
+  // just-started step is waited for (its task_started, NOW_WAIT_MS at most). An error only when
+  // nothing could be done; the draft then stays the page's.
+  async sendNow(draft: { text: string; images: Image[]; uuid?: string } | null, by: By = null): Promise<SendResult> {
+    const has = Boolean(draft && (draft.text.trim() || draft.images.length));
+    if (has) { const bad = imageError(draft!.images); if (bad) return { ok: false, error: bad }; }
+    const deadline = this.d.now() + NOW_WAIT_MS;
+    let r = this.route(has);
+    while (r.kind === 'wait' && this.d.now() < deadline) {
+      await new Promise((ok) => setTimeout(ok, NOW_POLL_MS));
+      r = this.route(has);
+    }
+    this.d.log('session.sendNow', { sid: this.id, route: r.kind, queued: this.status.queuedCount, steps: 'ids' in r ? r.ids.length : 0, draft: has });
+    if (r.kind === 'none') return { ok: false, error: r.error };
+    if (r.kind === 'wait') return { ok: false, error: 'Claude\'s step can\'t go to the background yet. Your messages stay queued.' };
+    const proc = this.proc!;
+    try {
+      if (r.kind === 'background') {
+        let moved = false;
+        for (const id of r.ids) moved = (await proc.backgroundTasks(id)) || moved;
+        if (!moved) return { ok: false, error: 'Claude\'s step couldn\'t go to the background. Your messages stay queued.' };
+      } else if (r.kind === 'interrupt') {
+        this.status.hurried(); // no Stop: the queued messages run next, and the queue isn't given back
+        const msg = this.stream.writing();
+        await proc.interruptKeepingQueue();
+        this.d.transcripts.setAside(this.id, msg); // the live line stays, struck through (R9.8)
+      }
+    } catch {
+      this.status.interruptFailed();
+      this.d.log('session.sendNowFailed', { sid: this.id, route: r.kind });
+      return { ok: false, error: r.kind === 'background' ? 'Nothing could go to the background: background tasks are turned off for this session (CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).' : 'Synopia couldn\'t change Claude\'s turn. Your messages stay queued.' };
+    }
+    return has ? this.send(draft!.text, draft!.images, draft!.uuid, by, r.kind === 'now') : { ok: true, sid: this.id };
+  }
+
+  private route(draft: boolean): NowRoute {
+    const proc = this.proc;
+    return nowRoute({
+      driven: Boolean(proc) && !proc!.done && this.state === 'running' && !this.terminalHolds,
+      working: this.status.working, cards: this.cards.size, queued: this.status.queuedCount, draft,
+      fg: this.d.transcripts.foreground(this.id),
+    });
   }
 
   // A card's answer settles its canUseTool request (cards.ts); held messages go after the last card.
@@ -835,14 +1059,21 @@ export class Session {
 
   // A message the process took: the page shows it pending (queued while a turn runs, R5.5) until
   // its prompt lands in the transcript. Not one held behind a card.
-  private sent(uuid: string, text: string, images: number, queued: boolean): void {
+  private sent(uuid: string, text: string, images: number, pics: Image[], queued: boolean): void {
     if (this.outbox.some((o) => o.id === uuid)) return;
-    this.outbox.push({ id: uuid, text, images, at: Date.now(), queued });
+    const imgs = pics.map((p, i) => ({ ref: `queued:${uuid}:${i}`, mediaType: p.mediaType, ...imageSize(p.mediaType, p.data) }));
+    this.outbox.push({ id: uuid, text, images, ...(imgs.length ? { imgs } : {}), at: Date.now(), queued, pics });
     this.d.publisher.changed(this.id);
   }
 
   private shownOutbox(): QueuedMessage[] {
-    return this.outbox.map(({ id, text, images, landed, queued }) => (landed ? { id, text, images, landed, queued } : { id, text, images, queued }));
+    return this.outbox.map(({ id, text, images, imgs, landed, queued }) => ({ id, text, images, ...(imgs ? { imgs } : {}), ...(landed ? { landed } : {}), queued }));
+  }
+
+  // GET /api/image with ref `queued:<id>:<n>`: a queued message's pasted image, while it is in the outbox.
+  queuedImage(ref: string): { status: 200; type: string; body: Buffer } | { status: 404 } {
+    const m = /^queued:([^:]+):(\d+)$/.exec(ref), im = m ? this.outbox.find((o) => o.id === m[1])?.pics[+m[2]] : undefined;
+    return im ? { status: 200, type: im.mediaType, body: Buffer.from(im.data, 'base64') } : { status: 404 };
   }
 
   // Before each flush (publisher.ts), with the main items that just changed.
@@ -897,7 +1128,12 @@ export class Session {
     for (const it of items) {
       if (it.k !== 'bang' || !it.sh) continue;
       const ts = it.ts ? Date.parse(it.ts) : NaN;
-      if (it.id === b.id || (it.cmd === b.cmd && !(ts < b.at - 2000))) { b.landed = it.id; return; }
+      if (it.id === b.id || (it.cmd === b.cmd && !(ts < b.at - 2000))) {
+        b.landed = it.id;
+        const r = this.bangs.find((x) => x.id === b.id) as ShownBang | undefined;
+        if (r) r.landed = it.id; // the panel's row keeps it after the shown run goes
+        return;
+      }
     }
   }
 
@@ -915,6 +1151,7 @@ export class Session {
     this.state = 'idle';
     this.queue = [];
     this.held = [];
+    this.heldBangs = [];
     this.bang?.kill();
     this.bang = null;
     this.cards.close();
@@ -941,6 +1178,12 @@ export class Session {
 }
 
 type Msg = { type: string; subtype?: string; [k: string]: unknown };
+
+// The images a prompt's content sends, in its order (userContent: the order of their tags).
+function sentImages(content: Content): Image[] {
+  if (typeof content === 'string') return [];
+  return content.flatMap((b) => (b.type === 'image' && b.source.type === 'base64' ? [{ mediaType: b.source.media_type, data: b.source.data }] : []));
+}
 
 // Whether a prompt item is a queued message: written no earlier than it was sent (2 s of clock
 // slack), with its text (the transcript cuts a long one) or, for images alone, no text.
@@ -990,6 +1233,11 @@ export class StreamPreview {
       this.blocks.splice(i, 1);
     }
     return changed;
+  }
+
+  // The message whose text is being streamed, if any text came: the reply an interrupt cuts short.
+  writing(): string | null {
+    return this.blocks.some((b) => b.msg === this.msg && b.text) ? this.msg || null : null;
   }
 
   clear(): boolean {

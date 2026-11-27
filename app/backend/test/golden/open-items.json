@@ -1,0 +1,19 @@
+{
+  "t": "openItems",
+  "sid": "44444444-0000-4000-8000-000000000004",
+  "items": [],
+  "checks": [],
+  "closed": [
+    {
+      "id": "Y1",
+      "kind": "review",
+      "text": "Review: Draft the demo release notes",
+      "how": "done",
+      "at": "<time>",
+      "note": "marked reviewed",
+      "by": "synopia"
+    }
+  ],
+  "unread": 0,
+  "note": null
+}

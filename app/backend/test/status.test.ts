@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary } from '../src/status.ts';
+import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary, blockedLast, blockedSubagent } from '../src/status.ts';
 import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
+import { openStore } from '../src/store.ts';
+import { OpenItems } from '../src/open-items.ts';
 import type { Client } from '../src/server.ts';
+import type { Item } from '../src/transcript.ts';
 
 function tracker(init: StatusEntry | null = null) {
   let t = 1000;
@@ -20,15 +23,52 @@ const ok = { subtype: 'success', is_error: false, terminal_reason: 'completed' }
 const aborted = { subtype: 'error_during_execution', is_error: true, terminal_reason: 'aborted_streaming' };
 const apiError = { subtype: 'error_during_execution', is_error: true, terminal_reason: 'api_error' };
 
-test('status: working from the state flag, your turn on idle after a normal result', () => {
+test('status: working from the state flag, your turn at a normal result; idle changes nothing', () => {
   const { s, seen } = tracker();
   s.stateChanged('running');
   assert.equal(s.status, 'busy');
   s.result(ok);
-  assert.equal(s.status, 'busy', 'with the flag, idle ends the turn, not result');
+  assert.equal(s.status, 'idle', 'the result ends the main turn, with the flag too');
   s.stateChanged('idle');
   assert.equal(s.status, 'idle');
   assert.deepEqual(seen, ['busy', 'idle']);
+});
+
+// docs/Agent SDK.md, "Session state and background tasks": with a background task running the CLI sends
+// no idle after the main turn's result, only once the task and the turn its notification starts ended.
+test('status: a background task keeps the state running past the result: still your turn', () => {
+  const { s, seen } = tracker();
+  s.stateChanged('running');
+  s.turnStarted(); // system/init
+  s.result(ok);
+  assert.equal(s.status, 'idle', 'the main turn is over while the background subagent runs');
+  assert.equal(s.working, false, 'nothing to interrupt');
+  s.stateChanged('running');
+  s.stateChanged('requires_action');
+  assert.equal(s.status, 'idle', 'a state event of the same run opens no turn');
+  s.turnStarted(); // the task's notification starts a turn: system/init
+  assert.equal(s.status, 'busy');
+  s.result(ok);
+  assert.equal(s.status, 'idle');
+  s.stateChanged('idle');
+  s.stateChanged('running');
+  assert.equal(s.status, 'busy', 'after idle, running is the next turn');
+  assert.deepEqual(seen, ['busy', 'idle', 'busy', 'idle', 'busy']);
+});
+
+test('status: a result with your messages still queued keeps working until their turn ends', () => {
+  const { s } = tracker();
+  s.stateChanged('running');
+  s.turnStarted();
+  s.result({ ...ok, queued: 1 });
+  assert.equal(s.status, 'busy', 'one more turn of yours follows');
+  s.turnStarted();
+  s.result({ ...ok, queued: 0 });
+  assert.equal(s.status, 'idle');
+  const n = tracker().s;
+  n.turnStarted();
+  n.result({ ...ok, queued: 1 });
+  assert.equal(n.status, 'idle', 'without the flag no idle would end it: the result does');
 });
 
 test('status: a turn our process starts is working', () => {
@@ -157,6 +197,62 @@ test('status: signed out on a credential error, over failed; cleared by the next
   assert.equal(s.status, 'busy');
 });
 
+test('status: an authentication retry is signed out, by its error, its HTTP status, or its sentence as the fallback', () => {
+  const bedrock = { type: 'system', subtype: 'api_retry', attempt: 4, max_retries: 10, retry_delay_ms: 3000, error_status: 403, error: 'unknown' };
+  const { s, msg } = clocked();
+  s.stateChanged('running');
+  msg(bedrock);
+  assert.equal(s.status, 'signedout', 'HTTP 403');
+  s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'The security token included in the request is expired', status: 403, credential: false } }, false);
+  assert.equal(s.detail.error, 'The security token included in the request is expired', "the CLI's sentence");
+  const b = clocked();
+  b.s.stateChanged('running');
+  b.msg({ ...bedrock, error_status: null });
+  assert.equal(b.s.status, 'retrying', 'an unknown error with no status');
+  b.s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'The security token included in the request is expired', status: null, credential: false } }, false);
+  assert.equal(b.s.status, 'signedout', 'the sentence decides when the fields say nothing');
+  const c = clocked();
+  c.s.stateChanged('running');
+  c.msg({ ...bedrock, error_status: null, error: 'cloud_credential_error' });
+  assert.equal(c.s.status, 'signedout', 'the documented error (live run AR-1)');
+  assert.equal(c.s.detail.error, "The model's credentials failed");
+  const d = clocked();
+  d.s.stateChanged('running');
+  d.msg({ ...bedrock, error_status: 529, error: 'overloaded' });
+  d.s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'Overloaded; the token budget expired', status: 529, credential: false } }, false);
+  assert.equal(d.s.status, 'retrying', 'the sentence is no fallback once the fields say what failed');
+});
+
+test('status: refreshing while the folder\'s refresh command runs; its success clears signed out', () => {
+  const { s, msg } = clocked();
+  s.stateChanged('running');
+  msg({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 3000, error_status: 401, error: 'authentication_failed' });
+  assert.equal(s.signedOutNow, true);
+  s.setRefreshing(true);
+  assert.equal(s.status, 'refreshing');
+  s.setRefreshing(false);
+  assert.equal(s.status, 'signedout', 'it failed');
+  s.setRefreshing(true);
+  s.setRefreshing(false);
+  s.credentialsRefreshed();
+  assert.equal(s.status, 'retrying', 'back to the turn: the CLI retries with the new credentials');
+  msg(reply);
+  assert.equal(s.status, 'busy');
+});
+
+test('status: retries that ran out fail the turn with its sentence', () => {
+  const { s, msg } = clocked();
+  s.stateChanged('running');
+  msg({ type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, retry_delay_ms: 3000, error_status: 503, error: 'server_error' });
+  msg({ type: 'result', subtype: 'success', is_error: true, result: 'API Error: 503 Service Unavailable' });
+  s.result({ subtype: 'success', is_error: true, text: 'API Error: 503 Service Unavailable' });
+  s.stateChanged('idle');
+  assert.equal(s.status, 'failed');
+  assert.deepEqual(s.detail, { error: 'API Error: 503 Service Unavailable' });
+  s.turnStarted();
+  assert.deepEqual(s.detail, {}, 'a new turn drops it');
+});
+
 test('status: needs you wins over signed out and every turn state', () => {
   const { s, msg } = clocked();
   s.stateChanged('running');
@@ -183,14 +279,20 @@ test('status: a restart keeps signed out, and the next turn clears it', () => {
   assert.equal(s.status, 'busy');
 });
 
-test('status: rate limited on a throttled retry, with its countdown; cleared by the next reply', () => {
+test('status: retrying on every retried request, with its attempt, countdown and sentence; cleared by the next reply', () => {
   const { s, seen, clock, msg } = clocked();
   s.stateChanged('running');
   msg(throttled);
   assert.equal(s.status, 'retrying');
-  assert.deepEqual(seen.at(-1)?.detail, { retry: { attempt: 3, max: 10, at: clock.t + 38_000 } });
+  assert.deepEqual(seen.at(-1)?.detail, { retry: { attempt: 3, max: 10, at: clock.t + 38_000, text: 'Rate limited (HTTP 429)' } });
   msg({ type: 'system', subtype: 'api_retry', attempt: 1, max_retries: 10, retry_delay_ms: 500, error_status: 500, error: 'server_error' });
-  assert.equal(s.status, 'busy', 'a server error retry is not rate limited');
+  assert.equal(s.status, 'retrying', 'a server error is retried too (2026-11-26)');
+  assert.equal(s.detail.retry?.text, 'The API had a server error (HTTP 500)');
+  s.setRunning({ agents: 0, turn: false, lastAt: 0, apiError: { text: 'Internal server error', status: 500, credential: false } }, false);
+  assert.equal(s.detail.retry?.text, 'Internal server error', "the CLI's own sentence, from the transcript");
+  msg({ type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 500, error_status: null, error: 'unknown' });
+  s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
+  assert.equal(s.detail.retry?.text, 'The connection failed', 'no HTTP status, no sentence yet');
   msg(throttled);
   msg({ type: 'assistant', parent_tool_use_id: null, message: { content: [] } });
   assert.equal(s.status, 'busy');
@@ -274,33 +376,28 @@ test('status: a message sent during a turn is queued until a reply lists its uui
   assert.deepEqual(s.detail, {}, 'the turn end empties it');
 });
 
-test('status: running subagents or forks keep a finished turn working; your turn comes back, aged from then', () => {
-  const { s, seen, clock } = clocked();
+// R8.2, 2026-11-26: motion means the main turn runs; background work alone is your turn (the panel shows it).
+test('status: running subagents or forks leave a finished turn your turn; needs you still wins', () => {
+  const { s } = clocked();
   s.stateChanged('running');
   s.result(ok);
   s.setRunning({ agents: 2, turn: false, lastAt: 0 }, false);
   s.stateChanged('idle');
-  assert.equal(s.status, 'busy', 'the main turn is over, two subagents run');
+  assert.equal(s.status, 'idle', 'the main turn is over, two subagents run: your turn');
   assert.equal(s.working, false, 'no turn to interrupt');
   s.setPending(1);
   assert.equal(s.status, 'waiting', 'needs you still wins');
   s.setPending(0);
-  s.setRunning({ agents: 1, turn: false, lastAt: 0 }, false);
-  assert.equal(s.status, 'busy');
-  clock.t += 300_000;
   s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'idle');
-  assert.equal(seen.at(-1)?.at, clock.t, 'aged from when the last one finished');
 });
 
-test('status: subagents of a session with no process make it working; a failed turn comes back as failed', () => {
+test('status: subagents of a session with no process leave its outcome; its transcript alone reads your turn', () => {
   const { s } = clocked({ status: 'failed', at: 5 });
   s.setRunning({ agents: 1, turn: false, lastAt: 0 }, false);
-  assert.equal(s.status, 'busy');
-  s.setRunning({ agents: 0, turn: false, lastAt: 0 }, false);
   assert.equal(s.status, 'failed');
-  assert.equal(transcriptStatus({ agents: 1, turn: false, lastAt: 0 }), 'busy', 'a session no process of ours set reads its transcript');
-  assert.equal(transcriptStatus({ agents: 0, turn: false, lastAt: 0 }), 'idle');
+  assert.equal(transcriptStatus({ agents: 1, turn: false, lastAt: 0 }), 'idle', 'a session no process of ours set reads its transcript: the main turn is over');
+  assert.equal(transcriptStatus({ agents: 1, turn: true, lastAt: 0 }), 'busy');
 });
 
 test('status: a main turn another process runs is working; ours or none is not; needs you still wins', () => {
@@ -340,7 +437,7 @@ test('status: a question another process asks is needs you over working, aged fr
 });
 
 // ---------- sessionState: what the page shows ----------
-const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, review: 0, driven: true, ...f });
+const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, blocked: false, review: 0, driven: true, ...f });
 const show = (status: Status, f: Partial<StateFacts> = {}, detail: StatusDetail = {}) => {
   const st = sessionState({ status, at: 7, detail }, facts(f));
   return [st.light, st.tone, st.word, st.mark];
@@ -350,9 +447,11 @@ test('state: each status has its light, tone, word and mark (R8.2)', () => {
   assert.deepEqual(show('busy'), ['green', 'green', 'Working', 'work']);
   assert.deepEqual(show('busy', {}, { queued: 2 }), ['green', 'green', 'Working', 'queued']);
   assert.deepEqual(show('compacting'), ['green', 'green', 'Compacting', 'compact']);
-  assert.deepEqual(show('retrying'), ['green', 'amber', 'Rate limited', 'ratelimit']);
+  assert.deepEqual(show('retrying'), ['green', 'amber', 'Retrying', 'ratelimit']);
+  assert.deepEqual(show('retrying', {}, { retry: { attempt: 4, max: 10, at: 0, text: 'x' } }), ['green', 'amber', 'Retrying, attempt 4 of 10', 'ratelimit']);
   assert.deepEqual(show('stale'), ['green', 'grey', 'No updates', 'stale']);
-  assert.deepEqual(show('signedout'), ['amber', 'red', 'Signed out', 'creds']);
+  assert.deepEqual(show('signedout'), ['red', 'red', 'Needs you, sign-in expired', 'pause']);
+  assert.deepEqual(show('refreshing'), ['green', 'green', 'Refreshing credentials…', 'work']);
   assert.deepEqual(show('idle'), ['amber', 'amber', 'Your turn', 'stopped']);
   assert.deepEqual(show('stopped'), ['amber', 'amber', 'Stopped', 'stopped']);
   assert.deepEqual(show('failed'), ['amber', 'amber', 'Failed', 'failed']);
@@ -378,12 +477,50 @@ test('state: stopped by you is the stop marker on your turn, not a turned-down t
   assert.equal(sessionState({ status: 'idle', at: 0 }, facts()).stopped, false);
   assert.deepEqual(show('failed', { interrupted: true }), ['amber', 'amber', 'Failed', 'failed'], 'a failed turn says so');
   assert.deepEqual(show('busy', { interrupted: true }), ['green', 'green', 'Working', 'work'], 'a new turn runs');
-  assert.deepEqual(show('signedout', { interrupted: true }), ['amber', 'red', 'Signed out', 'creds']);
+  assert.deepEqual(show('signedout', { interrupted: true }), ['red', 'red', 'Needs you, sign-in expired', 'pause']);
+});
+
+test('state: your turn after a blocked step is needs you, blocked (R8.2)', () => {
+  assert.deepEqual(show('idle', { blocked: true }), ['red', 'red', 'Needs you, blocked', 'pause']);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, facts({ blocked: true })).needsYou, 'blocked');
+  assert.equal(badgeOf(sessionState({ status: 'idle', at: 0 }, facts({ blocked: true }))), 1);
+  assert.deepEqual(show('busy', { blocked: true }), ['green', 'green', 'Working', 'work'], 'while the turn runs');
+  assert.deepEqual(show('failed', { blocked: true }), ['amber', 'amber', 'Failed', 'failed']);
+  assert.deepEqual(show('idle', { blocked: true, interrupted: true }), ['amber', 'amber', 'Stopped', 'stopped'], 'you stopped it');
+  assert.deepEqual(show('waiting', { blocked: true, pending: ['question'] }), ['red', 'red', 'Needs you', 'pause'], 'a card says what it waits on');
+});
+
+test('blockedLast: a denied step in the latest turn, not retried, blocks it; your next message clears it', () => {
+  let n = 0;
+  const you = (extra: Partial<Item> = {}): Item => ({ id: `y${n++}`, k: 'you', ts: null, text: 'go', ...extra });
+  const step = (state: string, input = 'git push', name = 'Bash'): Item => ({ id: `s${n++}`, k: 'tool', ts: null, name, input, state });
+  const claude: Item = { id: 'c', k: 'claude', ts: null, text: 'I need you to run it.' };
+  assert.equal(blockedLast([you(), step('done', 'ls'), step('denied'), claude]), true);
+  assert.equal(blockedLast([you(), step('denied'), step('done'), claude]), false, 'retried and ran');
+  assert.equal(blockedLast([you(), step('denied'), step('done', 'git status'), claude]), true, 'another command ran');
+  assert.equal(blockedLast([you(), step('denied'), claude, you()]), false, 'you wrote since');
+  assert.equal(blockedLast([you(), step('denied'), claude, { id: 'b', k: 'bang', ts: null, cmd: 'git push' }]), false, 'you ran a command');
+  assert.equal(blockedLast([you(), step('denied'), you({ turnedDown: true }), claude]), true, 'a turned-down marker is not your message');
+  assert.equal(blockedLast([you(), step('failed'), claude]), false);
+});
+
+test('blockedSubagent: a subagent run that ended after a denied step it did not redo blocks; your message, a stop or a redo clears it', () => {
+  let n = 0;
+  const at = (s: number) => `2026-11-24T09:00:${String(s).padStart(2, '0')}.000Z`;
+  const step = (s: number, state: string, input = 'npm run migrate'): Item => ({ id: `s${n++}`, k: 'tool', ts: at(s), name: 'Bash', input, state });
+  const end = (s: number, stopped = false) => ({ at: Date.parse(at(s)), stopped });
+  assert.equal(blockedSubagent([step(10, 'denied'), step(20, 'done', 'ls')], [end(30)], null), true);
+  assert.equal(blockedSubagent([step(10, 'denied')], [], null), false, 'still in its first run: it may redo it');
+  assert.equal(blockedSubagent([step(10, 'denied')], [end(30)], Date.parse(at(40))), false, 'you wrote since');
+  assert.equal(blockedSubagent([step(10, 'denied')], [end(30, true)], null), false, 'that run was stopped');
+  assert.equal(blockedSubagent([step(10, 'denied'), step(45, 'done')], [end(30)], null), false, 'resumed, it redid the step');
+  assert.equal(blockedSubagent([step(10, 'denied'), step(45, 'running', 'ls')], [end(30)], null), true, 'resumed, the step not redone yet');
+  assert.equal(blockedSubagent([step(10, 'failed')], [end(30)], null), false);
 });
 
 test('state: the badge share is needs you plus the deliverables to review (R2.6)', () => {
   const of = (status: Status, f: Partial<StateFacts> = {}) => badgeOf(sessionState({ status, at: 0 }, facts(f)));
-  assert.deepEqual((['waiting', 'signedout', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle', 'stopped'] as Status[]).map((s) => of(s)), [1, 0, 0, 0, 0, 0, 0, 0, 0]);
+  assert.deepEqual((['waiting', 'signedout', 'refreshing', 'stale', 'retrying', 'compacting', 'busy', 'failed', 'idle', 'stopped'] as Status[]).map((s) => of(s)), [1, 1, 0, 0, 0, 0, 0, 0, 0, 0]);
   assert.equal(of('signedout', { pending: ['question'] }), 1);
   assert.equal(of('busy', { review: 2 }), 2);
   assert.equal(of('waiting', { review: 1 }), 2);
@@ -412,11 +549,18 @@ const AGENTS = '44444444-0000-4000-8000-000000000004';
 const REVIEW = 'aaaa0004'; // "For review: Draft the demo release notes", finished in the fixture
 const tick = () => new Promise((r) => setImmediate(r));
 
-function badgeReading(claudeDir = CLAUDE, reviewed: Set<string> = new Set()) {
+function badgeReading(claudeDir = CLAUDE) {
   const badge = new BadgeCounter();
   const transcripts = new Transcripts({ claudeDir, home: '/Users/fixture', pollMs: 0, watch: false });
-  const publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, reviewed: (id) => reviewed.has(id) });
-  return { badge, transcripts, publisher, reviewed };
+  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-badge-')), { minIntervalMs: 0 });
+  let publisher: Publisher | null = null;
+  const openItems = new OpenItems({
+    store, home: '/Users/fixture', lookMs: 0,
+    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
+    onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
+  });
+  publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, openItems });
+  return { badge, transcripts, publisher, openItems };
 }
 
 test('badge: needs-you sessions and deliverables to review, open sessions only', async () => {
@@ -424,7 +568,7 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   // records are older, so its file counts as just changed, whenever it was checked out.
   const now = new Date();
   fs.utimesSync(path.join(CLAUDE, 'projects', '-tmp-fixture', `${ASKS}.jsonl`), now, now);
-  const { transcripts, publisher, badge, reviewed } = badgeReading();
+  const { transcripts, publisher, badge, openItems } = badgeReading();
   transcripts.open(IDLE);
   transcripts.open(ASKS);
   transcripts.open(AGENTS);
@@ -442,8 +586,8 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   publisher.setStatus(IDLE, 'waiting');
   assert.equal(badge.count, 3, 'the status waiting alone');
 
-  reviewed.add(REVIEW);
-  publisher.reviewed(REVIEW);
+  const item = openItems.view(AGENTS).items.find((i) => i.agent === REVIEW)!;
+  assert.equal(openItems.markReviewed(AGENTS, item.id), true);
   assert.equal(badge.count, 2, 'marked reviewed drops it');
   assert.equal(publisher.meta(AGENTS)?.state.review, 0);
 

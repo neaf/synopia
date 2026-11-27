@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  Writer, buildPrompt, parseReply, limit, MAX_PROMPT_TEXT, MAX_TITLE, MAX_NOW, SYSTEM_PROMPT,
+  Writer, buildPrompt, parseReply, limit, seedTitle, MAX_PROMPT_TEXT, MAX_TITLE, MAX_NOW, SYSTEM_PROMPT,
 } from '../src/writer.ts';
 import type { Turn, WriterSource } from '../src/writer.ts';
 import { writerOptions } from '../src/sdk.ts';
@@ -201,6 +201,26 @@ test('on open: written once when nothing is stored, not when text is', async () 
   assert.equal(q.calls.length, 1);
   w.stop();
   empty.stop();
+  store.close();
+});
+
+test('a seeded first title (start_session, R3.15) shows until the writer replaces it after a turn', async () => {
+  const dir = tmp('synopia-writer-');
+  const store = openStore(dir);
+  seedTitle(store, 's1', 'Next steps', 5);
+  assert.deepEqual(store.state.written.s1, { title: 'Next steps', at: 5, history: [{ title: 'Next steps', at: 5 }] }, 'written text, no Now line');
+  const q = writerFake(good);
+  const w = new Writer({ store, source: source(turns3, 'Next steps').src, stateDir: dir, sdk: q.sdk, debounceMs: 5, now: () => 9 });
+  w.opened('s1');
+  await wait(30);
+  assert.equal(q.calls.length, 0, 'stored text: no call on open');
+  w.turnEnded('s1');
+  await wait(40);
+  assert.equal(q.calls.length, 1, 'the first turn ends: written');
+  assert.match(q.calls[0].prompt, /Current title: Next steps/);
+  assert.equal(store.state.written.s1.title, 'Fix the login test');
+  assert.deepEqual(store.state.written.s1.history?.map((h) => h.title), ['Next steps', 'Fix the login test'], 'replaced as any written title');
+  w.stop();
   store.close();
 });
 

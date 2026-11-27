@@ -1,14 +1,14 @@
 // Server to page (FR-VIEW-01, -04, -05, -13, -14, -17): the only module that sends frames. It sends
-// `session` meta (with `state` from status.ts), `agents`, `background`, `pending` and `removed` to
+// `session` meta (with `state` from status.ts), `agents`, `background`, `openItems`, `pending` and `removed` to
 // every page, and `items` and the `stream` preview only to the pages viewing that conversation: a reset with the
 // last WINDOW items (or from the page's `from`) on `view`, then upserts of changed ids, and the WINDOW
 // items before the oldest shown on `earlier`. `restore` and an action's `toast` go to the page that
 // acted, when it is still connected.
 // One flush per change batch, guarded: a change made while a flush runs (status.ts hears what runs
 // and sets the status) marks the session dirty and flushes again after, so the frames of one flush
-// always go in this order: `session`, `agents`, `background`, `items`.
+// always go in this order: `session`, `agents`, `background`, `openItems`, `items`.
 import os from 'node:os';
-import { transcriptStatus, sessionState, badgeOf } from './status.ts';
+import { transcriptStatus, sessionState, badgeOf, blockedLast, blockedSubagent, turnStartMs } from './status.ts';
 import type { BadgeCounter, Running, SessionState, Needs, Status, StatusDetail } from './status.ts';
 import type { Agent, Item, PendingAsk, Transcript } from './transcript.ts';
 import { Transcripts, WINDOW, effortOf } from './transcripts.ts';
@@ -16,10 +16,15 @@ import type { ReadChanges } from './transcripts.ts';
 import type { Client } from './server.ts';
 import { displayPath } from './paths.ts';
 import { resolveModel } from './session.ts';
-import type { ModelChoice, QueuedMessage, ShownBang } from './session.ts';
+import type { BangMeta, ModelChoice, QueuedMessage, ShownBang } from './session.ts';
 import type { PendingRequest } from './cards.ts';
 import type { Returned } from './sdk.ts';
 import { VERSION } from '../../web/js/protocol.js';
+import { outputTail, outputBefore, outputSize, readOutput, eventTail, eventsFrom, eventsBefore } from './task-output.ts';
+import type { OutputPart } from './task-output.ts';
+import { FIND_READ } from './find.ts';
+import type { OpenItems } from './open-items.ts';
+import type { FindSource } from './find.ts';
 
 export { WINDOW } from './transcripts.ts';
 export const RECHECK_MS = 60_000;
@@ -27,7 +32,8 @@ export const RECHECK_MS = 60_000;
 export type SessionMeta = {
   id: string; title: string; name: string; now: string; cwd: string; prs: unknown[];
   state: SessionState; model: unknown; effort: unknown;
-  ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null;
+  ask: PendingAsk | null; outbox: QueuedMessage[]; bang: ShownBang | null; bangs: BangMeta[];
+  gone: boolean; // its folder was checked and isn't there (R3.11)
 };
 
 // What a session shows that it owns itself (session.ts): its queued messages and its `!` run, and
@@ -35,6 +41,8 @@ export type SessionMeta = {
 export type Shown = {
   outbox(): QueuedMessage[];
   bang(): ShownBang | null;
+  bangs(): BangMeta[]; // its `!` runs for the background panel
+  bangOutput(id: string): { cmd: string; out: string; err: string; running: boolean } | null; // one run's, for its shell view
   landed(items: Item[]): void;
 };
 
@@ -45,12 +53,15 @@ export type PublisherOptions = {
   // A turn running by the transcript alone ends after QUIET_MS without a change: every session is
   // flushed this often to notice. 0 turns it off (tests).
   recheckMs?: number;
+  // How often a shown shell's output file is looked at for more (R7.2); 0 turns it off (tests).
+  outputMs?: number;
   // The title and Now line Claude wrote for a session (state.json `written`).
   written?: (sid: string) => { title?: string; now?: string } | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
   defaultModel?: () => string | undefined;
-  // Whether a subagent's deliverable was marked reviewed (state.json `reviewed`).
-  reviewed?: (agentId: string) => boolean;
+  // The open-items lists (open-items.ts): each flush syncs the session's, sends its view when it changed, and
+  // takes the counts and the subagents' review flags from it. Without it (tests): no items, nothing to review.
+  openItems?: Pick<OpenItems, 'sync' | 'view' | 'counts' | 'reviewOpen'>;
   // The Dock badge's count: each session's share is set whenever its state is worked out.
   badge?: BadgeCounter;
   // What runs by the transcript changed: subagents and forks, the main turn and its ask.
@@ -64,17 +75,27 @@ export type PublisherOptions = {
 // What `hello` carries besides the sessions and their cards (main.ts gathers it).
 export type Hello = { code: string; layout: unknown; menu: unknown; ui: unknown; update: boolean };
 
-type Sub = { sid: string; agent: string | null; from: number };
+// A page's view: a conversation (`agent` null for the main one), or a background shell or monitor
+// (`bg`, its tool use id) with what the page has of its output (`out`).
+type Sub = {
+  sid: string; agent: string | null; from: number;
+  bg?: string | null; out?: { file: string | null; from: number; to: number } | null;
+  own?: string; // a `!` run of the session (session.ts bangOutput): the signature of the output last sent
+  chain?: Promise<void>; more?: boolean; // its output reads, one after the other; a look for more queued
+};
 type Pub = {
   id: string;
   status: Status | null; statusAt: number; statusDetail: StatusDetail; // set by session.ts; null: from the transcript
   choice: ModelChoice | null; pending: PendingRequest[]; held: string[]; stream: string | null;
   sent: string; // the last `session` meta sent
+  itemsSent: string; // the last `openItems` view sent
+  reviews: Set<string>; // the subagents last sent with `review` true
   ran: string; // the last Running given to onRunning
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   since: Map<string, number>; // tool use id -> when a running tool started, from the SDK's tool_progress (R5.6)
   shown: Shown | null;
   queued: boolean;
+  gone: boolean;
 };
 
 export class Publisher {
@@ -86,6 +107,7 @@ export class Publisher {
   private flushing = false;
   private dirty = new Set<string>();
   private recheck: NodeJS.Timeout | null = null;
+  private outTimer: NodeJS.Timeout | null = null;
 
   constructor(opts: PublisherOptions) {
     this.opts = opts;
@@ -106,6 +128,8 @@ export class Publisher {
   stop(): void {
     if (this.recheck) clearInterval(this.recheck);
     this.recheck = null;
+    if (this.outTimer) clearInterval(this.outTimer);
+    this.outTimer = null;
   }
 
   // ---------- sending ----------
@@ -124,6 +148,11 @@ export class Publisher {
   // protocol version (a page of another version reloads) and the daemon's code hash.
   hello(client: Client, rest: Hello): void {
     client.send({ t: 'hello', v: VERSION, code: rest.code, sessions: this.sessions(), pending: this.pending(), layout: rest.layout, menu: rest.menu, ui: rest.ui, update: rest.update });
+  }
+
+  // A session started `sid` (agent-tools.ts start_session): a page viewing `from` switches to it.
+  started(sid: string, from: string): void {
+    this.broadcast({ t: 'started', sid, from });
   }
 
   // The sidebar's layout, whole, after it changed (layout.ts).
@@ -168,6 +197,14 @@ export class Publisher {
     this.changed(sid);
   }
 
+  // Its folder is gone, or back (session.ts checkFolder).
+  setGone(sid: string, gone: boolean): void {
+    const p = this.pub(sid);
+    if (!p) return;
+    p.gone = gone;
+    this.changed(sid);
+  }
+
   // The model and effort you chose (session.ts), shown over the transcript's.
   setChoice(sid: string, choice: ModelChoice | null): void {
     const p = this.pub(sid);
@@ -200,7 +237,7 @@ export class Publisher {
     if (!p) return;
     p.stream = text;
     if (text === null) { this.broadcast({ t: 'stream', sid, clear: true }); return; }
-    for (const [client, sub] of this.liveSubs()) if (sub.sid === sid && sub.agent === null) client.send({ t: 'stream', sid, text });
+    for (const [client, sub] of this.liveSubs()) if (sub.sid === sid && sub.agent === null && !sub.bg) client.send({ t: 'stream', sid, text });
   }
 
   // The messages sent while a card waits, held behind it ("Queued until you answer the card above").
@@ -221,19 +258,9 @@ export class Publisher {
     if (!p || p.since.has(toolUseId) || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return;
     p.since.set(toolUseId, now - Math.round(elapsedSeconds * 1000));
     for (const [client, sub] of this.liveSubs()) {
-      if (sub.sid !== sid) continue;
+      if (sub.sid !== sid || sub.bg) continue;
       const t = this.transcripts.get(sid, sub.agent);
       if (t) this.sendUpserts(client, sub, t, [toolUseId]);
-    }
-  }
-
-  // "Mark reviewed" (the caller stores it): the subagent's line and its session's count change.
-  reviewed(agentId: string): void {
-    for (const sid of this.transcripts.ids()) {
-      const a = this.transcripts.get(sid)?.getAgent(agentId);
-      if (!a) continue;
-      this.broadcast({ t: 'agents', sid, upsert: this.agentsOut([a]) });
-      this.changed(sid);
     }
   }
 
@@ -243,9 +270,11 @@ export class Publisher {
   // oldest item the page had loaded for it (its earlier items, ui.js): one reset from that item to
   // the end, so the page renders once. Without it, or when it is gone or within the last WINDOW,
   // the last WINDOW items.
-  view(client: Client, sid: string, agent: string | null, from?: string | null): void {
+  view(client: Client, sid: string, agent: string | null, from?: string | null, bg?: string | null): Promise<void> | void {
+    if (bg) return this.viewOutput(client, sid, bg, from);
     const sub: Sub = { sid, agent: agent || null, from: 0 };
     this.subs.set(client, sub);
+    this.outTimers();
     this.sendReset(client, sub, from);
     const text = this.pubs.get(sid)?.stream ?? null;
     if (sub.agent === null && text !== null) client.send({ t: 'stream', sid, text });
@@ -257,7 +286,7 @@ export class Publisher {
   // (after a rewrite the page gets a reset instead). Returns how many items went out.
   earlier(client: Client, sid: string, agent: string | null, before: string): number {
     const sub = this.subs.get(client);
-    if (!sub || sub.sid !== sid || sub.agent !== (agent || null)) return 0;
+    if (!sub || sub.bg || sub.sid !== sid || sub.agent !== (agent || null)) return 0;
     const t = this.transcripts.get(sub.sid, sub.agent);
     if (!t) return 0;
     const end = t.items.findIndex((i) => i.id === before);
@@ -281,6 +310,143 @@ export class Publisher {
     return true;
   }
 
+  // What `find` searches in a view (find.ts, R5.12e): a conversation's items (`view` a subagent's id, null for the
+  // main one), else a `!` run's output, a monitor's events, or a shell's output file's last FIND_READ bytes.
+  async findSource(sid: string, view: string | null): Promise<FindSource | null> {
+    const t = this.transcripts.get(sid, view);
+    if (t) return { items: t.items };
+    if (view === null) return null;
+    const own = this.pubs.get(sid)?.shown?.bangOutput(view);
+    if (own) return { id: view, text: own.err ? `${own.out}\n${own.err}` : own.out };
+    const o = this.transcripts.outputOf(sid, view);
+    if (!o) return null;
+    if (o.kind === 'monitor') return { id: view, text: o.events.map((e) => e.text).join('\n') };
+    if (!o.file) return { id: view, text: '' };
+    const size = await outputSize(o.file);
+    const part = size < 0 ? null : await readOutput(o.file, Math.max(0, size - FIND_READ), size, true);
+    return { id: view, text: part ? part.text : '' };
+  }
+
+  // `view` with `bg` (R7.2): the page shows a background shell's or monitor's output, the last part of
+  // it (task-output.ts) or from `from` (where its loaded output began, before a reload), as one
+  // `output` reset. Then what the shell or monitor adds, as `output` appends: on each flush of the
+  // session (a monitor's events, a shell's file named) and each outputMs (a shell's file growing).
+  // `lost`: "unnamed" when the transcript names no output file, "gone" when it can't be read.
+  // Returns when the reset went (tests).
+  // A `!` run of yours (R5.13, 2026-11-26) has its output in the session, not a file: each frame is a reset
+  // with all of it, stdout as `text` and stderr as `err`, sent again when it changed.
+  viewOutput(client: Client, sid: string, bg: string, from?: string | null): Promise<void> {
+    const sub: Sub = { sid, agent: null, from: 0, bg, out: null };
+    this.subs.set(client, sub);
+    if (this.pubs.get(sid)?.shown?.bangOutput(bg)) {
+      sub.own = '';
+      return this.outRun(client, sub, async () => this.ownFrame(sub));
+    }
+    this.outTimers();
+    const at = from && /^\d+$/.test(from) ? Number(from) : null;
+    return this.outRun(client, sub, () => this.outReset(sub, at));
+  }
+
+  // `earlierOutput` from a page: the part before `before` of the output it shows, as a prepend.
+  earlierOutput(client: Client, sid: string, bg: string, before: number): Promise<void> {
+    const sub = this.subs.get(client);
+    if (!sub || sub.sid !== sid || sub.bg !== bg || !sub.out) return Promise.resolve();
+    return this.outRun(client, sub, async () => {
+      const o = this.transcripts.outputOf(sid, bg), out = sub.out;
+      if (!o || !out) return null;
+      const part = o.kind === 'monitor' ? eventsBefore(o.events, before) : out.file ? await outputBefore(out.file, before) : null;
+      if (!part || part.to > out.from) return null;
+      out.from = part.from;
+      return this.outFrame(sub, part, { prepend: true });
+    });
+  }
+
+  private ownFrame(sub: Sub): object | null {
+    const o = this.pubs.get(sub.sid)?.shown?.bangOutput(sub.bg as string);
+    if (!o) return null;
+    const sig = `${o.running}|${o.out.length}|${o.err.length}|${o.out.slice(-64)}|${o.err.slice(-64)}`;
+    if (sig === sub.own) return null;
+    sub.own = sig;
+    return { t: 'output', sid: sub.sid, bg: sub.bg, text: o.out, err: o.err, from: 0, to: o.out.length, total: o.out.length, reset: true };
+  }
+
+  // A look for more output of each shown shell or monitor of the session (all sessions: the timer's).
+  private outMore(sid: string | null): void {
+    for (const [client, sub] of this.liveSubs()) {
+      if (sub.bg && sub.own !== undefined) {
+        if (sid === null || sub.sid === sid) void this.outRun(client, sub, async () => this.ownFrame(sub));
+        continue;
+      }
+      if (!sub.bg || (sid !== null && sub.sid !== sid) || sub.more) continue;
+      sub.more = true;
+      void this.outRun(client, sub, async () => {
+        sub.more = false;
+        const o = this.transcripts.outputOf(sub.sid, sub.bg as string), out = sub.out;
+        if (!o && out) return null; // none (a foreground step's view, until it moves): its reset said so once
+        if (!o || !out) return this.outReset(sub, null);
+        if (o.kind === 'monitor') {
+          const part = eventsFrom(o.events, out.to);
+          if (part.total < out.to) return this.outReset(sub, null); // the transcript was read again
+          if (!part.text && part.to === out.to) return null;
+          out.to = part.to;
+          return this.outFrame(sub, part, {});
+        }
+        if (o.file !== out.file) return this.outReset(sub, out.from);
+        if (!out.file) return null;
+        const size = await outputSize(out.file);
+        if (size < 0 || size < out.to) return this.outReset(sub, null); // gone, or written again from the start
+        if (size === out.to) return null;
+        const part = await readOutput(out.file, out.to, size);
+        if (!part || part.to === out.to) return null;
+        out.to = part.to;
+        return this.outFrame(sub, part, {});
+      });
+    }
+  }
+
+  private async outReset(sub: Sub, from: number | null): Promise<object> {
+    const o = this.transcripts.outputOf(sub.sid, sub.bg as string);
+    const empty: OutputPart = { text: '', from: 0, to: 0, total: 0 };
+    if (!o) { sub.out = { file: null, from: 0, to: 0 }; return this.outFrame(sub, empty, { reset: true, lost: 'gone' }); }
+    if (o.kind === 'monitor') {
+      const part = eventTail(o.events, from);
+      sub.out = { file: null, from: part.from, to: part.to };
+      return this.outFrame(sub, part, { reset: true });
+    }
+    sub.out = { file: o.file, from: 0, to: 0 };
+    if (!o.file) return this.outFrame(sub, empty, { reset: true, lost: 'unnamed' });
+    const part = await outputTail(o.file, from);
+    if (!part) return this.outFrame(sub, empty, { reset: true, lost: 'gone' });
+    sub.out = { file: o.file, from: part.from, to: part.to };
+    return this.outFrame(sub, part, { reset: true });
+  }
+
+  private outFrame(sub: Sub, part: OutputPart, how: { reset?: boolean; prepend?: boolean; lost?: string }): object {
+    return { t: 'output', sid: sub.sid, bg: sub.bg, text: part.text, from: part.from, to: part.to, total: part.total, ...how };
+  }
+
+  // One output read of a page's view at a time, in order; its frame goes while the page still shows it.
+  private outRun(client: Client, sub: Sub, job: () => Promise<object | null>): Promise<void> {
+    sub.chain = (sub.chain ?? Promise.resolve()).then(job).then(
+      (m) => { if (m && this.subs.get(client) === sub) client.send(m); },
+      () => {},
+    );
+    return sub.chain;
+  }
+
+  // The look at shown shells' files runs only while a page shows one.
+  private outTimers(): void {
+    const every = this.opts.outputMs ?? 1000;
+    const want = every > 0 && [...this.subs.values()].some((s) => s.bg);
+    if (want && !this.outTimer) {
+      this.outTimer = setInterval(() => { this.outMore(null); this.outTimers(); }, every);
+      this.outTimer.unref?.();
+    } else if (!want && this.outTimer) {
+      clearInterval(this.outTimer);
+      this.outTimer = null;
+    }
+  }
+
   // ---------- what others read ----------
 
   meta(id: string): SessionMeta | undefined {
@@ -293,7 +459,7 @@ export class Publisher {
     return this.transcripts.ids().map((id) => {
       const p = this.pub(id) as Pub;
       const t = this.transcripts.get(id) as Transcript;
-      return { ...this.metaOf(p), agents: this.agentsOut(t.agents()), background: t.background(), stream: p.stream, held: p.held };
+      return { ...this.metaOf(p), agents: this.agentsOut(id, t.agents()), background: t.background(), stream: p.stream, held: p.held, openItems: this.itemsOf(id) };
     });
   }
 
@@ -363,12 +529,13 @@ export class Publisher {
     this.trimSince(p, t, ch);
     // What runs by the transcript first: the status it sets is in this flush's meta.
     const ran = this.transcripts.running(sid);
-    const ranKey = `${ran.agents}:${ran.turn}:${ran.ask?.toolUseId ?? ''}`;
+    const ranKey = `${ran.agents}:${ran.turn}:${ran.ask?.toolUseId ?? ''}:${ran.apiError?.text ?? ''}`;
     if (ranKey !== p.ran) {
       p.ran = ranKey;
       this.opts.onRunning?.(sid, ran);
     }
     if (this.pubs.get(sid) !== p) return; // closed or moved meanwhile
+    void this.opts.openItems?.sync(sid); // review items open before the meta counts them; a read tells us when done
     const meta = this.metaOf(p);
     this.opts.badge?.set(sid, badgeOf(meta.state));
     const key = JSON.stringify(meta);
@@ -376,13 +543,25 @@ export class Publisher {
       p.sent = key;
       this.broadcast({ t: 'session', ...meta });
     }
-    if (ch.agents.length) {
-      this.broadcast({ t: 'agents', sid, upsert: this.agentsOut(ch.agents.map((id) => t.getAgent(id)).filter((a): a is Agent => Boolean(a))) });
+    // the changed subagents, and those whose review item opened or closed (Mark reviewed changes no transcript)
+    const reviews = new Set(this.agentsOut(sid, t.agents()).filter((a) => a.review).map((a) => a.id));
+    const agentIds = new Set(ch.agents);
+    for (const id of reviews) if (!p.reviews.has(id)) agentIds.add(id);
+    for (const id of p.reviews) if (!reviews.has(id)) agentIds.add(id);
+    p.reviews = reviews;
+    if (agentIds.size) {
+      this.broadcast({ t: 'agents', sid, upsert: this.agentsOut(sid, [...agentIds].map((id) => t.getAgent(id)).filter((a): a is Agent => Boolean(a))) });
     }
     if (ch.background.length) {
       this.broadcast({ t: 'background', sid, upsert: ch.background.map((id) => t.getBackground(id)).filter(Boolean) });
     }
+    const items = this.itemsOf(sid), itemsKey = JSON.stringify(items);
+    if (itemsKey !== p.itemsSent) {
+      p.itemsSent = itemsKey;
+      this.broadcast({ t: 'openItems', sid, ...items });
+    }
     this.sendItems(sid, t, ch);
+    this.outMore(sid);
     // A shell, monitor or subagent that was running ended (often between turns): the writer
     // looks again, as after a turn, so the Now line doesn't keep saying it runs.
     let ended = false;
@@ -397,7 +576,9 @@ export class Publisher {
 
   private sendItems(sid: string, t: Transcript, ch: ReadChanges): void {
     for (const [client, sub] of this.liveSubs()) {
-      if (sub.sid !== sid) continue;
+      // the shell view of Claude's foreground Bash (R7.2, 2026-11-26): its step is a main item, sent as it changes
+      if (sub.sid === sid && sub.bg && !ch.reset && ch.items.includes(sub.bg)) this.sendUpserts(client, { ...sub, from: 0 }, t, [sub.bg]);
+      if (sub.sid !== sid || sub.bg) continue;
       if (sub.agent === null) {
         if (ch.reset) this.sendReset(client, sub);
         else this.sendUpserts(client, sub, t, ch.items);
@@ -447,6 +628,7 @@ export class Publisher {
     if (!next) return;
     next.id = to;
     next.ran = '';
+    next.itemsSent = '';
     this.pubs.set(to, next);
     const meta = this.metaOf(next);
     next.sent = JSON.stringify(meta);
@@ -457,7 +639,8 @@ export class Publisher {
       if (sub.sid !== from) continue;
       sub.sid = to;
       sub.agent = null;
-      this.sendReset(client, sub);
+      if (sub.bg) void this.outRun(client, sub, () => this.outReset(sub, null));
+      else this.sendReset(client, sub);
     }
   }
 
@@ -468,7 +651,7 @@ export class Publisher {
     if (p || !this.transcripts.has(sid)) return p;
     p = {
       id: sid, status: null, statusAt: 0, statusDetail: {}, choice: null, pending: [], held: [], stream: null,
-      sent: '', ran: '', working: new Set(), since: new Map(), shown: null, queued: false,
+      sent: '', itemsSent: '', reviews: new Set(), ran: '', working: new Set(), since: new Map(), shown: null, queued: false, gone: false,
     };
     this.pubs.set(sid, p);
     return p;
@@ -497,8 +680,9 @@ export class Publisher {
       id: p.id,
       title,
       // R3.4: the CLI's own name for it (its ai-title), shown small in the header so you recognise
-      // it from the terminal; left out while it is the title itself.
-      name: t.aiTitle && t.aiTitle !== title ? t.aiTitle : '',
+      // its terminal tab; only while another process (a terminal) holds it, not in a session Synopia
+      // runs, which has no tab, and left out while it is the title itself.
+      name: t.aiTitle && t.aiTitle !== title && (p.statusDetail.terminal || p.statusDetail.external) ? t.aiTitle : '',
       now: w?.now ?? '',
       cwd: displayPath(this.transcripts.cwdOf(p.id), this.home),
       prs: t.prs,
@@ -509,7 +693,9 @@ export class Publisher {
         pending: p.pending.map((r) => needsOf(r.kind)),
         ask,
         interrupted: interruptedLast(t.items),
-        review: t.agents().filter((a) => a.finished && this.toReview(a)).length,
+        blocked: this.blocked(p.id, t),
+        input: Boolean(p.shown?.bang()?.running && p.shown.bang()?.waiting),
+        ...this.countsOf(p.id),
         // a status from Synopia's own process, not the transcript alone nor a terminal that holds it
         driven: p.status !== null && !p.statusDetail.terminal && !p.statusDetail.external,
       }),
@@ -517,6 +703,8 @@ export class Publisher {
       ...resolveModel(p.choice, { model: typeof t.requestedModel === 'string' ? t.requestedModel : null, effort: effortOf(t.effort) }, this.opts.defaultModel?.()),
       outbox: p.shown?.outbox() ?? [],
       bang: p.shown?.bang() ?? null,
+      bangs: p.shown?.bangs() ?? [],
+      gone: p.gone,
     };
   }
 
@@ -553,14 +741,27 @@ export class Publisher {
     return [...this.subs];
   }
 
-  // A "For review: …" subagent not marked reviewed yet (R10.1).
-  private toReview(a: Agent): boolean {
-    return a.review && !this.opts.reviewed?.(a.id);
+  // Blocked (R8.2, FR-STAT-02): the main turn, or a subagent run since your last message (2026-11-26),
+  // has a step auto mode blocked or a permission denied that wasn't redone.
+  private blocked(sid: string, t: Transcript): boolean {
+    if (blockedLast(t.items)) return true;
+    const since = turnStartMs(t.items);
+    return t.agents().some((a) => blockedSubagent(this.transcripts.get(sid, a.id)?.items ?? [], t.runEnds(a.id), since));
   }
 
-  // Subagents as the pages get them: `review` is true while the deliverable waits to be reviewed.
-  private agentsOut(list: Agent[]): Agent[] {
-    return list.map((a) => (a.review && !this.toReview(a) ? { ...a, review: false } : a));
+  // The session's open items as the `openItems` frame carries them (FR-ITEM-05).
+  private itemsOf(sid: string): object {
+    return this.opts.openItems?.view(sid) ?? { items: [], checks: [], closed: [], unread: 0, note: null };
+  }
+
+  // The session's counts for its state (FR-ITEM-06): review items open, items waiting on you, follow-ups due.
+  private countsOf(sid: string): { review: number; waiting: number; due: number } {
+    return this.opts.openItems?.counts(sid) ?? { review: 0, waiting: 0, due: 0 };
+  }
+
+  // Subagents as the pages get them: `review` is true while the subagent has an open review item (R10.1).
+  private agentsOut(sid: string, list: Agent[]): Agent[] {
+    return list.map((a) => (a.review && !this.opts.openItems?.reviewOpen(sid, a.id) ? { ...a, review: false } : a));
   }
 }
 
@@ -578,3 +779,4 @@ function interruptedLast(items: Item[]): boolean {
   }
   return false;
 }
+

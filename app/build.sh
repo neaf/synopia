@@ -2,7 +2,7 @@
 # Builds build/Synopia.app from app/shell with swiftc. The app runs the backend
 # from this checkout with the node found now, so rebuild after a Node upgrade.
 # It builds into a temp bundle next to build/Synopia.app, checks it (Info.plist lint,
-# an executable binary, config.json naming a node and a backend that exist), and only
+# an executable binary, config.json naming a node, a backend and a harness plugin that exist), and only
 # then replaces the old bundle, so a failed build leaves the old app as it was and a
 # running app loses its bundle for no longer than one rename.
 set -euo pipefail
@@ -17,6 +17,26 @@ icon="$app/web/icon/icon-1024.png"
 if [ ! -f "$icon" ]; then
   icon="$(ls -S "$app"/web/icon/*.png 2>/dev/null | head -1 || true)"
   [ -n "$icon" ] || { echo "build: fail (no PNG in app/web/icon)"; exit 1; }
+fi
+
+# The agent-harness plugin the sessions load (R3.17). The gitignored app/.harness-live, one line holding
+# the path of your agent-harness checkout, names that checkout and nothing is copied; else the pinned
+# copy app/harness/bundle/ (app/harness/pin.sh) goes into Contents/Resources/harness/. Either must hold
+# .claude-plugin/plugin.json and the rendered build/agents/ (install.py --plugin).
+harness_ok() {
+  [ -f "$1/.claude-plugin/plugin.json" ] || { echo "build: fail ($2 has no .claude-plugin/plugin.json)"; exit 1; }
+  [ -d "$1/build/agents" ] || { echo "build: fail ($2 has no build/agents/: run install.py --plugin there)"; exit 1; }
+}
+live=""
+if [ -f "$app/.harness-live" ]; then
+  live="$(head -1 "$app/.harness-live")"
+  case "$live" in "~") live="$HOME" ;; "~/"*) live="$HOME/${live#\~/}" ;; esac
+  [ -n "$live" ] || { echo "build: fail (app/.harness-live is empty)"; exit 1; }
+  [ -d "$live" ] || { echo "build: fail (app/.harness-live names $live, not a folder)"; exit 1; }
+  live="$(cd "$live" && pwd)"
+  harness_ok "$live" "$live"
+else
+  harness_ok "$app/harness/bundle" "app/harness/bundle"
 fi
 
 mkdir -p "$root/build"
@@ -39,9 +59,16 @@ for s in 16 32 128 256 512; do
 done
 iconutil -c icns "$iconset" -o "$new/Contents/Resources/Synopia.icns"
 
+if [ -n "$live" ]; then
+  harness="$live"
+else
+  cp -R "$app/harness/bundle" "$new/Contents/Resources/harness"
+  harness="$bundle/Contents/Resources/harness" # where it is once the new bundle is swapped in
+fi
+
 config="$new/Contents/Resources/config.json"
-node="$node" backend="$app/backend/src/main.ts" "$node" -e \
-  'process.stdout.write(JSON.stringify({ node: process.env.node, backend: process.env.backend }, null, 2) + "\n")' \
+node="$node" backend="$app/backend/src/main.ts" harness="$harness" "$node" -e \
+  'process.stdout.write(JSON.stringify({ node: process.env.node, backend: process.env.backend, harness: process.env.harness }, null, 2) + "\n")' \
   >"$config"
 "$node" -e '
   const fs = require("node:fs");
@@ -49,6 +76,7 @@ node="$node" backend="$app/backend/src/main.ts" "$node" -e \
   fs.accessSync(c.node, fs.constants.X_OK);
   fs.accessSync(c.backend, fs.constants.R_OK);
 ' "$config" 2>/dev/null || fail "config.json names a missing node or backend"
+[ -n "$live" ] || harness_ok "$new/Contents/Resources/harness" "the copied harness"
 
 # the swap: the old bundle aside, the new one in, the old one gone
 old="$work/Synopia.app.old"

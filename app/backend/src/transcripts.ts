@@ -10,11 +10,14 @@ import path from 'node:path';
 import { Tailer, SubagentWatcher } from './tail.ts';
 import type { JsonRecord, Span } from './tail.ts';
 import { Transcript, sessionDirOf, SERVED_IMAGE_TYPES } from './transcript.ts';
+import type { BgOutput, LedgerFact } from './transcript.ts';
 import { landedBlocks, cwdOfRecords, resultTextIn, imageIn } from './claude-jsonl.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { QUIET_MS, ASK_STALE_MS } from './status.ts';
 import type { Running } from './status.ts';
+import type { Reply } from './open-items.ts';
+import type { Exchange, ExchangeKind, Segment } from './keeper.ts';
 
 export const WINDOW = 160; // the items a view gets, and an `earlier` page
 
@@ -116,6 +119,13 @@ export class Transcripts {
     this.listener?.closed(id);
   }
 
+  // The session continues in another folder (session.ts continueIn): the folder its meta shows, kept
+  // over the id change that follows.
+  moveCwd(id: string, cwd: string): void {
+    const s = this.live.get(id);
+    if (s) s.cwd = cwd;
+  }
+
   // The session's id changed (a new session's real id from system/init, or a conversation_reset):
   // the reading starts again on the new id's file, from the start. The cwd stays.
   rekey(oldId: string, newId: string): void {
@@ -203,14 +213,105 @@ export class Transcripts {
     };
   }
 
+  // The session's ledger by its main conversation (FR-ITEM-01), null when it named none or isn't open.
+  ledgerOf(id: string): LedgerFact | null {
+    return this.live.get(id)?.t.ledger ?? null;
+  }
+
+  // When you last wrote to the session (ms): your last message, not an interrupt marker; null when none.
+  lastYouAt(id: string): number | null {
+    const items = this.live.get(id)?.t.items ?? [];
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.k !== 'you' || it.interrupted || it.turnedDown) continue;
+      const ms = it.ts ? Date.parse(it.ts) : NaN;
+      return Number.isFinite(ms) ? ms : null;
+    }
+    return null;
+  }
+
+  // The keeper's exchange (FR-ITEM-08): `you`, your last message; `turn`, what came after it in the main
+  // conversation: Claude's text, one line per tool step with its result's first lines (a ledger's step with no
+  // result: the list is given apart), and the subagents' reports with their names and the ids their briefs
+  // owned. `key` names the exchange: your message's id, and for a turn its last item's. Null when the session
+  // isn't open or has no message of yours.
+  exchange(id: string, kind: ExchangeKind): Exchange | null {
+    const t = this.live.get(id)?.t;
+    if (!t) return null;
+    const items = t.items;
+    let at = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.k === 'you' && !it.interrupted && !it.turnedDown && (it.text ?? '').trim()) { at = i; break; }
+    }
+    if (at < 0) return null;
+    const you = items[at];
+    if (kind === 'you') return { kind, key: you.id, segments: [{ src: 'you', text: you.text ?? '' }] };
+    const segments: Segment[] = [];
+    let last = you.id;
+    for (const it of items.slice(at + 1)) {
+      if (it.k === 'claude' && it.text?.trim()) segments.push({ src: 'claude', text: it.text });
+      else if (it.k === 'tool' && it.name !== 'Agent' && it.name !== 'Task') {
+        const step = `${it.name ?? 'Tool'}(${(it.obj ?? '').replace(/\s+/g, ' ').slice(0, 160)})`;
+        const ledger = /(^|\/)open-items\.md$/.test(it.obj ?? '') || it.patch?.ledger;
+        const res = !ledger && it.out?.text ? it.out.text.split('\n').filter((l) => l.trim()).slice(0, 3).join(' / ').slice(0, 300) : '';
+        segments.push({ src: 'tool', text: res ? `${step} -> ${res}` : step });
+      } else if (it.k === 'report' && it.text?.trim()) {
+        const a = it.agent ? t.getAgent(it.agent) : undefined;
+        const owns = a?.toolUseId ? t.ownsOf(a.toolUseId) : [];
+        segments.push({ src: 'report', text: it.text, ...(it.agent ? { agent: it.agent } : {}), name: (a?.description ?? '').replace(/^for review:\s*/i, ''), ...(owns.length ? { owns } : {}) });
+      } else continue;
+      last = it.id;
+    }
+    return { kind, key: `${you.id}:${last}`, segments };
+  }
+
+  // Where the keeper's exchanges are now (open-items.ts asks once per key): your last message with its time,
+  // and, once the main turn is over and Claude wrote after it, the turn's key and its last record's time.
+  exchangeKeys(id: string): { you: { key: string; ms: number } | null; turn: { key: string; ms: number } | null } {
+    const t = this.live.get(id)?.t;
+    const none = { you: null, turn: null };
+    if (!t) return none;
+    const items = t.items;
+    let at = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.k === 'you' && !it.interrupted && !it.turnedDown && (it.text ?? '').trim()) { at = i; break; }
+    }
+    if (at < 0) return none;
+    const ms = (ts: string | null) => (ts ? Date.parse(ts) || 0 : 0);
+    const you = { key: items[at].id, ms: ms(items[at].ts) };
+    const after = items.slice(at + 1).filter((i) => (i.k === 'claude' && i.text?.trim()) || i.k === 'tool' || i.k === 'report');
+    const claude = after.some((i) => i.k === 'claude');
+    if (!claude || t.turnRunning(Date.now(), QUIET_MS)) return { you, turn: null };
+    const lastIt = after[after.length - 1];
+    return { you, turn: { key: `${you.key}:${lastIt.id}`, ms: ms(lastIt.ts) || you.ms } };
+  }
+
+  // The main conversation's Claude blocks and subagent reports, in transcript order, for the reply an open
+  // item came from (open-items.ts, FR-ITEM-07); none when the session isn't open.
+  replies(id: string): Reply[] {
+    const out: Reply[] = [];
+    for (const i of this.live.get(id)?.t.items ?? []) {
+      if (i.k === 'claude') out.push({ id: i.id, k: 'claude', ts: i.ts, text: i.text ?? '' });
+      else if (i.k === 'report') out.push({ id: i.id, k: 'report', ts: i.ts, text: '', ...(i.agent ? { agent: i.agent } : {}) });
+    }
+    return out;
+  }
+
+  // The open-item ids an Agent tool use's brief owns (FR-ITEM-04).
+  ownsOf(id: string, toolUseId: string): string[] {
+    return this.live.get(id)?.t.ownsOf(toolUseId) ?? [];
+  }
+
   // What runs now by the transcript (nothing when it isn't open): subagents and forks still running
   // by its rule (shells and monitors aren't counted), its main turn (quiet after QUIET_MS), and a
-  // card it waits on (none after ASK_STALE_MS of quiet).
+  // card it waits on (none after ASK_STALE_MS of quiet), and the request the CLI retries.
   running(id: string): Running {
     const s = this.live.get(id);
     if (!s) return { agents: 0, turn: false, lastAt: 0, ask: null };
     const t = s.t, now = Date.now();
-    return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(now, QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk(now, ASK_STALE_MS, () => mtimeOf(s.path)) };
+    return { agents: t.agents().filter((a) => a.running).length, turn: t.turnRunning(now, QUIET_MS), lastAt: (t.lastTs && Date.parse(t.lastTs)) || 0, ask: t.pendingAsk(now, ASK_STALE_MS, () => mtimeOf(s.path)), apiError: t.apiError };
   }
 
   // When the transcript last changed: its last record, else the file's mtime.
@@ -261,6 +362,11 @@ export class Transcripts {
     return out;
   }
 
+  // Where a background shell's or monitor's output is (task-output.ts reads it).
+  outputOf(sid: string, toolUseId: string): BgOutput | undefined {
+    return this.get(sid)?.outputOf(toolUseId);
+  }
+
   // The full result of one tool, read again from its record's line (only its preview is kept in
   // memory). Null when the file is gone or was rewritten.
   async resultText(sid: string, agent: string | null, toolUseId: string): Promise<string | null> {
@@ -288,14 +394,25 @@ export class Transcripts {
     this.edit(sid, (t) => t.processEnded(new Date(at).toISOString(), failed));
   }
 
-  // The SDK's task_notification for one of the session's background tasks (its tool use id).
-  taskEnded(sid: string, toolUseId: string, status: string, summary: string): void {
-    this.edit(sid, (t) => t.taskEnded(toolUseId, status, summary, new Date().toISOString()));
+  // The SDK's task_notification for one of the session's background tasks (its tool use id; its task id
+  // names a resumed subagent, whose tool use id is then the SendMessage's).
+  taskEnded(sid: string, toolUseId: string, status: string, summary: string, taskId = ''): void {
+    this.edit(sid, (t) => t.taskEnded(toolUseId, status, summary, new Date().toISOString(), taskId));
   }
 
   // The SDK's task_started: a task id by tool use id, matched against background_tasks_changed.
   taskStarted(sid: string, toolUseId: string, taskId: string): void {
     this.edit(sid, (t) => t.taskStarted(toolUseId, taskId));
+  }
+
+  // f, f (R9.8): the main conversation's running foreground Bash and Agent steps (Transcript.foreground).
+  foreground(sid: string): { ready: string[]; early: string[] } {
+    return this.live.get(sid)?.t.foreground() ?? { ready: [], early: [] };
+  }
+
+  // f, f's interrupt route (R9.8): the live line set aside for your queued messages (Transcript.setAside).
+  setAside(sid: string, msg: string | null): void {
+    this.edit(sid, (t) => t.setAside(new Date().toISOString(), msg));
   }
 
   // The SDK's background_tasks_changed: the task ids of its live background work (REPLACE semantics).

@@ -11,6 +11,8 @@ export const MARKS = {
   work: ['', WORK],
   /* working with your message queued: the same turning arc, its centre in your blue */
   queued: ['', WORK.replace('<circle cx="6" cy="6" r="1.8" fill="var(--mk-1A7F37)"/>', '<circle cx="6" cy="6" r="1.8" fill="var(--mk-0550AE)"/>')],
+  /* a message of yours that waits in the queue (R5.5): a still clock in your blue, in place of `❯`; it waits, it doesn't run */
+  waiting: ['', SVG + '<circle cx="6" cy="6" r="4.8" stroke="var(--mk-0550AE)" stroke-width="1.4"/><path d="M6 3.3V6l1.9 1.3" stroke="var(--mk-0550AE)" stroke-width="1.4"/></svg>'],
   compact: ['', '<i class="cr"></i><i class="cr"></i><i class="cr"></i>'],
   pause: ['v-seesaw', '<span class="bars"><i></i><i></i></span>'],
   creds: ['', '<i class="lock"><i class="sh"></i><i class="bd"></i></i>'],
@@ -21,7 +23,11 @@ export const MARKS = {
   failed: ['', '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.3" y="2.3" width="7.4" height="7.4" rx="1.1" fill="var(--red)"/></svg>'],
   timeout: ['', '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.4" y="2.4" width="7.2" height="7.2" rx="1" fill="none" stroke="var(--amber)" stroke-width="1" vector-effect="non-scaling-stroke"/></svg>'],
   done: ['', '<i class="chk"></i>'],
+  /* an MCP server turned off (R5.15): a grey ring with a bar across, still */
+  mcp_off: ['', '<svg class="k" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.6" stroke="var(--ink-3)" stroke-width="1.4"/><line x1="3.4" y1="6" x2="8.6" y2="6" stroke="var(--ink-3)" stroke-width="1.6" stroke-linecap="round"/></svg>'],
   review: ['', '<i class="badge"></i><i class="badge-chk"></i>'],
+  /* open items waiting on you (R4.2, 2026-11-26): the hollow circle a card uses for "not answered", still, in its line's colour */
+  open: ['o-open', '<svg class="k" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.3" stroke="currentColor" stroke-width="1.4"/></svg>'],
   /* kinds, running: a subagent's dot in orbit, a fork's two dots parting, a shell's >_ with the underscore
      stretching, a monitor's radar hand sweeping */
   k_sub: ['', SVG + '<circle cx="6" cy="6" r="4.4" stroke="var(--mk-7CC48F)" stroke-width="1.6"/><g class="rot" style="--d:var(--mark-period)"><circle cx="6" cy="1.6" r="1.8" fill="var(--mk-1A7F37)"/></g></svg>'],

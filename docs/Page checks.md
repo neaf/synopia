@@ -7,9 +7,9 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | Command | Runs |
 |---|---|
 | `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script and the page unit tests (`node --test app/web/test/*.test.js`); one pass or fail line each |
-| `app/check.sh --page` | the above, then `run.sh all` (22 suites); four pass lines |
+| `app/check.sh --page` | the above, then `run.sh all` (33 suites); four pass lines |
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
-| `app/web/dev/cdp/run.sh all` | every suite one after the other, a table of suite and result, failures under it; each suite's full output stays in the folder it prints |
+| `app/web/dev/cdp/run.sh all` | every suite, 4 at a time (`SYNOPIA_CDP_JOBS`), a table of suite and result in suite order, failures under it; each suite's full output stays in the folder it prints |
 | `SYNOPIA_CDP_THEME=dark app/web/dev/cdp/run.sh <suite>` | the suite with the system appearance dark |
 | `app/dev.sh --script` | the backend on the scripted SDK over a copy of the fixture tree below (`--claude-dir <tree>` for another), for looking at the page by hand; prints the URL to open |
 | `app/web/dev/compare.sh` | screenshots of `prototype/app.html` and the port side by side in `/tmp/synopia-compare/shots/` |
@@ -17,7 +17,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 - Each `run.sh` run starts its own headless browser (a temp `--user-data-dir`, `--remote-debugging-port=0`, the port read from `DevToolsActivePort`) and its own backend (`--port 0`, the port read from the ready line) on a fresh state folder. A `trap` stops both on exit, Ctrl-C too, and only its own pids. So two runs, other agents' runs and an open app never share anything.
 - A run prints `N/M pass`, the failures and where its shots are. Its exit code is the result: 0 only when every check passed and at least one ran.
 - The backend under the suites runs the real Sessions, status, writer and menu code on the scripted SDK (below), over a copy of `app/backend/test/fixtures/claude/` in the run's state folder with its `sdk-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), an idle session with diffs whose process gives the menu (`#11111111`). `run.sh` passes `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`, and `--dry-run` for `preview`.
-- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `preview`, `extcard` and `steps` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`).
+- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps`, `scroll`, `agenttools`, `sendnow`, `mcp`, `find`, `items` and `waiting` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`). `items` also writes its made-up ledger to `/tmp/synopia-items/shop/.ai-notes/checkout-m2/open-items.md`, the folder its records name, and rewrites it twice (the second time with an item Synopia found, for `d` and Undo); `waiting` writes its two ledgers under `/tmp/synopia-waiting/`.
 - Page hooks: `?agent=<id>` opens a subagent, `&open=1` expands the last diff. `rail.mjs` and `restore.mjs` use them.
 
 ## The scripted SDK
@@ -34,13 +34,17 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | `sessions.<id>.start` | its process starts at load, with no message (`Sessions.startIdle`, test-only, no folder check), as a resumed session waiting for input |
 | `sessions.<id>.steps` | played once, when its first process starts in this daemon |
 | `sessions.<id>.onSend` | played on each message that starts a turn |
+| `mcp` | `{servers: [{name, status, kind, scope}], loginMs, pendingMs, failLogin}`: the MCP servers every query reports, and the pretend `claude mcp login` (R5.15; docs/Agent SDK.md, "MCP servers: status, sign-in") |
+| `mcp` | `{servers: [{name, status, kind, scope}], loginMs, pendingMs, failLogin}`: the MCP servers every query reports, and the pretend `claude mcp login` (R5.15; docs/Agent SDK.md, "MCP servers: status, sign-in") |
 
-A step has one or more of: `message` (an SDK message the query yields; `session_id` and `uuid` filled in), `ask` (a `canUseTool` call: `tool`, `input`, `id` the request id, `toolUseId`, `suggestions`, `agentId`; the next step waits for its answer), `append` (records written to the transcript), `send` (a message you send, through `Sessions.send`), plus `after` (ms after the step before) and `ago` (ms: the step plays in the past).
+A step has one or more of: `call` (a call of one of Synopia's own tools, `{tool, input, toolUseId}`: the records the CLI writes, `canUseTool`, then the tool itself; the next step waits for it), `message` (an SDK message the query yields; `session_id` and `uuid` filled in), `ask` (a `canUseTool` call: `tool`, `input`, `id` the request id, `toolUseId`, `suggestions`, `agentId`; the next step waits for its answer), `append` (records written to the transcript), `send` (a message you send, through `Sessions.send`), `retry` (a request the CLI retries, `{attempt, max, delayMs, status, error, text, credential?}`: the `system/api_error` record, then the `api_retry` message; 2026-11-26), plus `after` (ms after the step before) and `ago` (ms: the step plays in the past).
 - The clock: while a step with `ago` plays, Sessions' clock reads that much earlier, so a status, a card's `since` or a stale timer starts in the past. Steps play one at a time across sessions, each handled before the clock moves back.
 - A check that injects a `session` frame to change a status sends the whole `state` the backend would (`background.mjs`, `tween.mjs`): the page derives nothing from `status`.
 - Seeding: a state folder whose `state.json` has no `open` list gets every `projects/*/<id>.jsonl` of the tree in id order, each with the script's status, else "your turn" since its last record. Fields already there stay (titles.mjs writes `written` first). A restart on the same folder seeds nothing and plays the steps again.
-- Terminals: every `<tree>/sessions/<pid>.json` is a live Claude Code that isn't Synopia's, in a terminal (`entrypoint: cli`, `helpers.mjs` `terminal`) or another app's SDK child (`entrypoint: sdk-ts`, `helpers.mjs` `elsewhere`); its process is never asked. A fixture session whose transcript runs in another process needs such a file: with none, the session is free and what its transcript runs reads ended (`claude-states/sessions/`, and the `make` steps of `background`, `extcard`, `steps`). A take-over's signal is logged as `scripted.kill` and the pretend CLI exits. Nothing real is signalled and no login shell runs.
+- Terminals: every `<tree>/sessions/<pid>.json` is a live Claude Code that isn't Synopia's, in a terminal (`entrypoint: cli`, `helpers.mjs` `terminal`) or another app's SDK child (`entrypoint: sdk-ts`, `helpers.mjs` `elsewhere`); its process is never asked. A fixture session whose transcript runs in another process needs such a file: with none, the session is free and what its transcript runs reads ended (`claude-states/sessions/`, and the `make` steps of `background`, `extcard`, `items`, `rail`, `steps`). A take-over's signal is logged as `scripted.kill` and the pretend CLI exits. Nothing real is signalled and no login shell runs.
 - What reads as whose: a session with its own process is `driven` (`state.driven`); one a terminal holds, or whose turn or question the transcript alone shows (no process of Synopia's), is not (`status.ts` `detail.external`). A transcript turn left open with recent records reads as another process's: a "driven, idle" session of a check has `start: true`.
+- Folders (R3.11): a session whose folder is missing reads "Folder gone" and has no message field. Folders under the script's `home` count as there without a stat (`Scripted.pretendFolder`, through `Sessions` `pretendFolder`), and `run.sh` makes the `/tmp/…` folders the tree's records name (`sandboxes.mjs`) for every suite but `folders`, which keeps its gone folder (`/tmp/synopia-folders/dev/demo-app.billing`) missing. `folders.mjs make` also writes the run's `state.json` with one open session, so the other three are past sessions for the Open list.
+- Forks: a query with `resume` and `forkSession` gets a new id and a copy of the old transcript under the new cwd's project folder; a process that took only `shouldQuery: false` context still sends `system/init`.
 - The script writes to the tree's transcripts as a CLI would, so `run.sh`, `dev.sh --script` and the backend tests run on a copy.
 
 ## Comparing with the prototype
@@ -50,8 +54,7 @@ A step has one or more of: `message` (an SDK message the query yields; `session_
 Expected differences, all deliberate:
 - no "N open sessions" footer;
 - no "Tab “…”" clause in the header (Synopia knows no terminal tabs);
-- "… N earlier items not shown" and "diff cut at 400 lines" without "in this prototype", so a cut diff is a little narrower;
-- the subagent view's placeholder says "Message <session title>", not "… about this subagent".
+- "… N earlier items not shown" and "diff cut at 400 lines" without "in this prototype", so a cut diff is a little narrower.
 
 ## Focus rule: chrome-headless-shell only
 
@@ -92,6 +95,8 @@ A script added with `Page.addScriptToEvaluateOnNewDocument` is not subject to th
 
 Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames, so they are steadier with one browser running. Source: runs on the baseline machine, 2026-11-24.
 
+`run.sh all` runs 4 suites at a time: about 80 s for 31 suites (before `items`), against about 270 s one after the other; 3 runs passed. At 6 at a time it takes about 64 s, but `steps` "Shell in Claude's turn" (a timing check) failed once in 2 runs, so 4 is the default. Source: runs on the baseline machine (8 cores), 2026-11-26.
+
 ## Writing a check
 
 - `connect()` from `cdp.mjs` needs `SYNOPIA_CHROME_PORT`, which `run.sh` sets. Each check times out after 180 s.
@@ -128,14 +133,17 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `sent(...types)` | frames the page sent since `spy()`, of those types (all with none) |
 | `received(...types)` | frames from the server since `spy()`, before the page applied them |
 | `inject(msg)` | hands `msg` to the page's message handler, as if the server sent it, past the schema check and the version check of `connection.js` |
-| `anchor()` | the log's scroll anchor: `{id, off}` (an item block's key and the pixels into it) or `{bottom: true}` |
+| `anchor()` | the log's scroll anchor: `{id, off}` (an item block's key and the pixels into it); at the end `{bottom: true, id, off}` with the last block on screen; `{bottom: true}` alone with no block |
 | `from(sid, agent)` | the oldest item id that view had loaded (sent with `view`), or null |
 | `attachments()` | the message box's pasted images: `{id, n, mediaType, url, data}`, `data` null until read |
 | `prompt()` | the prompt above the box: `"interrupt"` (Esc), `"background"` (b), `"close"` (x) or null |
 | `card(sid)` | the cursor and picks of that session's card (`{qi, oi, picks, own, notes, target, …}`; the shown session without `sid`), or null |
 | `cards()` | every card's state, keyed `"<sid>:<request id>"` |
 | `preview()` | the file preview: `{shown, path}` |
+| `find()` | the transcript's find bar (find.js): `{shown, q, at, total, count, hits, waiting}`, `count` the text it shows ("3 of 12", "No matches") |
 | `openList()` | the Open list: `{shown, filter}` |
+| `waitingList()` | the Waiting on you list: `{shown, filter, sel, rows: [{sid, id}]}`, `sel` "<sid>\n<id>" of the selected row |
+| `mcp()` | the MCP panel: `{shown, sid, servers, error, note, sel, action}` |
 | `marks()` | every mark kind in the marks table |
 | `mark(kind, size)` | a mark's markup, `size` in px |
 | `render(...parts)` | re-renders `"side"`, `"conv"`, `"header"`, `"log"`, `"card"` or `"rail"`, as a server message does |

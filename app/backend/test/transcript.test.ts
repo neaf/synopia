@@ -106,6 +106,21 @@ test('bashEditDiff: the 400-line cut, and the result before its tool use', () =>
   assert.equal(it.moreFiles, undefined);
 });
 
+test('the open-items ledger: its patches carry `ledger`, which Files changed leaves out (R5.9); other .ai-notes files do not', () => {
+  const LED = '/Users/fixture/dev/demo/.ai-notes/checkout-m2/open-items.md', PLAN = '/Users/fixture/dev/demo/.ai-notes/checkout-m2/plan.md';
+  const t = new Transcript({ home: HOME });
+  const hunk = { oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ['-a', '+b'] };
+  t.push({ type: 'assistant', uuid: 'a1', message: { content: [{ type: 'tool_use', id: 'te', name: 'Edit', input: { file_path: LED, old_string: 'a', new_string: 'b' } }] } });
+  t.push({ type: 'user', uuid: 'u1', toolUseResult: { filePath: LED, structuredPatch: [hunk] }, message: { content: [{ type: 'tool_result', tool_use_id: 'te', content: 'ok' }] } });
+  t.push({ type: 'assistant', uuid: 'a2', message: { content: [{ type: 'tool_use', id: 'tp', name: 'Edit', input: { file_path: PLAN, old_string: 'a', new_string: 'b' } }] } });
+  t.push({ type: 'user', uuid: 'u2', toolUseResult: { filePath: PLAN, structuredPatch: [hunk] }, message: { content: [{ type: 'tool_result', tool_use_id: 'tp', content: 'ok' }] } });
+  t.push({ type: 'assistant', uuid: 'a3', message: { content: [{ type: 'tool_use', id: 'tb', name: 'Bash', input: { command: 'ledger.py close Y1' } }] } });
+  t.push({ type: 'user', uuid: 'u3', cwd: '/Users/fixture/dev/demo', toolUseResult: { stdout: '', bashEditDiff: { files: [], moreFiles: 0, changedFiles: [LED] } }, message: { content: [{ type: 'tool_result', tool_use_id: 'tb', content: '' }] } });
+  assert.equal(byId(t, 'te').patch!.ledger, true);
+  assert.equal(byId(t, 'tp').patch!.ledger, undefined);
+  assert.deepEqual(byId(t, 'tb').patches!.map((p) => [p.bare, p.ledger]), [[true, true]]);
+});
+
 test('previewOf: 20 lines, 4 KB at most, the count of all lines', () => {
   assert.deepEqual(previewOf(''), { text: '', lines: 0, cut: false });
   assert.deepEqual(previewOf('one\ntwo\n'), { text: 'one\ntwo', lines: 2, cut: false });
@@ -128,7 +143,7 @@ test('tool steps: input and result preview, the span of the result record, and t
   t.pushAll(recs, spans);
   const bash = byId(t, 'toolu_bash1');
   assert.equal(bash.input, 'ls -la /Users/fixture/dev/demo');
-  assert.deepEqual(bash.out, { text: 'notes.md\nREADME.md', lines: 2, cut: false });
+  assert.deepEqual(bash.out, { text: 'notes.md\nREADME.md', lines: 2, cut: false, at: '2026-11-20T10:00:06.000Z' }, 'with the time of the result record');
   assert.equal(byId(t, 'toolu_grep1').input, 'pattern: TODO');
   assert.equal(byId(t, 'toolu_edit1').input, undefined, 'an edit shows its diff instead');
   const span = t.resultSpan('toolu_read1')!;
@@ -200,7 +215,7 @@ test('background shell and monitors with task notifications', () => {
   ]);
   assert.deepEqual(bg[0], {
     toolUseId: 'toolu_bgsh1', taskId: 'bash_1', kind: 'shell', description: 'Build the demo', command: 'make demo-build',
-    timeout: undefined, persistent: false, start: '2026-11-20T12:00:05.000Z',
+    timeout: undefined, persistent: false, start: '2026-11-20T12:00:06.000Z',
     status: 'completed', summary: 'Build finished with 0 errors', end: '2026-11-20T12:05:00.000Z',
   });
   assert.deepEqual([bg[1].timeout, bg[1].persistent, bg[1].summary, bg[1].end], [600000, false, '', '2026-11-20T12:06:00.000Z']);
@@ -250,7 +265,7 @@ test('subagents: meta, running rule, fork, For review and a file without meta', 
   const a1 = main.getAgent('aaaa0001')!;
   assert.deepEqual(a1, {
     id: 'aaaa0001', type: 'Explore', fork: false, description: 'Find the demo config', toolUseId: 'toolu_ag1',
-    model: 'haiku', depth: 1, finished: true, running: false, review: false, stopped: false,
+    model: 'haiku', depth: 1, finished: true, running: false, review: false, stopped: false, waiting: false,
     start: '2026-11-20T13:00:06.000Z', end: '2026-11-20T13:01:50.000Z', total: 2,
   });
   assert.equal(main.getAgent('aaaa0003')!.fork, true);
@@ -542,6 +557,19 @@ test('a tool you denied, or a plan you sent back, reads as denied, not failed', 
   assert.equal(byId(t, 'toolu_p').answer, 'Changes: use "final"');
 });
 
+test('a step auto mode blocked, or you turned down at a terminal, reads as denied with who said no', () => {
+  const t = new Transcript({ home: HOME });
+  const res = (id: string, content: string, kind?: string) => ({ type: 'user', uuid: `b-${id}`, timestamp: at(2), ...(kind ? { toolDenialKind: kind } : {}), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content }] } });
+  t.pushAll([
+    { type: 'assistant', uuid: 'b-a1', timestamp: at(1), message: { id: 'm1', content: [{ type: 'tool_use', id: 'toolu_auto', name: 'Bash', input: { command: 'git push' } }] } },
+    res('toolu_auto', 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: invented.', 'automode-blocked'),
+    { type: 'assistant', uuid: 'b-a2', timestamp: at(3), message: { id: 'm2', content: [{ type: 'tool_use', id: 'toolu_you', name: 'Bash', input: { command: 'rm -r out' } }] } },
+    res('toolu_you', "The user doesn't want to proceed with this tool use.", 'user-rejected'),
+    { type: 'user', uuid: 'b-u3', timestamp: at(4), message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } },
+  ]);
+  assert.deepEqual(['toolu_auto', 'toolu_you'].map((id) => [byId(t, id).state, byId(t, id).denied]), [['denied', 'auto'], ['denied', 'you']]);
+});
+
 test("task ended: the SDK's notification ends a background shell until the JSONL's own lands", () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
@@ -597,6 +625,17 @@ test('turn: a prompt opens it, turn_duration or stop_hook_summary closes it', ()
   assert.equal(t.turnRunning(NOW, QUIET), false);
   t.pushAll([{ type: 'attachment', uuid: 'q1', timestamp: ago(1), attachment: { type: 'queued_command', prompt: 'and this', commandMode: 'prompt' } }]);
   assert.equal(t.turnRunning(NOW, QUIET), true, 'a queued message is taken in by a running turn');
+});
+
+test('turn: Synopia\'s resume after a credential refresh is its own quiet item, not your prompt, and opens a turn (R8.2)', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([typed('u1', 'Go', ago(5)), replied('a1', ago(5), [{ type: 'text', text: 'Could not load credentials from any providers' }]), { type: 'system', subtype: 'stop_hook_summary', timestamp: ago(5) }]);
+  t.pushAll([typed('u2', 'Continue: the model\'s credentials were refreshed.', ago(3))]);
+  assert.deepEqual(t.items.at(-1), { id: 'u2', k: 'resumed', ts: ago(3) });
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+  t.pushAll([{ type: 'system', subtype: 'stop_hook_summary', timestamp: ago(2) }]);
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  assert.equal(t.items.find((i) => i.id === 'u2')?.workedMs, 60_000, 'the resumed turn has its time');
 });
 
 test('turn: quiet for 30 min with no tool waiting is your turn; a tool without its result runs on', () => {
@@ -715,9 +754,13 @@ test("subagents' shells and monitors: changes reported, and they end when their 
   t.taskEnded('toolu_bmon1', 'stopped', '', '2026-11-20T13:07:00.000Z'); // the SDK's, by its tool use id
   assert.deepEqual(t.takeChanges().background, ['toolu_bmon1']);
   assert.equal(t.getBackground('toolu_bmon1')?.status, 'stopped');
+  // a background subagent whose meta says finished while its own shell runs waits on it (its notification not here yet)
   t.setAgent('bbbb0001', { agentType: 'general-purpose', description: 'Build image thumbnails', toolUseId: 'toolu_r1', finished: true });
   assert.ok(t.takeChanges().background.includes('toolu_bsh1'));
-  assert.deepEqual([t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], ['stopped', 'Ended with its subagent']);
+  assert.deepEqual([t.getAgent('bbbb0001')?.running, t.getAgent('bbbb0001')?.waiting, t.getBackground('toolu_bsh1')?.status], [true, true, 'running']);
+  t.pushAll([{ type: 'user', uuid: 'r-k1', timestamp: '2026-11-20T13:08:00.000Z', message: { role: 'user', content: '<task-notification>\n<task-id>bbbb0001</task-id>\n<tool-use-id>toolu_r1</tool-use-id>\n<status>killed</status>\n<summary>Agent "Build image thumbnails" was stopped</summary>\n</task-notification>' } }]);
+  assert.ok(t.takeChanges().background.includes('toolu_bsh1'));
+  assert.deepEqual([t.getAgent('bbbb0001')?.stopped, t.getBackground('toolu_bsh1')?.status, t.getBackground('toolu_bsh1')?.summary], [true, 'stopped', 'Ended with its subagent']);
 });
 
 // Facts settled 2026-11-24 (docs/Claude Code transcripts.md), in the shapes real files hold (made-up content).
@@ -771,6 +814,43 @@ test('a foreground Bash moved to the background (backgroundTaskId) is a backgrou
   assert.equal(t.getBackground('toolu_fg')?.status, 'completed');
 });
 
+test('a shell or monitor started in the background runs from its result; one moved there from its tool use', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    // a permission card held the tool use 40 s before the shell started (its result)
+    replied('st-a1', ago(10), [{ type: 'tool_use', id: 'toolu_stb', name: 'Bash', input: { command: 'for i in 1 2 3; do echo tick; sleep 10; done', description: 'Print a tick', run_in_background: true } }]),
+    toolResult('st-r1', new Date(NOW - 10 * 60_000 + 40_000).toISOString(), 'toolu_stb', { content: 'Command running in background with ID: bst1. Output is being written to: /tmp/fixture/bst1.output' }),
+    replied('st-a2', ago(9), [{ type: 'tool_use', id: 'toolu_stm', name: 'Monitor', input: { command: 'tail -f x.log', description: 'Watch it', timeout_ms: 60000 } }]),
+    toolResult('st-r2', new Date(NOW - 9 * 60_000 + 5_000).toISOString(), 'toolu_stm', { content: 'Monitor started (task mst1, expires in 1m).' }),
+    replied('st-a3', ago(8), [{ type: 'tool_use', id: 'toolu_stf', name: 'Bash', input: { command: 'npm test', description: 'Run the tests' } }]),
+    { ...toolResult('st-r3', ago(7), 'toolu_stf', { content: 'Command was moved to the background with ID: bst2.' }),
+      toolUseResult: { stdout: '', stderr: '', interrupted: false, isImage: false, noOutputExpected: false, backgroundTaskId: 'bst2', backgroundedByUser: true } },
+  ]);
+  assert.deepEqual(t.background().map((b) => [b.toolUseId, b.start]), [
+    ['toolu_stb', new Date(NOW - 10 * 60_000 + 40_000).toISOString()],
+    ['toolu_stm', new Date(NOW - 9 * 60_000 + 5_000).toISOString()],
+    ['toolu_stf', ago(8)],
+  ], 'started at their results; the moved one ran in the foreground from its tool use');
+});
+
+test('setAside (f, f, R9.8): names the running main step, and marks the cut message\'s text landed before or after', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('sa-u1', 'Go', ago(5)),
+    { ...replied('sa-a1', ago(4), [{ type: 'text', text: 'Reading it first.' }]), message: { role: 'assistant', id: 'msg_sa', content: [{ type: 'text', text: 'Reading it first.' }] } },
+    replied('sa-a2', ago(4), [{ type: 'tool_use', id: 'toolu_sar', name: 'Read', input: { file_path: '/tmp/x' } }]),
+  ]);
+  t.takeChanges();
+  t.setAside(ago(3), 'msg_sa');
+  const aside = t.items.find((i) => i.k === 'aside')!;
+  assert.equal(aside.step, 'toolu_sar', 'the running Read it named');
+  assert.equal(t.items.find((i) => i.k === 'claude')!.aside, aside.id, 'text of the message that landed before');
+  assert.ok(t.takeChanges().items.includes('sa-a1:0'), 'and it is sent again');
+  t.pushAll([{ ...toolResult('sa-r1', ago(2), 'toolu_sar', { content: 'x' }) }]);
+  t.setAside(ago(1), null);
+  assert.equal(t.items.filter((i) => i.k === 'aside').at(-1)!.step, undefined, 'a finished step is not named');
+});
+
 test('background_tasks_changed: a foreground Bash or Agent in the live set is background work, by task id, once; leaving it ends it', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
@@ -820,13 +900,86 @@ test("a subagent's shell under an SDK-driven CLI: no toolUseResult in its file, 
   ]);
   main.setAgent('gggg0001', { agentType: 'general-purpose', description: 'Sleep', toolUseId: 'toolu_ag' }, sub);
   main.takeChanges();
-  assert.equal(main.getBackground('toolu_gsh')?.taskId, null, 'nothing in the file');
+  assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x', 'its result text names it');
   main.taskStarted('toolu_gsh', 'bg9x');
   assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x');
   assert.ok(main.takeChanges().background.includes('toolu_gsh'), 'pages get it');
   main.reset(); // a rewritten file keeps what the SDK said
   main.pushAll([typed('g-u1', 'Go', ago(10))]);
   assert.equal(main.getBackground('toolu_gsh')?.taskId, 'bg9x');
+});
+
+// docs/Claude Code transcripts.md "A subagent waiting on its own background work": the shapes of a live session
+// (shape scan 2026-11-26, keys only), invented content. A background subagent starts a long shell and a waiter, ends its
+// turn; the CLI marks its meta finished and notifies "waiting"; a message wakes it; the shell ends; it reports.
+function waitingAgent() {
+  const sc = { isSidechain: true, agentId: 'wwww0001' };
+  const note = (uuid: string, ts: string, summary: string, tuid: string | null, result: string) => ({ type: 'user', uuid, timestamp: ts, origin: { kind: 'task-notification' }, message: { role: 'user', content:
+    `<task-notification>\n<task-id>wwww0001</task-id>\n${tuid ? `<tool-use-id>${tuid}</tool-use-id>\n` : ''}<output-file>/tmp/t/wwww0001.output</output-file>\n<status>completed</status>\n<summary>Agent "Run the bench" ${summary}</summary>\n<note>made up</note>\n<result>${result}</result>\n<usage><subagent_tokens>1</subagent_tokens><tool_uses>2</tool_uses><duration_ms>3</duration_ms></usage>\n</task-notification>` } });
+  const main = new Transcript({ home: HOME });
+  main.pushAll([typed('w-u1', 'Bench the pages', ago(60)),
+    replied('w-a1', ago(59), [{ type: 'tool_use', id: 'toolu_wag', name: 'Agent', input: { description: 'Run the bench', prompt: 'x', subagent_type: 'general-purpose', run_in_background: true } }]),
+    { ...toolResult('w-r1', ago(59), 'toolu_wag', { content: 'Async agent launched successfully.' }), toolUseResult: { isAsync: true, status: 'async_launched', agentId: 'wwww0001', description: 'd', prompt: 'p', outputFile: '/tmp/t/wwww0001.output' } },
+    replied('w-a2', ago(58), [{ type: 'text', text: 'The bench runs in the background.' }])]);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.pushAll([
+    { ...typed('w-s0', 'Run the bench.', ago(59)), ...sc },
+    { ...replied('w-s1', ago(50), [{ type: 'tool_use', id: 'toolu_wsh', name: 'Bash', input: { command: 'node bench.mjs > run.log', description: 'Run the page bench', timeout: 7200000, run_in_background: true } }]), ...sc },
+    { ...toolResult('w-s2', ago(50), 'toolu_wsh', { content: 'Command running in background with ID: bw1. Output is being written to: /tmp/t/bw1.output. You will be notified.' }), ...sc },
+    { ...replied('w-s3', ago(49), [{ type: 'tool_use', id: 'toolu_wmon', name: 'Monitor', input: { command: 'tail -f run.log', description: 'Bench progress', timeout_ms: 1800000 } }]), ...sc },
+    { ...toolResult('w-s4', ago(49), 'toolu_wmon', { content: 'Monitor started (task mw1, expires in 30m).' }), ...sc },
+    { ...replied('w-s5', ago(48), [{ type: 'text', text: 'Waiting for the bench.' }]), ...sc },
+  ]);
+  main.setAgent('wwww0001', { agentType: 'general-purpose', description: 'Run the bench', toolUseId: 'toolu_wag', spawnDepth: 1, requestShape: 'background', finished: true }, sub);
+  return { main, sub, sc, note };
+}
+
+test('a subagent waiting on its own background work runs, its shells run under it, until it reports', () => {
+  const { main, sub, sc, note } = waitingAgent();
+  const a = () => main.getAgent('wwww0001')!, sh = () => main.getBackground('toolu_wsh')!;
+  const status = () => transcriptStatus({ agents: main.agents().filter((x) => x.running).length, turn: false, lastAt: 0 }); // the main turn is over
+  assert.deepEqual([a().running, a().finished, a().waiting], [true, false, true], 'meta finished, no notification yet: waiting');
+  main.pushAll([note('w-n1', ago(47), 'is waiting on its own background work', 'toolu_wag', 'Waiting for the bench.')]);
+  assert.deepEqual([a().running, a().finished, a().waiting, a().stopped], [true, false, true, false], 'the waiting notification is not its end');
+  assert.deepEqual([sh().status, sh().taskId, sh().agentId, main.getBackground('toolu_wmon')!.taskId], ['running', 'bw1', 'wwww0001', 'mw1'], 'its shell runs, the task id from its result text');
+  assert.equal(byId(main, 'toolu_wag').state, 'running', 'the Agent step still runs');
+  assert.ok(!main.items.some((i) => i.k === 'report'), 'the message it waits with is not its report');
+  assert.equal(status(), 'idle', 'the main turn is over: your turn, its subagent runs in the background (FR-STAT-02, 2026-11-26)');
+  // a message wakes it; it answers and waits again (that notification carries the SendMessage's tool use id)
+  main.pushAll([replied('w-a3', ago(40), [{ type: 'tool_use', id: 'toolu_wsm', name: 'SendMessage', input: { to: 'wwww0001', message: 'Status?' } }]), toolResult('w-r3', ago(40), 'toolu_wsm')]);
+  sub.pushAll([{ ...typed('w-s6', 'Status?', ago(40)), ...sc, isMeta: true }, { ...replied('w-s7', ago(39), [{ type: 'text', text: '34 of 372 done.' }]), ...sc }]);
+  main.setAgent('wwww0001', undefined);
+  assert.deepEqual([a().running, a().waiting], [true, false], 'awake after the notification: working');
+  main.pushAll([note('w-n2', ago(39), 'is waiting on its own background work', 'toolu_wsm', '34 of 372 done.')]);
+  assert.deepEqual([a().running, a().waiting], [true, true], 'waiting again, by its own Agent step');
+  // the monitor and the shell end, each notified in its own file; it wakes, then reports
+  sub.pushAll([
+    { type: 'attachment', uuid: 'w-s8', timestamp: ago(19), ...sc, attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>mw1</task-id>\n<tool-use-id>toolu_wmon</tool-use-id>\n<status>completed</status>\n<summary>Monitor "Bench progress" timed out</summary>\n</task-notification>' } },
+    { type: 'attachment', uuid: 'w-s9', timestamp: ago(10), ...sc, attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>bw1</task-id>\n<tool-use-id>toolu_wsh</tool-use-id>\n<output-file>/tmp/t/bw1.output</output-file>\n<status>completed</status>\n<summary>Background command "Run the page bench" completed (exit code 0)</summary>\n</task-notification>' } },
+    { ...replied('w-s10', ago(9), [{ type: 'text', text: 'All 372 pages done.' }]), ...sc },
+  ]);
+  main.setAgent('wwww0001', undefined);
+  assert.deepEqual([sh().status, a().running, a().waiting], ['completed', true, false], 'its shell ended; it works on its report');
+  main.pushAll([note('w-n3', ago(8), 'finished', null, 'All 372 pages done.')]);
+  assert.deepEqual([a().running, a().finished, a().waiting, a().stopped], [false, true, false, false], 'its report: finished');
+  assert.equal(byId(main, 'report:wwww0001').text, 'All 372 pages done.');
+  assert.equal(byId(main, 'toolu_wag').state, 'done');
+  assert.equal(status(), 'idle');
+});
+
+test('a subagent waiting on its own background work: the process ends, it and its shells read stopped', () => {
+  const { main, note } = waitingAgent();
+  main.pushAll([note('w-n1', ago(47), 'is waiting on its own background work', 'toolu_wag', 'Waiting.')]);
+  main.processEnded(ago(30));
+  assert.deepEqual([main.getAgent('wwww0001')!.running, main.getAgent('wwww0001')!.stopped], [false, true]);
+  assert.deepEqual([main.getBackground('toolu_wsh')!.status, main.getBackground('toolu_wsh')!.summary], ['stopped', 'Ended with its subagent']);
+});
+
+test('a background subagent that notified finished: a shell of its own with no notification had ended, not stopped', () => {
+  const { main, note } = waitingAgent();
+  main.pushAll([note('w-n1', ago(47), 'finished', 'toolu_wag', 'Done.')]);
+  assert.deepEqual([main.getAgent('wwww0001')!.running, main.getAgent('wwww0001')!.stopped], [false, false]);
+  assert.deepEqual([main.getBackground('toolu_wsh')!.status, main.getBackground('toolu_wsh')!.summary], ['completed', 'Ended before its subagent finished']);
 });
 
 test('a stale card: a question in a transcript quiet for 12 hours is your turn, not needs you', () => {
@@ -971,4 +1124,72 @@ test('a multi-block assistant record reduces like its split form', () => {
   assert.deepEqual(shape(one), shape(split));
   assert.deepEqual(one.items.filter((i) => i.k === 'claude').map((i) => i.text), ['Checking the folder.', 'Both started.']);
   assert.deepEqual([one.background(), one.agents(), one.turnRunning(NOW, QUIET)], [split.background(), split.agents(), split.turnRunning(NOW, QUIET)]);
+});
+
+// docs/Claude Code transcripts.md "Quirk: a subagent's edits have no structuredPatch". Invented records.
+test("a subagent's edit with no toolUseResult takes its patch from the input, outside cwd too, once its result lands", () => {
+  const t = new Transcript({ home: HOME, sidechain: true });
+  const base = { isSidechain: true, agentId: 'a1', sessionId: 's1', cwd: `${HOME}/dev/demo`, entrypoint: 'sdk-ts' };
+  const file = `${HOME}/dev/demo.other-worktree/src/widget.ts`;
+  const use = (id: string, name: string, input: JsonRecord, n: number): JsonRecord => ({ ...base, type: 'assistant', uuid: `as${n}`, timestamp: `2026-11-25T10:00:0${n}.000Z`,
+    message: { id: `m${n}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+  const result = (id: string, n: number, extra: JsonRecord = {}): JsonRecord => ({ ...base, type: 'user', uuid: `us${n}`, timestamp: `2026-11-25T10:00:0${n}.500Z`, permissionDecision: {},
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'The file has been updated.', ...extra }] } });
+  t.push({ ...base, type: 'user', uuid: 'u0', timestamp: '2026-11-25T10:00:00.000Z', message: { role: 'user', content: 'Speed up the widget' } });
+  t.push(use('toolu_e1', 'Edit', { file_path: file, old_string: 'a\nslow()\nb', new_string: 'a\nfast()\nb', replace_all: false }, 1));
+  assert.equal(byId(t, 'toolu_e1').patch, undefined, 'running: no patch yet');
+  t.push(result('toolu_e1', 1));
+  assert.deepEqual(byId(t, 'toolu_e1').patch, { file: '~/dev/demo.other-worktree/src/widget.ts', abs: file, add: 1, del: 1, created: false, cut: false,
+    hunks: [{ o: 0, n: 0, lines: [' a', '-slow()', '+fast()', ' b'] }], unnumbered: true });
+  t.push(use('toolu_w1', 'Write', { file_path: `${HOME}/dev/demo.other-worktree/NOTES.md`, content: 'x\ny\n' }, 2));
+  t.push(result('toolu_w1', 2));
+  assert.deepEqual([byId(t, 'toolu_w1').patch!.add, byId(t, 'toolu_w1').patch!.hunks[0].n, byId(t, 'toolu_w1').patch!.unnumbered], [2, 1, undefined]);
+  t.push(use('toolu_e2', 'Edit', { file_path: file, old_string: 'nope', new_string: 'x' }, 3));
+  t.push(result('toolu_e2', 3, { is_error: true }));
+  assert.equal(byId(t, 'toolu_e2').patch, undefined, 'a failed edit changed nothing');
+});
+
+// FR-ITEM-01, FR-ITEM-04 (invented records): the session's last ledger and each brief's owned ids.
+test('open items: the last ledger the main conversation named, and the ids each Agent brief owns', () => {
+  const CWD = '/Users/fixture/dev/shop', LED = `${CWD}/.ai-notes/checkout-m2/open-items.md`, OTHER = `${CWD}/.ai-notes/rates/open-items.md`;
+  const use = (uuid: string, s: number, tid: string, name: string, input: object, extra: object = {}): JsonRecord =>
+    ({ type: 'assistant', uuid, cwd: CWD, timestamp: at(s), message: { id: `m-${uuid}`, role: 'assistant', content: [{ type: 'tool_use', id: tid, name, input }] }, ...extra });
+  const t = new Transcript({ home: HOME });
+  assert.equal(t.ledger, null);
+  t.push(use('a1', 1, 'tr', 'Read', { file_path: LED }));
+  assert.deepEqual(t.ledger, { path: LED, at: at(1), toolUseId: 'tr', results: 0 });
+  t.push(toolResult('u1', at(2), 'tr'));
+  assert.equal(t.ledger!.results, 1);
+  // an Edit by a path relative to the record's cwd
+  t.push(use('a2', 3, 'te', 'Edit', { file_path: '.ai-notes/rates/open-items.md', old_string: 'a', new_string: 'b' }));
+  assert.deepEqual([t.ledger!.path, t.ledger!.toolUseId], [OTHER, 'te']);
+  // a Bash command naming the path
+  t.push(use('a3', 4, 'tb', 'Bash', { command: `python3 ~/.claude/skills/open-items/scripts/ledger.py check '${LED}' && echo ok` }));
+  assert.deepEqual([t.ledger!.path, t.ledger!.at], [LED, at(4)]);
+  t.push(toolResult('u3', at(5), 'tb'));
+  assert.equal(t.ledger!.results, 2); // the Edit's result never came
+  // a subagent's Read, in the main file (sidechain) or in its own Transcript, doesn't count
+  t.push(use('a4', 6, 'ts', 'Read', { file_path: OTHER }, { isSidechain: true }));
+  assert.equal(t.ledger!.path, LED);
+  const sub = new Transcript({ home: HOME, sidechain: true });
+  sub.push(use('s1', 6, 'ts2', 'Read', { file_path: OTHER }, { isSidechain: true }));
+  assert.equal(sub.ledger, null);
+  // other .ai-notes files and other names aren't ledgers
+  t.push(use('a5', 7, 'tp', 'Read', { file_path: `${CWD}/.ai-notes/checkout-m2/plan.md` }));
+  t.push(use('a6', 8, 'tq', 'Bash', { command: 'cat .ai-notes/open-items.md' }));
+  assert.equal(t.ledger!.toolUseId, 'tb');
+  // open_items' `ledger` names one from the main conversation; a subagent's call is ignored (FR-ITEM-12)
+  t.push(use('a5b', 8, 'toi', 'mcp__synopia__open_items', { op: 'open', kind: 'decision', text: 'x', ledger: OTHER }));
+  assert.deepEqual([t.ledger!.path, t.ledger!.toolUseId], [OTHER, 'toi']);
+  t.push(use('a5c', 8, 'tos', 'mcp__synopia__open_items', { op: 'list', ledger: LED }, { isSidechain: true }));
+  sub.push(use('s2', 8, 'tos2', 'mcp__synopia__open_items', { op: 'list', ledger: LED }, { isSidechain: true }));
+  assert.deepEqual([t.ledger!.path, sub.ledger], [OTHER, null]);
+  t.push(use('a5d', 8, 'tb2', 'Bash', { command: `cat '${LED}'` }));
+  // the brief's `Open items:` line
+  const prompt = 'Merge the rates branch.\n\nOpen items: Y5 (keep main\'s Norway rates, answered "Main\'s"), A2 (re-run the tax specs on PR 818)\n\nNo review.';
+  t.push(use('a7', 9, 'tA', 'Agent', { description: 'Merge rates', prompt }));
+  t.push(use('a8', 10, 'tB', 'Agent', { description: 'Look around', prompt: 'Open items: none' }));
+  assert.deepEqual(t.ownsOf('tA'), ['Y5', 'A2']);
+  assert.deepEqual(t.ownsOf('tB'), []);
+  assert.deepEqual(t.ownsOf('unknown'), []);
 });

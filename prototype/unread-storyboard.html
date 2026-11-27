@@ -1,0 +1,664 @@
+<!-- Storyboard for review (2026-11-25), not the spec: docs/requirements.md wins where they differ. All data in it is invented. -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synopia: coming back to a session, kept place and unread</title>
+<style>
+  /* The app's bundled fonts, read from the repo beside this file. Nothing loads from the network. */
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 400; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 500; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Medium.woff2") format("woff2"); }
+  @font-face { font-family: "Atkinson Hyperlegible Next"; font-weight: 700; src: url("../app/web/fonts/atkinson-hyperlegible-next/AtkinsonHyperlegibleNext-Bold.woff2") format("woff2"); }
+  @font-face { font-family: "JetBrains Mono NL"; font-weight: 400; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Regular.ttf") format("truetype"); }
+  @font-face { font-family: "JetBrains Mono NL"; font-weight: 700; src: url("../app/web/fonts/jetbrains-mono-nl/JetBrainsMonoNL-Bold.ttf") format("truetype"); }
+
+  /* ---------- the palette, as app.css :root ---------- */
+  :root {
+    --mark-period: 2s;
+    --canvas: #EDEFF2; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781; --faint: #8C959F;
+    --red: #CF222E; --amber: #9A6700; --green: #1A7F37; --link: #0550AE;
+    --band: #F0F3F6; --dot-green: #2DA44E; --guide: #B1BAC4;
+    --k-sub: #1A7F37; --k-shell: #0B7A82;
+    --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0;
+    --sans: "Atkinson Hyperlegible Next", system-ui, sans-serif;
+    --mono: "JetBrains Mono NL", "JetBrains Mono", ui-monospace, Menlo, monospace;
+    --log-font: 12px; --log-lh: 1.45; --dot-lift: calc(var(--log-font) * .084);
+  }
+  /* dark mode, as css/dark.css */
+  .dark {
+    --canvas: #2A3038; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+    --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA; --faint: #9AA5B1;
+    --red: #FF7B72; --amber: #E3B341; --green: #56D364; --link: #6CB6FF;
+    --band: #2C3644; --dot-green: #3FB950; --guide: #606B78; --k-sub: #3FB950; --k-shell: #39C5CF;
+    --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C;
+    color: var(--ink);
+  }
+
+  /* ---------- the page around the frames ---------- */
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #F6F7F9; color: #1F2328; font: 400 14.5px/1.5 var(--sans); }
+  :focus-visible { outline: 2px solid #0550AE; outline-offset: 2px; }
+  .page { max-width: 1560px; margin: 0 auto; padding: 28px 32px 80px; }
+  header.top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; letter-spacing: -.01em; }
+  header.top p { margin: 0 0 6px; color: #4B535C; max-width: 88ch; }
+  header.top q { color: #1F2328; }
+  h2 { font-size: 21px; margin: 48px 0 4px; line-height: 1.25; }
+  h2 + .lede { margin: 0 0 14px; color: #4B535C; max-width: 96ch; }
+  h3 { font-size: 15px; margin: 0 0 4px; }
+  code { font-family: var(--mono); font-size: .88em; }
+  kbd { font-family: var(--mono); font-size: 10.5px; border: 1px solid #D0D7DE; border-bottom-width: 2px; border-radius: 2.5px; padding: 0 3.5px; background: #fff; color: #4B535C; }
+
+  .key { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin: 22px 0 0; }
+  .key div { background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; padding: 10px 13px; font-size: 13.5px; color: #4B535C; }
+  .key b { display: block; color: #1F2328; font-size: 15px; margin-bottom: 2px; }
+  .key div.rec { box-shadow: 0 0 0 2px #0550AE; border-color: transparent; }
+  .rec-tag { font-size: 11.5px; font-weight: 700; color: #fff; background: #0550AE; border-radius: 4px; padding: 0 6px; line-height: 18px; }
+
+  .rule { margin: 20px 0 0; display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; }
+  .rule > div { background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; padding: 12px 16px; font-size: 14px; color: #4B535C; }
+  .rule .def { font-size: 16px; color: #1F2328; line-height: 1.45; margin: 0 0 8px; }
+  .rule p { margin: 0 0 6px; } .rule p:last-child { margin: 0; }
+  .rule b { color: #1F2328; }
+
+  .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; align-items: start; }
+  .fr { min-width: 0; margin: 0; }
+  .fr.span { grid-column: 1 / -1; }
+  .fr > .tag { display: flex; align-items: center; gap: 8px; margin: 0 2px 6px; font-size: 13.5px; font-weight: 700; }
+  .fr > figcaption { margin: 7px 2px 0; font-size: 13px; color: #4B535C; max-width: 90ch; }
+  .fr.rec .win { box-shadow: 0 0 0 2px #0550AE; }
+  .why { margin: 18px 0 0; padding: 12px 16px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; font-size: 14px; color: #4B535C; max-width: 116ch; }
+  .why b { color: #1F2328; }
+  .why p { margin: 0 0 8px; } .why p:last-child { margin: 0; }
+  table.ref { border-collapse: collapse; width: 100%; max-width: 1180px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; font-size: 13.5px; }
+  table.ref th, table.ref td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid #E4E8EC; }
+  table.ref th { font-weight: 700; color: #1F2328; background: #F6F8FA; }
+  table.ref td { color: #4B535C; }
+  table.ref td:first-child { color: #1F2328; font-weight: 700; white-space: nowrap; }
+  table.ref tr:last-child td { border-bottom: 0; }
+  ol.qs { margin: 0; padding: 14px 20px 14px 40px; background: #fff; border: 1px solid #D0D7DE; border-radius: 8px; display: grid; gap: 8px; max-width: 116ch; font-size: 14px; }
+  ol.qs li span { color: #6E7781; }
+
+  /* ---------- the window crop: the dark sidebar and the main area, as app.css .app ---------- */
+  .win { display: grid; grid-template-columns: 214px minmax(0, 1fr); height: var(--h, 476px); border: 1px solid #D0D7DE; border-radius: 10px; overflow: hidden;
+    background: var(--canvas); color: var(--ink); font: 400 13px/1.5 var(--sans); }
+  .win.dark { border-color: #22272E; }
+  .win.only-side { grid-template-columns: 236px; height: auto; }
+
+  /* the dark sidebar (#22272E in both themes), as app.css .side */
+  .side { background: #22272E; color: #E6EDF3; display: flex; flex-direction: column; min-height: 0; min-width: 0;
+    --guide: #545D68; --k-sub: #3FB950; --k-shell: #39C5CF;
+    --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; }
+  .side .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --green: #3FB950; }
+  .side-head { display: flex; align-items: center; gap: 9px; padding: 11px 12.5px 4px; }
+  .side-head .lights { display: flex; gap: 6px; margin-right: 6px; } .side-head .lights i { width: 9px; height: 9px; border-radius: 50%; background: #545D68; }
+  .side-head b { font-size: 14px; color: #F0F6FC; }
+  .side-scroll { flex: 1; min-height: 0; overflow: hidden; padding: 0 0 8px; }
+  .side-foot { border-top: 1px solid #373E47; padding: 7px 10px; display: flex; gap: 4px; justify-content: flex-end; font-size: 10.5px; color: #9198A1; }
+  .side-foot span { border-radius: 5px; padding: 1px 6px; border: 1px solid transparent; font-weight: 500; }
+  .side-foot span.on { background: #2D333B; border-color: #444C56; color: #E6EDF3; }
+  .tree { margin-top: 10px; }
+  .tree .th { padding: 0 12px; }
+  .tree .g-name { font-weight: 700; font-size: 12px; color: #F0F6FC; }
+  .tree.others .g-name { color: #9198A1; }
+  .row { position: relative; display: grid; grid-template-columns: 20px minmax(0, 1fr); column-gap: 8px; align-items: start;
+    width: calc(100% - 6px); margin-left: 6px; padding: 8px 12.5px 9px 22px; border-top: 1px solid transparent; border-bottom: 1px solid transparent; }
+  .tree.others .row { padding-left: 22px; }
+  .r-side { width: 20px; height: 20px; margin-top: -2px; border: 1px solid #545D68; border-radius: 6px; background: #2D333B; display: flex; align-items: center; justify-content: center; }
+  .r-side .ind { font-size: 11px; }
+  .r-main { min-width: 0; display: grid; gap: 1px; }
+  .r-title { font-weight: 500; font-size: 12px; line-height: 1.3; color: #CDD9E5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .r-state { font-size: 11px; line-height: 1.3; font-weight: 500; color: #8C959F; }
+  .row.green .r-state { color: #56D364; } .row.red .r-state { color: #FF7B72; }
+  .r-agent { display: flex; align-items: center; gap: 5px; font-size: 10.5px; color: #9198A1; line-height: 1.35; white-space: nowrap; overflow: hidden; }
+  .r-agent .el { flex: none; width: 7px; height: 7px; margin: -6px 1px 0 2px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+  .r-agent .ind { font-size: 9px; }
+  .r-agent b { color: var(--k-sub); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+  .r-review { color: #58A6FF; }
+  /* the tree guides, as app.css .tree .row .tg */
+  .row .tg { position: absolute; left: 11px; top: -1px; bottom: -1px; width: 11px; pointer-events: none; }
+  .row .tg::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; border-left: 1px solid var(--guide); }
+  .row.last .tg::before { bottom: auto; height: 18.5px; border-bottom: 1px solid var(--guide); width: 11px; }
+  .row:not(.last) .tg::after { content: ""; position: absolute; left: 0; top: 17.5px; width: 11px; border-top: 1px solid var(--guide); }
+  .tree.others .row .tg { display: none; }
+  /* the open row: a light cut-out in the canvas colour, rounded left, curving into the canvas on the right */
+  .row.cur { background: var(--canvas); border-color: var(--canvas); border-radius: 9px 0 0 9px;
+    --mk-0550AE: #0550AE; --mk-0B7A82: #0B7A82; --mk-1A7F37: #1A7F37; --mk-7CC48F: #7CC48F; --mk-B6E0E3: #B6E0E3; --mk-C6E9D0: #C6E9D0; }
+  .row.cur .ind { --red: #CF222E; --ink-3: #6E7781; --link: #0550AE; --green: #1A7F37; }
+  .row.cur .r-title { color: var(--ink); font-weight: 700; }
+  .row.cur .r-state { color: var(--ink-3); } .row.cur.green .r-state { color: var(--green); } .row.cur.red .r-state { color: var(--red); }
+  .row.cur .r-side { background: var(--panel); border-color: #8C959F; }
+  .row.cur .tg::before, .row.cur .tg::after { border-color: #8C959F; }
+  .row .cap { display: none; position: absolute; right: 0; width: 9px; height: 9px; }
+  .row.cur .cap { display: block; }
+  .cap.ct { top: -10px; background: radial-gradient(circle at 0 0, transparent 8.5px, var(--canvas) 9px); }
+  .cap.cb { bottom: -10px; background: radial-gradient(circle at 0 100%, transparent 8.5px, var(--canvas) 9px); }
+  .dark .row.cur { --mk-0550AE: #4493F8; --mk-0B7A82: #39C5CF; --mk-1A7F37: #3FB950; --mk-7CC48F: #2E7D45; --mk-B6E0E3: #1B4B50; --mk-C6E9D0: #1F4D2C; }
+  .dark .row.cur .ind { --red: #FF7B72; --ink-3: #9198A1; --link: #58A6FF; --green: #3FB950; }
+  .dark .row.cur .r-side, .dark .row.cur .tg::before, .dark .row.cur .tg::after { border-color: #6E7781; }
+
+  /* ---------- NEW: unread in the sidebar ---------- */
+  /* B1 (recommended): a filled dot at the row's right end, on the title line, and the title bold and brighter */
+  .row .udot { display: none; position: absolute; right: 11px; top: 14.5px; width: 6px; height: 6px; border-radius: 50%; background: #E6EDF3; }
+  .row.unread .udot { display: block; }
+  .row.unread .r-title { padding-right: 12px; }
+  .s-dot .row.unread .r-title, .s-bold .row.unread .r-title { font-weight: 700; color: #F0F6FC; }
+  .row.cur.unread .udot { background: var(--ink); }
+  .row.cur.unread .r-title { color: var(--ink); }
+  .s-bold .row .udot, .s-count .row .udot { display: none !important; }
+  .s-bold .row.unread .r-title, .s-count .row.unread .r-title { padding-right: 0; }
+  .r-state .cnt { color: #CDD9E5; }
+  .row.cur .r-state .cnt { color: var(--ink-2); }
+
+  /* ---------- the main area, as app.css .conv ---------- */
+  .conv { display: grid; grid-template-columns: minmax(0, 1fr); gap: 9px; padding: 9px; min-height: 0; min-width: 0; }
+  .conv.with-rail { grid-template-columns: minmax(0, 1fr) 248px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
+  .thread { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .c-head { flex: none; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; border-bottom: 1px solid var(--line-2); }
+  .c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
+  .c-now { color: var(--ink-2); margin: 0; }
+  .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; line-height: 16.5px; height: 16.5px; }
+  .c-meta .mono { font-family: var(--mono); color: var(--ink-2); font-size: .9em; }
+  .c-meta .lk { color: var(--link); text-decoration: underline; text-underline-offset: 2.5px; }
+  .c-head > p, .c-head > h4 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .c-acts { grid-row: 1 / 4; grid-column: 2; display: flex; align-items: center; }
+  .model-btn { border: 1px solid transparent; border-radius: 5.5px; padding: 4.5px 11px; font: 500 12px/1.5 var(--sans); color: var(--ink-2); }
+
+  /* the transcript, as app.css .log; the script below sets each frame's scroll */
+  .logwrap { position: relative; flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .log { position: relative; overflow: hidden; padding: 11px 16px 12.5px; flex: 1 1 0; min-height: 0;
+    font-family: var(--mono); font-size: var(--log-font); line-height: var(--log-lh); font-variant-ligatures: none; }
+  .it { position: relative; }
+  .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; overflow-wrap: anywhere; }
+  .ln > .g { position: relative; user-select: none; }
+  .ln.claude > .g { color: var(--ink); }
+  .ln.tool > .g, .ln.agent > .g { color: var(--dot-green); }
+  .ln > .g > .ind { position: absolute; font-size: 10px; left: calc(.6ch - .5em); top: calc(var(--log-font) * var(--log-lh) / 2 - var(--dot-lift) - .5em); }
+  .ln .name { font-weight: 700; color: var(--ink); }
+  .ln .dim, .res { color: var(--ink-3); }
+  .res { display: grid; grid-template-columns: 3ch minmax(0, 1fr); }
+  .res.failed { color: var(--red); }
+  .lcorner { display: inline-block; width: 7px; height: 7px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
+  .res > .lcorner { align-self: start; margin: 2px 0 0 3px; }
+  .md p { margin: 0 0 .85em; } .md > :last-child { margin-bottom: 0; }
+  .md ul { list-style: none; margin: 0 0 .85em; padding-left: 2ch; } .md ul > li::before { content: "- "; margin-left: -2ch; }
+  .md code { color: var(--link); }
+  .md b { font-weight: 700; }
+  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: var(--band); border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+  .prompt > .g { color: var(--link); }
+  .liveln b { color: var(--green); }
+  .doneln { color: var(--ink-3); margin-bottom: 16px; }
+  .doneln > .g > .ind { opacity: .55; }
+  .alink { color: var(--link); }
+  .adur { color: var(--ink-3); margin-left: 2ch; }
+  .files .root { color: var(--ink-3); margin-top: 2px; }
+  .flist { display: grid; grid-template-columns: 2ch minmax(0, max-content) max-content; column-gap: 1ch; }
+  .flist > .lcorner { align-self: start; margin: 2px 0 0 3px; }
+  .flist .fp { color: var(--link); }
+  .flist .fc { margin-left: 1ch; white-space: nowrap; }
+  .add { color: var(--green); } .del { color: var(--red); }
+
+  /* the message box, the panel's last row, in normal mode (R9.2) */
+  .composer { flex: none; display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 16px 9px 13.5px; border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent;
+    font-family: var(--mono); font-size: 12px; line-height: 1.45; }
+  .composer > * { opacity: .5; }
+  .composer > .g { color: var(--link); }
+  .composer .ta { min-height: 3lh; color: var(--faint); }
+
+  /* ---------- baseline: "N new below", a quiet pill over the transcript's bottom edge ---------- */
+  .newbelow { position: absolute; left: 50%; bottom: 9px; transform: translateX(-50%); z-index: 3; display: inline-flex; align-items: center; gap: 7px;
+    padding: 1.5px 6px 1.5px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel); color: var(--ink-2);
+    font: 500 11px/18px var(--sans); white-space: nowrap; box-shadow: 0 1px 0 var(--line-2); }
+  .newbelow kbd { font-size: 10px; line-height: 13px; background: var(--sub); border-color: var(--line); color: var(--ink-2); }
+
+  /* ---------- A: the unread divider, a 1px line with "New", in the gap above the first unseen item; it takes no space ---------- */
+  .it.new-at::before { content: ""; position: absolute; left: -16px; right: -16px; top: -6px; height: 1px; background: var(--link); z-index: 1; }
+  .it.new-at > .nlab { position: absolute; right: -4px; top: -12.5px; z-index: 2; padding: 0 6px; background: var(--panel); font: 700 10.5px/12px var(--sans); color: var(--link); white-space: nowrap; }
+  .it.new-at > .nlab i { font-style: normal; font-weight: 500; color: var(--ink-3); }
+
+  /* ---------- D: a 1px rule in the gutter beside unseen items, receding as they are seen ---------- */
+  .it.rail-on::after { content: ""; position: absolute; left: -11px; top: -5.5px; bottom: -5.5px; width: 1px; background: var(--link); }
+
+  /* ---------- the background panel, as app.css .rail ---------- */
+  .rail { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .rail h5 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; font-weight: 700; }
+  .past { flex: 1; min-height: 0; overflow: hidden; padding: 9px 0 20px; }
+  .past h5 { color: var(--faint); }
+  .pr { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 9px; padding: 2.5px 12.5px; font-size: 11.5px; line-height: 1.4; color: var(--ink-3); }
+  .pr .pm { display: inline-flex; align-items: center; gap: 4px; } .pr .pm .ind { font-size: 9px; }
+  .pr .n { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+  .pr .d { color: var(--faint); font-variant-numeric: tabular-nums; }
+  .pr.cur::before { content: ""; position: absolute; inset: 0 7px; border: 1px solid var(--ink); border-radius: 5.5px; }
+  .pr.cur .n { color: var(--ink); }
+  .review { border-top: 1px solid var(--line-2); padding: 8px 0 6px; }
+  .review h5 { color: var(--link); }
+  .rv { display: grid; grid-template-columns: 13px minmax(0, 1fr) auto; column-gap: 7px; align-items: center; margin: 0 7px 5px; padding: 6px 8px; border: 1px solid #B6E3FF; background: #F1F8FF; border-radius: 5px; }
+  .dark .rv { border-color: #2F5A88; background: #22344A; }
+  .rv .n { font-weight: 700; font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rv .m { font-size: 10px; color: var(--ink-2); grid-column: 2; }
+  .rv > .ind { grid-row: 1 / 3; }
+  .rv .btn { grid-row: 1 / 3; grid-column: 3; font-size: 10.5px; color: var(--link); }
+  .now { border-top: 1px solid var(--line-2); padding: 7px 0; flex: none; }
+  .main-row { position: relative; display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; column-gap: 9px; align-items: center; margin: 0 7px; padding: 7px 9px; border-radius: 5.5px; border: 1px solid var(--line); background: var(--sub); }
+  .main-row.cur { border-color: var(--ink); }
+  .main-row > .ind { grid-row: 1 / 3; font-size: 11px; }
+  .main-row b { font-size: 12px; line-height: 1.3; }
+  .main-row .m { grid-column: 2; font-size: 11px; line-height: 1.3; color: var(--ink-3); }
+  .main-row .w { grid-row: 1 / 3; grid-column: 3; font-size: 11px; color: var(--ink-3); }
+  /* NEW in C: the same filled dot, on the Main conversation card and (variant C1 only) on Past lines */
+  .pdot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ink); align-self: center; }
+  .main-row .pdot { margin-left: 6px; vertical-align: 1px; }
+  .pr .pdot { position: absolute; right: 2px; top: 50%; margin-top: -3px; }
+  .main-row.unread b { font-weight: 700; }
+  .pr.unread .n { color: var(--ink); font-weight: 700; }
+
+  /* ---------- marks, as js/marks.js and app.css; running marks turn linearly, one cycle per 2 s ---------- */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes see { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(.42); } }
+  @keyframes bounce { 0% { transform: translateX(0) scaleX(.42); } 25% { transform: translateX(0) scaleX(1); } 50% { transform: translateX(2.44px) scaleX(.42); } 75% { transform: translateX(0) scaleX(1); } 100% { transform: translateX(0) scaleX(.42); } }
+  .ind { display: inline-grid; place-items: center; width: 1em; height: 1em; position: relative; flex: none; vertical-align: middle; line-height: 0; font-size: 11px; }
+  .ind > * { grid-area: 1 / 1; }
+  .ind svg { width: 1em; height: 1em; display: block; overflow: visible; }
+  .ind .rot { transform-box: view-box; transform-origin: 50% 50%; animation: spin var(--mark-period) linear infinite; }
+  .ind .bounce { transform-box: fill-box; transform-origin: 0 50%; animation: bounce var(--mark-period) linear infinite; }
+  .ind .bars { display: flex; gap: .2em; height: .84em; align-items: center; }
+  .ind .bars i { display: block; width: .27em; height: 100%; background: var(--red); border-radius: .05em; animation: see var(--mark-period) linear infinite; }
+  .ind .bars i + i { animation-delay: -.55s; }
+  .ind .chk { width: .32em; height: .6em; border: solid var(--ink-3); border-width: 0 .16em .16em 0; transform: translateY(-.07em) rotate(45deg); }
+  .ind .badge { width: .9em; height: .9em; border-radius: 50%; background: var(--link); }
+  .ind .badge-chk { width: .22em; height: .42em; border: solid #fff; border-width: 0 .13em .13em 0; transform: translateY(-.06em) rotate(45deg); }
+  @media (prefers-reduced-motion: reduce) { .ind *, .ind *::before { animation: none !important; } }
+
+  /* the Dock tile */
+  .dock-demo { display: flex; gap: 28px; align-items: flex-end; flex-wrap: wrap; margin-top: 6px; }
+  .dock-demo figure { margin: 0; display: grid; justify-items: center; gap: 8px; font-size: 13px; color: #4B535C; max-width: 26ch; text-align: center; }
+  .tile { position: relative; width: 64px; height: 64px; border-radius: 15px; background: #22272E; display: grid; place-items: center; box-shadow: inset 0 0 0 1px #373E47; }
+  .tile .ind { font-size: 30px; --mk-1A7F37: #3FB950; --mk-C6E9D0: #1F4D2C; }
+  .tile .bdg { position: absolute; top: -6px; right: -8px; min-width: 22px; height: 22px; padding: 0 6px; border-radius: 11px; background: #E5484D; color: #fff; font: 700 13px/22px var(--sans); text-align: center; }
+
+  @media (max-width: 1100px) { .grid2, .rule { grid-template-columns: minmax(0, 1fr); } .key { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 700px) { .key { grid-template-columns: minmax(0, 1fr); } .page { padding: 18px 14px 60px; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h1>Coming back to a session: the kept place, and what you haven't read</h1>
+    <p>In your words: <q>When I'm not looking at a conversation, it shouldn't scroll. When I come back to it, I should be able to read the transcript without needing to find the place I last saw.</q></p>
+    <p>The baseline being built does that: what you last saw stays at the same place on screen, new items go below it, and a quiet "14 new below" (or <kbd>G</kbd>) jumps to the end. Your question is whether that is enough, or whether Synopia should also show what is read and unread. This page answers it in frames: every frame is the same invented session, coming back at 2:53 PM to a turn that wrote three screens while you were away.</p>
+  </header>
+
+  <div class="key">
+    <div><b>Baseline</b>Exact place kept, plus "14 new below". Nothing marks where the new part starts.</div>
+    <div><b>A. Divider</b>A 1px line with "New" between the last item you saw and the first you didn't. It stays until you leave the session.</div>
+    <div><b>B. Sidebar dot</b>A row whose session wrote what you haven't seen gets a filled dot and a bold title.</div>
+    <div class="rec"><b>C. A and B together <span class="rec-tag">Recommended</span></b>One concept, unseen, with the dot on the Main conversation card only. To review stays separate.</div>
+    <div><b>D. Gutter rule</b>A 1px rule beside every unseen item, shrinking as you read.</div>
+  </div>
+
+  <div class="rule">
+    <div>
+      <p class="def"><b>Seen:</b> an item is seen once its first line has been on screen for 1 s in a row while the Synopia window is focused and that view is shown, and everything above the furthest seen item counts as seen too.</p>
+      <p><b>What follows from it.</b> Reading down with <kbd>j</kbd> or the trackpad sees each screen after 1 s. <kbd>G</kbd> and "14 new below" go to the end, so the last item is seen and so is everything above it. Flicking through sessions with <kbd>Ctrl</kbd>+<kbd>J</kbd> sees nothing, because no session stays up for 1 s. Your own message is seen when you send it, since sending shows the end. A window behind another app, or a minimised one, sees nothing.</p>
+      <p><b>Leaving and coming back.</b> You leave a view when you switch session or view, or the window loses focus; you come back when it is shown in a focused window again. The baseline's "doesn't scroll" holds while you are away.</p>
+    </div>
+    <div>
+      <p><b>Where it lives.</b> In the backend, beside the scroll position R3.9 already keeps (<code>ui-state.ts</code>, <code>UiSession.scroll</code>, per view: "" for the main conversation, else the subagent's or shell's id). One more record per view: <code>seen</code>, the furthest seen item's id (a byte offset for a shell's log), and <code>newAt</code>, the item the divider sits above.</p>
+      <p><b>Over a reload or restart.</b> Both are kept, so the divider comes back where it was. A reload is not a coming back: it doesn't move the divider or see anything until the 1 s rule runs again in the focused window.</p>
+      <p><b>The sidebar's dot</b> is derived by the backend, as it derives the state word: the main conversation has items after <code>seen</code>, and Claude's turn isn't running.</p>
+    </div>
+  </div>
+
+  <h2>1. Baseline: the place is kept</h2>
+  <p class="lede">You left at 2:14 PM while Claude worked, at the end of the transcript. It worked on for 27 minutes and wrote three screens. You come back at 2:53 PM.</p>
+  <div class="grid2" id="f1"></div>
+  <div class="why">
+    <p><b>Is the kept place enough?</b> For the first screen, yes: you are exactly where you stopped, and the first new line sits right where the live line was. It stops being enough once you read on. After one <kbd>j</kbd> page the old and the new look the same, and if you scroll back up to check something, nothing tells you where "before I left" ends. It also says nothing about the other sessions: in the sidebar, "Your turn, 25 min" looks the same whether you read that turn or not.</p>
+  </div>
+
+  <h2>2. A: the unread divider</h2>
+  <p class="lede">The same return, with a 1px line and "New" in the gap above the first unseen item. It takes no space, so drawing or removing it moves nothing. It is placed when you come back and stays put while you read.</p>
+  <div class="grid2" id="f2"></div>
+  <div class="why">
+    <p><b>It stays until you leave the session, not until you reach the bottom.</b> At the bottom you are often still reading the last screen, and scrolling back up to reread the start of the new part is the moment the line helps most. Slack keeps its line the same way.</p>
+    <p><b>"since 2:14 PM"</b> is the time you left. It says how long the gap is, so you can tell a 3-minute absence from a 3-hour one before reading. Items Claude writes while you are looking get no divider: they are seen as they arrive.</p>
+  </div>
+
+  <h2>3. B: unread in the sidebar</h2>
+  <p class="lede">Three ways to mark a row whose session wrote what you haven't seen. "Search: rank exact title matches" finished while you were away and you haven't read it; "Changelog for 3.1" is also your turn, but you read it.</p>
+  <div class="grid2" id="f3"></div>
+  <h3 style="margin-top:26px">With every status</h3>
+  <p class="lede" style="margin:0 0 12px;color:#4B535C;max-width:96ch">The left column has unseen output, the right column the same sessions with everything seen. While Claude's turn runs (Working, queued, compacting, rate limited, no updates) the dot stays off: the moving mark already says output is coming, and a dot on every working row would be noise. It appears when the turn ends, if you haven't seen it.</p>
+  <div class="grid2" id="f3m" style="grid-template-columns: repeat(4, max-content)"></div>
+  <h3 style="margin-top:26px">How it clears</h3>
+  <div class="grid2" id="f3c"></div>
+  <div class="why">
+    <p><b>Recommended: B1, the dot and the bold title.</b> The dot is a shape, so it holds on the open row too, where the title is bold already. It sits on the right, away from the status mark on the left, so the two never compete: the left says what Claude is doing, the right says whether you've read it. It adds no words to the state line, which stays "Your turn, 12 min". The count in B3 reads as part of the status and fights it for the same line.</p>
+    <p><b>The dot is neutral ink, not blue.</b> Blue in the sidebar already means to review (the blue check and "1 to review"), and red means needs you.</p>
+  </div>
+
+  <h2>4. C: A and B together, and the background panel</h2>
+  <p class="lede">The divider in the transcript and the dot in the sidebar are one concept, unseen, read from the same <code>seen</code> record. The open question is the background panel: subagents and shells also write output you may not have seen.</p>
+  <div class="grid2" id="f4"></div>
+  <table class="ref" style="margin-top:18px">
+    <tr><th></th><th>Unseen (new)</th><th>To review (exists, R10)</th></tr>
+    <tr><td>Means</td><td>Output was written while you weren't looking at it.</td><td>A <code>For review: </code> subagent finished a deliverable that needs your judgement.</td></tr>
+    <tr><td>Clears when</td><td>You see it (the 1 s rule), or <kbd>G</kbd>. Nothing to click.</td><td>You click "Mark reviewed". Opening it doesn't count.</td></tr>
+    <tr><td>Shows as</td><td>A neutral filled dot and a bold title; the "New" line in the transcript.</td><td>The blue check badge, "1 to review", the To review group.</td></tr>
+    <tr><td>Dock badge</td><td>Doesn't count.</td><td>Counts, with needs you.</td></tr>
+    <tr><td>Where both apply</td><td colspan="2">A finished deliverable you haven't opened is both. To review shows; the unseen dot never sits on a to-review item, because the badge already asks for more than a look.</td></tr>
+  </table>
+  <div class="why">
+    <p><b>Keep them apart.</b> Merging would force one of two wrong rules: either unseen output needs a click to clear, or a deliverable clears by being opened, which R10.2 rules out. They differ in what you owe: a look, or a decision.</p>
+    <p><b>Recommended: the dot on the Main conversation card only (C2), nothing on subagents and shells.</b> A subagent's report and a shell's end already land in the main conversation as items of their own ("Report from …", the task notification), so the main conversation's unseen part covers them. Each subagent and shell view still keeps its own <code>seen</code> and shows its own divider when you open it.</p>
+  </div>
+
+  <h2>5. D: a gutter rule beside the unseen part</h2>
+  <p class="lede">Instead of one line where the new part starts, a 1px rule runs beside every unseen item, from the first one to the end.</p>
+  <div class="grid2" id="f5"></div>
+  <div class="why">
+    <p><b>Not recommended.</b> It marks what is left, not where you were, and the two differ: every screen you rest on for 1 s loses its rule, so while you read the rule only ever shows on the lines that just scrolled in, and it shrinks under your eyes. The divider answers the question you came back with, "where did I stop?", and stays still. The blue rule also sits close to the prompt band's blue edge.</p>
+  </div>
+
+  <h2>6. Keys</h2>
+  <p class="lede">No new key. One way to do each thing: scrolling is what marks things seen, and the existing keys already do the rest.</p>
+  <table class="ref">
+    <tr><th>Key</th><th>Today</th><th>With unseen</th></tr>
+    <tr><td><kbd>j</kbd> <kbd>k</kbd>, <kbd>g</kbd></td><td>Scroll the transcript; top.</td><td>Unchanged. Reading down sees each screen after 1 s; scrolling up never un-sees.</td></tr>
+    <tr><td><kbd>G</kbd>, "14 new below"</td><td>Go to the end (the baseline).</td><td>Unchanged; everything is seen, the dot clears. The divider stays until you leave.</td></tr>
+    <tr><td><kbd>J</kbd> <kbd>K</kbd></td><td>Next or previous view in the session: Main conversation, then the panel's rows.</td><td>Unchanged. In a subagent's view, the dot on the Main conversation card says the main conversation wrote something; <kbd>J</kbd> or <kbd>K</kbd> takes you back to it.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>J</kbd> <kbd>K</kbd></td><td>Next or previous session, in sidebar order.</td><td>Unchanged. Considered and left out: skipping to the next unseen session (a key that means two things), and a new <kbd>u</kbd> for it. With about ten rows the dots are visible at a glance (open question 5).</td></tr>
+  </table>
+
+  <h2>7. The Dock badge</h2>
+  <p class="lede">The badge counts what waits on you: needs you, and deliverables to review. Unseen output doesn't wait on you, so it doesn't count, and the Dock gets no dot of its own.</p>
+  <div class="dock-demo" id="f7"></div>
+
+  <h2>8. Dark mode, recommended</h2>
+  <p class="lede">The divider takes the dark link blue (#6CB6FF) on the dark panel; the sidebar stays the darkest surface, and the dot is the same light ink there. On the open row it takes the theme ink, light here too.</p>
+  <div class="grid2" id="f8"></div>
+
+  <div class="why" style="margin-top:40px">
+    <p><b>Recommended: C, the divider and the sidebar dot, read from one <code>seen</code> record per view; the dot on the Main conversation card in the panel, nothing on subagents and shells; no new key; the Dock badge unchanged.</b></p>
+    <p><b>It extends the baseline, it doesn't replace it.</b> The kept place stays the rule for what is on screen when you come back: the divider just draws a line at the bottom of that screen. "14 new below" stays as built and counts unseen items below the screen. The baseline already watches what is on screen to count what's below; the 1 s rule reads the same observer. The <code>seen</code> and <code>newAt</code> ids go next to the baseline's scroll anchor in the same per-view record, so reload and restart come for free. The sidebar dot is one more derived flag on the session's state.</p>
+    <p><b>Why add anything to the baseline.</b> The kept place finds your spot in the session you open. It can't tell you which other session finished while you were away, and it is lost after the first page you read. The dot answers the first, the divider the second.</p>
+  </div>
+
+  <h2>Open questions</h2>
+  <ol class="qs">
+    <li>Is 1 s on screen the right threshold? <span>Shorter, and Ctrl+J flicking through sessions starts marking them read; longer, and a quick glance at a short reply doesn't count.</span></li>
+    <li>Should the divider also go when you reach the bottom, or stay until you leave the session, as drawn?</li>
+    <li>Should the dot show while Claude works, once a turn you haven't seen has ended under it? <span>This page keeps it off for the whole time a turn runs.</span></li>
+    <li>For a session a terminal holds (you may be reading it in iTerm), should its output count as seen? <span>Synopia can't see the terminal's screen; a guess is "seen while the terminal holds it".</span></li>
+    <li>Do you want a key for the next session with unseen output, or are the dots enough with Ctrl+J/K?</li>
+    <li>Should a session be markable as read without reading it, for example with a key in the sidebar, or is <kbd>G</kbd> on it enough?</li>
+  </ol>
+</div>
+
+<script>
+(() => {
+  /* ---------- marks, as js/marks.js ---------- */
+  const SVG = '<svg class="k" viewBox="0 0 12 12" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  const M = {
+    work: SVG + '<circle cx="6" cy="6" r="4.8" stroke="var(--mk-C6E9D0)" stroke-width="1.8"/><circle cx="6" cy="6" r="4.8" stroke="var(--mk-1A7F37)" stroke-width="1.8" pathLength="4" stroke-dasharray="1.6 2.4" class="rot"/><circle cx="6" cy="6" r="1.8" fill="var(--mk-1A7F37)"/></svg>',
+    stopped: '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.3" y="2.3" width="7.4" height="7.4" rx="1.1" fill="var(--ink-3)"/></svg>',
+    failed: '<svg class="k" viewBox="0 0 12 12" aria-hidden="true"><rect x="2.3" y="2.3" width="7.4" height="7.4" rx="1.1" fill="var(--red)"/></svg>',
+    pause: '<span class="bars"><i></i><i></i></span>',
+    done: '<i class="chk"></i>',
+    review: '<i class="badge"></i><i class="badge-chk"></i>',
+    k_sub: SVG + '<circle cx="6" cy="6" r="4.4" stroke="var(--mk-7CC48F)" stroke-width="1.6"/><g class="rot"><circle cx="6" cy="1.6" r="1.8" fill="var(--mk-1A7F37)"/></g></svg>',
+    s_sub: SVG + '<circle cx="6" cy="6" r="4.4" stroke="var(--mk-7CC48F)" stroke-width="1.6"/><circle cx="6" cy="1.6" r="1.8" fill="var(--mk-1A7F37)"/></svg>',
+    s_agent: SVG + '<circle cx="6" cy="6" r="4.8" stroke="var(--mk-1A7F37)" stroke-width="1.8"/><circle cx="6" cy="6" r="1.8" fill="var(--mk-1A7F37)"/></svg>',
+    s_shell: SVG + '<path d="M1.8 3.2 5 6 1.8 8.8" stroke="var(--mk-0B7A82)" stroke-width="1.8"/><line x1="6.4" y1="9.5" x2="10.6" y2="9.5" stroke="var(--mk-0B7A82)" stroke-width="1.9"/></svg>',
+  };
+  M.queued = M.work.replace('r="1.8" fill="var(--mk-1A7F37)"', 'r="1.8" fill="var(--mk-0550AE)"');
+  const ind = (k, cls = "") => `<span class="ind ${k === "pause" ? "v-seesaw" : ""} ${cls}" aria-hidden="true">${M[k]}</span>`;
+
+  /* ---------- the transcript: [key, html] items ---------- */
+  const it = (k, html) => ({ k, html });
+  const band = t => `<div class="prompt"><span class="g">❯</span><div class="md"><p>${t}</p></div></div>`;
+  const ln = (g, body, cls = "") => `<div class="ln ${cls}"><span class="g">${g}</span><div>${body}</div></div>`;
+  const res = (t, cls = "") => `<div class="res ${cls}"><span class="lcorner"></span><span>${t}</span></div>`;
+  const tool = (n, a, r, rc) => ln("●", `<span class="name">${n}</span>(${a})${res(r, rc)}`, "tool");
+  const say = md => ln("●", `<div class="md">${md}</div>`, "claude");
+
+  const SEEN = [
+    it("p0", band("Why does order 10482 show two failed card payments one minute apart?")),
+    it("t0", ln("●", `Searched for 1 pattern, read 2 files <span class="dim">(click to expand)</span>`, "tool")),
+    it("c0", say("<p>Both are the same payment. The first attempt failed with <code>card_declined</code>; the retry job charged it again 60 s later and the gateway answered <code>rate_limited</code>, because 380 other retries ran in the same minute.</p><p>The retry job has no backoff: every failed payment is retried once a minute until it succeeds.</p>")),
+    it("d0", ln(ind("s_agent"), "Worked for 1m 52s, done 1:58 PM", "doneln")),
+    it("p1", band("Failed card payments retry every minute and hit the gateway's rate limit. Add exponential backoff to the retry job, stop after 5 attempts, and cover it with tests.")),
+    it("c1", say("<p>I'll start with how the retry job schedules its next attempt.</p>")),
+    it("t1", ln("●", `Read 3 files, searched for 2 patterns <span class="dim">(click to expand)</span>`, "tool")),
+    it("c2", say("<p>The job re-queues itself with a fixed <code>delay: 60_000</code> in <code>jobs/retryPayment.ts</code>. Nothing records the attempt number, so it can't back off. I'll add an <code>attempt</code> field to the job's payload and compute the delay from it.</p>")),
+    it("t2", tool("Update", "jobs/retryPayment.ts", "Added 18 lines, removed 3 lines")),
+  ];
+  const LIVE = it("live", ln(ind("work"), `<b>Working</b> <span class="dim">Write(jobs/schedule.ts)</span>`, "liveln"));
+  const NEW = [
+    it("t3", tool("Write", "jobs/schedule.ts", "Wrote 24 lines")),
+    it("c3", say("<p>The schedule:</p><ul><li>attempt 2 after 1 min</li><li>attempt 3 after 4 min</li><li>attempt 4 after 16 min</li><li>attempt 5 after 64 min</li></ul><p>After the fifth failure the payment is marked <code>failed_permanently</code> and the customer gets the dunning email.</p>")),
+    it("t4", tool("Bash", "Run the retry job's tests", "2 failed, 19 passed", "failed")),
+    it("c4", say("<p>Two tests still expect the fixed one-minute delay. They pin the old behaviour, so I'll update them rather than the code.</p>")),
+    it("t5", ln("●", `Edited 2 files, read 1 file <span class="dim">(click to expand)</span>`, "tool")),
+    it("t6", tool("Bash", "Run the retry job's tests", "21 passed")),
+    it("c5", say("<p>I checked the gateway's limit too: 100 requests per minute per merchant. With the new schedule a burst of 400 failures spreads over about an hour instead of hitting the limit in the first minute.</p>")),
+    it("a1", ln(ind("s_sub"), `<span class="alink">Review the backoff for edge cases</span><span class="adur">2m 10s</span>`, "agent")),
+    it("r1", ln("●", `Report from <b>Review the backoff for edge cases</b>, 2m <span class="dim">(click to read)</span>`, "claude")),
+    it("c6", say("<p>The review found one gap: a payment refunded between attempts would still be retried. I added a check that skips refunded payments, with a test.</p>")),
+    it("t7", tool("Update", "jobs/retryPayment.ts", "Added 6 lines")),
+    it("t8", tool("Bash", "Run the retry job's tests", "24 passed")),
+    it("c7", say("<p>Done. Retries now back off 1, 4, 16 and 64 minutes, stop after 5 attempts, and skip refunded payments. 24 tests pass.</p><p>One choice for you: should the fifth failure email the customer at once, or wait for the nightly dunning run?</p>")),
+    it("fc", ln("●", `Files changed<div class="root">~/work/shop-api</div><div class="flist">
+      <span class="lcorner"></span><span class="fp">jobs/retryPayment.ts</span><span class="fc"><span class="add">+41</span> <span class="del">−7</span></span>
+      <span class="lcorner"></span><span class="fp">jobs/schedule.ts</span><span class="fc"><span class="add">+24</span></span>
+      <span class="lcorner"></span><span class="fp">test/retryPayment.test.ts</span><span class="fc"><span class="add">+58</span> <span class="del">−12</span></span></div>`, "files")),
+    it("dn", ln(ind("s_agent"), "Worked for 27m 40s, done 2:41 PM", "doneln")),
+  ];
+  const NEWKEYS = NEW.map(x => x.k);
+
+  const SUB_LOG = [
+    it("s1", band("Read jobs/retryPayment.ts and jobs/schedule.ts. List the cases where a payment could be retried when it shouldn't be, or not retried when it should.")),
+    it("s2", ln("●", `Read 2 files, searched for 3 patterns <span class="dim">(click to expand)</span>`, "tool")),
+    it("s3", say("<p>Three cases checked:</p><ul><li>a payment refunded between attempts is still retried: <b>a gap</b></li><li>a job that crashes mid-attempt keeps its attempt number: fine</li><li>a merchant paused by the gateway: the job already stops</li></ul>")),
+    it("s4", say("<p>One change needed: skip payments whose status is <code>refunded</code> before charging again.</p>")),
+  ];
+
+  /* ---------- the sidebar ---------- */
+  // [title, mark, word, tone, flags] flags: cur, unread, last, sub (a sub-line)
+  const R = (t, mark, word, tone = "", f = {}) => ({ t, mark, word, tone, ...f });
+  const SIDE = (o = {}) => [
+    { g: "Shop API" },
+    R("Billing: retry failed card payments", o.billing ? o.billing.mark : "stopped", o.billing ? o.billing.word : "Your turn, 12 min", o.billing ? o.billing.tone : "", { cur: !o.viewOther, unread: !!o.billingUnread }),
+    R("Orders: CSV export for accounting", "work", "Working", "green", { sub: `<span class="r-agent"><i class="el"></i>${ind("k_sub")} <b>Check the date formats</b> 1m 12s</span>` }),
+    R("Checkout: address autocomplete", "pause", "Needs you, 3 min", "red", { last: true, unread: o.marks }),
+    { g: "Docs site" },
+    R("Search: rank exact title matches", "stopped", "Your turn, 25 min", "", { unread: o.marks }),
+    R("Changelog for 3.1", "stopped", "Your turn, 1 h", "", { last: true, sub: `<span class="r-agent r-review"><i class="el"></i>${ind("review")} 1 to review</span>` }),
+    { g: "Not in a group", others: true },
+    R("Infra: rotate staging certificates", "work", "Working", "green"),
+    R("Scratch: date parsing check", "stopped", "Your turn, 2 d"),
+  ];
+  const rowHTML = r => {
+    let word = r.word;
+    if (r.count) word += `, <span class="cnt">${r.count}</span>`;
+    return `<div class="row${r.cur ? " cur" : ""}${r.unread ? " unread" : ""}${r.last ? " last" : ""}${r.tone ? " " + r.tone : ""}">
+      <span class="r-side">${ind(r.mark)}</span>
+      <span class="r-main"><span class="r-title">${r.t}</span><span class="r-state">${word}</span>${r.sub || ""}</span>
+      <span class="tg"></span><span class="cap ct"></span><span class="cap cb"></span><span class="udot" aria-label="unseen output"></span></div>`;
+  };
+  const sidebar = (rows, style = "s-dot") => {
+    let html = "", open = false;
+    for (const r of rows) {
+      if (r.g) { if (open) html += "</div>"; html += `<div class="tree${r.others ? " others" : ""}"><div class="th"><span class="g-name">${r.g}</span></div>`; open = true; }
+      else html += rowHTML(r);
+    }
+    if (open) html += "</div>";
+    return `<aside class="side ${style}"><div class="side-head"><span class="lights"><i></i><i></i><i></i></span><b>Synopia</b></div>
+      <div class="side-scroll">${html}</div><div class="side-foot"><span>Open session</span><span class="on">New session</span></div></aside>`;
+  };
+
+  /* ---------- the conversation panel ---------- */
+  const HEAD_MAIN = (now) => `<div class="c-head"><h4 class="c-title">Billing: retry failed card payments</h4><p class="c-now">${now}</p>
+    <p class="c-meta">Folder <span class="mono">~/work/shop-api</span>, branch retry-backoff, PR #48, tab shop-api</p><div class="c-acts"><span class="model-btn">Opus</span></div></div>`;
+  const HEAD_SUB = `<div class="c-head"><h4 class="c-title">Review the backoff for edge cases</h4><p class="c-now">Finished after 2m 10s</p>
+    <p class="c-meta">Subagent of <span class="lk">Billing: retry failed card payments</span>, started 2:31 PM</p><div class="c-acts"><span class="model-btn">Opus</span></div></div>`;
+  const BOX = `<div class="composer"><span class="g">❯</span><span class="ta">/ for commands</span></div>`;
+
+  function logHTML(items, o) {
+    return items.map(x => {
+      let cls = "it", extra = "";
+      if (o.newAt === x.k) { cls += " new-at"; extra = `<span class="nlab">New <i>since 2:14 PM</i></span>`; }
+      if (o.rail && o.rail.includes(x.k)) cls += " rail-on";
+      return `<div class="${cls}" data-k="${x.k}">${x.html}${extra}</div>`;
+    }).join("");
+  }
+
+  function railHTML(o) {
+    const dotPast = !!o.pastDots;
+    return `<aside class="panel rail">
+      <div class="past"><h5>Past</h5>
+        <div class="pr${o.subCur ? " cur" : ""}${dotPast ? " unread" : ""}"><span class="pm">${ind("done")}${ind("s_sub")}</span><span class="n">Review the backoff for edge cases</span><span class="d">2m</span>${dotPast && !o.subCur ? '<span class="pdot"></span>' : ""}</div>
+        <div class="pr${dotPast ? " unread" : ""}"><span class="pm">${ind("done")}${ind("s_shell")}</span><span class="n">Run the retry job's tests</span><span class="d">14s</span>${dotPast ? '<span class="pdot"></span>' : ""}</div>
+        <div class="pr"><span class="pm">${ind("done")}${ind("s_sub")}</span><span class="n">Find where retries are scheduled</span><span class="d">48s</span></div>
+      </div>
+      <div class="review"><h5>To review</h5>
+        <div class="rv">${ind("review")}<span class="n">Retry schedule diagram</span><span class="m">subagent, 2:38 PM</span><span class="btn">Mark reviewed</span></div>
+      </div>
+      <div class="now"><div class="main-row${o.subCur ? "" : " cur"}${o.mainDot ? " unread" : ""}">${ind("stopped")}<b>Main conversation${o.mainDot ? `<span class="pdot"></span>` : ""}</b><span class="m">Nothing running in the background</span><span class="w">Your turn</span></div></div>
+    </aside>`;
+  }
+
+  /* one frame: o = { side, sideStyle, items, pos, now, newAt, pill, rail, withRail, sub, dark, h, tag, cap, rec, span } */
+  const frames = [];
+  function frame(o) {
+    const id = "fr" + frames.length; frames.push({ id, ...o });
+    const items = o.sub ? SUB_LOG : o.items;
+    const thread = `<section class="panel thread">${o.sub ? HEAD_SUB : HEAD_MAIN(o.now || "Now: retries back off 1, 4, 16 and 64 min; 24 tests pass")}
+      <div class="logwrap"><div class="log"><div class="log-inner">${logHTML(items, o)}</div></div>${o.pill ? '<span class="newbelow" hidden></span>' : ""}</div>${o.sub ? "" : BOX}</section>`;
+    return `<figure class="fr${o.rec ? " rec" : ""}${o.span ? " span" : ""}"><div class="tag">${o.tag}${o.rec ? ' <span class="rec-tag">Recommended</span>' : ""}</div>
+      <div class="win${o.dark ? " dark" : ""}" id="${id}" style="${o.h ? `--h:${o.h}px;` : ""}${o.withRail ? "grid-template-columns:214px minmax(0,1fr)" : ""}">${sidebar(o.side, o.sideStyle)}
+      <div class="conv${o.withRail ? " with-rail" : ""}">${thread}${o.withRail ? railHTML(o) : ""}</div></div>
+      <figcaption>${o.cap}</figcaption></figure>`;
+  }
+  const put = (id, html) => { document.getElementById(id).innerHTML = html; };
+
+  const ALL = [...SEEN, ...NEW];
+  const LEAVE_ITEMS = [...SEEN, LIVE];
+  const WORKING = { mark: "work", word: "Working", tone: "green" };
+  const back = { k: "t2", like: "leave" };   // the baseline: t2 where it was when you left
+  const DIV = "t3";
+
+  /* ---------- 1. baseline ---------- */
+  put("f1", [
+    frame({ tag: "2:14 PM, before you leave", items: LEAVE_ITEMS, pos: { end: true }, measure: "leave", now: "Now: adding the backoff schedule", side: SIDE({ billing: WORKING }),
+      cap: "You are at the end while Claude works. You switch to another app." }),
+    frame({ tag: "2:53 PM, you come back", items: ALL, pos: back, pill: true, side: SIDE(),
+      cap: "The same screen: Update(jobs/retryPayment.ts) is where it was. The first new line, Write(jobs/schedule.ts), sits where the live line was. The pill counts what is below." }),
+    frame({ tag: "One page down", items: ALL, pos: { k: "c4", y: 20 }, pill: true, side: SIDE(),
+      cap: "After one page of reading, nothing on screen says which lines are new. Scroll back up and the boundary is gone too." }),
+    frame({ tag: "After G or a click on the pill", items: ALL, pos: { end: true }, side: SIDE(),
+      cap: "At the end. The pill is gone. In the sidebar, the two “Your turn” sessions in Docs site look alike, read or not." }),
+  ].join(""));
+
+  /* ---------- 2. A ---------- */
+  put("f2", [
+    frame({ tag: "A1. You come back", items: ALL, pos: back, pill: true, newAt: DIV, side: SIDE(),
+      cap: "The kept place, plus the line above the first new item, near the bottom of the screen: exactly where your reading stopped." }),
+    frame({ tag: "A2. Reading past it", items: ALL, pos: { k: DIV, y: 96 }, pill: true, newAt: DIV, side: SIDE(),
+      cap: "A few lines further down, the line has moved up with the text. Above it is what you saw before 2:14 PM, below it what's new." }),
+    frame({ tag: "A3. At the end", items: ALL, pos: { end: true }, newAt: DIV, side: SIDE(),
+      cap: "Everything is seen and the pill is gone. The line is off screen above, and still there if you scroll back up to reread." }),
+    frame({ tag: "A4. You leave and come back", items: ALL, pos: { k: DIV, y: 96 }, side: SIDE(),
+      cap: "Nothing new came, so the next return draws no line: scrolled back to A2's place, the gap above Write(jobs/schedule.ts) is just a gap again." }),
+  ].join(""));
+
+  /* ---------- 3. B ---------- */
+  const SIDE_B = SIDE({ marks: true, billingUnread: true });
+  const withCount = SIDE_B.map(r => r.unread ? { ...r, count: r.t.startsWith("Billing") ? "15 new" : r.t.startsWith("Search") ? "6 new" : "1 new" } : r);
+  put("f3", [
+    frame({ tag: "B1. Dot and bold title", rec: true, items: ALL, pos: back, pill: true, newAt: DIV, side: SIDE_B, sideStyle: "s-dot",
+      cap: "Checkout (needs you), Search and the open Billing row have unseen output. Changelog, also your turn, is read: no dot, normal title." }),
+    frame({ tag: "B2. Bold title only", items: ALL, pos: back, pill: true, newAt: DIV, side: SIDE_B, sideStyle: "s-bold",
+      cap: "Works on the dark rows, but the open row's title is always bold, so Billing can't show it." }),
+    frame({ tag: "B3. A count in the state line", items: ALL, pos: back, pill: true, newAt: DIV, side: withCount, sideStyle: "s-count",
+      cap: "“Your turn, 12 min, 15 new”: the count reads as part of the status and makes the line longer on every row. Not recommended." }),
+  ].join(""));
+
+  /* the status matrix: two sidebar-only crops */
+  const MX = (u) => [
+    { g: "Every status" },
+    R("Working", "work", "Working", "green", { unread: false }),
+    R("Working, message queued", "queued", "Working, 1 message queued", "green", { unread: false }),
+    R("Needs you", "pause", "Needs you, 3 min", "red", { unread: u }),
+    R("Needs you, blocked", "pause", "Needs you, blocked, 8 min", "red", { unread: u }),
+    R("Your turn", "stopped", "Your turn, 12 min", "", { unread: u }),
+    R("Stopped by you", "stopped", "Stopped, 5 min", "", { unread: u }),
+    R("Failed", "failed", "Failed, 20 min", "", { unread: u }),
+    R("Done, with a deliverable", "done", "Done, 1 h", "", { unread: u, last: true, sub: `<span class="r-agent r-review"><i class="el"></i>${ind("review")} 1 to review</span>` }),
+  ];
+  const sideOnly = (rows, tag, cap) => `<figure class="fr" style="width:236px"><div class="tag">${tag}</div><div class="win only-side">${sidebar(rows)}</div><figcaption>${cap}</figcaption></figure>`;
+  put("f3m", sideOnly(MX(true), "Unseen output", "No dot on the two working rows: the turn still runs.") + sideOnly(MX(false), "All seen", "The same rows after you read them. The status words and marks don't change."));
+
+  put("f3c", [
+    frame({ tag: "Halfway down: the dot stays", items: ALL, pos: { k: DIV, y: 96 }, pill: true, newAt: DIV, side: SIDE_B,
+      cap: "Billing still has unseen items below, so its dot stays while you read. Opening a session doesn't clear it; seeing its end does." }),
+    frame({ tag: "At the end: the dot clears", items: ALL, pos: { end: true }, newAt: DIV, side: SIDE({ marks: true, billingUnread: false }),
+      cap: "The last item has been on screen for 1 s: Billing's dot goes and its title is the open row's normal bold. The other rows keep theirs." }),
+  ].join(""));
+
+  /* ---------- 4. C ---------- */
+  put("f4", [
+    frame({ tag: "C1. Dots in the panel too", span: true, withRail: true, items: ALL, pos: back, pill: true, newAt: DIV, side: SIDE_B, pastDots: true, h: 460,
+      cap: "Every subagent and shell you haven't opened gets a dot in Past. The finished deliverable in To review keeps its blue badge and gets no dot. Most Past lines would carry a dot most of the time: you rarely open a test run's output." }),
+    frame({ tag: "C2. Only the Main conversation card", rec: true, span: true, withRail: true, sub: true, subCur: true, pos: { end: true }, mainDot: true, side: SIDE({ marks: true, billingUnread: true }), h: 460,
+      cap: "You opened the review subagent from its report while Claude finished its reply. The reply landed while you read the subagent, so the Main conversation card has the dot and a bold name, and the Billing row keeps its dot. Past and To review stay as today." }),
+  ].join(""));
+
+  /* ---------- 5. D ---------- */
+  const restFrom = k => NEWKEYS.slice(NEWKEYS.indexOf(k));
+  put("f5", [
+    frame({ tag: "D1. You come back", items: ALL, pos: back, pill: true, rail: NEWKEYS, side: SIDE(),
+      cap: "The rule starts beside the first new line, just as A's divider would, and runs down to the end." }),
+    frame({ tag: "D2. Reading, 1 s after a page down", items: ALL, pos: { k: DIV, y: 96 }, pill: true, rail: restFrom("c3"), side: SIDE(),
+      cap: "The screen you rested on is seen, so its rule has gone; it shows only beside the lines that just scrolled in, until their 1 s passes. The boundary you came back to is no longer drawn." }),
+  ].join(""));
+
+  /* ---------- 7. Dock ---------- */
+  put("f7", `<figure><div class="tile">${ind("s_agent")}<span class="bdg">2</span></div>Today and with C: Checkout needs you, and one deliverable waits for review.</figure>
+    <figure><div class="tile">${ind("s_agent")}<span class="bdg">5</span></div>Rejected: adding the 3 sessions with unseen output. The number would rarely reach 0 and would stop meaning "waiting on you".</figure>`);
+
+  /* ---------- 8. dark ---------- */
+  put("f8", [
+    frame({ tag: "You come back", dark: true, rec: true, items: ALL, pos: back, pill: true, newAt: DIV, side: SIDE_B,
+      cap: "The divider and “New” in the dark link blue; the dot on the open row in the light ink of dark mode." }),
+    frame({ tag: "Reading past it", dark: true, rec: true, items: ALL, pos: { k: DIV, y: 96 }, pill: true, newAt: DIV, side: SIDE_B,
+      cap: "The line holds 1px on the dark panel; “since 2:14 PM” in the dark grey." }),
+  ].join(""));
+
+  /* ---------- scroll each frame: to the end, or an item's top at y px; "like" reuses the y measured in another frame ---------- */
+  const measured = {};
+  function place(f) {
+    const win = document.getElementById(f.id), log = win.querySelector(".log");
+    const top = k => log.querySelector(`[data-k="${k}"]`).offsetTop;
+    if (f.pos.end) log.scrollTop = log.scrollHeight;
+    else {
+      const y = f.pos.like ? measured[f.pos.like] : f.pos.y;
+      log.scrollTop = top(f.pos.k) - y;
+    }
+    if (f.measure) measured[f.measure] = top("t2") - log.scrollTop;
+    const pill = win.querySelector(".newbelow");
+    if (pill) {
+      const bottom = log.scrollTop + log.clientHeight - 4;
+      const n = NEWKEYS.filter(k => log.querySelector(`[data-k="${k}"]`) && top(k) >= bottom).length;
+      if (n) { pill.innerHTML = `${n} new below <kbd>G</kbd>`; pill.hidden = false; } else pill.hidden = true;
+    }
+  }
+  const run = () => { const order = [...frames].sort((a, b) => (b.measure ? 1 : 0) - (a.measure ? 1 : 0)); order.forEach(place); document.body.dataset.ready = "1"; };
+  (document.fonts ? document.fonts.ready : Promise.resolve()).then(run);
+  window.addEventListener("resize", run);
+})();
+</script>
+</body>
+</html>

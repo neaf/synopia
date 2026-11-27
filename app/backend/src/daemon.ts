@@ -55,8 +55,10 @@ const realIo: HashIo = {
 // The page's protocol schema, which the backend imports too (main.ts, router.ts, publisher.ts): a
 // change to it alone is new backend code. Relative to the backend folder; a missing one is a state.
 export const PROTOCOL_FILE = '../web/js/protocol.js';
+// The page modules the backend imports besides it: the matcher (sessions.ts, the Open list).
+export const SHARED_FILES = [PROTOCOL_FILE, '../web/js/fuzzy.js'];
 
-// The backend's code version: a SHA-256 over `src/**/*.ts`, `package-lock.json` and PROTOCOL_FILE
+// The backend's code version: a SHA-256 over `src/**/*.ts`, `package-lock.json` and SHARED_FILES
 // (each path and its content's digest), its first 16 hex digits. null while a file can't be read (a
 // save or a checkout in progress). Async, and a file whose size, times and inode are unchanged since
 // the last reading isn't read again (NFR-06).
@@ -73,12 +75,12 @@ export class CodeHasher {
       const files = (await this.io.readdir(join(this.dir, 'src'))).filter((f) => f.endsWith('.ts')).map((f) => join('src', f)).sort();
       const h = createHash('sha256');
       const next = new Map<string, { key: string; digest: string }>();
-      for (const f of [...files, 'package-lock.json', PROTOCOL_FILE]) {
+      for (const f of [...files, 'package-lock.json', ...SHARED_FILES]) {
         let st;
         try {
           st = await this.io.stat(join(this.dir, f));
         } catch (e) {
-          if (f !== PROTOCOL_FILE || (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
+          if (!SHARED_FILES.includes(f) || (e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
           h.update(f).update('\0-\0'); // a backend without the page beside it (a test's copy)
           continue;
         }

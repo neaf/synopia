@@ -24,7 +24,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const term = (pid = 777): Terminal => ({ pid, sessionId: SID, procStart: 'Tue Nov 24 10:02:03 2026', cwd: '/tmp/x', status: 'busy', statusUpdatedAt: 1 });
 
 // `confirm`: the start check's answer, resolved by the test.
-function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) {
+function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean; onSignedOut?: (sid: string, cwd: string, on: boolean) => void } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-session-'));
   const claudeDir = path.join(root, 'claude');
   const cwd = path.join(root, 'scratch');
@@ -46,10 +46,10 @@ function setup(o: { idleMs?: number; open?: string[]; confirm?: boolean } = {}) 
     end: async () => true,
     ...(o.confirm ? { confirm: () => new Promise<Terminal | null>((r) => checks.push(r)) } : {}),
   };
-  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, terminals, log: (e) => logs.push(e) });
+  const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, idleMs: o.idleMs, terminals, log: (e) => logs.push(e), onSignedOut: o.onSignedOut });
   sessions.start();
   const take = (t: string) => { const out = got.filter((m) => m.t === t); for (const m of out) got.splice(got.indexOf(m), 1); return out; };
-  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; detail: Record<string, unknown> } } | undefined;
+  const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string; word: string; detail: Record<string, unknown> } } | undefined;
   return { sessions, store, transcripts, publisher, q, logs, checks, take, last, s: () => sessions.get(SID)! };
 }
 
@@ -162,4 +162,125 @@ test('close: the session rules go, so a reopened session asks again (Q6)', async
   assert.deepEqual(t.q.calls[0].options.allowedTools, ['Read(//tmp/**)'], 'for this session');
   t.sessions.close(SID);
   assert.equal(SID in t.store.state.rules, false);
+});
+
+test('session: a retried request shows its attempt; an expired sign-in needs you and asks for a refresh; retries that ran out fail with the sentence', async () => {
+  const signed: boolean[] = [];
+  const t = setup({ onSignedOut: (sid, cwd, on) => { assert.equal(sid, SID); assert.ok(cwd.endsWith('scratch')); signed.push(on); } });
+  t.s().send('one');
+  const call = t.q.calls[0];
+  emit(call, { type: 'system', subtype: 'init', session_id: SID });
+  emit(call, { type: 'system', subtype: 'api_retry', attempt: 2, max_retries: 10, retry_delay_ms: 3000, error_status: 503, error: 'server_error', session_id: SID, uuid: 'u1' });
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.word], ['retrying', 'Retrying, attempt 2 of 10']);
+  emit(call, { type: 'system', subtype: 'api_retry', attempt: 4, max_retries: 10, retry_delay_ms: 3000, error_status: 403, error: 'unknown', session_id: SID, uuid: 'u2' });
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.word], ['signedout', 'Needs you, sign-in expired']);
+  assert.deepEqual(signed, [true], 'creds.ts is told once');
+  t.sessions.refreshing([SID], true);
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.word], ['refreshing', 'Refreshing credentials…']);
+  t.sessions.refreshing([SID], false);
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.deepEqual(signed, [true, false]);
+  assert.equal(t.last()?.state.status, 'retrying', 'the CLI retries with the new credentials');
+  emit(call, { type: 'system', subtype: 'api_retry', attempt: 10, max_retries: 10, retry_delay_ms: 3000, error_status: 503, error: 'server_error', session_id: SID, uuid: 'u3' });
+  emit(call, { ...RESULT, is_error: true, result: 'API Error: 503 Service Unavailable' });
+  await tick();
+  assert.deepEqual([t.last()?.state.status, t.last()?.state.detail.error], ['failed', 'API Error: 503 Service Unavailable']);
+  t.sessions.stop();
+});
+
+// Resumed after the credential refresh (R8.2, 2026-11-26): a turn whose credential retries ran out.
+const CRED_RETRY = (n: number) => ({ type: 'system', subtype: 'api_retry', attempt: n, max_retries: 2, retry_delay_ms: 1000, error_status: null, error: 'cloud_credential_error', session_id: SID, uuid: `r${n}` });
+const CRED_FAILED = { ...RESULT, is_error: true, result: 'Could not load credentials from any providers' };
+const textsOf = (call: { inputs: { message: { content: unknown } }[] }) => call.inputs.map((m) => (typeof m.message.content === 'string' ? m.message.content : JSON.stringify(m.message.content)));
+async function failOnCredentials(t: ReturnType<typeof setup>, call = t.q.calls.at(-1)!) {
+  emit(call, { type: 'system', subtype: 'init', session_id: SID });
+  emit(call, CRED_RETRY(1));
+  emit(call, CRED_RETRY(2));
+  emit(call, { type: 'assistant', error: 'cloud_credential_error', parent_tool_use_id: null, message: { role: 'assistant', content: [{ type: 'text', text: 'Could not load credentials from any providers' }] }, session_id: SID, uuid: 'a1' });
+  emit(call, CRED_FAILED);
+  await tick();
+}
+
+test('session: a refresh that succeeds after the turn failed on the credentials resumes it once, with Synopia\'s fixed text', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  await failOnCredentials(t);
+  assert.equal(t.last()?.state.status, 'signedout');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.deepEqual(textsOf(call), ['Draft the notes.', 'Continue: the model\'s credentials were refreshed.'], 'one resume, not your prompt again');
+  assert.equal(t.last()?.state.status, 'busy', 'a new turn runs');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 2, 'once only');
+  t.sessions.stop();
+});
+
+test('session: a refresh that ends while the turn still retries sends nothing; the next retry goes through', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  emit(call, { type: 'system', subtype: 'init', session_id: SID });
+  emit(call, CRED_RETRY(1));
+  await tick();
+  assert.equal(t.last()?.state.status, 'signedout');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 1);
+  assert.equal(t.last()?.state.status, 'retrying');
+  t.sessions.stop();
+});
+
+test('session: the resumed turn failing on the credentials again doesn\'t resume again (no loop): needs you, sign-in expired', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  await failOnCredentials(t);
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 2);
+  await failOnCredentials(t);
+  assert.equal(t.last()?.state.status, 'signedout');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.equal(call.inputs.length, 2, 'no second resume');
+  assert.equal(t.last()?.state.status, 'failed');
+  t.sessions.stop();
+});
+
+test('session: a message of yours since the failure means no resume', async () => {
+  const t = setup();
+  t.s().send('Draft the notes.');
+  const call = t.q.calls[0];
+  await failOnCredentials(t);
+  t.s().send('Try again.');
+  t.sessions.refreshed([SID]);
+  await tick();
+  assert.deepEqual(textsOf(call), ['Draft the notes.', 'Try again.']);
+  t.sessions.stop();
+});
+
+test('session: two sessions of one folder whose last turns failed on the credentials each resume once', async () => {
+  const t = setup({ open: [SID, OTHER] });
+  t.sessions.get(SID)!.send('one');
+  t.sessions.get(OTHER)!.send('two');
+  const [a, b] = t.q.calls;
+  await failOnCredentials(t, a);
+  emit(b, { type: 'system', subtype: 'init', session_id: OTHER });
+  emit(b, { ...CRED_RETRY(1), session_id: OTHER });
+  emit(b, { ...CRED_FAILED });
+  await tick();
+  t.sessions.refreshed([SID, OTHER]);
+  await tick();
+  const resume = 'Continue: the model\'s credentials were refreshed.';
+  assert.deepEqual([textsOf(a), textsOf(b)], [['one', resume], ['two', resume]]);
+  t.sessions.refreshed([SID, OTHER]);
+  await tick();
+  assert.deepEqual([a.inputs.length, b.inputs.length], [2, 2]);
+  t.sessions.stop();
 });

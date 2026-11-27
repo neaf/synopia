@@ -1,6 +1,7 @@
 // Shared helpers for the page checks: waiting, the key table, screenshots and transcript record builders.
 // No import of cdp.mjs here, so a suite's `make` mode can use the builders without a browser.
 import fs from 'node:fs';
+import { deflateSync, crc32 } from 'node:zlib';
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // an exception in a page expression (cdp.mjs `ev` throws it); its message names the expression
@@ -35,6 +36,8 @@ export function keyTable(key) {
   for (const [name, [k, code, vk]] of Object.entries(NAMED)) K[name] = () => key(k, { code, vk });
   K.next = () => key(']', { meta: true, shift: true, code: 'BracketRight', vk: 221 });
   K.prev = () => key('[', { meta: true, shift: true, code: 'BracketLeft', vk: 219 });
+  K.ctrlJ = () => key('j', { ctrl: true, code: 'KeyJ', vk: 74 });
+  K.ctrlK = () => key('k', { ctrl: true, code: 'KeyK', vk: 75 });
   K.cmdF = () => key('f', { meta: true, code: 'KeyF', vk: 70 });
   return K;
 }
@@ -71,12 +74,41 @@ export async function serverSend(url, ...msgs) {
   }
 }
 
+// The output panel (R5.6, app.css `.step-out .out:not(.err)`) of the first element `sel` matches: its styles, and
+// whether they are the panel's in every place it shows (a step, a `!` command, a shell's view): the --sub fill, a
+// 1px --line-2 line, 5.5px corners, 3.5px 9px padding. null when nothing matches.
+export const outPanel = (c, sel) => c.ev(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null;
+  const st = getComputedStyle(e), v = n => { const i = document.createElement('i'); i.style.color = getComputedStyle(document.documentElement).getPropertyValue(n); document.body.append(i); const c = getComputedStyle(i).color; i.remove(); return c; };
+  const got = { display: st.display, bg: st.backgroundColor, border: [st.borderTopWidth, st.borderRightWidth, st.borderBottomWidth, st.borderLeftWidth, st.borderTopStyle, st.borderTopColor].join(' '), radius: st.borderTopLeftRadius, pad: st.padding };
+  const want = { display: 'block', bg: v('--sub'), border: '1px 1px 1px 1px solid ' + v('--line-2'), radius: '5.5px', pad: '3.5px 9px' };
+  return { ok: JSON.stringify(got) === JSON.stringify(want), got, want }; })()`);
+
 // A PNG of the page, or of `clip` ({ x, y, width, height }, scale 1 unless given), written to `file`.
 export async function shot(c, file, clip) {
   const r = await c.cdp('Page.captureScreenshot', { format: 'png', ...(clip ? { clip: { scale: 1, ...clip } } : {}) });
   if (!r.result) throw new Error('screenshot failed: ' + JSON.stringify(r.error));
   fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'));
   return file;
+}
+
+// A made-up w x h RGB PNG: a hue ramp left to right, darker in a band at the centre (so a crop shows).
+export function png(w, h) {
+  const chunk = (type, data) => {
+    const t = Buffer.concat([Buffer.from(type, 'latin1'), data]);
+    const len = Buffer.alloc(4); len.writeUInt32BE(data.length);
+    const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(t));
+    return Buffer.concat([len, t, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4); ihdr[8] = 8; ihdr[9] = 2;
+  const rows = Buffer.alloc((3 * w + 1) * h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const f = x / Math.max(1, w - 1), mid = Math.abs(x - w / 2) < w / 10 ? 0.55 : 1, o = y * (3 * w + 1) + 1 + 3 * x;
+      rows[o] = (90 + 140 * f) * mid; rows[o + 1] = (170 - 60 * f + 40 * (y / h)) * mid; rows[o + 2] = (230 - 150 * f) * mid;
+    }
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
 }
 
 // Transcript records (Claude Code JSONL, docs/Claude Code transcripts.md), one line each.

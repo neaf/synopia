@@ -2,7 +2,7 @@
 // transcripts.md records (made-up content). Assistant records hold one block each, as the CLI writes them.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classify, agentMetaOf, fileEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords } from '../src/claude-jsonl.ts';
+import { classify, agentMetaOf, fileEditOf, inputEditOf, bashEditOf, taskNotes, resultTextIn, imageIn, imageBlocks, landedBlocks, cwdOfRecords, movedContext, RESUME_TEXT } from '../src/claude-jsonl.ts';
 import type { ClaudeRecord, UserRecord, AssistantRecord, ToolUse } from '../src/claude-jsonl.ts';
 
 const ts = '2026-11-24T10:00:00.000Z';
@@ -18,6 +18,17 @@ test('interrupt markers: a stop, and a tool you turned down', () => {
   assert.deepEqual(bodyOf('[Request interrupted by user for tool use]'), { kind: 'interrupt', interrupt: 'toolUse' });
   assert.deepEqual(user([{ type: 'text', text: '[Request interrupted by user for tool use]' }]).body, { kind: 'interrupt', interrupt: 'toolUse' });
   assert.deepEqual(bodyOf('Request interrupted by user'), { kind: 'prompt' }, 'only at the start, in brackets');
+});
+
+// docs/Claude Code transcripts.md#denied-tool-calls: one user record per denied call (invented text).
+test('tool results: a call auto mode blocked, or you turned down at a terminal, is a denial; a hook block or a failure is not', () => {
+  const blocked = (kind: string | undefined, content: string, isError = true) => user([{ type: 'tool_result', tool_use_id: 't1', is_error: isError, content }], kind ? { toolDenialKind: kind } : {}).results[0].denial;
+  assert.equal(blocked('automode-blocked', 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: invented.'), 'auto');
+  assert.equal(blocked(undefined, 'Permission for this action was denied by the Claude Code auto mode classifier. Reason: invented.'), 'auto', 'by its prefix alone');
+  assert.equal(blocked('user-rejected', "The user doesn't want to proceed with this tool use."), 'you');
+  assert.equal(blocked('permission-rule', '<tool_use_error>PreToolUse:Bash hook error: invented</tool_use_error>'), null, 'a hook or rule block');
+  assert.equal(blocked(undefined, 'Exit code 1'), null, 'a plain failure');
+  assert.equal(blocked('automode-blocked', 'ok', false), null, 'only an error result');
 });
 
 test('tool results: error text an interrupt or a resume wrote is cut short; others are not', () => {
@@ -59,7 +70,8 @@ test('user text prefixes', () => {
   assert.deepEqual(bodyOf('<local-command-stdout>x</local-command-stdout>'), { kind: 'system' });
   assert.deepEqual(user([{ type: 'text', text: '<note>' }, { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } }]).body, { kind: 'prompt' }, 'a `<` text with an image is a prompt');
   assert.deepEqual(bodyOf('[Image: source: /tmp/x.png]', { isMeta: true }), { kind: 'meta' });
-  assert.deepEqual(bodyOf('<bash-input>ls</bash-input>'), { kind: 'bash-input', cmd: 'ls' });
+  assert.deepEqual(bodyOf('<bash-input>ls</bash-input>'), { kind: 'bash-input', runs: [{ cmd: 'ls', out: null }], rest: '', then: null, context: false }, 'a querying send: a turn');
+  assert.equal((bodyOf('<bash-input>ls</bash-input>', { queueTranscriptOnly: true }) as { context?: boolean }).context, true, 'a shouldQuery: false send: context');
   assert.deepEqual(bodyOf('<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>'), { kind: 'bash-output', out: { out: 'a', err: '', cut: false, exit: null } });
   assert.deepEqual(bodyOf('Tidy the notes.'), { kind: 'prompt' });
 });
@@ -74,12 +86,41 @@ test('task notifications: ids, status, summary and result; a monitor event has n
   assert.deepEqual(taskNotes('<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>killed</status>\n<summary>Stopped</summary>\n</task-notification>'
     + '<task-notification><task-id>m1</task-id><summary>Monitor event</summary><event>tick</event></task-notification>'
     + '<task-notification><task-id>a1</task-id><status>completed</status><result>Done.\n</result></task-notification>'), [
-    { taskId: 'b1', toolUseId: 't1', status: 'killed', summary: 'Stopped', result: null },
-    { taskId: 'm1', toolUseId: null, status: null, summary: 'Monitor event', result: null },
-    { taskId: 'a1', toolUseId: null, status: 'completed', summary: null, result: 'Done.\n' },
+    { taskId: 'b1', toolUseId: 't1', status: 'killed', summary: 'Stopped', result: null, event: null, outputFile: null, waiting: false },
+    { taskId: 'm1', toolUseId: null, status: null, summary: 'Monitor event', result: null, event: 'tick', outputFile: null, waiting: false },
+    { taskId: 'a1', toolUseId: null, status: 'completed', summary: null, result: 'Done.\n', event: null, outputFile: null, waiting: false },
   ]);
   assert.equal(user('<task-notification><task-id>b1</task-id></task-notification>').notes.length, 1);
   assert.equal(user('<bash-input>echo "<task-notification><task-id>x</task-id></task-notification>"</bash-input>').notes.length, 0, 'not inside a ! command');
+});
+
+// docs/Claude Code transcripts.md "A subagent waiting on its own background work" (shape scan 2026-11-26, invented text)
+test('a subagent waiting on its own background work: a completed notification that is not its end; a shell result names its task id', () => {
+  const [w] = taskNotes('<task-notification>\n<task-id>a1b2c3</task-id>\n<tool-use-id>t9</tool-use-id>\n<output-file>/tmp/t/a1b2c3.output</output-file>\n<status>completed</status>\n'
+    + '<summary>Agent "Run the bench" is waiting on its own background work</summary>\n<note>made up</note>\n<result>The bench runs.</result>\n<usage><duration_ms>1</duration_ms></usage>\n</task-notification>');
+  assert.deepEqual([w.status, w.waiting, w.result], ['completed', true, 'The bench runs.']);
+  const [f] = taskNotes('<task-notification><task-id>a1b2c3</task-id><status>completed</status><summary>Agent "Run the bench" finished</summary></task-notification>');
+  assert.equal(f.waiting, false);
+  const id = (text: string, isError = false) => user([{ type: 'tool_result', tool_use_id: 't1', content: text, is_error: isError }]).results[0].taskId;
+  assert.equal(id('Command running in background with ID: bx7k2. Output is being written to: /tmp/t/bx7k2.output. You will be notified.'), 'bx7k2');
+  assert.equal(id('Monitor started (task m4q9z, expires in 30m unless the source ends first).'), 'm4q9z');
+  assert.equal(id('Command was moved to the background (ID: b3) so that a message can reach you.'), 'b3');
+  assert.equal(id('Command running in background with ID: bx7k2.', true), '', 'not an error');
+  assert.equal(id('total 8'), '');
+});
+
+test('background output (docs/Claude Code transcripts.md#background-output): the file a shell result names, an end notification\'s, a monitor event\'s lines', () => {
+  const res = (text: string) => user([{ type: 'tool_result', tool_use_id: 't1', content: text }]).results[0].outputFile;
+  assert.equal(res('Command running in background with ID: b1x2y3z4w. Output is being written to: /private/tmp/claude-501/-tmp-demo/s1/tasks/b1x2y3z4w.output You will be notified when it completes.'),
+    '/private/tmp/claude-501/-tmp-demo/s1/tasks/b1x2y3z4w.output');
+  assert.equal(res('Command was manually backgrounded by user with ID: b2. Output is being written to: /tmp/claude-501/x/tasks/b2.output'), '/tmp/claude-501/x/tasks/b2.output');
+  assert.equal(res('Command was moved to the background (ID: b3) so that a message that arrived while it was running can reach you; it was not interrupted. Output is being written to: /tmp/t/b3.output\nYou will be notified.'), '/tmp/t/b3.output');
+  assert.equal(res('Monitor started (task m1, expires in 30m unless the source ends first).'), '', 'a monitor result names no file');
+  assert.equal(res('Output is being written to: relative/b4.output'), '', 'only an absolute path');
+  const [end] = taskNotes('<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>t1</tool-use-id>\n<output-file>/tmp/t/b1.output</output-file>\n<status>completed</status>\n<summary>Background command "x" completed (exit code 0)</summary>\n</task-notification>');
+  assert.equal(end.outputFile, '/tmp/t/b1.output');
+  const [ev] = taskNotes('<task-notification>\n<task-id>m1</task-id>\n<summary>Monitor event: "Watch the log"</summary>\n<event>line one\nline two</event>\n</task-notification>');
+  assert.equal(ev.event, 'line one\nline two');
 });
 
 test('toolUseResult: background task ids, an async Agent, edits and shell edits', () => {
@@ -88,6 +129,10 @@ test('toolUseResult: background task ids, an async Agent, edits and shell edits'
   assert.equal(res({ taskId: 'm1' })?.taskId, 'm1');
   assert.deepEqual([res({ status: 'async_launched', agentId: 'a1' })?.asyncLaunched, res({ status: 'async_launched', agentId: 'a1' })?.taskId], [true, 'a1']);
   assert.equal(res({ agentId: 'a1' })?.taskId, '', 'an agent id is a task id only for an async launch');
+  // docs/Claude Code transcripts.md#a-subagent-resumed-by-sendmessage (invented values)
+  const resume = res({ success: true, message: 'Resuming agent a1 in the background.', resumedAgentId: 'a1', revivedAgentId: 'a1', pin: { id: 'a1', name: 'n', ref: 'r' } });
+  assert.deepEqual([resume?.resumedAgentId, resume?.taskId, resume?.asyncLaunched], ['a1', '', false], 'a SendMessage that resumed a subagent');
+  assert.equal(res({ success: true, message: 'Message sent.' })?.resumedAgentId, '');
   assert.equal(res({ stdout: '', interrupted: true })?.interrupted, true);
   assert.deepEqual(res({ filePath: '/Users/fixture/a.md', structuredPatch: [{ oldStart: 3, newStart: 3, lines: [' a', '-b', '+c'] }] })?.edit,
     { filePath: '/Users/fixture/a.md', created: false, hunks: [{ oldStart: 3, newStart: 3, lines: [' a', '-b', '+c'] }] });
@@ -160,4 +205,39 @@ test('subagent meta, and lookups in a record read again', () => {
   assert.deepEqual(imageIn({ type: 'attachment', uuid: 'q1', attachment: { prompt: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'BB' } }] } }, 'q1', [0]), { mediaType: 'image/gif', data: 'BB' });
   assert.deepEqual(imageBlocks([{ type: 'image', source: { type: 'url', url: 'x' } }]), [{ index: 0, mediaType: '', data: null }]);
   assert.equal(cwdOfRecords([{ type: 'x' }, { cwd: '/a' }, { cwd: '/b' }]), '/a');
+});
+
+test('the moved context line (R3.11): Synopia\'s own, read back as "Continued in" with its folder', () => {
+  const text = movedContext('~/dev/a "b"', '/Users/demo/dev/a "b"', '~/dev/gone');
+  assert.match(text, /^<synopia-moved to="~\/dev\/a &quot;b&quot;">This session continues in \/Users\/demo\/dev\/a "b"\. Its folder ~\/dev\/gone no longer exists/);
+  assert.deepEqual(bodyOf(text), { kind: 'moved', to: '~/dev/a "b"' });
+  assert.deepEqual(bodyOf('<synopia-other>x</synopia-other>'), { kind: 'system' });
+});
+
+test('the resume after a credential refresh (R8.2, 2026-11-26): Synopia\'s fixed text, as a prompt record or a queued one', () => {
+  assert.equal(RESUME_TEXT, 'Continue: the model\'s credentials were refreshed.');
+  assert.deepEqual(bodyOf(RESUME_TEXT), { kind: 'resumed' });
+  assert.deepEqual(user([{ type: 'text', text: RESUME_TEXT }]).body, { kind: 'resumed' });
+  const q = classify({ type: 'attachment', uuid: 'q1', timestamp: ts, attachment: { type: 'queued_command', prompt: RESUME_TEXT, commandMode: 'prompt' } });
+  assert.deepEqual(q.kind === 'queued' && q.user?.body, { kind: 'resumed' });
+  assert.deepEqual(bodyOf(`${RESUME_TEXT} And fix the tests.`), { kind: 'prompt' }, 'only the text alone');
+});
+
+test('inputEditOf: an Edit or Write from its input, for a subagent result with no toolUseResult', () => {
+  // common first and last lines stay context; the hunk has no line numbers
+  assert.deepEqual(inputEditOf('Edit', { file_path: '/Users/fixture/dev/demo.feature/src/a.ts', old_string: 'one\ntwo\nthree\n', new_string: 'one\n2\n2b\nthree\n', replace_all: false }),
+    { filePath: '/Users/fixture/dev/demo.feature/src/a.ts', created: false, hunks: [{ oldStart: 0, newStart: 0, lines: [' one', '-two', '+2', '+2b', ' three'] }], unnumbered: true });
+  assert.deepEqual(inputEditOf('Edit', { file_path: '/x/a', old_string: 'a', new_string: 'a\nb' })!.hunks[0].lines, [' a', '+b']);
+  assert.deepEqual(inputEditOf('Write', { file_path: '/x/b.md', content: '# B\n\nbody\n' }),
+    { filePath: '/x/b.md', created: false, hunks: [{ oldStart: 0, newStart: 1, lines: ['+# B', '+', '+body'] }] });
+  assert.equal(inputEditOf('Read', { file_path: '/x/a' }), null);
+  assert.equal(inputEditOf('Edit', { old_string: 'a', new_string: 'b' }), null);
+});
+
+test('classify: a retried request (system/api_error): the sentence the CLI shows (formatted, else message), its HTTP status, a credential error', () => {
+  const r = classify({ type: 'system', subtype: 'api_error', level: 'error', source: 'request_retry', uuid: 'e1', timestamp: ts, retryInMs: 3000, retryAttempt: 4, maxRetries: 10,
+    error: { message: 'Request failed.', formatted: 'The security token included in the request is expired', status: 403, connection: null, isNetworkDown: false, rateLimits: {}, noResponse: null } });
+  assert.deepEqual(r, { uuid: 'e1', ts, sidechain: false, kind: 'api-error', text: 'The security token included in the request is expired', status: 403, credential: false });
+  const c = classify({ type: 'system', subtype: 'api_error', error: { message: 'Failed to resolve AWS credentials.', isCloudCredentialError: true } });
+  assert.deepEqual(c, { uuid: '', ts: null, sidechain: false, kind: 'api-error', text: 'Failed to resolve AWS credentials.', status: null, credential: true });
 });

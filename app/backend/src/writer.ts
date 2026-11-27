@@ -1,5 +1,5 @@
 // Claude-written titles and Now lines (FR-SES-06, R3.4). After a session's turn ends
-// (debounced 20 s), and once when a session opens with no stored text, a one-shot `query()`
+// (debounced 20 s, stored text or not), and once when a session opens with no stored text, a one-shot `query()`
 // reads the last turns and writes a title and a Now line. The call can't act: no tools, no MCP
 // servers, no hooks, its own system prompt, no saved session, and a scratch folder of its own.
 // Its result never reaches the sessions, so a writer call can't start another one.
@@ -114,6 +114,15 @@ export function withTitle(history: { title: string; at: number }[], title: strin
   const last = history[history.length - 1];
   if (last && key(last.title) === key(title)) return history;
   return [...history, { title, at }].slice(-MAX_HISTORY);
+}
+
+// A first title given from outside (start_session's `title`, R3.15), stored as written text: shown
+// until the writer writes its own after a turn, then replaced like any written title. No Now line.
+export function seedTitle(store: Store, sid: string, title: string, at: number): void {
+  const t = limit(title, MAX_TITLE);
+  if (!t) return;
+  store.state.written[sid] = { title: t, at, history: withTitle([], t, at) };
+  store.changed();
 }
 
 export function limit(s: string, n: number): string {

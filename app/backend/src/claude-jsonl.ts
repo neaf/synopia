@@ -3,8 +3,8 @@
 // so transcript.ts reduces typed records and never a raw field. Pure: no I/O.
 import path from 'node:path';
 import type { JsonRecord } from './tail.ts';
-import { parseBashInput, parseBashOutput } from './bang.ts';
-import type { BashOutput } from './bang.ts';
+import { parseBashOutput, splitBash } from './bang.ts';
+import type { BashOutput, BashRun } from './bang.ts';
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const obj = (v: unknown): JsonRecord => (v && typeof v === 'object' && !Array.isArray(v) ? (v as JsonRecord) : {});
@@ -35,7 +35,8 @@ export function imageBlocks(content: unknown): ImageBlock[] {
 
 // A hunk of `structuredPatch` (Edit, Write) or of `bashEditDiff` (a shell command's edits).
 export type RawHunk = { oldStart: number; newStart: number; lines: string[] };
-export type FileEdit = { filePath: string; created: boolean; hunks: RawHunk[] };
+// `unnumbered`: built from the tool's input, whose hunks carry no line numbers (inputEditOf).
+export type FileEdit = { filePath: string; created: boolean; hunks: RawHunk[]; unnumbered?: true };
 // `changedFiles`: files the command changed, absolute (resolved against the record's cwd).
 export type BashEdit = { files: FileEdit[]; changedFiles: string[]; moreFiles: number };
 
@@ -56,6 +57,32 @@ export function fileEditOf(tur: JsonRecord): FileEdit | null {
     hunks = [{ oldStart: 0, newStart: 1, lines: lines.map((l) => '+' + l) }];
   }
   return { filePath, created, hunks };
+}
+
+// An Edit's or Write's change from its tool_use input, for a result with no `toolUseResult`: an
+// SDK-driven CLI writes none in a subagent's records (docs/Claude Code transcripts.md, "Quirk: a
+// subagent's edits have no structuredPatch"). An Edit is one hunk, `old_string` against `new_string`
+// with their common first and last lines as context, and no line numbers: where it sits in the file
+// isn't recorded. A Write is its content as added lines from line 1; whether it made or replaced the
+// file isn't recorded either, so it never reads "new".
+export function inputEditOf(name: string, inp: JsonRecord): FileEdit | null {
+  const filePath = str(inp.file_path);
+  if (!filePath || (name !== 'Edit' && name !== 'Write')) return null;
+  const linesOf = (t: string): string[] => {
+    if (!t) return [];
+    const l = t.split('\n');
+    if (l.length > 1 && l[l.length - 1] === '') l.pop(); // the final newline is not a line
+    return l;
+  };
+  if (name === 'Write') return { filePath, created: false, hunks: [{ oldStart: 0, newStart: 1, lines: linesOf(str(inp.content)).map((l) => '+' + l) }] };
+  const a = linesOf(str(inp.old_string)), b = linesOf(str(inp.new_string));
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const lines = [...a.slice(0, head).map((l) => ' ' + l), ...a.slice(head, a.length - tail).map((l) => '-' + l),
+    ...b.slice(head, b.length - tail).map((l) => '+' + l), ...a.slice(a.length - tail).map((l) => ' ' + l)];
+  return { filePath, created: false, hunks: [{ oldStart: 0, newStart: 0, lines }], unnumbered: true };
 }
 
 // `toolUseResult.bashEditDiff` (docs/Claude Code transcripts.md#shell-edits-basheditdiff). Relative
@@ -83,6 +110,7 @@ export type ToolUse = {
   plan: string; // ExitPlanMode's plan (can be an older revision than the card's)
   questions: Question[]; // AskUserQuestion's
   to: string | null; // SendMessage's recipient
+  edit: FileEdit | null; // an Edit's or Write's change from its input, for a result without one (inputEditOf)
 };
 export type AssistantBlock = { type: 'text'; index: number; text: string } | ToolUse | { type: 'other'; index: number; blockType: string };
 
@@ -100,6 +128,7 @@ function toolUseOf(b: JsonRecord, index: number): ToolUse {
     type: 'tool_use', index, id: str(b.id), name, input: inp, background: Boolean(inp.run_in_background),
     description: str(inp.description), command: str(inp.command), timeout: inp.timeout, timeoutMs: inp.timeout_ms,
     persistent: Boolean(inp.persistent), plan: str(inp.plan), questions, to: typeof inp.to === 'string' ? inp.to : null,
+    edit: inputEditOf(name, inp),
   };
 }
 
@@ -118,32 +147,60 @@ function unansweredOf(d: JsonRecord, results: ToolResult[]): string {
   return results.some((r) => r.isError && r.text.trimStart().startsWith(UNANSWERED_TEXT)) ? 'unknown' : '';
 }
 
-// A tool_result block. `text`: what Claude got (images aren't text). `cutShort`: an error result
-// the CLI wrote for an interrupt.
-export type ToolResult = { index: number; toolUseId: string; isError: boolean; text: string; cutShort: boolean; images: ImageBlock[] };
+// A tool call that never ran because a permission check said no (docs/Claude Code
+// transcripts.md#denied-tool-calls): `auto`, auto mode's classifier blocked it; `you`, you turned it
+// down at the terminal's permission prompt. The user record's `toolDenialKind` says which; an
+// auto-mode block is also known by its result's fixed prefix. A hook or rule block (`permission-rule`)
+// is neither: Claude reads its reason and carries on, so it stays a failed step.
+export type Denial = 'auto' | 'you';
+const DENIAL_KINDS = new Map<string, Denial>([['automode-blocked', 'auto'], ['user-rejected', 'you']]);
+const AUTO_MODE_BLOCKED = 'Permission for this action was denied by the Claude Code auto mode classifier';
 
-function toolResultOf(b: JsonRecord, index: number): ToolResult {
+// A tool_result block. `text`: what Claude got (images aren't text). `cutShort`: an error result
+// the CLI wrote for an interrupt. `denial`: an error result for a call a permission check denied.
+// `outputFile`: where a background shell's output goes, as its result text names it ("Output is being
+// written to: <path>"; docs/Claude Code transcripts.md#background-output), else ''. `taskId`: the task id a
+// background shell's or monitor's result text names ("Command running in background with ID: <id>",
+// "Monitor started (task <id>"), else ''; a subagent's records have no toolUseResult to carry it
+// (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work).
+export type ToolResult = { index: number; toolUseId: string; isError: boolean; text: string; cutShort: boolean; denial: Denial | null; images: ImageBlock[]; outputFile: string; taskId: string };
+const OUTPUT_FILE = /Output is being written to: (\/\S+?\.output)(?=\s|$)/;
+const TASK_ID = /^(?:Command running in background with ID: |Command was manually backgrounded by user with ID: |Command was moved to the background \(ID: |Monitor started \(task )([A-Za-z0-9]+)/;
+
+function toolResultOf(b: JsonRecord, index: number, denialKind: unknown): ToolResult {
   const text = textOf(b.content);
   const isError = Boolean(b.is_error);
-  return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), images: imageBlocks(b.content) };
+  const denial = !isError ? null : DENIAL_KINDS.get(str(denialKind)) ?? (text.trimStart().startsWith(AUTO_MODE_BLOCKED) ? 'auto' : null);
+  return { index, toolUseId: str(b.tool_use_id), isError, text, cutShort: isError && CUT_SHORT.test(text.trim()), denial, images: imageBlocks(b.content), outputFile: OUTPUT_FILE.exec(text)?.[1] ?? '', taskId: isError ? '' : TASK_ID.exec(text.trimStart())?.[1] ?? '' };
 }
 
 // A user record's `toolUseResult`, for its first tool_result. `taskId`: the id that stops it
 // (a moved or background shell's `backgroundTaskId`, a monitor's `taskId`, an async Agent's `agentId`).
+// `resumedAgentId`: the subagent a SendMessage woke after it had ended (docs/Claude Code
+// transcripts.md#a-subagent-resumed-by-sendmessage), else ''.
 export type ToolUseResult = {
-  toolUseId: string; asyncLaunched: boolean; backgroundTaskId: string; taskId: string; interrupted: boolean;
+  toolUseId: string; asyncLaunched: boolean; backgroundTaskId: string; taskId: string; interrupted: boolean; resumedAgentId: string;
   edit: FileEdit | null; bashEdit: BashEdit | null;
 };
 
 // One `<task-notification>` (docs/Claude Code transcripts.md#background-work). A monitor's event has
-// no tool-use id; a subagent woken again has its task id only.
-export type TaskNote = { taskId: string | null; toolUseId: string | null; status: string | null; summary: string | null; result: string | null };
+// no tool-use id; a subagent woken again has its task id only. `event`: the monitor output lines it
+// carries; `outputFile`: the task's output file, named at its end. `waiting`: a background subagent that
+// ended its turn with its own shells or monitors still running: status `completed`, summary `Agent "<description>"
+// is waiting on its own background work`. Not its end: it wakes when that work ends, and notifies again
+// (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work).
+export type TaskNote = {
+  taskId: string | null; toolUseId: string | null; status: string | null; summary: string | null; result: string | null;
+  event: string | null; outputFile: string | null; waiting: boolean;
+};
+const WAITING = /\bis waiting on its own background work\s*$/;
 
 export function taskNotes(text: string): TaskNote[] {
   const out: TaskNote[] = [];
   for (const tn of text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)) {
     const tag = (name: string) => new RegExp(`<${name}>([^<]+)`).exec(tn[1])?.[1] ?? null;
-    out.push({ taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary'), result: /<result>([\s\S]*?)<\/result>/.exec(tn[1])?.[1] ?? null });
+    out.push({ taskId: tag('task-id'), toolUseId: tag('tool-use-id'), status: tag('status'), summary: tag('summary'), result: /<result>([\s\S]*?)<\/result>/.exec(tn[1])?.[1] ?? null,
+      event: /<event>([\s\S]*?)<\/event>/.exec(tn[1])?.[1] ?? null, outputFile: tag('output-file'), waiting: WAITING.test(tag('summary') ?? '') });
   }
   return out;
 }
@@ -153,7 +210,10 @@ export function taskNotes(text: string): TaskNote[] {
 export type Interrupt = 'stop' | 'toolUse';
 export type UserBody =
   | { kind: 'results' } // tool results only
-  | { kind: 'bash-input'; cmd: string | null }
+  // `!` commands (splitBash): `then` is the body of the text after them (`rest`), as one record can hold the next prompt too.
+  // `context`: written with no turn (`queueTranscriptOnly`, a `shouldQuery: false` send); else it started one
+  // (Synopia's since 2026-11-27, docs/Claude Code transcripts.md "Bash mode records").
+  | { kind: 'bash-input'; runs: BashRun[]; rest: string; then: UserBody | null; context: boolean }
   | { kind: 'bash-output'; out: BashOutput | null }
   | { kind: 'meta' } // an isMeta note: skipped
   | { kind: 'notification' } // task notifications only (in `notes`)
@@ -161,6 +221,8 @@ export type UserBody =
   | { kind: 'command'; text: string } // a slash command you typed: `/name args`
   | { kind: 'system' } // reminders, local command output, hooks: skipped
   | { kind: 'interrupt'; interrupt: Interrupt }
+  | { kind: 'moved'; to: string } // Synopia continued the session in another folder (movedContext)
+  | { kind: 'resumed' } // Synopia resumed a turn that failed on the credentials, once they were refreshed (RESUME_TEXT)
   | { kind: 'prompt' };
 
 type Base = { uuid: string; ts: string | null; sidechain: boolean };
@@ -172,7 +234,7 @@ export type UserRecord = Base & {
   toolUse: ToolUseResult | null; notes: TaskNote[]; body: UserBody; unanswered: string;
 };
 export type AssistantRecord = Base & {
-  kind: 'assistant'; messageId: string; requestedModel: unknown; effort: unknown; blocks: AssistantBlock[];
+  kind: 'assistant'; cwd: string; messageId: string; requestedModel: unknown; effort: unknown; blocks: AssistantBlock[];
 };
 export type ClaudeRecord =
   | (Base & { kind: 'ai-title'; title: string })
@@ -180,6 +242,9 @@ export type ClaudeRecord =
   | (Base & { kind: 'pr-link'; pr: unknown })
   | (Base & { kind: 'permission-mode'; mode: string })
   | (Base & { kind: 'turn-end'; by: 'turn_duration' | 'stop_hook_summary'; durationMs: number | null })
+  // A request the CLI retries (system/api_error): its sentence, as the CLI's spinner shows it (`error.formatted`,
+  // else `error.message`), the HTTP status, and whether the CLI calls it a cloud credential error.
+  | (Base & { kind: 'api-error'; text: string; status: number | null; credential: boolean })
   // A `queued_command` attachment: a message, notification or hand-back taken in by a running turn.
   // `user`: what shows of it (a typed prompt, a notification or a report), null for the rest.
   | (Base & { kind: 'queued'; user: UserRecord | null })
@@ -201,9 +266,30 @@ function reportOf(text: string): { agent: string | null; text: string } {
   return { agent: frm ? frm[1] : null, text: body };
 }
 
+// Synopia's own context line when it continues a session whose folder is gone in another folder (R3.11):
+// a `shouldQuery: false` user message, so Claude reads it with your next message and no turn starts. The
+// transcript shows it as "Continued in <to>". `to` is the folder as the page shows it, `abs` the real path.
+export const MOVED_TAG = '<synopia-moved';
+const escAttr = (s: string) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const unescapeAttr = (s: string) => s.replace(/&lt;/g, '<').replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+export function movedContext(to: string, abs: string, from: string): string {
+  return `${MOVED_TAG} to="${escAttr(to)}">This session continues in ${abs}. Its folder ${from} no longer exists, so work in ${abs} from here.</synopia-moved>`;
+}
+
+// Synopia's message that resumes a turn that failed on the model's credentials, once the folder's refresh
+// command succeeded (R8.2, 2026-11-26). It goes as any message you send, so the CLI writes it as a prompt: a
+// plain `user` record whose content is this text (or a `queued_command` holding it). The transcript shows it
+// as "Resumed after the credential refresh", not as your prompt. The one place for its wording.
+export const RESUME_TEXT = 'Continue: the model\'s credentials were refreshed.';
+
 function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolean): UserBody {
   if (onlyResults) return { kind: 'results' };
-  if (text.startsWith('<bash-input>')) return { kind: 'bash-input', cmd: parseBashInput(text) };
+  if (text.startsWith('<bash-input>')) {
+    const b = splitBash(text);
+    const context = d.queueTranscriptOnly === true;
+    if (!b) return { kind: 'bash-input', runs: [], rest: '', then: null, context };
+    return { kind: 'bash-input', ...b, then: b.rest ? bodyOf(d, b.rest, images, false) : null, context };
+  }
   if (text.startsWith('<bash-stdout>')) return { kind: 'bash-output', out: parseBashOutput(text) };
   if (d.isMeta && !text.startsWith(REPORT_PREFIX)) return { kind: 'meta' };
   if (text.startsWith('<task-notification>')) return { kind: 'notification' };
@@ -213,6 +299,8 @@ function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolea
     const args = /<command-args>([^<]*)/.exec(text);
     return { kind: 'command', text: `${m ? m[1] : ''} ${args ? args[1] : ''}`.trim() };
   }
+  if (text.startsWith(MOVED_TAG)) return { kind: 'moved', to: unescapeAttr(/^<synopia-moved to="([^"]*)"/.exec(text)?.[1] ?? '') };
+  if (!images && text.trim() === RESUME_TEXT) return { kind: 'resumed' };
   if (text.startsWith('<') && !images) return { kind: 'system' };
   if (text.startsWith(TURNED_DOWN_MARKER)) return { kind: 'interrupt', interrupt: 'toolUse' };
   if (text.startsWith(STOP_MARKER)) return { kind: 'interrupt', interrupt: 'stop' };
@@ -221,7 +309,7 @@ function bodyOf(d: JsonRecord, text: string, images: number, onlyResults: boolea
 
 function userOf(d: JsonRecord, base: Base, content: unknown): UserRecord {
   const blocks = Array.isArray(content) ? content : [];
-  const results = blocks.map((b, i) => (isBlock(b, 'tool_result') ? toolResultOf(obj(b), i) : null)).filter((r): r is ToolResult => r !== null);
+  const results = blocks.map((b, i) => (isBlock(b, 'tool_result') ? toolResultOf(obj(b), i, d.toolDenialKind) : null)).filter((r): r is ToolResult => r !== null);
   const tur = d.toolUseResult && typeof d.toolUseResult === 'object' && !Array.isArray(d.toolUseResult) ? (d.toolUseResult as JsonRecord) : null;
   let toolUse: ToolUseResult | null = null;
   if (tur && results.length) {
@@ -230,7 +318,7 @@ function userOf(d: JsonRecord, base: Base, content: unknown): UserRecord {
     toolUse = {
       toolUseId: results[0].toolUseId, asyncLaunched: async, backgroundTaskId: str(tur.backgroundTaskId),
       taskId: str(tur.backgroundTaskId) || str(tur.taskId) || (async ? str(tur.agentId) : ''),
-      interrupted: tur.interrupted === true, edit: fileEditOf(tur),
+      interrupted: tur.interrupted === true, resumedAgentId: str(tur.resumedAgentId), edit: fileEditOf(tur),
       bashEdit: diff && typeof diff === 'object' && !Array.isArray(diff) ? bashEditOf(diff as JsonRecord, str(d.cwd)) : null,
     };
   }
@@ -253,6 +341,12 @@ export function classify(d: JsonRecord): ClaudeRecord {
   if (t === 'system' && (d.subtype === 'turn_duration' || d.subtype === 'stop_hook_summary')) {
     return { ...base, kind: 'turn-end', by: d.subtype, durationMs: typeof d.durationMs === 'number' ? d.durationMs : null };
   }
+  if (t === 'system' && d.subtype === 'api_error') {
+    // docs/Claude Code transcripts.md#retried-requests
+    const e = obj(d.error);
+    const text = (str(e.formatted) || str(e.message)).replace(/\s+/g, ' ').trim().slice(0, 300);
+    return { ...base, kind: 'api-error', text, status: typeof e.status === 'number' ? e.status : null, credential: e.isCloudCredentialError === true };
+  }
   if (t === 'attachment') {
     // A message sent during a turn lands here, not as a user record (docs/Claude Code
     // transcripts.md#messages-sent-during-a-turn); `prompt` is a string or text and image blocks.
@@ -262,7 +356,8 @@ export function classify(d: JsonRecord): ClaudeRecord {
     const images = blocks ? blocks.some((b) => isBlock(b, 'image')) : false;
     if (a.type !== 'queued_command' || (!prompt && !images)) return { ...base, kind: 'other' };
     const typed = a.commandMode === 'prompt' && (!prompt.startsWith('<') || images);
-    const shown = typed || prompt.startsWith('<task-notification>') || prompt.startsWith('<agent-message');
+    // a `!` command taken in by a running turn comes as two of these: its input, then its output (bang.ts)
+    const shown = typed || (a.commandMode === 'prompt' && (prompt.startsWith('<bash-input>') || prompt.startsWith('<bash-stdout>'))) || prompt.startsWith('<task-notification>') || prompt.startsWith('<agent-message');
     return { ...base, kind: 'queued', user: shown ? userOf(d, base, blocks ?? prompt) : null };
   }
   if (t === 'user') return userOf(d, base, obj(d.message).content);
@@ -277,7 +372,7 @@ export function classify(d: JsonRecord): ClaudeRecord {
     });
     // One content block per record; the records of one response share `message.id`
     // (docs/Claude Code transcripts.md#assistant-records-one-block-per-record).
-    return { ...base, kind: 'assistant', messageId: str(m.id), requestedModel: d.requestedModel, effort: d.effort, blocks };
+    return { ...base, kind: 'assistant', cwd: str(d.cwd), messageId: str(m.id), requestedModel: d.requestedModel, effort: d.effort, blocks };
   }
   return { ...base, kind: 'other' };
 }

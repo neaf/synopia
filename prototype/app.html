@@ -81,11 +81,13 @@
   .row[data-state="amber"] .dot, .dot.amber { background: var(--dot-amber); }
   .row[data-state="green"] .dot, .dot.green { background: var(--dot-green); }
 
-  /* ---------- main area: four panels on the canvas ---------- */
-  .conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 9px; padding: 9px; min-height: 0; }
+  /* ---------- main area: the conversation as one panel (header, log, the box as its last row), the background panel beside it ---------- */
+  .conv { display: grid; grid-template-columns: minmax(0, 1fr) 270px; grid-template-rows: minmax(0, 1fr); gap: 9px; padding: 9px; min-height: 0; }
+  .thread { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .thread > .c-head { flex: none; border-bottom: 1px solid var(--line-2); }
   .conv.no-rail { grid-template-columns: minmax(0, 1fr); }
   .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 7px; min-width: 0; }
-  .c-head { grid-column: 1 / -1; padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
+  .c-head { padding: 11px 14.5px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 14.5px; align-items: start; }
   .c-title { font-size: 17px; font-weight: 700; margin: 0; line-height: 1.25; }
   .c-now { color: var(--ink-2); margin: 0; }
   .c-meta { color: var(--ink-3); font-size: 11px; margin: 2px 0 0; }
@@ -95,14 +97,17 @@
   .c-acts { grid-row: 1 / 6; grid-column: 2; display: flex; gap: 7px; align-items: center; }
   .missing { padding: 27px; max-width: 60ch; }
 
-  .log { overflow-y: auto; padding: 11px 16px 12.5px; min-height: 0; }
-  .log-inner { max-width: 150ch; }
+  .log { overflow-y: auto; overflow-x: hidden; padding: 11px 16px 12.5px; min-height: 0; flex: 1 1 0; }
+  /* the text keeps a 150ch measure; a band's fill runs edge to edge across the panel */
+  .log-inner > :not(.prompt, .qpin) { max-width: 150ch; }
+  .prompt > :not(.g) { max-width: 148ch; }
+  .log .ln { overflow-wrap: anywhere; }
   .earlier { color: var(--ink-3); margin: 0 0 11px; }
 
   /* transcript: mono, gutter glyphs like the CLI */
   .log, .composer textarea, .status { font-family: var(--mono); font-size: 12px; line-height: 1.45; font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0; }
   .ln { display: grid; grid-template-columns: 2ch minmax(0, 1fr); margin: 0 0 11px; }
-  .ln > .g { user-select: none; }
+  .ln > .g, .log .prompt > .g { -webkit-user-select: none; user-select: none; cursor: default; } /* marks are not text (2026-11-26) */
   .ln.claude > .g { color: var(--ink); }
   .ln.tool > .g, .ln.agent > .g { color: var(--dot-green); }
   .ln.tool.failed > .g { color: var(--red); }
@@ -116,7 +121,17 @@
   details.fold > summary .hint { color: var(--faint); }
   details.fold[open] > summary .hint { display: none; }
   details.fold .body { margin-top: 5.5px; }
-  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -18px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+  /* a step's line is one line at any width (R5.6, 2026-11-26): its target gives way with an ellipsis, the name and the closing bracket stay */
+  .oneln { display: flex; min-width: 0; overflow: hidden; white-space: nowrap; }
+  .oneln > span { flex: none; white-space: pre; }
+  .oneln > .oneln-t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* from the panel's inner edge (-16px, the log's padding), so the 2.5px edge shows whole */
+  .prompt { display: grid; grid-template-columns: 2ch minmax(0, 1fr); background: #F0F3F6; border-left: 2.5px solid var(--link); margin: 3.5px -16px 11px; padding: 3.5px 16px 3.5px 13.5px; }
+  /* a queued message: the same band, a still clock in place of ❯, lighter text; one sticky block at the log's end */
+  .prompt.qc > .md { color: var(--ink-3); }
+  .qpin { position: sticky; bottom: 0; z-index: 2; display: flow-root; background: var(--panel); margin: -7.5px -16px 0; padding: 7.5px 16px 12.5px; }
+  .qpin > .prompt:first-child { margin-top: 0; }
+  .qpin.edge { box-shadow: inset 0 1px 0 var(--line-2); }
   .prompt > .g { color: var(--link); }
   .prompt .img { color: var(--ink-3); }
   .done { color: var(--ink-3); margin: 0 0 14.5px; }
@@ -136,9 +151,25 @@
   .md pre code { color: var(--ink); }
   .md blockquote { margin: 0 0 .85em; padding-left: 2ch; border-left: 2.5px solid var(--line); color: var(--ink-2); }
   .md a { color: var(--link); }
-  .md table { border-collapse: collapse; margin: 0 0 .85em; }
+  /* tables: 11px, 1px rules between rows; the renderer marks each column (num, short, prose, c0 the first)
+     and fitTables fits the table: only the long text wraps, then the first column, then it scrolls in its box */
+  .md .tw { overflow-x: auto; margin: 0 0 .85em; max-width: 100%; }
+  .md .tw.scrolls { border-right: 1px solid var(--line); padding-bottom: 7px; }
+  .md .tw::-webkit-scrollbar { height: 5px; }
+  .md .tw::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+  .md table { border-collapse: collapse; margin: 0; overflow-wrap: normal; font-size: 11px; line-height: 1.45; }
+  .md table code { font-size: 1em; }
   .md th { text-align: left; font-weight: 700; border-bottom: 1px solid var(--line); }
-  .md th, .md td { padding: 1px 3ch 1px 0; vertical-align: top; }
+  .md th, .md td { padding: 1px 2.5ch 1px 0; vertical-align: top; }
+  .md th { padding-top: 0; }
+  .md th:last-child, .md td:last-child { padding-right: 0; }
+  .md tbody tr:not(:last-child) > td { border-bottom: 1px solid var(--line-2); }
+  .md .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .md .short, .md .num, .md .c0 { white-space: nowrap; }
+  .md table.wrap1 .c0 { white-space: normal; min-width: 14ch; }
+  .md .c0 code { white-space: nowrap; }
+  .md .prose { min-width: 26ch; overflow-wrap: break-word; }
+  .md th.al, .md td.al { text-align: left; } .md th.ac, .md td.ac { text-align: center; } .md th.ar, .md td.ar { text-align: right; }
 
   /* waves of subagents */
   .wave .name { font-weight: 700; }
@@ -180,16 +211,19 @@
   .dl.c { color: var(--ink-2); }
   .dgap { color: var(--faint); padding-left: 7ch; background: var(--sub); }
 
-  /* message panel: status bar on top, input below */
-  .dock { padding: 0; overflow: visible; }
+  /* the message box, the panel's last row: a card or status line above it, between 1px lines */
+  .dock { flex: none; padding: 0; overflow: visible; }
   .dock-inner { max-width: none; }
-  .status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); border-radius: 7px 7px 0 0; }
+  .dock-inner > :not(.composer) { border-top: 1px solid var(--line-2); margin-bottom: 23.5px; }
+  .thread:has(.dock-inner > :not(.composer)) > .log { padding-bottom: 0; }
+  .status { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; border-bottom: 1px solid var(--line-2); background: var(--sub); }
   .status b { font-weight: 700; }
   .status[data-state="red"] b { color: var(--red); }
   .status[data-state="amber"] b { color: var(--amber); }
   .status[data-state="green"] b { color: var(--green); }
   .status span { color: var(--ink-2); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 12.5px 7px; }
+  /* a ❯ band being written, under a 1px line: ❯ where a posted band's sits */
+  .composer { position: relative; display: grid; grid-template-columns: 2ch minmax(0, 1fr); padding: 9px 16px 9px 13.5px; border-top: 1px solid var(--line-2); border-left: 2.5px solid transparent; }
   .composer > .g { font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--link); }
   .composer .attach, .composer .c-row { grid-column: 2; }
   .composer textarea { width: 100%; background: none; border: 0; resize: none; outline: none; min-height: 36px; max-height: 198px; padding: 0; }
@@ -213,7 +247,7 @@
 
   /* background work panel, like a play queue turned upside down:
      past work fades into the top edge, what runs now sits at the bottom, the main conversation anchors it */
-  .rail { grid-column: 2; grid-row: 2 / 4; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .rail { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
   .past { flex: 1; min-height: 0; overflow-y: auto; padding: 9px 0 36px; display: flex; flex-direction: column;
     -webkit-mask-image: linear-gradient(to top, transparent 0, #000 57.5px); mask-image: linear-gradient(to top, transparent 0, #000 57.5px); }
   .rail h3 { font-size: 13.5px; margin: 0; padding: 0 12.5px 5.5px; display: flex; align-items: baseline; gap: 7px; }
@@ -238,8 +272,6 @@
   .card .m { font-size: 11px; color: var(--ink-2); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .card .d { font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; font-size: 12px; grid-row: 1 / 3; grid-column: 2; }
   .now .none { color: var(--ink-3); font-size: 11px; padding: 0 12.5px 3.5px; }
-  .bw-detail { margin: 0 12.5px 7px; font-size: 11px; color: var(--ink-2); }
-  .bw-detail code { display: block; font-family: var(--mono); font-size: 10.5px; background: var(--sub); border: 1px solid var(--line-2); border-radius: 3.5px; padding: 3.5px 5.5px; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3.5px; }
   .main-row { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--line); border-radius: 7px 7px 0 0; padding: 8px 12.5px; cursor: pointer; font-size: 11.5px; flex: none; }
   .main-row:hover { background: var(--sub); }
   .main-row[aria-current="true"] { background: #DDF4FF; box-shadow: inset 2.5px 0 0 var(--link); }
@@ -435,6 +467,68 @@
   .rv-open .m { font-size: 10px; color: var(--ink-2); }
   .rv-open .m .kind { margin-right: 4px; }
   .rv-done { font-size: 10.5px; margin-right: 4px; }
+  /* the Waiting on you list (R9.10, ?demo=items; app/web/css/app.css's Open list and Waiting on you blocks) */
+  .app > .side { grid-column: 1; grid-row: 1; }
+  .app > .conv { grid-column: 2; grid-row: 1; }
+  .open-list { grid-column: 2; grid-row: 1; z-index: 6; background: var(--canvas); padding: 9px; min-height: 0; display: flex; }
+  .open-list[hidden] { display: none; }
+  .ol-panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .ol-head { padding: 11px 14.5px; border-bottom: 1px solid var(--line-2); }
+  .ol-filter { border-bottom: 1px solid var(--line-2); }
+  .ol-filter input { font-family: var(--mono); font-size: 12px; line-height: 1.45; width: 100%; background: none; border: 0; outline: none; padding: 0; color: var(--ink); }
+  .ol-list { flex: 1; min-height: 0; overflow-y: auto; font-family: var(--mono); font-size: 12px; line-height: 1.4; padding: 3.5px 0; }
+  .ol-it { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 40ch) 10ch; gap: 2ch; padding: 2px 14.5px; cursor: pointer; }
+  .ol-it > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ol-it .f, .ol-it .a { color: var(--ink-3); }
+  .ol-it .a { text-align: right; font-variant-numeric: tabular-nums; }
+  .ol-it:hover { background: var(--sub); }
+  .ol-it[aria-selected="true"] { background: #DDF4FF; }
+  .ol-it[aria-selected="true"] .n { color: var(--link); }
+  .ol-empty { color: var(--ink-3); margin: 0; padding: 5.5px 14.5px; }
+  .ol-keys { margin: 0; padding: 6.5px 14.5px; border-top: 1px solid var(--line-2); font-size: 11px; color: var(--ink-3); }
+  .side-head .wbtn { margin-left: auto; color: #ADBAC7; border-color: #444C56; background: transparent; font-size: 11px; padding: 1px 8px; display: inline-flex; gap: 5px; align-items: center; }
+  .side-head .wbtn[hidden] { display: none; }
+  .side-head .wbtn:hover { background: #2D333B; color: #E6EDF3; }
+  .side-head .wbtn .ind { font-size: 9px; }
+  .wl-h { display: flex; gap: 2ch; padding: 7px 14.5px 2px; font-family: var(--sans); font-size: 12px; font-weight: 700; color: var(--ink); }
+  .wl-h:first-child { padding-top: 3px; }
+  .wl-h > span:last-child { flex: none; font-weight: 400; color: var(--ink-3); }
+  .waiting-list .ol-it .n { display: flex; gap: 0; align-items: baseline; }
+  .waiting-list .ol-it .n .oi-id { flex: none; font-size: 10.5px; margin-right: 1ch; }
+  .waiting-list .ol-it .n .oi-id.found { border-style: dashed; }
+  .waiting-list .ol-it .n .x-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  /* open items in the panel (?demo=items; the same rules as app/web/css/app.css's open-items block) */
+  .oi-id { display: inline-block; font: 700 10.5px/1 var(--mono); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px; padding: 2px 3px 1.5px; min-width: 2.6ch; text-align: center; box-sizing: border-box; }
+  .oi-id.q { border-style: dotted; color: var(--ink-3); }
+  .oi-id.found { border-style: dashed; }
+  .oi-undo { font-size: 11px; }
+  .oi-group { border-bottom: 1px solid var(--line-2); padding: 8px 0 3px; }
+  .oi-group h3 { color: var(--ink); }
+  .oi-closed h3 { color: var(--faint); }
+  .oi { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; column-gap: 7px; row-gap: 2px; align-items: baseline; margin: 0 7px 5px; padding: 6px 8px 7px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); font-size: 11.5px; line-height: 1.35; }
+  .oi > .oi-id { grid-row: 1 / 3; align-self: start; margin-top: 1px; }
+  .oi .oi-k { font-size: 10.5px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .oi .oi-age { font-size: 10.5px; color: var(--faint); font-variant-numeric: tabular-nums; }
+  .oi-t { all: unset; box-sizing: border-box; cursor: pointer; color: var(--ink); min-width: 0; }
+  .oi .oi-t { grid-column: 2 / 4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .oi-t code { font-size: .95em; color: var(--link); }
+  .oi .oi-w { grid-column: 2 / 4; font-size: 10.5px; color: var(--ink-2); }
+  .oi .oi-acts { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 4px; }
+  .oi-chip { all: unset; box-sizing: border-box; font-size: 10.5px; line-height: 17px; padding: 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--sub); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+  .oi-chip:hover { border-color: var(--faint); color: var(--ink); }
+  .oi-chip .rc { color: var(--green); margin-left: 3px; }
+  .oi.ans { background: var(--sub); }
+  .oi.focus, .oi-fu.focus, .rv.focus { box-shadow: inset 0 0 0 1px var(--link); border-color: var(--link); }
+  .oi.bad { grid-template-columns: auto minmax(0, 1fr); }
+  .oi.bad > .oi-id { grid-row: auto; }
+  .oi-fu { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 7px; row-gap: 1px; margin: 0 7px; padding: 2.5px 5.5px 4px; border: 1px solid transparent; border-radius: 5px; font-size: 11.5px; line-height: 1.35; align-items: baseline; }
+  .oi-fu .oi-t { color: var(--ink-2); }
+  .oi-fu .oi-w { grid-column: 2; font-size: 10.5px; color: var(--ink-3); }
+  .pr.oi-cl { cursor: default; }
+  .oi-cl .n { white-space: normal; }
+  .oi-cl .pm { align-self: start; margin-top: 4px; }
+  .oi-cl .oi-id, .rv-open .n .oi-id { font-size: 9.5px; padding: 1px 2px; margin-right: 4px; vertical-align: 1px; }
+  .oi-cl .oi-id { color: var(--ink-2); border-color: var(--faint); }
 
   /* kind = spinner + colour: subagent orbit (slate), fork two arcs (purple), shell turning bar (teal), monitor radar (pink) */
   :root { --k-sub: #1A7F37; --k-fork: #8250DF; --k-shell: #0B7A82; --k-mon: #0E6BA8; }
@@ -498,6 +592,13 @@
 
 
   .liveln b { color: var(--green); }
+  /* the Working line on a 1px rule edge to edge through its middle; the mark and words break it; it takes no space (R5.5, 2026-11-25) */
+  .log-inner > .liveln.rule { position: relative; margin-left: -16px; margin-right: -16px; padding: 0 16px; max-width: none; }
+  .log-inner > .liveln.rule::before { content: ""; position: absolute; left: 0; right: 0; top: calc(12px * 1.45 / 2 - .5px); height: 1px; background: var(--line); }
+  .log-inner > .liveln.rule > .g { background: var(--panel); box-shadow: -5px 0 0 var(--panel); }
+  .log-inner > .liveln.rule > :not(.g) { position: relative; display: block; width: fit-content; max-width: 100%; box-sizing: border-box; background: var(--panel); padding-right: 1ch; }
+  /* shell output in its own subtle panel under its command (R5.6, R7.2, 2026-11-25) */
+  .res > .out { display: block; color: var(--ink-2); white-space: pre-wrap; background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; padding: 3.5px 9px; margin: 2px 0 3.5px; }
 
   .log { overflow-x: hidden; }
 
@@ -530,6 +631,11 @@
   .side .row .r-drift { color: #E3B341; }
   .side .row .r-agent { color: #9198A1; }
   .side .r-review { color: #58A6FF !important; }
+  .ind.o-open { color: var(--ink-3); }
+  .side .row .r-wait { color: #ADBAC7; }
+  .side .row .r-wait .ind.o-open { color: #9198A1; }
+  .side .row[aria-current="true"] .r-wait { color: var(--ink-2); }
+  .side .row[aria-current="true"] .r-wait .ind.o-open { color: var(--ink-3); }
   .side .row .r-side { border-color: var(--guide); background: #F6F8FA; }
   /* the open session: light like the canvas, normal light-theme text, kind colours back to the light set */
   .side .row[aria-current="true"] { background: var(--canvas); border-color: var(--canvas);
@@ -586,9 +692,8 @@
   .r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }
   .r-agent .ind { margin: 0; }
 
-  .composer { padding: 9px 14px; }
   .composer { align-items: center; }
-  .composer textarea { min-height: 0; height: 1.45em; display: block; }
+  .composer textarea { min-height: 3lh; max-width: 148ch; display: block; }
   .composer > .g { align-self: start; }
   .model-btn { font-size: 12px; color: var(--ink-2); }
 
@@ -605,19 +710,19 @@
   /* modes */
   .composer { grid-template-columns: 2ch minmax(0, 1fr); }
   .composer > textarea { grid-column: 2; grid-row: 1; }
-  .composer > .g { grid-column: 1; grid-row: 1; align-self: center; }
+  .composer > .g { grid-column: 1; grid-row: 1; align-self: start; }
   .composer > .slash { grid-column: 1 / -1; }
   .mode { grid-column: 3; grid-row: 1; font-family: var(--sans); font-size: 11px; color: var(--ink-3); white-space: nowrap; padding-left: 12px; align-self: center; }
-  body[data-mode="normal"] .dock .composer { background: var(--sub); }
-  body[data-mode="normal"] .composer textarea::placeholder { color: var(--faint); }
-  body[data-mode="normal"] .composer > .g { color: var(--faint); }
-  body[data-mode="insert"] .dock { box-shadow: 0 0 0 2px #54AEFF; }
+  /* the mode, one indicator: normal, the box's ❯ and text at half strength (its line at full); insert, the band
+     your message becomes, the band's fill and blue left edge */
+  body[data-mode="normal"] .dock:not(:has(.dock-inner > :not(.composer))) .composer > :not(.slash) { opacity: .5; }
+  body[data-mode="insert"] .dock .composer { background: #F0F3F6; border-left-color: var(--link); }
   body[data-mode="insert"] .mode { color: var(--link); }
 
   /* ---------- Claude's questions card ---------- */
   :root { --sel: #DDF4FF; }
   .qa-card { border-bottom: 1px solid var(--line-2); }
-  .nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; border-radius: 7px 7px 0 0; font-size: 12px; }
+  .nd-head { display: flex; align-items: baseline; gap: 1ch; padding: 6.5px 12.5px; background: #FFEBE9; border-bottom: 1px solid #FFCECB; font-size: 12px; }
   .nd-head b { color: var(--red); font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
   .nd-head .why { color: var(--ink-2); }
   .nd-head .prog { margin-left: auto; color: var(--ink-2); font-size: 11.5px; }
@@ -692,6 +797,8 @@
 
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: #fff; padding: 6.5px 11.5px; border-radius: 5.5px; font-weight: 500; display: none; z-index: 10; }
   .toast.show { display: block; }
+  .mark-time { position: fixed; z-index: 11; pointer-events: none; background: var(--ink); color: var(--panel); font: 500 11.5px/1.35 var(--sans); padding: 2.5px 6.5px; border-radius: 4px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .mark-time[hidden] { display: none; }
 
   @media (max-width: 990px) {
     .conv { grid-template-columns: minmax(0, 1fr); }
@@ -709,7 +816,7 @@
 <body>
 <div class="app">
   <aside class="side" aria-label="Open sessions">
-    <div class="side-head"><h1>Synopia</h1></div>
+    <div class="side-head"><h1>Synopia</h1><button class="btn quiet wbtn" id="waiting" type="button" hidden></button></div>
     <div class="side-scroll" id="groups"></div>
     <div class="side-foot"><span id="exported"></span><button class="btn" id="new">New session</button></div>
   </aside>
@@ -757,7 +864,23 @@ function applyDemo() {
   if (!s) return;
   s.items = [...s.items];
   const now = new Date().toISOString();
-  if (DEMO === "ask") {
+  if (DEMO === "items") { // open items in the panel (R7.1, app/web/js/open-items.js), invented
+    const at = Date.now() - 4 * 60_000;
+    s.openItems = { unread: 1, note: null, focus: "Y1", // the focused item (J/K, R9.1): the blue ring
+      items: [{ id: "Y1", kind: "decision", text: "Run `bin/schema-lint --fix` now, or look at the 14 warnings first?", at, options: ["Run it", "Look first"], recommended: "Look first" },
+        { id: "Y2", kind: "your task", text: "Answer the 2 review threads from Mira on #812.", at },
+        { id: "Y4", kind: "default", text: "Mark #812 to #815 ready in this order: #812, #814, #813, #815.", at, goesAhead: "when CI is green on all four, unless you object" },
+        { id: "Y5", kind: "decision", text: "Can I remove the worktrees ~/dev/shop-wt-cart and ~/dev/shop-wt-tax?", at, options: ["Remove both", "Keep them"], found: true },
+        { id: "Y9", kind: "review", text: "Review: Pricing page copy", at: null, subagent: "Pricing page copy" }],
+      checks: [{ id: "A1", kind: "follow-up", text: "Re-check #820, which GitHub shows as conflicting.", at, trigger: "after the M2 stack merges" }],
+      closed: [{ id: "Y3", kind: "decision", text: "", how: "answered", at: Date.now() - 60_000, note: "“Run it” · done: 14 entries added", by: "agent" },
+        { id: "Y6", kind: "decision", text: "Should the tax table be cached per request?", how: "dropped", at: Date.now() - 30_000, note: "not an item: you said so", by: "synopia", found: true, undo: true }] };
+    /* the Waiting on you list (R9.10, w): two more sessions with items of their own */
+    const more = data.filter(x => x !== s).slice(0, 2), empty = { checks: [], closed: [], unread: 0, note: null };
+    if (more[0]) more[0].openItems = { ...empty, items: [{ id: "Y2", kind: "decision", text: "Round per line or per invoice?", at: Date.now() - 62 * 60_000, options: ["Per line", "Per invoice"], recommended: "Per invoice" },
+      { id: "Y3", kind: "your task", text: "Ask finance for the 2027 reduced rate.", at: Date.now() - 120 * 60_000 }] };
+    if (more[1]) more[1].openItems = { ...empty, items: [{ id: "Y1", kind: "your task", text: "Review the draft of the retry section.", at: Date.now() - 3 * 3600_000, found: true }] };
+  } else if (DEMO === "ask") {
     const i = s.items.map(x => x.k).lastIndexOf("ask");
     if (i < 0) return;
     s.items = s.items.slice(0, i + 1); s.items[i] = { ...s.items[i], state: "pending", answer: null };
@@ -807,6 +930,26 @@ function dur(ms) {
 const clock = ts => new Date(ts).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" });
 
 /* small markdown renderer: code blocks, headings, lists, quotes, bold, inline code, links */
+/* a table column: numbers (every cell a number with an optional unit), long text (a cell over 44 characters), or short */
+const NUM = /^(n\/a|[~<>]?\d[\d.,]*\s?(k|M|ms|s|%)?(\s?[+]\s?[~]?\d[\d.,]*\s?(k|M|ms|s|%)?)*|\d{4}-\d\d-\d\d)$/;
+function colKinds(rows) {
+  const plain = s => s.replace(/`/g, "").replace(/\*\*/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  return Array.from({ length: Math.max(0, ...rows.map(r => r.length)) }, (_, j) => {
+    const cells = rows.map(r => plain(r[j] ?? "")), full = cells.filter(c => c);
+    if (full.length && full.every(c => NUM.test(c)) && !full.every(c => /^\d{4}-/.test(c))) return "num";
+    if (Math.max(0, ...cells.map(c => c.length)) > 44) return "prose";
+    return j === 0 ? "c0" : "short";
+  });
+}
+/* the fit: 1. only the long text wraps, 2. the first column may wrap, 3. the table scrolls in its box */
+function fitTables(root) {
+  const over = tw => tw.firstElementChild.getBoundingClientRect().width > tw.clientWidth + .5;
+  root.querySelectorAll(".md .tw").forEach(tw => {
+    const t = tw.firstElementChild; t.classList.remove("wrap1"); tw.classList.remove("scrolls");
+    if (over(tw)) { t.classList.add("wrap1"); if (over(tw)) tw.classList.add("scrolls"); }
+  });
+}
+addEventListener("resize", () => fitTables(document));
 function md(src) {
   const out = []; const lines = (src || "").split("\n"); let i = 0;
   const inline = s => esc(s)
@@ -822,9 +965,12 @@ function md(src) {
     if (/^\s*\|.*\|\s*$/.test(l)) {
       const rows = []; while (i < lines.length && /^\s*\|/.test(lines[i])) rows.push(lines[i++]);
       const cells = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim());
-      const body = rows.filter(r => !/^\s*\|?\s*:?-{2,}/.test(r)).map(cells);
+      const isSep = r => /^\s*\|?\s*:?-{2,}/.test(r);
+      const body = rows.filter(r => !isSep(r)).map(cells);
       const [head, ...rest] = body;
-      out.push(`<table><thead><tr>${head.map(c => `<th>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map(c => `<td>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`);
+      const sepRow = rows.find(isSep), align = sepRow ? cells(sepRow).map(c => /^:-+:$/.test(c) ? "c" : /-:$/.test(c) ? "r" : /^:-/.test(c) ? "l" : "") : [], k = colKinds(rest);
+      const cls = j => ` class="${k[j] || "short"}${j === 0 && k[j] !== "c0" ? " c0" : ""}${align[j] ? ` a${align[j]}` : ""}"`;
+      out.push(`<div class="tw"><table><thead><tr>${head.map((c, j) => `<th${cls(j)}>${inline(c)}</th>`).join("")}</tr></thead><tbody>${rest.map(r => `<tr>${r.map((c, j) => `<td${cls(j)}>${inline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }
     const h = l.match(/^(#{1,4})\s+(.*)/); if (h) { out.push(`<h4>${inline(h[2])}</h4>`); i++; continue; }
@@ -865,6 +1011,7 @@ function rowHTML(s) {
       ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
       ${(n => n ? `<span class="r-agent"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
       ${(n => n ? `<span class="r-agent r-review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(toReview(s).length)}
+      ${((n, d) => n || d ? `<span class="r-agent r-wait"><i class="el"></i>${ind("open")} ${[...(n ? [`${n} waiting on you`] : []), ...(d ? [`${d} due`] : [])].join(", ")}</span>` : "")(OI(s).items.filter(i => i.kind !== "review" && i.state !== "answered" && i.state !== "later").length, OI(s).checks.filter(a => a.state === "due").length)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
     <span class="merge-hint">+ New group</span>
@@ -916,6 +1063,8 @@ function renderSide() {
   if (layout.groups.length || layout.others.length) html += `<section class="group tree others" data-group="others"><div class="th"><span class="g-name">Not in a group</span></div>
     ${layout.others.length ? layout.others.map(id => rowHTML(byId(id))).join("") : `<div class="g-empty" data-drop-group="others">Drop a session here to take it out of its group</div>`}</section>`;
   const el = document.getElementById("groups"); el.innerHTML = html;
+  const total = KEYS.reduce((t, id) => t + waitsOf(byId(id)).length, 0), wb = document.getElementById("waiting");
+  wb.hidden = !total; wb.innerHTML = `${ind("open")} ${total} waiting on you`;
   el.querySelectorAll(".row").forEach(b => { b.onclick = () => { current = b.dataset.id; view = null; renderAll(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
@@ -1002,14 +1151,35 @@ function took(ms) {
 }
 const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
-
-function toolLine(t) {
-  const res = t.state === "failed" ? `<div class="res failed"><span>⎿</span><span>Failed</span></div>`
-    : t.state === "running" ? `<div class="res"><span>⎿</span><span>Running${t.name === "Agent" || t.name === "Task" ? " in the background" : ""}</span></div>` : "";
-  return `<div class="ln tool ${t.state}"><span class="g">●</span><div><span class="name">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${res}</div></div>`;
+/* the marks in the bullet column are not text: no selection, no click; hover shows when the row appeared (2026-11-26) */
+function markTime(ts, now = Date.now()) {
+  const d = new Date(ts), n = new Date(now); if (!ts || isNaN(d)) return "";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  if (d.toDateString() === n.toDateString()) return time;
+  return `${d.getDate()} ${d.toLocaleDateString([], { month: "short" })}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ""}, ${time}`;
 }
+const markAt = ts => ts ? ` data-at="${esc(typeof ts === "number" ? new Date(ts).toISOString() : ts)}"` : "";
+{
+  const MARK = ".log .ln > .g, .log .prompt > .g"; let tip = null, on = null, timer = 0;
+  const hide = () => { clearTimeout(timer); on = null; if (tip) tip.hidden = true; };
+  document.addEventListener("mouseover", e => {
+    const g = e.target.closest?.(MARK); if (g === on) return; hide(); if (!g || !g.dataset.at) return;
+    on = g; timer = setTimeout(() => {
+      const text = markTime(g.dataset.at); if (!text) return;
+      if (!tip) { tip = document.createElement("div"); tip.className = "mark-time"; tip.setAttribute("role", "tooltip"); document.body.append(tip); }
+      tip.textContent = text; tip.hidden = false;
+      const r = g.getBoundingClientRect(), t = tip.getBoundingClientRect(), above = r.top - t.height - 4;
+      tip.style.left = `${Math.max(4, Math.min(r.left - 2, innerWidth - t.width - 4))}px`; tip.style.top = `${above >= 4 ? above : r.bottom + 4}px`;
+    }, 300);
+  });
+  document.addEventListener("scroll", hide, true);
+  document.addEventListener("click", e => { if (e.target.closest?.(MARK)) { e.stopPropagation(); e.preventDefault(); } }, true);
+}
+
+/* a step's line: head and tail stay whole, the target (mid) gives way with an ellipsis */
+const lineHTML = (head, mid = "", tail = "") => `<span class="oneln">${head ? `<span>${head}</span>` : ""}${mid ? `<span class="oneln-t">${mid}</span>` : ""}${tail ? `<span>${tail}</span>` : ""}</span>`;
+/* steps fold into one line, a single step too ("Ran 1 command", R5.6, 2026-11-26) */
 function toolsHTML(run) {
-  if (run.length === 1) return toolLine(run[0]);
   const counts = {}; run.forEach(t => counts[t.verb] = (counts[t.verb] || 0) + 1);
   const label = { Plan: n => `showed ${n} plans`, "Loaded tools": n => "loaded tools", Ran: n => `ran ${n} commands`, Read: n => `read ${n} files`, Edited: n => `edited ${n} files`, Wrote: n => `wrote ${n} files`,
     Searched: n => `searched ${n} times`, Subagent: n => `started ${n} subagents`, Fetched: n => `fetched ${n} pages`, Skill: n => `used ${n} skills` };
@@ -1017,9 +1187,9 @@ function toolsHTML(run) {
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
-  const cls = fails ? "failed" : "";
-  return `<div class="ln tool ${cls}"><span class="g">●</span><details class="fold"><summary><span class="name">${esc(text)}</span>${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span></summary>
-    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span><span><span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? `(${esc(t.obj)})` : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}</span></div>`).join("")}</div></details></div>`;
+  const cls = run.length === 1 ? run[0].state : fails ? "failed" : "";
+  return `<div class="ln tool ${cls}"><span class="g"${markAt(run[0].ts)}>●</span><details class="fold"><summary>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
+    <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? "(" : ""}`, esc(t.obj), `${t.obj ? ")" : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}`)}</div>`).join("")}</div></details></div>`;
 }
 
 /* ---------- files changed ---------- */
@@ -1118,6 +1288,7 @@ function filesHTML(patches) {
     timeout: ['', '<i class="sqo amber"></i>'],
     timeoutfill: ['', '<i class="sq amber"></i>'],
     review: ['', '<i class="badge"></i><i class="badge-chk"></i>'],
+    open: ['o-open', '<svg class="k" viewBox="0 0 12 12" fill="none" aria-hidden="true"><circle cx="6" cy="6" r="4.3" stroke="currentColor" stroke-width="1.4"/></svg>'],
     reviewflag: ['', '<i class="flag"></i>'],
     reviewring: ['', '<i class="ring-blue"></i><i class="chk sm bluechk"></i>']
   };
@@ -1193,7 +1364,7 @@ function waveHTML(tools, s) {
   const time = a => a ? (a.finished ? took(agentMs(a)) : live(a.start, agentMs(a))) : "";
   if (rows.length === 1) {
     const { t, a } = rows[0];
-    return `<div class="ln agent one"><span class="g">${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
+    return `<div class="ln agent one"><span class="g"${markAt(t.ts)}>${ind(markOf(a))}</span><div>${nameOf(t, a)} <span class="adur">${time(a)}</span></div></div>`;
   }
   const ms = rows.map(r => r.a ? agentMs(r.a) : 0);
   const t0 = Math.min(...rows.map(r => r.a?.start ? +new Date(r.a.start) : Infinity));
@@ -1211,15 +1382,40 @@ function waveHTML(tools, s) {
 
 /* ---------- background work: forks, subagents, shells, monitors ---------- */
 const bgOf = s => s.background || [];
-const hasBackground = s => agentsOf(s).length || bgOf(s).length;
+/* open items (R7.1, the same as app/web/js/open-items.js): s.openItems, set by ?demo=items */
+const OI = s => s.openItems || { items: [], checks: [], closed: [], unread: 0, note: null };
+const hasItems = s => { const o = OI(s); return !!(o.items.length || o.checks.length || o.unread || o.note); };
+const oiText = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
+const oiId = (id, found) => `<span class="oi-id${found ? " found" : ""}">${esc(id)}</span>`;
+const oiAge = i => typeof i.at === "number" ? `${Math.max(0, Math.round((Date.now() - i.at) / 60000))} min` : "";
+function oiChips(i) {
+  if (i.state === "answered") return "";
+  const b = (label, rec) => `<button class="oi-chip">${esc(label)}${rec ? `<span class="rc">Recommended</span>` : ""}</button>`;
+  const out = i.kind === "decision" ? (i.options || []).map(o => b(o, o === i.recommended)) : i.kind === "your task" ? [b("Done")] : i.kind === "default" ? [b("Object")] : [];
+  return out.length ? `<span class="oi-acts">${out.join("")}</span>` : "";
+}
+const oiItem = (i, f) => `<div class="oi${i.state === "answered" ? " ans" : ""}${f === i.id ? " focus" : ""}">${oiId(i.id, i.found)}<span class="oi-k">${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}${i.found ? ", found by Synopia" : ""}</span><span class="oi-age">${oiAge(i)}</span><button class="oi-t">${oiText(i.text)}</button>${i.goesAhead ? `<span class="oi-w">Goes ahead ${esc(i.goesAhead)}</span>` : ""}${oiChips(i)}</div>`;
+function oiReview(s) {
+  const rv = OI(s).items.filter(i => i.kind === "review"); if (!rv.length) return "";
+  return `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>${rv.map(i => `<div class="rv"><button class="rv-open">${ind("review")}<span class="n">${oiId(i.id)}${esc(i.subagent || i.text)}</span><span class="m">${kind("sub")} handed over</span></button><button class="btn quiet rv-done">Mark reviewed</button></div>`).join("")}</div>`;
+}
+function oiGroups(s) {
+  const o = OI(s), wait = o.items.filter(i => i.kind !== "review" && !i.with);
+  const bad = o.unread ? `<div class="oi bad"><span class="oi-id q">?</span><span class="oi-k">${o.unread} line${o.unread > 1 ? "s" : ""} Synopia can't read, in open-items.md</span></div>` : "";
+  return (wait.length || bad ? `<section class="oi-group oi-wait"><h3>Waiting on you <span class="cnt">${wait.length}</span></h3>${wait.map(i => oiItem(i, o.focus)).join("")}${bad}</section>` : "")
+    + (o.checks.length ? `<section class="oi-group oi-check"><h3>Claude will check <span class="cnt">${o.checks.length}</span></h3>${o.checks.map(a => `<div class="oi-fu">${oiId(a.id)}<button class="oi-t">${oiText(a.text)}</button><span class="oi-w"><span>${esc(a.trigger || "")}</span></span></div>`).join("")}</section>` : "")
+    + (o.closed.length ? `<section class="oi-group oi-closed"><h3>Closed this turn <span class="cnt">${o.closed.length}</span></h3>${o.closed.map(c => `<div class="pr oi-cl"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${oiId(c.id, c.found)}${esc(c.by === "synopia" ? c.note[0].toUpperCase() + c.note.slice(1) : (c.how[0].toUpperCase() + c.how.slice(1)) + (c.note ? `: ${c.note}` : ""))}</span><span class="d">${c.undo ? `<button class="link oi-undo">Undo</button>` : hhmm(c.at)}</span></div>`).join("")}</section>` : "");
+}
+const hasBackground = s => agentsOf(s).length || bgOf(s).length || hasItems(s);
 function bgState(b) {
   if (b.status && b.status !== "running") return b.status === "completed" ? "done" : b.status;
   if (b.kind === "monitor" && b.timeout && !b.persistent && new Date(b.start).getTime() + b.timeout < NOWISH) return "timed out";
   return "running";
 }
 const bgMs = b => (b.end ? new Date(b.end) : (bgState(b) === "timed out" ? new Date(new Date(b.start).getTime() + b.timeout) : NOWISH)) - new Date(b.start);
-let openBg = null;
-function railHTML(s, A) {
+/* a shell or monitor opens in the pane like a subagent (R7.2): view holds its tool use id */
+const bgById = (s, id) => bgOf(s).find(b => b.toolUseId === id);
+function railHTML(s, A, B) {
   if (!hasBackground(s)) return "";
   const kindOf = x => x.kind ? x.kind : agentType(x);
   const all = [
@@ -1230,14 +1426,15 @@ function railHTML(s, A) {
   const past = all.filter(x => !x.running).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
   const now = all.filter(x => x.running).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  const attrs = x => x.agent ? `data-agent="${x.agent.id}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${x.key}" aria-expanded="${openBg === x.key}"`;
-  const detail = x => x.bg && openBg === x.key ? `<div class="bw-detail">${x.bg.summary ? esc(x.bg.summary) : x.running ? "No report yet." : esc(x.st)}<code>${esc(x.bg.command)}</code></div>` : "";
+  const attrs = x => x.agent ? `data-agent="${x.agent.id}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${x.key}" aria-current="${!!(B && B.toolUseId === x.key)}"`;
+  const detail = () => "";
   const label = { shell: "shell", monitor: "monitor", fork: "fork", "general-purpose": "subagent", Explore: "explore", Plan: "plan" };
   return `<aside class="rail panel" aria-label="Background work">
-    <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A}">${sessionMark(s)}<b>Main conversation</b><span class="m">${esc(WORD[stateOf(s)])}</span></button>
+    <button class="main-row" data-back-main data-state="${stateOf(s)}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${esc(WORD[stateOf(s)])}</span></button>
     ${(rv => rv.length ? `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>
       ${rv.map(x => `<div class="rv"><button class="rv-open" ${attrs(x)}>${ind("review")}<span class="n">${esc(x.name.replace(/^for review:\s*/i, ""))}</span><span class="m">${kind(kindKey(x))} finished ${hhmm(x.end)}</span></button>
         <button class="btn quiet rv-done" data-reviewed="${x.agent.id}">Mark reviewed</button></div>`).join("")}</div>` : "")(past.filter(x => bgMarkKey(x) === "review"))}
+    ${oiReview(s)}${oiGroups(s)}
     <div class="now">
       <h3>Running <span class="cnt">${now.length ? `${now.length} in the background` : ""}</span></h3>
       ${now.length ? now.map(x => `<button class="card kc-${kindKey(x)}" ${attrs(x)}>${ind(bgMarkKey(x))}<span class="n">${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, started ${hhmm(x.start)}</span><span class="d">${live(x.start, x.ms)}</span></button>${detail(x)}`).join("") : `<p class="none">Nothing running in the background.</p>`}
@@ -1258,28 +1455,28 @@ function itemsHTML(items, sessionBusy, s) {
     run = [];
   };
   const flushFiles = () => { flush(); out.push(filesHTML(turnPatches)); turnPatches = []; };
-  const endTurn = () => { flushFiles(); if (turnStart && lastTs && new Date(lastTs) > new Date(turnStart)) out.push(`<div class="ln doneln"><span class="g">${ind("s_agent")}</span><div>Worked for ${took(new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`); };
+  const endTurn = () => { flushFiles(); if (turnStart && lastTs && new Date(lastTs) > new Date(turnStart)) out.push(`<div class="ln doneln"><span class="g"${markAt(lastTs)}>${ind("s_agent")}</span><div>Worked for ${took(new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`); };
   const prompt = (html, ts) => {
     flush(); endTurn();
     if (ts && day(ts) !== lastDay) { out.push(`<div class="done">${day(ts)}</div>`); lastDay = day(ts); }
-    out.push(`<div class="prompt"><span class="g">❯</span><div class="md">${html}</div></div>`); turnStart = ts;
+    out.push(`<div class="prompt"><span class="g"${markAt(ts)}>❯</span><div class="md">${html}</div></div>`); turnStart = ts;
   };
   for (const it of items) {
     if (it.k === "tool") { run.push(it); if (it.patch) turnPatches.push(it.patch); if (it.ts) lastTs = it.ts; continue; }
     if (it.k === "you") { prompt(`${it.images ? `<p class="img">[${it.images} pasted image${it.images > 1 ? "s" : ""}]</p>` : ""}${md(it.text)}`, it.ts); lastTs = it.ts; continue; }
     flush();
-    if (it.k === "claude") out.push(`<div class="ln claude"><span class="g">●</span><div class="md">${md(it.text)}</div></div>`);
+    if (it.k === "claude") out.push(`<div class="ln claude"><span class="g"${markAt(it.ts)}>●</span><div class="md">${md(it.text)}</div></div>`);
     else if (it.k === "report") {
       const first = (it.text.split("\n").find(l => l.trim()) || "Report").replace(/[#*`]/g, "").slice(0, 160);
       const a = s && agentById(s, it.agent);
-      out.push(`<div class="ln agent"><span class="g">${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`);
+      out.push(`<div class="ln agent"><span class="g"${markAt(it.ts)}>${a ? ind(isReview(a) && !reviewed.has(a.id) ? "review" : a.fork ? "s_fork" : "s_sub") : "●"}</span><details class="fold"><summary><span class="name">Report from ${a ? esc(a.description) : "a subagent"}</span>${a ? ` <span class="dim">${took(agentMs(a))}</span>` : ""} <span class="hint">(click to read)</span></summary><div class="body md">${md(it.text)}</div>${a ? `<p><button class="alink" data-agent="${a.id}">Open its transcript</button></p>` : ""}</details></div>`);
     } else if (it.k === "ask" && it.state === "pending") {
       flushFiles();
-      out.push(`<div class="ln waitln"><span class="g">${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`);
+      out.push(`<div class="ln waitln"><span class="g"${markAt(it.ts)}>${ind("pause")}</span><div><b>Waiting for you:</b> <span class="dim">${it.kind === "permission" ? `permission to run ${esc(it.cmd || "a command")}` : it.kind === "plan" ? "your approval of the plan above" : `${it.qs.length === 1 ? "a question" : `${it.qs.length} questions`} from Claude`}, in the message panel</span></div></div>`);
       waiting = true; continue;
     } else if (it.k === "ask") {
       const picked = it.kind ? [answerText(it)] : parseAnswers(it.answer);
-      out.push(`<div class="ln ask"><span class="g">●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
+      out.push(`<div class="ln ask"><span class="g"${markAt(it.ts)}>●</span><div>${it.qs.map((q, qi) => `<div class="md" style="margin-bottom:.4em">${md(q.q)}</div>
         <div style="margin-bottom:.85em">${q.opts.map(([l], oi) => `<div class="opt-line ${picked[qi] === l ? "picked" : ""}">${picked[qi] === l ? "❯" : " "} ${oi + 1}. ${esc(l)}</div>`).join("")}</div>`).join("")}</div></div>`);
       if (it.state === "answered") {
         const txt = picked.length ? picked.map((p, i) => `<p>${it.qs.length > 1 ? `${i + 1}. ` : ""}${esc(p)}</p>`).join("") : md(it.answer);
@@ -1294,7 +1491,7 @@ function itemsHTML(items, sessionBusy, s) {
 }
 /* the "working" line closes the transcript, like the CLI's spinner line */
 function liveLine(s, A) {
-  const line = (mark, t) => `<div class="ln liveln"><span class="g">${ind(mark)}</span><div><b>Working</b> <span class="dim">${t ? `${esc(t.verb)}${t.obj ? `(${esc(t.obj)})` : ""}` : ""}</span></div></div>`;
+  const line = (mark, t) => `<div class="ln liveln rule"><span class="g"${markAt(t && t.ts)}>${ind(mark)}</span><div>${lineHTML(`<b>Working</b>${t ? ` <span class="dim">${esc(t.verb)}${t.obj ? "(" : ""}</span>` : ""}`, t && t.obj ? `<span class="dim">${esc(t.obj)}</span>` : "", t && t.obj ? `<span class="dim">)</span>` : "")}</div></div>`;
   if (A) return A.finished ? "" : line(A.fork ? "k_fork" : "k_sub", A.items.filter(x => x.k === "tool").pop());
   return stateOf(s) === "green" ? line("work", [...s.items].reverse().find(x => x.k === "tool")) : "";
 }
@@ -1314,12 +1511,17 @@ function statusLine(s) {
 function renderConv() {
   const s = data.find(x => x.id === current); const conv = document.getElementById("conv");
   if (!s) { conv.innerHTML = `<div class="missing"><p>No transcripts loaded. Run <code>app/web/dev/compare.sh</code>, then open <code>/tmp/synopia-compare/proto/prototype/app.html</code>: that copy has the invented test fixtures as data.</p></div>`; return; }
-  const A = view && agentById(s, view);
-  if (view && !A) view = null;
-  const hidden = A ? A.total - A.items.length : s.total - s.items.length;
+  const A = view && agentById(s, view), B = view && !A ? bgById(s, view) : null;
+  if (view && !A && !B) view = null;
+  const hidden = A ? A.total - A.items.length : B ? 0 : s.total - s.items.length;
+  const bst = B && bgState(B);
   conv.innerHTML = `
-    <header class="c-head panel">
-      ${A ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
+    <div class="thread panel">
+    <header class="c-head">
+      ${B ? `<h2 class="c-title">${esc(B.description || B.command)}</h2>
+        <p class="c-now">${bst === "running" ? "Running" : bst === "failed" ? "Failed" : bst === "timed out" ? "Timed out" : "Finished"}, ${took(bgMs(B))}. ${B.kind === "monitor" ? "Monitor" : "Background shell"}.</p>
+        <p class="c-meta">${B.kind === "monitor" ? "Claude hears each event. Monitor" : "Claude hears when it ends. Shell"} in <button class="link" data-back>‹ ${esc(s.title)}</button></p>`
+      : A ? `<p class="c-crumb"><button class="link" data-back>‹ ${esc(s.title)}</button></p>
         <h2 class="c-title">${esc(A.description)}</h2>
         <p class="c-now">${A.finished ? "Finished" : "Running"}, ${took(agentMs(A))}. ${esc(agentType(A))}${A.model ? `, model ${esc(A.model)}` : ""}${A.fork ? ", started with a copy of the session's context" : ""}</p>
         <p class="c-meta">Subagent of “${esc(s.title)}”. Its report goes back to that session.</p>`
@@ -1329,22 +1531,25 @@ function renderConv() {
         ${s.drift ? `<p class="c-drift">${esc(s.drift)}. <button class="link" data-split>Split into a new session</button></p>` : ""}`}
       <div class="c-acts"><button class="btn quiet model-btn" id="model-label" title="Change the model (same as /model)"></button>${A ? "" : `<button class="btn" data-close>Close session</button>`}</div>
     </header>
-    <div class="log panel" id="log"><div class="log-inner">
+    <div class="log" id="log"><div class="log-inner">
       ${hidden > 0 ? `<p class="earlier">… ${hidden} earlier items not shown in this prototype</p>` : ""}
-      ${view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
-      ${liveLine(s, A)}
+      ${B ? `<div class="ln tool"><span class="g"${markAt(B.start)}>●</span><div><span class="name">${B.kind === "monitor" ? "Monitor" : "Bash"}</span>(${esc(B.description || B.command)})<div class="mono" style="white-space:pre-wrap;color:var(--ink)">${esc(B.command)}</div><div class="res"><span class="lcorner" aria-hidden="true"></span><span class="mono out">its output, whole, as the terminal printed it (the app reads it)</span></div></div></div>
+        <div class="ln ${bst === "running" ? "liveln" : "doneln"}"><span class="g"${markAt(B.start)}>${ind(bst === "running" ? (B.kind === "monitor" ? "k_mon" : "k_shell") : bst === "failed" ? "failed" : "done")}</span><div>${bst === "running" ? "<b>Running</b>" : `${bst === "failed" ? "Failed" : "Finished"} after ${took(bgMs(B))}. ${esc(B.summary || "")}`}</div></div>`
+      : view ? itemsHTML(agentById(s, view).items, !agentById(s, view).finished, s) : itemsHTML(s.items, stateOf(s) === "green", s)}
+      ${B ? "" : liveLine(s, A)}
     </div></div>
-    <div class="dock panel"><div class="dock-inner">
-      ${!A && stateOf(s) === "red" && !pendingAsk(s) ? statusLine(s) : ""}
-      ${!A && pendingAsk(s) ? qaHTML(s, pendingAsk(s)) : ""}
+    ${view ? "" : `<div class="dock"><div class="dock-inner">
+      ${stateOf(s) === "red" && !pendingAsk(s) ? statusLine(s) : ""}
+      ${pendingAsk(s) ? qaHTML(s, pendingAsk(s)) : ""}
       <div class="composer"><div class="slash" id="slash" role="listbox" hidden></div>
         <div class="attach" style="grid-column:2">${attachments.map((src, i) => `<figure><img src="${src}" alt="Pasted image ${i + 1}"><button data-unattach="${i}" aria-label="Remove image">×</button></figure>`).join("")}</div>
-        <span class="g">❯</span><textarea id="msg" rows="1" placeholder="${A ? `Message ${esc(s.title)} about this subagent` : `Message ${esc(s.title)}`}, / for commands" aria-label="Message"></textarea>
+        <span class="g">❯</span><textarea id="msg" rows="1" placeholder="Message ${esc(s.title)}, / for commands" aria-label="Message"></textarea>
       </div>
-    </div></div>
-    ${railHTML(s, A)}`;
+    </div></div>`}
+    </div>
+    ${railHTML(s, A, B)}`;
   conv.classList.toggle("no-rail", !hasBackground(s));
-  const log = document.getElementById("log"); log.scrollTop = log.scrollHeight;
+  const log = document.getElementById("log"); fitTables(log); log.scrollTop = log.scrollHeight;
   log.querySelectorAll(".frow .fc").forEach(b => b.onclick = () => {
     const d = document.getElementById(b.getAttribute("aria-controls")); d.hidden = !d.hidden; b.setAttribute("aria-expanded", !d.hidden);
   });
@@ -1354,11 +1559,11 @@ function renderConv() {
   conv.querySelector("[data-back]")?.addEventListener("click", () => { view = null; renderConv(); });
   conv.querySelector("[data-back-main]")?.addEventListener("click", () => { view = null; renderConv(); });
   conv.querySelectorAll("[data-reviewed]").forEach(b => b.onclick = e => { e.stopPropagation(); reviewed.add(b.dataset.reviewed); localStorage.setItem(REVIEWED_KEY, JSON.stringify([...reviewed])); renderAll(); });
-  conv.querySelectorAll("[data-bg]").forEach(b => b.onclick = () => { openBg = openBg === b.dataset.bg ? null : b.dataset.bg; renderConv(); });
+  conv.querySelectorAll("[data-bg]").forEach(b => b.onclick = () => { view = b.dataset.bg; renderConv(); });
   conv.querySelector("[data-close]") && (conv.querySelector("[data-close]").onclick = proto("Next step: the close flow from the earlier prototype, fed by this transcript."));
   conv.querySelector("[data-split]")?.addEventListener("click", proto("Prototype: starts a new session with Claude's summary of the drifted part, and points this one back at its job."));
   conv.querySelectorAll("[data-unattach]").forEach(b => b.onclick = () => { attachments.splice(+b.dataset.unattach, 1); renderConv(); });
-  const ta = document.getElementById("msg");
+  const ta = document.getElementById("msg") || document.createElement("textarea"); // a subagent, shell or monitor view has no box: the panel ends with the log
   const pa = !A && pendingAsk(s);
   if (pa) {
     const st = qs(s, pa);
@@ -1566,6 +1771,51 @@ function stepSession(step) {
   const i = KEYS.indexOf(current);
   current = KEYS[(i + step + KEYS.length) % KEYS.length]; view = null; renderAll();
 }
+/* ---------- the Waiting on you list (R9.10; app/web/js/waiting-list.js): w or the head's button ---------- */
+const waitsOf = s => s ? OI(s).items.filter(i => i.kind !== "review" && i.state !== "answered" && i.state !== "later") : [];
+const WL = { el: null, sel: 0, rows: [] };
+function showWaiting() {
+  if (!WL.el) {
+    document.querySelector(".app").insertAdjacentHTML("beforeend", `<div class="open-list waiting-list" id="waiting-list"><div class="panel ol-panel"><header class="ol-head"><h2 class="c-title">Waiting on you</h2><p class="c-meta" id="wl-meta"></p></header>
+      <div class="composer ol-filter"><span class="g">❯</span><input id="wl-filter" autocomplete="off" spellcheck="false" placeholder="Type to find an item by its text, its id or its session"></div>
+      <div class="ol-list" id="wl-list"></div><p class="ol-keys"><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>j</kbd> <kbd>k</kbd> move, <kbd>Enter</kbd> answers in its session, <kbd>Esc</kbd> closes</p></div></div>`);
+    WL.el = document.getElementById("waiting-list");
+    document.getElementById("wl-filter").addEventListener("input", () => { WL.sel = 0; drawWaiting(); });
+    document.getElementById("wl-list").addEventListener("click", e => { const it = e.target.closest(".ol-it"); if (it) pickWaiting(+it.dataset.i); });
+  }
+  WL.el.hidden = false; const inp = document.getElementById("wl-filter"); inp.value = ""; WL.sel = 0;
+  drawWaiting(); setMode("normal"); inp.focus();
+}
+function drawWaiting() {
+  const q = document.getElementById("wl-filter").value.trim().toLowerCase(), plain = t => t.replace(/`/g, "");
+  const all = KEYS.map(id => data.find(x => x.id === id)).filter(Boolean).flatMap(s => waitsOf(s).map(i => ({ s, i })));
+  WL.rows = all.filter(r => !q || `${r.i.id} ${plain(r.i.text)} ${r.s.title}`.toLowerCase().includes(q));
+  const n = new Set(all.map(r => r.s.id)).size;
+  document.getElementById("wl-meta").textContent = `${all.length} item${all.length === 1 ? "" : "s"} in ${n} session${n === 1 ? "" : "s"}, in sidebar order.`;
+  let g = null;
+  document.getElementById("wl-list").innerHTML = WL.rows.length ? WL.rows.map((r, k) => (r.s !== g ? (g = r.s, `<div class="wl-h"><span>${esc(r.s.title)}</span><span>${WORD[stateOf(r.s)]}${stateOf(r.s) === "green" ? "" : `, ${dur(r.s.statusAt)}`}</span></div>`) : "")
+    + `<div class="ol-it" data-i="${k}" aria-selected="${k === WL.sel}"><span class="n"><span class="oi-id${r.i.source === "synopia" ? " found" : ""}">${esc(r.i.id)}</span><span class="x-t">${esc(plain(r.i.text))}</span></span><span class="f">${esc(r.i.kind)}</span><span class="a">${oiAge(r.i)}</span></div>`).join("")
+    : `<p class="ol-empty">${all.length ? `No item matches “${esc(q)}”.` : "Nothing waits on you in the open sessions."}</p>`;
+}
+const waitingShown = () => !!WL.el && !WL.el.hidden;
+function pickWaiting(k) {
+  const r = WL.rows[k]; if (!r) return;
+  WL.el.hidden = true; current = r.s.id; view = null; OI(r.s).focus = r.i.id; renderAll();
+  const ta = document.getElementById("msg"); if (ta) { ta.value = ta.value ? `${ta.value}\n${r.i.id} ` : `${r.i.id} `; ta.dispatchEvent(new Event("input")); setMode("insert"); }
+}
+document.getElementById("waiting").onclick = showWaiting;
+window.addEventListener("keydown", e => {
+  if (!waitingShown() || e.metaKey || e.ctrlKey || e.altKey) return;
+  const n = WL.rows.length, empty = !document.getElementById("wl-filter").value;
+  const move = d => { if (n) { WL.sel = (WL.sel + d + n) % n; drawWaiting(); } };
+  if (e.key === "Escape") WL.el.hidden = true;
+  else if (e.key === "Enter") pickWaiting(WL.sel);
+  else if (e.key === "ArrowDown" || (e.key === "j" && empty)) move(1);
+  else if (e.key === "ArrowUp" || (e.key === "k" && empty)) move(-1);
+  else return;
+  e.preventDefault(); e.stopImmediatePropagation();
+}, true);
+document.addEventListener("mousedown", e => { if (waitingShown() && !e.target.closest(".waiting-list .ol-panel") && !e.target.closest("#waiting")) WL.el.hidden = true; }, true);
 document.addEventListener("focusin", e => { if ((e.target.id === "msg" || e.target.id === "qa-own") && mode !== "insert") { mode = "insert"; paintMode(); } });
 document.addEventListener("focusout", e => { if (e.target.id === "msg" && mode !== "normal") { mode = "normal"; paintMode(); } });
 document.addEventListener("keydown", e => {
@@ -1584,6 +1834,7 @@ document.addEventListener("keydown", e => {
     case "g": e.preventDefault(); if (log) log.scrollTop = 0; break;
     case "G": e.preventDefault(); if (log) log.scrollTop = log.scrollHeight; break;
     case "i": case "a": e.preventDefault(); setMode("insert"); break;
+    case "w": e.preventDefault(); showWaiting(); break; // the Waiting on you list (R9.10)
     case "/": { e.preventDefault(); setMode("insert"); const ta = document.getElementById("msg"); ta.value = "/"; ta.dispatchEvent(new Event("input")); break; }
   }
 });

@@ -1,0 +1,7 @@
+{
+  "name": "harness",
+  "description": "An invented plugin for bundle.test.ts: two skills, one agent, short rules.",
+  "agents": [
+    "./build/agents/helper.md"
+  ]
+}

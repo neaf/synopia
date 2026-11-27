@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Example app: choosing a project</title>
+<style>
+  /* Fonts: the project's bundled files, by a relative path from this page's folder. Nothing loads from the network.
+  @font-face { font-family: "Body Sans"; font-weight: 400; src: url("../app/fonts/body-sans/BodySans-Regular.woff2") format("woff2"); }
+  @font-face { font-family: "Body Mono"; font-weight: 400; src: url("../app/fonts/body-mono/BodyMono-Regular.woff2") format("woff2"); }
+  */
+
+  /* Tokens: replace with the look reference's own values (its app CSS and dark CSS). */
+  :root {
+    --canvas: #EDEFF2; --panel: #FFFFFF; --sub: #F6F8FA; --line: #D0D7DE; --line-2: #E4E8EC;
+    --ink: #1F2328; --ink-2: #4B535C; --ink-3: #6E7781;
+    --red: #CF222E; --green: #1A7F37; --link: #0550AE; --sel: #DDF4FF;
+    --side: #24292F; --side-ink: #E6EDF3; --side-ink-2: #9198A1; --side-sel: #32383F;
+    --sans: "Body Sans", system-ui, sans-serif;
+    --mono: "Body Mono", ui-monospace, Menlo, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --canvas: #2A3038; --panel: #333A44; --sub: #2E353E; --line: #535D6A; --line-2: #434B57;
+    --ink: #E6EDF3; --ink-2: #C5CED8; --ink-3: #A3AEBA;
+    --red: #FF7B72; --green: #56D364; --link: #6CB6FF; --sel: #1F3B5C;
+    --side: #161B22; --side-ink: #E6EDF3; --side-ink-2: #8B949E; --side-sel: #262C34;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--canvas); color: var(--ink); font: 400 14.5px/1.5 var(--sans); }
+  kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: var(--panel); color: var(--ink-2); white-space: nowrap; }
+  code { font-family: var(--mono); font-size: .88em; }
+
+  /* ---------- page ---------- */
+  .wrap { max-width: 1360px; margin: 0 auto; padding: 0 40px 48px; }
+  .top { padding: 36px 0 8px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; }
+  .top h1 { font-size: 30px; line-height: 1.15; margin: 0 0 8px; }
+  .top p { margin: 0; color: var(--ink-2); max-width: 78ch; }
+  .note { margin: 12px 0 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+  .theme { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; padding: 4px 11px; font: inherit; font-size: 12.5px; color: inherit; cursor: pointer; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 14px 0 0; padding: 0; list-style: none; font-size: 13.5px; }
+  .toc a, a { color: var(--link); }
+  h2 { font-size: 21px; line-height: 1.25; margin: 56px 0 6px; }
+  h3 { font-size: 16px; margin: 30px 0 4px; }
+  .lede { margin: 0 0 16px; color: var(--ink-2); max-width: 80ch; }
+
+  /* summary: recommended, requirement changes, open questions */
+  .sum { display: grid; grid-template-columns: 1.1fr 1fr 1fr; gap: 36px; margin: 22px 0 0; }
+  .sum h3 { margin: 0 0 8px; }
+  .sum ul { margin: 0; padding-left: 1.2em; }
+  .sum li { margin: 0 0 7px; color: var(--ink-2); }
+  .sum li b { color: var(--ink); }
+  .id { font-family: var(--mono); font-size: 12px; color: var(--ink); white-space: nowrap; }
+
+  /* options side by side: exactly one .is-rec */
+  .opts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; margin: 10px 0 0; align-items: start; }
+  .opts.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .opt h4 { margin: 10px 0 2px; font-size: 14.5px; }
+  .opt .rec { display: block; font-size: 12px; font-weight: 500; color: var(--green); }
+  .opt .no { display: block; font-size: 12px; font-weight: 500; color: var(--ink-3); }
+  .opt p { margin: 0; color: var(--ink-2); font-size: 13.5px; }
+  .opt.is-rec .shot { outline: 1px solid var(--green); outline-offset: 3px; }
+
+  /* strip of states: numbered do, frame, see */
+  .flow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 26px 28px; margin: 12px 0 0; padding: 0; list-style: none; counter-reset: st; align-items: start; }
+  .flow > li { counter-increment: st; }
+  .flow .do { display: flex; gap: 10px; align-items: baseline; margin: 0 0 7px; font-size: 13.5px; }
+  .flow .do::before { content: counter(st); flex: none; width: 21px; height: 21px; border-radius: 50%; background: var(--ink); color: var(--panel); font-size: 12px; font-weight: 700; line-height: 21px; text-align: center; }
+  .flow .see { margin: 7px 0 0; color: var(--ink-2); font-size: 13.5px; }
+
+  table { border-collapse: collapse; margin: 10px 0 0; font-size: 13.5px; }
+  th, td { border-bottom: 1px solid var(--line-2); padding: 6px 16px 6px 0; text-align: left; vertical-align: top; }
+  th { font-weight: 500; color: var(--ink-3); }
+  .rejected li { margin: 0 0 6px; color: var(--ink-2); }
+  .rejected b { color: var(--ink); }
+  footer { margin: 56px 0 0; padding: 14px 0 0; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12.5px; }
+
+  /* ---------- frames: replace with the look reference's own markup ---------- */
+  .shot { display: grid; grid-template-columns: 170px minmax(0, 1fr); height: 220px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); font-size: 12.5px; }
+  .shot.big { height: 360px; grid-template-columns: 220px minmax(0, 1fr); }
+  .side { background: var(--side); color: var(--side-ink); padding: 10px 0; }
+  .side .row { display: flex; gap: 8px; align-items: center; padding: 3px 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .side .row.on { background: var(--side-sel); }
+  .side .dim { color: var(--side-ink-2); }
+  .main { padding: 12px 14px; min-width: 0; }
+  .list { border: 1px solid var(--line); border-radius: 5px; background: var(--panel); }
+  .list .in { padding: 6px 10px; border-bottom: 1px solid var(--line); font-family: var(--mono); }
+  .list .it { padding: 4px 10px; display: flex; justify-content: space-between; gap: 8px; }
+  .list .it.on { background: var(--sel); }
+  .list .it span:last-child { color: var(--ink-3); }
+  .muted { color: var(--ink-3); }
+
+  /* a running mark: always moving, linear and infinite, with a reduced-motion fallback that keeps the shape */
+  .run { width: 10px; height: 10px; flex: none; border: 1.5px solid var(--side-ink-2); border-top-color: var(--green); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .reduced * { animation: none !important; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; } }
+
+  @media (max-width: 900px) { .sum, .opts, .opts.two, .flow { grid-template-columns: minmax(0, 1fr); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>Choosing a project when you start</h1>
+    <p>How Example app gets you into the right project, on the first day and after a year. Each scenario compares the options where the choice is real, then walks the recommended flow. Every project, title and count here is invented.</p>
+    <!-- After the author decides, add: <p class="note">Decided on 2030-01-15; the requirements doc wins where they differ.</p> -->
+    <ul class="toc">
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#picture">The design in one picture</a></li>
+      <li><a href="#s1">1. First day</a></li>
+      <li><a href="#s2">2. After a year</a></li>
+      <li><a href="#keys">Keyboard path</a></li>
+      <li><a href="#edges">Edge cases</a></li>
+      <li><a href="#rejected">Rejected</a></li>
+    </ul>
+  </div>
+  <div>
+    <button class="theme" id="theme" type="button">Dark mode</button>
+    <button class="theme" id="motion" type="button">Preview reduced motion</button>
+  </div>
+</header>
+
+<section id="summary" class="sum">
+  <div>
+    <h3>Recommended</h3>
+    <ul>
+      <li><b>New item asks which project, with the answer ready.</b> The project on screen is selected, so <kbd>⌘N</kbd> <kbd>Enter</kbd> starts there.</li>
+      <li><b>The list is every project you have used,</b> newest first. Typing filters.</li>
+      <li><b>A deleted project is named, not hidden.</b> Its items read “Project gone” and open read-only.</li>
+    </ul>
+  </div>
+  <div>
+    <h3>Requirement changes</h3>
+    <ul>
+      <li><span class="id">R2.1</span>: New item opens the project list instead of starting at once. The default-project setting goes.</li>
+      <li><span class="id">New R2.7</span>: items whose project is gone open read-only.</li>
+    </ul>
+  </div>
+  <div>
+    <h3>Open questions</h3>
+    <ul>
+      <li>Should a typed name that matches nothing offer “Create project …”? Shown here; it is the only write the app would make.</li>
+      <li>Not checked: whether the import keeps the project of each item. One scripted import settles it.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="picture">
+  <h2>The design in one picture</h2>
+  <p class="lede">After a year: 9 items open, 31 projects, 640 past items. You are in “Quarterly report: fix the totals row” and press <kbd>⌘N</kbd>. Its project is selected; <kbd>Enter</kbd> starts there.</p>
+  <div class="shot big">
+    <div class="side">
+      <div class="row"><span class="run"></span>Quarterly report: fix the totals row</div>
+      <div class="row on"><span class="run"></span>Garden planner: frost dates</div>
+      <div class="row dim">Recipe import: metric units</div>
+    </div>
+    <div class="main">
+      <div class="list">
+        <div class="in">Project for the new item</div>
+        <div class="it on"><span>garden-planner</span><span>now</span></div>
+        <div class="it"><span>quarterly-report</span><span>2 h</span></div>
+        <div class="it"><span>recipe-box</span><span>3 days</span></div>
+        <div class="it"><span>bike-log</span><span>5 months</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="s1">
+  <h2>1. First day</h2>
+  <p class="lede">A new install with no history. You want to work in <code>garden-planner</code>, which you created a minute ago.</p>
+
+  <h3>What the window shows first</h3>
+  <div class="opts">
+    <div class="opt is-rec">
+      <div class="shot"><div class="side"></div><div class="main"><div class="list"><div class="in">Type a project name</div><div class="it muted"><span>No projects yet</span><span></span></div></div></div></div>
+      <h4>The project list</h4><span class="rec">Recommended</span>
+      <p>The same list you use every day, so there is nothing extra to learn.</p>
+    </div>
+    <div class="opt">
+      <div class="shot"><div class="side"></div><div class="main"><p>Welcome</p><p class="muted">Choose a project to begin.</p></div></div>
+      <h4>A welcome screen</h4><span class="no">Not recommended</span>
+      <p>A second way to start that you use once.</p>
+    </div>
+    <div class="opt">
+      <div class="shot"><div class="side"></div><div class="main"><p class="muted">Empty</p></div></div>
+      <h4>An empty window</h4><span class="no">Not recommended</span>
+      <p>Nothing on screen says what to press.</p>
+    </div>
+  </div>
+
+  <h3>Recommended flow</h3>
+  <ol class="flow">
+    <li>
+      <p class="do">Open the app.</p>
+      <div class="shot"><div class="side"></div><div class="main"><div class="list"><div class="in">Type a project name</div><div class="it muted"><span>No projects yet</span><span></span></div></div></div></div>
+      <p class="see">The list is already open and the cursor is in it.</p>
+    </li>
+    <li>
+      <p class="do">Type <code>gard</code>.</p>
+      <div class="shot"><div class="side"></div><div class="main"><div class="list"><div class="in">gard</div><div class="it on"><span>garden-planner</span><span>new</span></div></div></div></div>
+      <p class="see">One match, selected.</p>
+    </li>
+    <li>
+      <p class="do">Press <kbd>Enter</kbd>.</p>
+      <div class="shot"><div class="side"><div class="row on"><span class="run"></span>New item</div></div><div class="main"><p class="muted">garden-planner</p></div></div>
+      <p class="see">An empty item in <code>garden-planner</code>, ready to type in.</p>
+    </li>
+  </ol>
+</section>
+
+<section id="s2">
+  <h2>2. After a year</h2>
+  <p class="lede">31 projects, 640 past items, 9 open. Only the recommended flow is drawn here: the choice is the same as on the first day.</p>
+  <ol class="flow">
+    <li><p class="do">Press <kbd>⌘N</kbd>.</p><div class="shot"><div class="side"><div class="row on"><span class="run"></span>Quarterly report</div></div><div class="main"><div class="list"><div class="in">Project for the new item</div><div class="it on"><span>quarterly-report</span><span>now</span></div><div class="it"><span>recipe-box</span><span>3 days</span></div></div></div></div><p class="see">The project on screen is selected.</p></li>
+    <li><p class="do">Type <code>bike</code>.</p><div class="shot"><div class="side"><div class="row on"><span class="run"></span>Quarterly report</div></div><div class="main"><div class="list"><div class="in">bike</div><div class="it on"><span>bike-log</span><span>5 months</span></div></div></div></div><p class="see">Older projects are one word away.</p></li>
+  </ol>
+</section>
+
+<section id="keys">
+  <h2>Keyboard path</h2>
+  <table>
+    <tr><th>You want to</th><th>Keys</th><th>Presses</th></tr>
+    <tr><td>Start where the screen is</td><td><kbd>⌘N</kbd> <kbd>Enter</kbd></td><td>2</td></tr>
+    <tr><td>Start in a project from last month</td><td><kbd>⌘N</kbd> type <code>bike</code> <kbd>Enter</kbd></td><td>2 and the name</td></tr>
+  </table>
+</section>
+
+<section id="edges">
+  <h2>Edge cases</h2>
+  <p class="lede">A project deleted last week still has one item open in the sidebar.</p>
+  <div class="opts two">
+    <div class="opt is-rec">
+      <div class="shot"><div class="side"><div class="row on dim">Recipe import: metric units</div></div><div class="main"><p>Project gone</p><p class="muted">recipe-box no longer exists. Read-only. <kbd>Enter</kbd> picks a project to continue in.</p></div></div>
+      <h4>Name it and open read-only</h4><span class="rec">Recommended</span>
+      <p>The history is still worth reading, and the next step is on screen.</p>
+    </div>
+    <div class="opt">
+      <div class="shot"><div class="side"></div><div class="main"><p class="muted">The item is not listed.</p></div></div>
+      <h4>Hide the item</h4><span class="no">Not recommended</span>
+      <p>The history is still on disk, and nothing tells you where it went.</p>
+    </div>
+  </div>
+</section>
+
+<section id="rejected">
+  <h2>Rejected</h2>
+  <ul class="rejected">
+    <li><b>Two commands, one for “here” and one that asks.</b> Two ways to do one thing; <kbd>⌘N</kbd> <kbd>Enter</kbd> already costs one key.</li>
+    <li><b>The system folder picker as the main way.</b> It knows nothing about the projects you used, and it is slow by key.</li>
+  </ul>
+</section>
+
+<footer>Example app design storyboard: choosing a project, 2030-01-08. All content is invented.</footer>
+</div>
+
+<script>
+/* Theme: ?theme=light|dark wins (for headless screenshots), then the button, then the system. */
+const root = document.documentElement, btn = document.getElementById("theme");
+const mq = matchMedia("(prefers-color-scheme: dark)");
+let picked = new URLSearchParams(location.search).get("theme");
+const apply = () => {
+  const dark = picked ? picked === "dark" : mq.matches;
+  root.dataset.theme = dark ? "dark" : "light";
+  btn.textContent = dark ? "Light mode" : "Dark mode";
+};
+mq.addEventListener("change", apply);
+btn.onclick = () => { picked = root.dataset.theme === "dark" ? "light" : "dark"; apply(); };
+apply();
+
+/* Reduced-motion preview: running marks keep their shape and stop turning. */
+const mo = document.getElementById("motion");
+mo.onclick = () => { const on = document.body.classList.toggle("reduced"); mo.textContent = on ? "Preview motion" : "Preview reduced motion"; };
+
+/* Full page height for shoot.py, after the fonts settle. */
+const mark = () => { root.dataset.h = root.scrollHeight; };
+mark();
+document.fonts.ready.then(mark);
+</script>
+</body>
+</html>

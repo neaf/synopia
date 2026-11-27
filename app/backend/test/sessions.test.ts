@@ -6,6 +6,7 @@ import path from 'node:path';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
+import { Folders } from '../src/folders.ts';
 import { StreamPreview } from '../src/session.ts';
 import { STATE_FLAG } from '../src/sdk.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
@@ -24,7 +25,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const REAL = '11111111-2222-4333-8444-555555555555';
 const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
-function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void; now?: () => number; terminals?: TerminalSource } = {}) {
+function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void; now?: () => number; folders?: Folders; terminals?: TerminalSource } = {}) {
   const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const claudeDir = path.join(root, 'claude');
   const stateDir = path.join(root, 'state');
@@ -35,13 +36,14 @@ function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: numb
   const c: Client = { send: (m) => got.push(JSON.parse(JSON.stringify(m))), close: () => {} };
   const clients = new Set<Client>([c]);
   const store = openStore(stateDir, { minIntervalMs: 0 });
-  store.state.settings.newSessionCwd = cwd;
   store.state.settings.model = 'haiku';
   let sessions: Sessions | null = null;
   const transcripts = new Transcripts({ claudeDir, home: root, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
   const publisher = new Publisher({ transcripts, clients: () => clients, home: root, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r), layout: () => sessions?.layout.get() });
   const q = fakeQuery({ sessions: past });
   sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root, ...extra });
+  const make = sessions.newSession.bind(sessions);
+  sessions.newSession = (folder = cwd) => make(folder); // the tests' new sessions start in scratch
   const take = (t?: string) => { const out = got.filter((m) => !t || m.t === t); got.length = 0; return out; };
   return { root, claudeDir, cwd, c, store, transcripts, publisher, sessions, q, take };
 }
@@ -427,10 +429,10 @@ test('sessions: statuses go working, then your turn; a failed process is failed 
   await tick();
   emit(q.calls[0], RESULT);
   await tick();
-  assert.equal(take('session').at(-1)?.state.status, 'busy');
+  assert.equal(take('session').at(-1)?.state.status, 'idle', 'the result ends the main turn');
   emit(q.calls[0], { type: 'system', subtype: 'session_state_changed', state: 'idle' });
   await tick();
-  assert.equal(take('session').at(-1)?.state.status, 'idle');
+  assert.ok(take('session').every((m) => m.state.status === 'idle'));
 
   q.calls[0].out.end(new Error('boom'));
   await tick();
@@ -470,8 +472,7 @@ const Q_SENT = '0e9b7f1c-0000-4000-8000-0000000000b1';
 
 test('sessions: a missing folder fails without starting a process', () => {
   const { sessions, store, q, take } = setup();
-  store.state.settings.newSessionCwd = '/tmp/synopia-no-such-folder-' + process.pid;
-  const ph = sessions.newSession();
+  const ph = sessions.newSession('/tmp/synopia-no-such-folder-' + process.pid);
   const r = sessions.get(ph)!.send('hi');
   assert.equal(r.ok, false);
   assert.match((r as { error: string }).error, /no longer exists/);
@@ -1244,7 +1245,7 @@ test('bash mode: refused while another process runs the turn, as with a terminal
   sessions.stop();
 });
 
-test('openSession: reopening makes it the most recently opened, for the new-session folder', async () => {
+test('openSession: reopening makes it the most recently opened, the newest folder of the folder list', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const cwd = path.join(root, 'scratch');
   writePast(path.join(root, 'claude'), cwd);
@@ -1252,15 +1253,13 @@ test('openSession: reopening makes it the most recently opened, for the new-sess
   const t = setup(root, [info(PAST, { cwd })], { now: () => now });
   const other = path.join(root, 'other');
   fs.mkdirSync(other);
-  delete t.store.state.settings.newSessionCwd;
   await t.sessions.openSession(PAST);
   t.store.state.open.push({ id: RESET, cwd: other, openedAt: 2000, closedAt: null }); // opened after it
   t.sessions.close(PAST);
   now = 3000;
   await t.sessions.openSession(PAST);
   assert.equal(t.store.state.open.find((e) => e.id === PAST)?.openedAt, 3000);
-  const ph = t.sessions.newSession();
-  assert.equal(t.publisher.meta(ph)?.cwd, '~/scratch', 'the reopened one\'s folder');
+  assert.equal((await t.sessions.listFolders())[0].path, '~/scratch', 'the reopened one\'s folder is the newest');
 });
 
 test('start: the page ui state of a session that is not open goes, with its draft images', () => {
@@ -1278,4 +1277,90 @@ test('start: the page ui state of a session that is not open goes, with its draf
   assert.ok(fs.existsSync(drafts(OPEN)));
   assert.deepEqual(fs.readdirSync(path.join(path.dirname(t.store.path), 'drafts')), [OPEN]);
   t.sessions.stop();
+});
+
+// ---------- folders (R3.3, R3.11, R3.13) ----------
+
+test('newSessionIn: a folder that is there; create makes it first; a missing one is refused', async () => {
+  const { sessions, root, publisher, store } = setup();
+  const made = path.join(root, 'dev', 'new-app');
+  const missing = await sessions.newSessionIn(made);
+  assert.equal(missing.ok, false);
+  assert.match((missing as { error: string }).error, /no folder/);
+  assert.equal(fs.existsSync(made), false);
+  const r = await sessions.newSessionIn('~/dev/new-app', true);
+  assert.equal(r.ok, true);
+  const sid = (r as { sid: string }).sid;
+  assert.match(sid, /^new-/);
+  assert.equal(fs.statSync(made).isDirectory(), true, 'mkdir -p of that one path');
+  assert.equal(publisher.meta(sid)?.cwd, '~/dev/new-app');
+  assert.equal(sessions.get(sid)!.cwd, made);
+  assert.equal(store.state.open.length, 0, 'still a placeholder until its first message');
+});
+
+test('listFolders: the folders of the open list and listSessions(), with no disk read', async () => {
+  const io = { readdir: () => { throw new Error('read'); }, stat: () => { throw new Error('stat'); }, mkdir: () => { throw new Error('mkdir'); } };
+  const t = setup(undefined, [info(PAST, { cwd: '/w/demo-app', lastModified: 4000 }), info(REAL, { cwd: '/w/demo-app', lastModified: 3000 })], { folders: new Folders('/home-x', io as never) });
+  t.store.state.open.push({ id: RESET, cwd: '/w/notes', openedAt: 5000, closedAt: 6000 });
+  assert.deepEqual(await t.sessions.listFolders(), [
+    { path: '/w/notes', sessions: 1, lastUsed: 5000 },
+    { path: '/w/demo-app', sessions: 2, lastUsed: 4000 },
+    { path: '~', sessions: 0, lastUsed: 0 },
+  ]);
+});
+
+test('searchRecent: the matcher over every past session, not only the newest 50, with the totals (R3.2)', async () => {
+  const many = Array.from({ length: 60 }, (_, i) => info(`bbbbbbbb-0000-4000-8000-${String(i).padStart(12, '0')}`, { lastModified: 2000 + i, summary: `Demo app: step ${i}`, cwd: `/w/f${i % 3}` }));
+  const old = 'cccccccc-0000-4000-8000-00000000000c', other = 'dddddddd-0000-4000-8000-00000000000d';
+  const t = setup(undefined, [...many, info(old, { lastModified: 1, summary: 'Invoice export: CSV columns', cwd: '/w/web-shop' }), info(other, { lastModified: 5, summary: 'Import old invoices from CSV', cwd: '/w/api' })]);
+  const all = await t.sessions.searchRecent();
+  assert.deepEqual([all.rows.length, all.total, all.folders, all.matched], [50, 62, 5, 62]);
+  const r = await t.sessions.searchRecent('invoice csv');
+  assert.deepEqual(r.rows.map((x) => x.id), [other, old], 'both words, the oldest reached; both match at word starts (280), so the newer goes first');
+  assert.equal(r.matched, 2);
+  assert.equal(r.total, 62);
+  assert.deepEqual((await t.sessions.searchRecent('csv invoice')).rows.map((x) => x.id), [other, old], 'in any order');
+  assert.deepEqual((await t.sessions.searchRecent('export')).rows.map((x) => x.id), [old]);
+  assert.equal((await t.sessions.searchRecent('zzqx')).rows.length, 0);
+});
+
+test('continueSession: a gone folder forks into the folder picked; the old id stays a past session (R3.11)', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const goneCwd = path.join(root, 'dev', 'demo-app.billing');
+  writePast(path.join(root, 'claude'), goneCwd); // its folder was never made: gone
+  const t = setup(root, [info(PAST, { cwd: goneCwd })]);
+  const next = path.join(root, 'dev', 'demo-app');
+  fs.mkdirSync(next, { recursive: true });
+  await t.sessions.openSession(PAST);
+  assert.equal(t.publisher.meta(PAST)?.gone, true, 'the row you chose was checked');
+  await tick();
+  assert.equal(t.take('session').at(-1)?.gone, true);
+  const send = t.sessions.get(PAST)!.send('hello');
+  assert.equal(send.ok, false, 'a send in a gone folder starts nothing');
+  assert.equal(t.q.calls.length, 0);
+
+  const r = await t.sessions.continueSession(PAST, '~/dev/demo-app');
+  assert.deepEqual(r, { ok: true, sid: PAST });
+  await tick();
+  assert.equal(t.q.calls.length, 1);
+  const o = t.q.calls[0].options;
+  assert.deepEqual([o.resume, o.forkSession, o.cwd], [PAST, true, next], 'resume + forkSession in the new folder');
+  const ctx = t.q.calls[0].inputs[0];
+  assert.equal(ctx.shouldQuery, false, 'one context line, no turn');
+  assert.match(String(ctx.message.content), /^<synopia-moved to="~\/dev\/demo-app">This session continues in /);
+  assert.equal(t.publisher.meta(PAST)?.cwd, '~/dev/demo-app');
+  assert.equal(t.publisher.meta(PAST)?.gone, false);
+
+  const FORK = '99999999-0000-4000-8000-000000000099';
+  emit(t.q.calls[0], init(FORK));
+  await tick();
+  assert.ok(t.sessions.get(FORK) && t.sessions.get(PAST) === t.sessions.get(FORK), 'the fork takes its place; the old id leads to it');
+  assert.deepEqual(t.store.state.open.map((e) => [e.id, e.cwd]), [[FORK, next]]);
+  assert.deepEqual(t.store.state.layout.others, [FORK]);
+  assert.deepEqual((await t.sessions.listRecent()).map((x) => x.id), [PAST], 'the old session is a past session again');
+
+  // a folder that is there: nothing to continue
+  const t2 = setup(undefined, []);
+  const ph = t2.sessions.newSession();
+  assert.equal((await t2.sessions.continueSession(ph, '~')).ok, false);
 });

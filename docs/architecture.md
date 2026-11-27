@@ -25,7 +25,7 @@ How Synopia is built: modules, data flow, threading, interfaces and who owns wha
 
 Rules the design keeps:
 - Each external system's quirks sit in one adapter module named after it, mapped to one topic doc (table under "External-system adapters").
-- Pure logic (claude-jsonl, transcript, status, layout, cards mapping, bang format, md, format, protocol) has no I/O and is tested without a CLI, browser or app.
+- Pure logic (claude-jsonl, ledger, transcript, status, layout, cards mapping, bang format, md, format, protocol) has no I/O and is tested without a CLI, browser or app.
 - One owner per piece of state (table under "State ownership").
 - Nothing blocks the Node loop: no synchronous child process anywhere; file reads stay sliced at 4 MB per turn.
 - The page stays plain JavaScript served by the backend, no build step: native ES modules plus one classic head script (`theme.js`, first paint). No import cycles; only `test-api.js` writes `window` (`check-web.mjs` fails otherwise).
@@ -42,26 +42,39 @@ Rules the design keeps:
 | `daemon-files.ts` | Adapter for Synopia's own on-disk daemon contract: `daemon.json` (incl. the `handover` field), `backend.lock` (an `O_EXLOCK` kernel lock), `daemon.log` rotation, exit codes. Swift's `DaemonFiles.swift` is the only other reader. |
 | `server.ts` | HTTP and WebSocket transport: 127.0.0.1, token, Host/Origin, CSP, static files, 32 MB cap, per-client backpressure (drop `stream` first), error handlers. No routing logic. |
 | `router.ts` | Page-to-server dispatch table keyed by `t`: validates each frame against `protocol.js`, resolves id aliases once, calls one module, answers `ack {id, ok, error}`; one try/catch per frame. |
-| `publisher.ts` | Server-to-page, the only frame sender: per-client subscriptions, meta diffs, `items` reset/upsert/prepend, `agents`, `background`, `pending`, `stream` (viewer only), `layout`, `restore`/`toast` to the acting client; one re-entrancy-guarded flush with a fixed frame order. |
-| `store.ts` | `state.json`: load, validate every entry, cap growing maps, atomic write at most 1/s, retry after a failed write, sync flush on any exit, `.bad-<ms>` on corrupt; `ReviewedMarks`. |
+| `publisher.ts` | Server-to-page, the only frame sender: per-client subscriptions, meta diffs, `items` reset/upsert/prepend, `agents` (`review` while the subagent's review item is open), `background`, `openItems` (each session's `open-items.ts` view, whole, to every page when it changed; synced on each flush), `pending`, `stream` (viewer only), `layout`, `restore`/`toast` to the acting client; one re-entrancy-guarded flush with a fixed frame order. |
+| `store.ts` | `state.json`: load, validate every entry (the `items` section through `open-items.ts` `cleanItems`), cap growing maps, atomic write at most 1/s, retry after a failed write, sync flush on any exit, `.bad-<ms>` on corrupt. |
 | `ui-state.ts` | UI state (R3.9): patch, caps, drafts as files, prune on close and at start, rekey on id swap; never clears `current`/`view` on an empty entry. |
 | `layout.ts` | The one layout owner: applies page intents (move, new group, rename group), reconciles with the open list, renames on id swap, keeps closed ids in place. Pure functions plus the `Layouts` owner. |
-| `sessions.ts` | The set of open sessions: open list, new/open/close, `listRecent`, id aliases, one `rekey` that moves the whole per-session record. |
-| `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background. |
-| `cards.ts` | Needs-you requests: park `canUseTool` FIFO per session, abort cleanup, answer mapping (questions, permission, plan), "always allow" session rules that clear on close (Q6). |
-| `bang.ts` | `!` commands: run in a process group, cap by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. |
-| `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
+| `sessions.ts` | The set of open sessions: open list, new (in a folder, made first on request)/open/close/continue (fork into another folder), `listRecent` (the matcher over every past session, with totals), `listFolders`, id aliases, one `rekey` that moves the whole per-session record. |
+| `folders.ts` | Folders on disk, the only module that touches them for the folder list (R3.13, NFR-13): the known-folders list from Synopia's open list and `listSessions()` (no read), `~` expansion, one-folder completion (one `readdir`, injectable for the test that counts reads), gone checks of named paths with the protected-folder rule, and the one write, `mkdir -p` of a typed path. |
+| `session.ts` | One open session as a state machine (idle, starting, running, ending, yielded, takingOver) over one `sdk` process: input queue, held-behind-card, after-exit queue, outbox (queued messages), yield and take-over, idle end, model/effort apply, interrupt, background, send-now (f, f: `nowRoute`). |
+| `agent-tools.ts` | Synopia's tools for agents (R3.15), the one owner: the tool list (name, description, zod input, card words, step line, run), the server per process (through `sdk.ts` `toolServer`), the `Host` it needs from `sessions.ts`, `start_session` and its result text, `open_items` (FR-ITEM-12: no card, `answerOf`; its calls go to `open-items.ts` `toolOp` through `Host.items`). A tool is one entry of `TOOLS`. |
+| `cards.ts` | Needs-you requests: park `canUseTool` FIFO per session, abort cleanup, answer mapping (questions, permission, plan), "always allow" session rules that clear on close (Q6); a tool of ours with no card answered at once (`auto`, FR-ITEM-12). |
+| `bang.ts` | `!` commands: run in one pty (`pty.ts`, 2026-11-26) as their own process group, a typed line in (`input`), stopped from its shell view (`kill`, `session.ts` `stopBang`), `waiting`/`quiet`/`waitedAt` from `pty.ts` `InputWatch` and `cardAt` from `runs.ts` (2026-11-26), plain text capped by code point, kill timers cleared on finish, CLI `<bash-input>`/`<bash-stdout>` format both ways. `session.ts` owns the runs: the shown one (`bang`), the last 10 for the panel (`bangs`, no output) and their output for the shell view (`bangOutput`, sent by `publisher.ts` as `output` resets). The page only reshapes `bangs` into panel shells (`state.js` `ownBg`). A run's end goes to Claude as a turn (R5.13, 2026-11-27): `session.ts` `shareBang` makes one message of its command and output and sends it through the same `input` path as a prompt (`sdk.ts` `pushBang`, `client_composed`), so a running turn queues it and `status.ts` counts it; behind a waiting card it waits in `heldBangs`; one an interrupt cancels, or left behind a card that ended, goes in as `shouldQuery: false` context (`quietBangs`). It never gets an outbox entry: the run row is its only row. |
+| `sdk.ts` | Adapter for the Claude Agent SDK, the only value import of `@anthropic-ai/claude-agent-sdk`: start options, the state-events env flag, `interrupt({cancelQueued})`, `setModel`/`applyFlagSettings`, plan `setMode`, idle menu probe with timeout, writer one-shot options, the in-process tool server (`toolServer`), `listSessions`, command filters (`__*`, `workflow-launch-exec`, HTML unescape), user content with `[Image #N]` tags, image limits. Takes an injectable `query`/`listSessions` pair. |
 | `menu.ts` | Slash commands and model list per folder: cache, persisted models, backoff after a failed fill, one send per folder per connection. |
+| `mcp.ts` | `/mcp` (R5.15): per session, its MCP servers' rows, the action running on each and the last error, sent whole as `mcp` to every page. Status and control calls from the session's process (`Session.mcpControl`), else an idle probe in its folder (`sdk.ts` `mcpProbe`, closed 3 min after the last ask); a fresh source's empty first answer and `pending` rows are read again every 0.5 s. Sign-in and sign-out run the bundled CLI (`sdk.ts` `bundledCli`) as `claude mcp login <name>` or `logout` in the session's folder, no TTY, 5 min for a sign-in, then `reconnectMcpServer`. The runner and the probe are injected (tests; the scripted SDK's pretend CLI). |
+| `find.ts` | Find in the transcript (R5.12e, 2026-11-26), the one owner of what ⌘F searches: an item's search text (`itemText`, what the page renders for it), case-ignoring matches with offsets in the text, every match of a view in order, capped at 10,000. The view's source comes from `publisher.ts` `findSource` (its items, or a shell's last 4 MB of output, a monitor's events, a `!` run's output); `router.ts` answers `find` with `found`. |
+| `creds.ts` | Credential refresh (R8.2, 2026-11-26), the one owner: each folder's refresh command (`state.json` `refresh`, keyed by the git root), one run per folder for an expiry shared by its sessions, the `creds` frame (phase, command or guess, live output, failure sentence) to every page, `credsSave`/`credsInput`/`credsCancel`. The guess: `sdk.ts` `awsAuthRefreshOf`, then an executable `bin/aws-login`. The pty runner is injected (tests). |
+| `pty.ts` | A command in one pseudo-terminal for its whole run (`script(1)` behind a `cat` pipe), its output to a callback only (stderr apart on request), a line typed into it, its exit code; killed as the command's group, whose id the pty reports. `plainText`: the one place the pty's CRLF and escape sequences go. `InputWatch` and `looksLikePrompt` (2026-11-26, live run IN-1 in docs/Claude Code terminals.md): the one rule for "waits for input" (a prompt-shaped last line, 1 s quiet) and the 10 s "may wait" hint. Used by `creds.ts` and `bang.ts`. |
+| `runs.ts` | When your `!` run or the credential refresh gets its panel card (R7.1, 2026-11-26): `cardAt` (3 s after the start, or when it first waited; none for a run over sooner). `bang.ts` and `creds.ts` send it; the page shows a card once its clock passes it. Claude's background shells and monitors carry none: their card shows from their start (`rail.js`). |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
+| `bundle.ts` | The bundled agent-harness plugin (R3.17, FR-HAR-01), the one reader of the folder `--harness` names: `load(dir)` gives `{dir, skills, agents, rules, rulesHash}` (the `skills/*/SKILL.md` folders, the plugin.json `agents` names, `instructions/global.md` and its sha256); a missing or unreadable bundle is `null` and one `harness.missing` line. Sessions don't load it yet (milestone 3). |
+| `keeper.ts` | The open-items keeper (R3.16, FR-ITEM-08): a one-shot call per exchange `open-items.ts` asks for (`ask`), with the writer's isolated options (`sdk.ts` `writerOptions`, cwd `<state>/keeper`) and `settings.keeperModel` (default `sonnet`); its own queue, one call at a time, no debounce. Holds the fixed system prompt, `buildPrompt` (the list, the exchange by source, `<work>`, as data, cut to 12,000 characters) and the op checks (`checkOps`: the quote word for word in a segment, the most trusted one wins; known ids and values; who may close how; at most 8). Checked ops go back to `open-items.ts`; dropped ones are logged. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
-| `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). Rebuilt by construction on reset. No I/O. |
+| `ledger.ts` | Adapter for the open-items ledger, `.ai-notes/<area>/open-items.md` (FR-ITEM-01, FR-ITEM-04): `parse` of the version 1 line shapes into open items, closed lines and the lines it can't read (one bad line never fails the file), `blockOf` (an item's own lines), `nextId`, `fromOf`, `optionsOf`, `stampTime` (local time, date-only stamps), the path rule `isLedgerPath` (with `ledgerPathOf` for a tool's path and `ledgerPathIn` for a Bash command), a brief's `Open items:` line (`ownedIds`) and `ownerOf` (the brief first, the `subagent` field by name second). Pure. |
+| `open-items.ts` | Open items (R3.16, FR-ITEM-01 to -04, -06), the one owner and writer of every list: one list per ledger (by its absolute path, `session:<sid>` while the session named none), the session's list from `transcripts.ts` `ledgerOf` (a shared ledger counts under the session that named it last). Reads the ledger through `ledger.ts` on a new tool result for it and on a size or mtime change (looked at every 2 s), async, one read per file at a time; not over 256 KB nor in a protected folder (`folders.ts` `isProtected`), with the note why. Merges each read by the items' own lines as last read (`blockOf`): new ids adopted (Synopia's item on that number renumbered), a changed item wins, an unchanged one keeps Synopia's state, a gone one dropped. Opens `Review: <name>` for finished `For review: ` subagents, ties a ledger review item to its subagent by the `subagent` field, `markReviewed`. Derives `view` (the open Y items, the A items, Closed this turn, unread count, note; `with` from `ledger.ts` `ownerOf`; `reply`, the block key of the reply an item came from: a raised item's report, else the Claude block holding the `from` quote, else the last one by its minute, scanned on from where the last view left it, never stored) and `counts` (review, waiting, due). Phase 3 (FR-ITEM-08 to -10): asks the keeper (`keeper.ts` `ask`) once per new message of yours and once per ended turn, by `transcripts.ts` `exchangeKeys`, never about an exchange older than the daemon; `keeperList` is what the keeper reads; `applyOps` reads the ledger first, then applies the checked ops (found items with a `from: Synopia` field, closes by Synopia with `undo`, dropped when the agent or you came first, after Undo, after two flips, for a duplicate or dismissed text); `notItem` (`d`) and `undo`. The write-back (FR-ITEM-11): a ledger whose list Synopia changed is pending; `writeBack` writes it when no session using it has a turn running (`turnRunning`), after reading and merging the file, only for a v1 file with the comment and no unread line, through `ledger.ts` `serialize`, a tmp file renamed over it, and not when the file changed since that read; each item's written lines become its last-read lines. `state.json` `items` (`cleanItems` validates on load, the phase 3 marks too, and carries the old `reviewed` marks). |
+| `transcript.ts` | Pure reducer: classified records to items, agents, background work, turn state, pending ask, titles. Tracks tool uses per `message.id` across records (one block per record). The main conversation's open-items facts (FR-ITEM-01, FR-ITEM-04): `ledger`, the last ledger a Read, Write or Edit `file_path` or a Bash command named (relative to the record's `cwd`), with the count of its tool results; `ownsOf`, the ids an Agent brief's `Open items:` line names (the prompt is not kept); a ledger's patches flagged `ledger` (R5.9). Rebuilt by construction on reset. No I/O. |
 | `tail.ts` | File tailing by byte offset and the subagent folder watcher: 4 MB slices, `fs.watch` plus the 1 s poll, reset on shrink, inode change or content rewrite (not on a bare touch). |
-| `transcripts.ts` | The reading set: one Tailer + Transcript per open session and subagent, the new-session finder, the one 1 s poll, facts for other modules, async rereads for `toolOutput` and `/api/image`. |
-| `status.ts` | The one status derivation: SDK events, transcript facts, pending cards and terminal state to a `SessionState` (status, since, detail, light, tone, word, mark, stopped, needsYou, review, driven). Keeps the badge count incrementally (`BadgeCounter`) and words the quit check (`quitSummary`). Pure apart from a clock. |
+| `transcripts.ts` | The reading set: one Tailer + Transcript per open session and subagent, the new-session finder, the one 1 s poll, facts for other modules (`facts`, `turns`, `ledgerOf`, `ownsOf`; the keeper's `exchange` and `exchangeKeys`, FR-ITEM-08: your last message, or what came after it as Claude's text, one line per tool step with its result and the reports, a ledger's step with no result), async rereads for `toolOutput` and `/api/image`. |
+| `task-output.ts` | A shown shell's output file read by byte window (whole lines, whole UTF-8 characters) and a monitor's events cut the same way (R7.2); the publisher sends them as `output`. |
+| `status.ts` | The one status derivation: SDK events, transcript facts, pending cards and terminal state to a `SessionState` (status, since, detail, light, tone, word, mark, stopped, needsYou, review, waiting, due, driven; the three counts from `open-items.ts` `counts`). Keeps the badge count incrementally (`BadgeCounter`) and words the quit check (`quitSummary`). Pure apart from a clock. |
 | `cli-terminals.ts` | Adapter for terminal-run Claude Code CLIs: pid files, liveness, procStart match, ours-vs-theirs, take-over signals (SIGTERM, SIGINT, never SIGKILL), tty note, transcript stable wait; logs a live pid whose procStart mismatches. |
 | `macos.ts` | Process probes, all async: `ps -o lstart=` under `LC_ALL=C TZ=UTC`, `ps -o tty=`, liveness, process-group signals, ancestry. Transient failures are not cached. |
 | `open.ts` | `/usr/bin/open` via argv: allow-list, reveal otherwise, http/https URLs only. |
 | `preview.ts` | File preview: plan (text vs open), caps, ANSI to escaped HTML, and the bat call (the bat adapter: flags, themes, language list). |
+| `file-refs.ts` | Paths named in replies (R5.9, 2026-11-25): `resolvePaths` against the session's folder and home, one stat each (there or not, file or folder; protected folders skipped as in `folders.ts`); the viewer's image of a file it answered for that session (`/api/image` ref `file:<abs>`: image name and bytes, 20 MB at most). Opening goes through `preview` and `open`. |
 | `login-env.ts` | Login shell environment merge once at start, allow-list, fallback PATH. |
 | `paths.ts` | Display paths (`~`, `/tmp`) with left boundaries; also the absolute path used as cache key (display strings are never keys); `isDir`. |
 | `log.ts` | `backend.log` event lines with quoted, capped values. |
@@ -79,26 +92,38 @@ Dev and test only (not loaded in production):
 |---|---|
 | `js/protocol.js` | The shared message schema: protocol version, every message type and its fields, the validator, action types that need an ack, the image limits. Imported by the page and by `router.ts`/`publisher.ts`/`sdk.ts`. DOM-free. |
 | `js/connection.js` | The WebSocket: auth, reconnect backoff, version check (another version: "Updating…", reload once for a newer one, else wait), frame validation, `send()` that returns false when down, actions with ids awaiting `ack`, `request()` for read frames, refusal toast while disconnected (Q9). |
-| `js/state.js` | The one page store: applies server messages, holds current session and view (`select`, `selectView` are the only writers), the ticker's `nowish`, exposes server-derived fields only. |
+| `js/state.js` | The one page store: applies server messages (the `creds` frames too, and each session's `openItems`, `applyOpenItems`), holds current session and view (`select`, `selectView` are the only writers), the ticker's `nowish`, exposes server-derived fields only. `bgAll`: a session's runs for the panel and the shell view, as one shape (Claude's background entries, its foreground Bash steps `stepBg`, your `!` runs `ownBg`, the refresh `credsBg`). |
 | `js/ui-state.js` | Restore of exactly what was on screen (R3.9): collect, debounce, patch, apply hello, scroll anchors; hooks `useLog`, `useBox`, `useCards` so it imports no view module. |
 | `js/main.js` | Entry: wires modules and hooks, the message dispatch, the 1 s ticker, start. |
 | `js/test-api.js` | `window.__synopia`: read-only state getters, ready signal, sent-frame spy, message injection. The page checks use only this plus the DOM. |
 | `js/format.js` | Time and duration formatters, the ticking spans, model label, `still`. Pure. |
-| `js/md.js` | Markdown as the CLI renders it. Pure. |
+| `js/md.js` | Markdown as the CLI renders it, and the kind and stated alignment of each table column. Pure. |
+| `js/table-fit.js` | Fits a markdown table in the log to its reply (only the long text wraps, then the first column, then it scrolls in its box), again when the log resizes or a fold opens. |
 | `js/marks.js` | Mark drawing per mark key and the animation phase pin (CON-WK-05). |
 | `js/tween.js` | Layout tweens and the 5 s grace for finished lines. |
-| `js/sidebar.js` | Rows, groups tree, rename field; sends layout intents. |
+| `js/sidebar.js` | Rows (their sub-lines, "○ N waiting on you, N due" from the state's `waiting` and `due` among them), groups tree, rename field; sends layout intents. |
 | `js/dnd.js` | Pointer-event drag and drop, drop-zone geometry, intent on drop. |
-| `js/rail.js` | Background work panel. |
-| `js/transcript.js` | Header and the keyed log: blocks, steps, files changed, earlier link, live line, queued prompts. |
+| `js/rail.js` | Background work panel: agents (an owned item under its running subagent, `open-items.js`), To review and the open-items groups (`open-items.js`) between the tree and Past, shown with background work or open items; Claude's background shells and monitors as cards from their start, your runs and the refresh once due (`cardAt`), no card for Claude's foreground Bash; who started each by its sign, the waiting card. |
+| `js/runs.js` | Runs (R5.13, R7.1, 2026-11-26): your `!` command and the refresh in one shape (`ownRowHTML` on the `!` band in the transcript, `credsRunHTML` in the dock), their state line; `bgState` and the who sign for the panel; draws only what the backend sent. Claude's Bash and Monitor steps are steps (`transcript.js`). |
+| `js/bg-view.js` | A run's shell view (R7.2): its header, and `titleWithCrumb`, the title line with "‹ <session title>" that every view but Main conversation uses (R5.1), its output as a terminal run, earlier output; holds the `output` the page has. Every run opens here (2026-11-26): Claude's background shells and monitors (from their card or Past line), its foreground Bash (from the live line), your `!` runs, the refresh; the `!` band in the box's place that types into yours or the refresh (`runDockHTML`). |
+ `js/transcript.js` | The conversation panel (header, log, the box as its last row) and the keyed log: blocks, steps (Claude's Bash and Monitor among them, foreground and background, folded and expanded in place), files changed, earlier link, live line, the sticky queue of queued prompts. |
 | `js/images.js` | Thumbnails and the image viewer. |
-| `js/preview.js` | File preview pane and find. |
-| `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back. |
+| `js/preview.js` | File preview pane and find (`findIn`, the page's one matcher). |
+| `js/find.js` | Find in the transcript (R5.12e, R9.9): the ⌘F bar, `find`/`found`, each match's Range from the rendered blocks (an item's block by key, a step's `data-item`), going to a match through `ui-state.js` `jumpTo`, the marks (CSS Custom Highlights `tf-find`, `tf-cur`). |
+| `js/path-links.js` | Paths in replies (R5.9, 2026-11-25): asks `resolvePaths` for the new `data-pc` code spans once per render, cached per session; ⌘ held (`cmd-held`, cleared on blur) and ⌘-click to the preview, the image viewer or `open`. |
+| `js/composer.js` | Message box, slash menu, `!` mode, image paste, the one in-box prompt (Esc, b, x), giving a refused send back; `writeLine` (an open item's button: its line on a new line of the draft, insert mode, nothing sent). |
+| `js/open-items.js` | Open items in the panel (R7.1, FR-ITEM-03 to -05): draws the session's `openItems` as HTML for `rail.js`: To review from the review items (a handed-over one only focuses), Waiting on you, Claude will check, Closed this turn, the unread line and the note, the items a running subagent owns; the buttons carry their line (`data-write`) and `transcript.js` hands it to `composer.js` `writeLine`; the focused item (one per page, not stored); a found item's dashed box and "found by Synopia", Undo on a line Synopia closed (`data-oi-undo`), `dismissable` for `d` (FR-ITEM-10). Imports only state.js, format.js and marks.js (composer.js would make a cycle through sidebar.js). |
 | `js/card.js` | Needs-you card and the status line; keeps picks until the answer is acked. |
-| `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, sidebar drag), then the session keys; `renderAll`. |
+| `js/keys.js` | The one keyboard dispatcher (window capture): layers in a fixed order (preview, image viewer, Open list, folder list, sidebar drag), then the session keys (n, o among them; J/K on to the Waiting on you items, Enter on the focused one); `renderAll`. |
 | `js/mode.js` | Normal and insert mode (`setMode`, `paintMode`); the box is the only indicator. |
 | `js/toast.js` | The toast line. |
-| `js/open-list.js` | Open session list, New session. |
+| `js/mark-time.js` | The marks in the transcript's bullet column: no click, and on hover the tip with the time their row appeared (`data-at`). |
+| `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
+| `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
+| `js/waiting-list.js` | The Waiting on you list (R9.10, FR-ITEM-13), a layer in `keys.js` drawn like the Open list: every open Y item of the sessions whose `state.waiting` counts them (so a shared ledger shows once), grouped in sidebar order (`sidebar.js` `KEYS`), filtered with fuzzy.js; Enter hands the session and `Y2 ` to `keys.js`, which renders and calls `composer.js` `writeLine` (this module imports neither: `ui-state.js` imports it). |
+| `js/creds-line.js` | The dock's credential line (R8.2): renders the backend's `creds` frame for the session (kept in `state.js`): one line over the run's preview, which opens its shell view (2026-11-26), or the editable command with Save. |
+| `js/mcp-panel.js` | The MCP panel (R5.15), a layer in `keys.js` drawn like the Open list: renders the backend's `mcp` frame, chooses a server and an action, sends `mcpAction`. |
+| `js/folder-list.js` | The folder list (New session and "Continue in a folder"): known folders, path completion on Tab, the create row, gone rows, the fixed list with no open session. |
 | `js/theme-switch.js` | The theme choice: footer switch, system listener, UI state `theme`, the localStorage copy for first paint. |
 | `js/theme.js` | Classic head script: theme before first paint from the localStorage copy; no globals. |
 | `css/app.css`, `css/dark.css`, `css/preview.css`, `fonts/` | Look; fonts bundled (Q8, OFL), no Google Fonts. |
@@ -115,13 +140,13 @@ Page unit tests: `app/web/test/*.test.js` (`node --test`; `stub-dom.js` gives in
 | `TitleBar.swift` | Integrated title bar, drag strip, double-click action. |
 | `WebView.swift` | WKWebView, chrome injection (`in-app`, `fullscreen`, `--titlebar`, `SYNOPIA_CLOCK24`), navigation policy, snapshot hook. No `confirm()` bridge. |
 | `DaemonFiles.swift` | The Swift reader of `daemon.json` (incl. `handover`), the HTTP reply types (ping, badge, quit-check) and the `daemon.log` tail for the error view. |
-| `Backend.swift` | Find or start the daemon (posix_spawn), async HTTP with timeouts (ping, badge, quit-check, stop, restart), slow vs gone, loss handling with the handover field. |
+| `Backend.swift` | Find or start the daemon (posix_spawn, with `--harness` when `config.json` names one), async HTTP with timeouts (ping, badge, quit-check, stop, restart), slow vs gone, loss handling with the handover field. |
 
 Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/shell/test/golden` through `DaemonFiles.swift`; `shell-contract.test.ts` checks a real daemon's files and replies against the same goldens.
 
 ### Tooling
 
-`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 22 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
+`app/build.sh` (builds `build/Synopia.app` in a temp bundle, copies the harness bundle into it unless `app/.harness-live` names a checkout, checks it, swaps it in), `app/harness/pin.sh` (pins agent-harness into `app/harness/bundle/`), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 32 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
 
 ## Data flow
 
@@ -130,9 +155,10 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 3. `session` drives one `sdk` process. SDK messages flow `sdk` -> `session` (control state) -> `status` (derived state) and `cards` (requests) -> `publisher`.
 4. The CLI writes JSONL. `tail` -> `claude-jsonl` (classify) -> `transcript` (reduce) inside `transcripts` -> `status` (transcript facts) and `publisher` (items). The SDK stream carries only control and live state (R12); the stream preview is cleared when its record lands.
 5. `cli-terminals` watches pid files -> `session` yields or takes over; `macos` gives process facts. `cli-terminals` alone says whether any Claude Code outside Synopia has a session open (`free`); `session` alone knows its own process, and with neither it tells `transcripts` the transcript's process ended (`processEnded`), so nothing reads running.
-6. `publisher` flushes once per change batch: `session` meta (with `state` from `status`), then `agents`/`background`, then `items`. Every module that changes visible state tells the publisher; nobody else sends frames.
-7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, reviewed, settings and UI state. `layout` and `ui-state` own their sections; `store` owns the file.
-8. Shell: `Backend` polls `/api/badge` (cached count from `status`, O(1)) every 2 s on an async session; on loss reads `daemon.json` `handover` to wait for the successor.
+6. `publisher` flushes once per change batch: `open-items` syncs the session (its ledger, its review items), then `session` meta (with `state` from `status`), then `agents`/`background`, then `openItems` when the view changed, then `items`. A ledger read that changes a list flushes every session using it. Every module that changes visible state tells the publisher; nobody else sends frames.
+7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, open items (`open-items.ts` owns the `items` section: the lists, each item's lines as last read, the carried marks), settings and UI state.
+8. Folders: the page asks `listFolders` when the folder list opens (no disk read: the open list and `listSessions()`), `completeFolder` on Tab (one `readdir`), `checkFolders` for the rows on screen once per opening and for a typed path when typing stops; `newSession`/`continueSession` with `create` make the folder first. A continue starts the session's process with `resume`, `forkSession` and the new `cwd`; its `system/init` id goes through `rekey` ('moved'), which also moves the open entry to the new folder. `layout` and `ui-state` own their sections; `store` owns the file.
+9. Shell: `Backend` polls `/api/badge` (cached count from `status`, O(1)) every 2 s on an async session; on loss reads `daemon.json` `handover` to wait for the successor.
 
 ## Threading and timing model
 
@@ -145,12 +171,12 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 
 ## Interfaces
 
-### WebSocket protocol (`app/web/js/protocol.js` is the source, `VERSION` 2)
+### WebSocket protocol (`app/web/js/protocol.js` is the source, `VERSION` 4)
 
 - Transport: `/ws`, `auth` first within 10 s, 32 MB cap, close 4001 on auth failure, 1009 on oversize.
 - `hello` carries `v` (protocol version) and `code` (daemon code hash). A page of another version shows "Updating…", sends nothing and waits; it reloads once for a newer daemon.
-- Server to page: `hello`, `session` (meta plus `state` from `status`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`), `background`, `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `recent`, `preview` (also for non-text files: `{opened:true}`), `restore` (texts and images, acting client only), `update`, `ack`.
-- Page to server: actions with `id` and an `ack`: `send`, `bang`, `answer`, `interrupt`, `background`, `close`, `newSession`, `openSession {sid}`, `cancelTakeover`, `setModel`, `reviewed`, `moveSession`, `newGroup`, `renameGroup`. Requests answered by data: `view {sid, agent, from}`, `earlier`, `toolOutput`, `listRecent`, `preview`, `open`. State sync: `ui {patch}` (resent on reconnect).
+- Server to page: `started` (a session started another, R3.15: a page viewing `from` shows `sid`), `hello`, `session` (meta plus `state` from `status` and `gone`; `replaces` and `layout` once on an id swap), `layout`, `removed`, `items`, `agents` (with `review`, true while the subagent has an open review item), `background`, `openItems {sid, items, checks, closed, unread, note}` (R3.16, FR-ITEM-05, to every page, whole on each change and in each `hello` session: `items` the open Y items, review items among them with `kind: "review"` and the subagent's `agent` id, `checks` the open A items, `closed` the items closed this turn, `unread` the ledger lines Synopia can't read, `note` why nothing could be read; an item is `{id, kind, text, source, at, minute, state?, options?, recommended?, trigger?, goesAhead?, watch?, subagent?, raisedBy?, answer?, agent?, with?: {agent, name}, reply?}` (`reply`: the block key of the reply it came from, FR-ITEM-07), an item Synopia found carries `found: true`; a closed one `{id, kind, text, how, at, note, by, found?, undo?}` (`undo`: Synopia closed it this turn, FR-ITEM-10); open-items.ts `view`), `pending`, `stream` (subscribed viewer only), `menu`, `toast`, `toolOutput`, `found {sid, view, q, seq, hits: [{id, at: [[from, to]]}], total, more}` (⌘F, R5.12e, 2026-11-26: the matches of `find` in transcript order, `id` an item's or, in a shell's view, the view's, `at` offsets in that item's search text, find.ts `itemText`), `output` (a shown shell's or monitor's output part: reset, prepend or append), `recent` (rows plus `total`, `folders`, `matched`), `folders` (the known folders), `completion` (one folder's child folders), `folderState` (gone or not, per path asked), `mcp` (R5.15, to every page: `{sid, servers: [{name, status, kind, scope, signIn, reconnect, busy}], error, note, reading}`, whole each time), `preview` (also for non-text files: `{opened:true}`), `pathState {sid, states: [{p, path, kind}]}` (2026-11-25), `restore` (texts and images, acting client only), `update`, `ack`.
+- Page to server: actions with `id` and an `ack`: `send`, `bang`, `bangInput {sid, text}` (a line typed into the running `!` command, 2026-11-26), `bangStop {sid, bg}` and `stopTask {sid, bg}` (Esc, Esc in a run's shell view: your `!` command, or Claude's background shell or monitor through the SDK's `stopTask`, 2026-11-26), `answer`, `interrupt`, `background`, `sendNow {sid, draft?}` (f, f, R9.8: `session.ts` `nowRoute` picks how the turn changes, from what runs and what is queued; `draft` is the box's `{text, images, uuid}`, sent as a `send` would be), `close`, `newSession {cwd, create?}`, `openSession {sid}`, `continueSession {sid, cwd, create?}`, `cancelTakeover`, `setModel`, `item {sid, item, act}` (FR-ITEM-03: `act: "reviewed"` is Mark reviewed on a review item, `"notItem"` is `d` (FR-ITEM-10), `"undo"` reopens a line Synopia closed this turn; refused for an item no open session's list holds; protocol 4 replaced the `reviewed` action), `moveSession`, `newGroup`, `renameGroup`, `mcpAction {sid, name, action}` (R5.15: `login`, `logout`, `reconnect`, `enable`, `disable`; acked once it ran, its outcome and error in the next `mcp`; refused while that server is busy or a terminal holds the session). Requests answered by data: `mcp {sid}` (the MCP panel opened: read now), `view {sid, agent, from, bg?}` (`bg`: a shell's or monitor's tool use id), `earlier`, `earlierOutput {sid, bg, before}`, `toolOutput`, `find {sid, view, q, seq}` (⌘F, R5.12e, 2026-11-26: the whole view searched by find.ts; `view` a subagent's, shell's or monitor's id, null for the main conversation), `listRecent`, `listFolders`, `completeFolder {path}`, `checkFolders {paths, chosen?}`, `preview`, `open`, `resolvePaths {sid, paths}` (R5.9, 2026-11-25: the inline-code paths of a render). State sync: `ui {patch}` (resent on reconnect).
 - At run time a field more is ignored both ways; a frame that doesn't fit is dropped with a log line or console warning.
 - Contract tests: golden frames in `app/backend/test/golden/`, checked strictly against the schema by `protocol-golden.test.ts`.
 
@@ -176,6 +202,11 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 | `<state>/backend.log` | `log.ts` | page checks (preview, open) |
 | `~/.claude/projects/**` | Claude Code | `tail.ts` / `claude-jsonl.ts` |
 | `~/.claude/sessions/<pid>.json` | Claude Code | `cli-terminals.ts` (never `*.key`) |
+| `<folder>/.ai-notes/<area>/open-items.md` | the agent and the open-items skill | `open-items.ts` through `ledger.ts` (the format) |
+| `app/harness/bundle/` (`.claude-plugin/plugin.json`, `skills/`, `build/agents/`, `instructions/global.md`) and `app/harness/PIN`, committed | `app/harness/pin.sh` | `build.sh` (copies it), `bundle.ts` |
+| `Contents/Resources/harness/` in the app, or the checkout `app/.harness-live` names (gitignored, one path) | `build.sh` | `bundle.ts` through `--harness` |
+| `Contents/Resources/config.json` `{node, backend, harness}` | `build.sh` | `Backend.swift` (`BackendConfig`; `harness` optional) |
+| Your folders | you | `folders.ts`: one `readdir` on Tab, stats of named paths, `mkdir -p` of a typed path on its create row; `session.ts` stats its own folder |
 
 `<state>` is `~/Library/Application Support/Synopia/` for the app, `app/.dev-state/` for `dev.sh`, a temp folder per page-check run. The daemon's files are in [Daemon files](Daemon%20files.md).
 
@@ -190,7 +221,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
   "version": 1,
   "open":     [{"id": "…", "cwd": "…", "openedAt": 0, "closedAt": null}],
   "layout":   {"groups": [{"id": "g…", "name": "…", "ids": ["…"]}], "others": ["…"]},
-  "reviewed": ["<agentId>"],
+  "items":    {"lists": {"<ledger path>|session:<sid>": {"top": {"Y": 0, "A": 0}, "items": [{"id": "Y1", "kind": "review", "text": "Review: …", "fields": {"subagent": "…"}, "source": "agent|synopia", "block": "<its lines as last read>", "agent": "<agentId>", "at": 0, "closed": {"how": "done", "at": 0, "note": "marked reviewed", "by": "agent|synopia"}}]}}, "carried": ["<agentId>"]},
   "models":   {"<sid>": {"model": "…", "effort": "…"}},
   "rules":    {"<sid>": ["Bash(npm run test:*)"]},
   "answers":  {"<toolUseId>": "Allow once"},
@@ -199,13 +230,13 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
   "ended":    {"<sid>": 0},
   "endedFailed": {"<sid>": true},
   "written":  {"<sid>": {"title": "…", "now": "…", "at": 0, "history": [{"title": "…", "at": 0}]}},
-  "settings": {"writerModel": "haiku", "model": "…", "newSessionCwd": "…"},
+  "settings": {"writerModel": "haiku", "model": "…"},
   "ui": {
-    "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "openBg": "<key>|null", "theme": "light|dark|null",
-    "openList": {"filter": "…"}, "preview": {"path": "…", "scroll": 0, "find": "…"},
+    "current": "<sid>", "view": "<agentId>|null", "mode": "normal|insert", "theme": "light|dark|null",
+    "openList": {"filter": "…"}, "waitingList": {"filter": "…"}, "folderList": {"filter": "…", "sid": "<sid continued>|null"}, "preview": {"path": "…", "scroll": 0, "find": "…"},
     "viewer": {"srcs": ["/api/image?sid=…&ref=…"], "froms": ["…"], "i": 0},
     "sessions": {"<sid>": {
-      "scroll":  {"<view>": {"id": "<block key>", "off": 0}, "<view>": {"bottom": true}},
+      "scroll":  {"<view>": {"id": "<block key>", "off": 0, "seen": "<block key>[@<output end>]"}, "<view>": {"bottom": true, "id": "<last block on screen>", "off": -300}},
       "earlier": {"<view>": "<oldest item id loaded>"},
       "steps": ["<view>|<item id>"], "diffs": ["<view>|<diff id>"], "folds": ["<view>|<block key>#<n>"],
       "draft": {"text": "…", "cursor": [0, 0], "images": [{"id": "…", "mediaType": "image/png", "size": 0, "n": 1}]},
@@ -215,9 +246,9 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
 }
 ```
 
-- Caps: `reviewed` keeps the newest 1000, `answers` 2000, `plans` 100 (`store.ts`), trimmed on write and on load. `written.history` keeps 50 titles. Every map entry is validated on load; a wrong one is dropped.
+- Caps: `items` keeps closed items with an agent id and the `carried` marks the newest 1000 together, other closed items the newest 30 per list (`open-items.ts`); `answers` 2000, `plans` 100 (`store.ts`), trimmed on write and on load. `written.history` keeps 50 titles. Every map entry is validated on load; a wrong one is dropped.
 - `ui` (R3.9, `ui-state.ts`; page side `ui-state.js`): `<view>` is `""` for the main conversation, else the agent id. The page sends `ui {patch}` with the fields that changed, 300 ms after the last change (2 s at most) and at once on `visibilitychange` (hidden), `pagehide` and a send. A top-level field replaces the stored one; `sessions` merges per session and per field, `null` removing it. Unknown fields and malformed values are dropped. It is never broadcast: the last writer wins. `hello` returns it.
-- The page applies `ui` before its first render. The scroll waits for the view's reset items, re-requests earlier items up to the stored oldest id, then goes to the anchor (the first block whose bottom is below the top of the log, and the pixels into it) or the bottom. A missing anchor block goes to the bottom.
+- The page applies `ui` before its first render. The scroll waits for the view's reset items, re-requests earlier items up to the stored oldest id, then goes to the anchor (the first block whose bottom is below the top of the log, and the pixels into it; at the end, the last block on screen, so what came since is below it), loading up to 5 more pages of earlier items to find it. A missing anchor block goes to the bottom. A view follows its end only while the window is visible. `seen` is the furthest block whose first line was on screen 1 s in a row with the window focused (`run@<offset>` for a line of a shell's or monitor's output, `bg-view.js` `outEnds`), `seenAt` when you last had it on screen, and `newAt` `{id, at}` the block the "New since" line sits above: placed when you come back to the view or the window is shown again, kept over a reload (`watchSeen`, `placeNew`, `drawNew`; 2026-11-25).
 - Draft images: the page sends an image's base64 once, with the first patch that lists it; the backend writes `<state>/drafts/<sid>/<id>.png|jpg` (5 MB each, 20 MB per session; past that a toast and it isn't kept) and keeps only `{id, mediaType, size, n}`. A patch that no longer lists an image removes its file; a send clears the draft. After a restore the page loads them from `GET /api/image?sid&ref=draft:<id>`.
 - A card's state is dropped once its request is gone. `close` prunes the session's data and its drafts folder; the start drops entries of sessions that are not open; an id swap moves both.
 - Layout: the backend owns it (`layout.ts`). New and reopened sessions with no place go last under "Not in a group"; closed ids stay in their group, hidden, so a reopened session keeps its place; an id that changes keeps its place; a group goes only when it has no ids at all, hidden ones included.
@@ -225,7 +256,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
 
 ### CLI flags and env
 
-`--claude-dir`, `--state-dir`, `--port`, `--no-parent`, `--sdk-script <file>` (dev and checks: the scripted SDK over `--claude-dir`), `--dry-run` (`open` and a take-over's signal log and act on nothing), `--after <pid>` (set by the daemon this one replaces). Test-only: `--idle-ms`, `--exit-idle-ms`, `--update-read-ms`, `--successor-ms`. Accepted for the one update from a `rearch-base` daemon: `--fake` (the scripted SDK with no script) and `--dry-open` (as `--dry-run`). An unknown flag exits 2.
+`--claude-dir`, `--state-dir`, `--port`, `--no-parent`, `--sdk-script <file>` (dev and checks: the scripted SDK over `--claude-dir`), `--dry-run` (`open` and a take-over's signal log and act on nothing), `--after <pid>` (set by the daemon this one replaces), `--harness <dir>` (the agent-harness plugin folder, from `config.json`; a successor inherits it; `dev.sh` and the page checks pass none). Test-only: `--idle-ms`, `--exit-idle-ms`, `--update-read-ms`, `--successor-ms`. Accepted for the one update from a `rearch-base` daemon: `--fake` (the scripted SDK with no script) and `--dry-open` (as `--dry-run`). An unknown flag exits 2.
 
 Env read by the shell: `SYNOPIA_STATE_DIR`, `SYNOPIA_SDK_SCRIPT` (a fixture tree: `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`), `SYNOPIA_EXIT_IDLE_MS`, `SYNOPIA_SNAPSHOT`, `SYNOPIA_DEBUG_DRAG`.
 
@@ -239,13 +270,17 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 |---|---|---|
 | Session status, word, light, mark, needs-you, stopped, review count, badge | `status.ts` | page renders `session.state`; badge reads the counter |
 | "Interrupted" vs "turned down" | `claude-jsonl.ts` classification | none |
+| A subagent running, waiting, stopped or resumed after its end | `transcript.ts` `agentRunning` (the main conversation's Transcript) | page renders `agents[]`; status.ts reads its runs' ends (`runEnds`) |
 | Pending cards, session rules, answer labels, answered plans | `cards.ts` | page shows `pending`; half-answers in UI state |
 | Held, queued (outbox), after-exit messages | `session.ts` | page shows `session.outbox` |
 | Layout | `layout.ts` | page renders the server layout, sends intents |
 | Open list | `sessions.ts` | |
+| MCP panel: servers, running action, last error | `mcp.ts` | page renders `mcp` |
+| Credential refresh: each folder's command, its run, the dock line's phase and output, whether it waits | `creds.ts` (`state.json` `refresh`) | page renders `creds` |
+| A run waits for input; when a run's card shows | `pty.ts` `InputWatch`; `runs.ts` `cardAt` (your runs and the refresh) | `bang.ts`, `creds.ts` send them; the page compares `cardAt` with its clock |
 | UI state | `ui-state.ts` (backend) | page `ui-state.js` collects and applies |
 | Theme | backend `ui.theme` | localStorage first-paint copy |
-| Reviewed marks | `store.ts` `ReviewedMarks` via router: only a subagent an open session has, the 1000 newest kept, not pruned with closed sessions (a closed session can be reopened) | page via `agents[].review` |
+| Open items: the lists, ids, Synopia's state per item, review items, Mark reviewed | `open-items.ts` (`state.json` `items`; Mark reviewed through router `item`, only an item an open session's list holds; closed review items carried over a session's close); the ledger file is the agent's, an input | page renders `openItems` and `agents[].review`; status.ts takes `counts` |
 | Model and effort choice | `session.ts` resolver (one), used for header and process | |
 | Token and port | `daemon-files.ts` | page URL |
 
@@ -265,7 +300,9 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 |---|---|
 | `claude-jsonl.ts`, `tail.ts` | [Claude Code transcripts](Claude%20Code%20transcripts.md) |
 | `cli-terminals.ts` | [Claude Code terminals](Claude%20Code%20terminals.md) |
-| `sdk.ts`, `dev/scripted-sdk.ts` | [Agent SDK](Agent%20SDK.md) |
+| `ledger.ts` | [Open items](Open%20items.md) |
+| `sdk.ts`, `dev/scripted-sdk.ts`, `mcp.ts` (control calls), `bundle.ts` (the plugin format) | [Agent SDK](Agent%20SDK.md) |
+| `mcp.ts` (`claude mcp login`, `logout`) | [Claude Code terminals](Claude%20Code%20terminals.md) |
 | `daemon-files.ts`, `DaemonFiles.swift` | [Daemon files](Daemon%20files.md) |
 | `macos.ts`, `open.ts`, `login-env.ts`, `preview.ts` (bat) | [macOS](macOS.md) |
 | `WebView.swift`, `TitleBar.swift`, `AppDelegate.swift`, page `marks.js`/`dnd.js` platform quirks | [WKWebView and AppKit](WKWebView%20and%20AppKit.md) |
@@ -323,8 +360,8 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-PLAT-18 | build.sh, app/web/icon |
 | FR-PLAT-19 | daemon-files.ts, log.ts, daemon.ts |
 | FR-SES-01 | sessions.ts, store.ts |
-| FR-SES-02 | sessions.ts, store.ts, open-list.js |
-| FR-SES-03 | sessions.ts, sdk.ts, open-list.js |
+| FR-SES-02 | sessions.ts, folders.ts, folder-list.js, fuzzy.js |
+| FR-SES-03 | sessions.ts, sdk.ts, fuzzy.js, open-list.js |
 | FR-SES-04 | sessions.ts, session.ts, cards.ts, ui-state.ts |
 | FR-SES-05 | writer.ts, sdk.ts |
 | FR-SES-06 | transcript.ts, claude-jsonl.ts, publisher.ts |
@@ -337,6 +374,11 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-SES-13 | sdk.ts |
 | FR-SES-14 | session.ts, sdk.ts, protocol.js, composer.js |
 | FR-SES-15 | none (future) |
+| FR-SES-16 | session.ts, sessions.ts, folders.ts, sdk.ts (`forkSession`), claude-jsonl.ts (the context line), publisher.ts, composer.js, folder-list.js |
+| FR-SES-17 | folder-list.js, transcript.js |
+| FR-SES-18 | fuzzy.js, sessions.ts, open-list.js, folder-list.js, composer.js |
+| FR-SES-19 | folders.ts, sessions.ts, folder-list.js |
+| FR-SES-20 | agent-tools.ts, sdk.ts (`toolServer`), sessions.ts (`toolHost`), layout.ts (`placeUnder`), cards.ts, transcript.ts, publisher.ts (`started`), card.js, transcript.js, main.js |
 | FR-STATE-01 | ui-state.ts, ui-state.js |
 | FR-STATE-02 | store.ts, daemon.ts |
 | FR-SIDE-01 | app.css, sidebar.js |
@@ -348,14 +390,15 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-01 | transcript.js, publisher.ts |
 | FR-VIEW-02 | transcript.js, app.css, fonts |
 | FR-VIEW-03 | transcript.ts, transcript.js |
-| FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js |
+| FR-VIEW-04 | session.ts (outbox), publisher.ts, transcript.js, composer.js, marks.js |
 | FR-VIEW-05 | transcript.ts, publisher.ts, transcript.js |
 | FR-VIEW-06 | transcript.ts, transcript.js |
 | FR-VIEW-07 | transcript.ts, transcript.js |
-| FR-VIEW-08 | transcript.ts, claude-jsonl.ts, transcript.js, open.ts |
+| FR-VIEW-08 | transcript.ts, claude-jsonl.ts, ledger.ts (`isLedgerPath`), transcript.js, open.ts |
 | FR-VIEW-09 | preview.ts, preview.js |
 | FR-VIEW-10 | open.ts |
-| FR-VIEW-11 | md.js |
+| FR-VIEW-10a | md.js, path-links.js, file-refs.ts |
+| FR-VIEW-11 | md.js, table-fit.js |
 | FR-VIEW-12 | transcript.ts, cards.ts |
 | FR-VIEW-13 | transcript.js, publisher.ts, state.js |
 | FR-VIEW-14 | publisher.ts, transcripts.ts, transcript.js |
@@ -365,10 +408,13 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-VIEW-18 | tail.ts, transcripts.ts |
 | FR-VIEW-19 | claude-jsonl.ts, transcript.ts |
 | FR-VIEW-20 | paths.ts |
+| FR-VIEW-22 | find.ts, publisher.ts, router.ts, find.js, keys.js, ui-state.js, transcript.js |
 | FR-BOX-01 | composer.js |
 | FR-BOX-02 | composer.js, protocol.js, sdk.ts (content) |
 | FR-BOX-03 | bang.ts, session.ts, composer.js |
 | FR-BOX-04 | menu.ts, sdk.ts, composer.js |
+| FR-BOX-05 | mcp.ts, sdk.ts, session.ts, router.ts, mcp-panel.js, composer.js, keys.js |
+| FR-BOX-06 | composer.js, md.js, transcript.js |
 | FR-NEED-01 | marks.js, app.css, card.js, status.ts |
 | FR-NEED-02 | transcript.js |
 | FR-NEED-03 | card.js |
@@ -378,15 +424,15 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-NEED-07 | cards.ts |
 | FR-NEED-08 | transcript.ts, status.ts, card.js |
 | FR-NEED-09 | status.ts, transcript.js |
-| FR-BG-01 | rail.js, tween.js |
+| FR-BG-01 | runs.ts, publisher.ts, rail.js, state.js, tween.js |
 | FR-BG-02 | transcript.ts, rail.js |
 | FR-BG-03 | rail.js |
 | FR-BG-04 | rail.js, app.css |
-| FR-BG-05 | rail.js |
-| FR-BG-06 | none (dropped, Q4) |
-| FR-BG-07 | transcript.ts, session.ts, publisher.ts |
+| FR-BG-05 | publisher.ts, bg-view.js, rail.js |
+| FR-BG-06 | session.ts, sdk.ts, router.ts, composer.js, bg-view.js |
+| FR-BG-07 | transcript.ts, claude-jsonl.ts, session.ts, publisher.ts |
 | FR-STAT-01 | marks.js, tween.js, app.css |
-| FR-STAT-02 | status.ts, claude-jsonl.ts |
+| FR-STAT-02 | status.ts, claude-jsonl.ts, transcript.ts (`runEnds`), publisher.ts (`blocked`), bang.ts, pty.ts |
 | FR-STAT-03 | marks.js |
 | FR-STAT-04 | app.css, dark.css |
 | FR-STAT-05 | status.ts |
@@ -397,7 +443,23 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-KEY-04 | composer.js, session.ts, sdk.ts |
 | FR-KEY-05 | composer.js, session.ts |
 | FR-KEY-06 | composer.js, keys.js |
-| FR-REV-01 | status.ts, store.ts, router.ts, publisher.ts, transcript.js, rail.js |
+| FR-KEY-07 | keys.js, folder-list.js, open-list.js |
+| FR-REV-01 | replaced by FR-ITEM-03 |
+| FR-ITEM-01 | ledger.ts (the format, the path rule), transcript.ts (`ledger`), transcripts.ts (`ledgerOf`), open-items.ts (the reads) |
+| FR-ITEM-02 | open-items.ts, ledger.ts, store.ts |
+| FR-ITEM-03 | open-items.ts (review items, `markReviewed`, the carried marks), router.ts (`item`), publisher.ts (`agents[].review`), status.ts (`review`), protocol.js, state.js (`applyOpenItems`), transcript.js (Mark reviewed by the item's id), open-items.js and rail.js (To review from the review items) |
+| FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`), open-items.ts (`with`), open-items.js and rail.js (under the subagent's card) |
+| FR-ITEM-05 | publisher.ts, protocol.js (`openItems`), state.js (`applyOpenItems`), open-items.js, rail.js, transcript.js (the clicks), composer.js (`writeLine`), app.css, dark.css |
+| FR-ITEM-06 | open-items.ts (`counts`), status.ts (`waiting`, `due`), publisher.ts, sidebar.js (`waitingLine`), tween.js, marks.js (`open`) |
+| FR-ITEM-13 | waiting-list.js, keys.js (w, the layer, Enter to `writeLine`), sidebar.js (the head button, `rowWord`), open-items.js (`itemsOf`, `ageOf`, `focusItem`), fuzzy.js, ui-state.js and ui-state.ts (`waitingList`), main.js (redraws), app.css |
+| FR-ITEM-07 | open-items.ts (`reply`: the quote, the minute, a raised item's report), transcripts.ts (`replies`), open-items.js (the focus), keys.js (J/K, Enter), transcript.js (`openItem`, through ui-state.js `jumpTo`), sidebar.js (the line's click), rail.js (`waitingIds`) |
+| FR-ITEM-08 | keeper.ts (the call, the prompt, the op checks), transcripts.ts (`exchange`), open-items.ts (when to ask), sdk.ts (`writerOptions`, `oneShot`), store.ts (`keeperModel`) |
+| FR-ITEM-09 | open-items.ts (`applyOps`, the marks, the flip guard, dismissed texts) |
+| FR-ITEM-10 | open-items.ts (`notItem`, `undo`), router.ts (`item`), protocol.js, keys.js (`d`), open-items.js and transcript.js (Undo) |
+| FR-ITEM-11 | ledger.ts (`serialize`), open-items.ts (`writeBack`, `docOf`; `look` tries the pending ones) |
+| FR-ITEM-12 | agent-tools.ts (`open_items`, `answerOf`), cards.ts (answered with no card), transcript.ts (a subagent's call ignored), open-items.ts (`toolOp`) |
+| FR-HAR-01 | pin.sh, build.sh, Backend.swift, main.ts, bundle.ts |
+| FR-HAR-02 to -06 | planned (harness plan milestones 3 to 5) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |
 | FR-LOOK-03 | all page modules, prototype/app.html |
@@ -410,4 +472,4 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-TOOL-07 | none (dropped, Q10) |
 | FR-TOOL-08 | test/upgrade.sh, test/upgrade.ts |
 
-NFRs: NFR-01 the adapters table above; NFR-02 `sdk.ts` and the topic docs; NFR-03 the page modules and the `motion` suite; NFR-04 `chrome-bin.sh` and the cdp harness; NFR-05 `check.sh`; NFR-06 `macos.ts`, `daemon.ts` (async hash), `transcripts.ts` (async rereads); NFR-07 `router.ts`, `server.ts`, `daemon.ts`, `session.ts`; NFR-08 `server.ts`, `open.ts`, `log.ts`, `WebView.swift`; NFR-09 `tail.ts` (perf test in `tail.test.ts`), `session.ts` idle end; NFR-10 `build.sh`, `app/web/fonts`; NFR-11 fixtures with invented data, `cli-terminals.ts` (never `*.key`); NFR-12 `store.ts`.
+NFRs: NFR-01 the adapters table above; NFR-02 `sdk.ts` and the topic docs; NFR-03 the page modules and the `motion` suite; NFR-04 `chrome-bin.sh` and the cdp harness; NFR-05 `check.sh`; NFR-06 `macos.ts`, `daemon.ts` (async hash), `transcripts.ts` (async rereads); NFR-07 `router.ts`, `server.ts`, `daemon.ts`, `session.ts`; NFR-08 `server.ts`, `open.ts`, `log.ts`, `WebView.swift`; NFR-09 `tail.ts` (perf test in `tail.test.ts`), `session.ts` idle end; NFR-10 `build.sh`, `app/web/fonts`; NFR-11 fixtures with invented data, `cli-terminals.ts` (never `*.key`); NFR-12 `store.ts`; NFR-13 `folders.ts` (`folders.test.ts` counts the reads).

@@ -1,12 +1,12 @@
 {
   "t": "hello",
-  "v": 2,
+  "v": 4,
   "code": "<code>",
   "sessions": [
     {
       "id": "11111111-0000-4000-8000-000000000001",
       "title": "Demo notes cleanup",
-      "name": "A later generated title",
+      "name": "",
       "now": "",
       "cwd": "~/dev/demo",
       "prs": [
@@ -26,6 +26,8 @@
         "stopped": false,
         "needsYou": null,
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -33,10 +35,19 @@
       "effort": "high",
       "outbox": [],
       "bang": null,
+      "bangs": [],
+      "gone": false,
       "agents": [],
       "background": [],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "22222222-0000-4000-8000-000000000002",
@@ -56,6 +67,8 @@
         "stopped": false,
         "needsYou": "question",
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -63,10 +76,19 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
+      "gone": false,
       "agents": [],
       "background": [],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "33333333-0000-4000-8000-000000000003",
@@ -86,6 +108,8 @@
         "stopped": false,
         "needsYou": "permission",
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -93,6 +117,8 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
+      "gone": false,
       "agents": [],
       "background": [
         {
@@ -102,7 +128,7 @@
           "description": "Build the demo",
           "command": "make demo-build",
           "persistent": false,
-          "start": "2026-11-20T12:00:05.000Z",
+          "start": "2026-11-20T12:00:06.000Z",
           "status": "completed",
           "summary": "Build finished with 0 errors",
           "end": "2026-11-20T12:05:00.000Z"
@@ -115,7 +141,7 @@
           "command": "tail -f /tmp/demo.log",
           "timeout": 600000,
           "persistent": false,
-          "start": "2026-11-20T12:00:05.000Z",
+          "start": "2026-11-20T12:00:06.000Z",
           "status": "failed",
           "summary": "",
           "end": "2026-11-20T12:06:00.000Z"
@@ -127,14 +153,21 @@
           "description": "Watch the other log",
           "command": "tail -f /tmp/other.log",
           "persistent": true,
-          "start": "2026-11-20T12:00:05.000Z",
+          "start": "2026-11-20T12:00:06.000Z",
           "status": "running",
           "summary": "",
           "end": null
         }
       ],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "44444444-0000-4000-8000-000000000004",
@@ -154,6 +187,8 @@
         "stopped": false,
         "needsYou": null,
         "review": 1,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -161,6 +196,8 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
+      "gone": false,
       "agents": [
         {
           "id": "aaaa0001",
@@ -174,6 +211,7 @@
           "running": false,
           "review": false,
           "stopped": false,
+          "waiting": false,
           "start": "2026-11-20T13:00:06.000Z",
           "end": "2026-11-20T13:01:50.000Z",
           "total": 2
@@ -190,6 +228,7 @@
           "running": true,
           "review": false,
           "stopped": false,
+          "waiting": false,
           "start": "2026-11-20T13:00:07.000Z",
           "end": "2026-11-20T13:20:00.000Z",
           "total": 2
@@ -206,9 +245,10 @@
           "running": false,
           "review": false,
           "stopped": false,
+          "waiting": false,
           "start": "2026-11-20T13:00:08.000Z",
           "end": "2026-11-20T13:09:50.000Z",
-          "total": 2
+          "total": 4
         },
         {
           "id": "aaaa0004",
@@ -222,6 +262,7 @@
           "running": false,
           "review": true,
           "stopped": false,
+          "waiting": false,
           "start": "2026-11-20T13:00:09.000Z",
           "end": "2026-11-20T13:11:59.000Z",
           "total": 2
@@ -238,6 +279,7 @@
           "running": true,
           "review": false,
           "stopped": false,
+          "waiting": false,
           "start": "2026-11-20T13:00:10.000Z",
           "end": "2026-11-20T13:00:40.000Z",
           "total": 2
@@ -254,6 +296,7 @@
           "running": false,
           "review": false,
           "stopped": false,
+          "waiting": false,
           "start": "2026-11-20T13:00:11.000Z",
           "end": "2026-11-20T13:01:00.000Z",
           "total": 2
@@ -261,7 +304,25 @@
       ],
       "background": [],
       "stream": "Two subagents are still running. I'll merge their changes when both report back.",
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [
+          {
+            "id": "Y1",
+            "kind": "review",
+            "text": "Review: Draft the demo release notes",
+            "source": "synopia",
+            "at": 1795180319000,
+            "minute": true,
+            "subagent": "Draft the demo release notes",
+            "agent": "aaaa0004"
+          }
+        ],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     },
     {
       "id": "55555555-0000-4000-8000-000000000005",
@@ -281,6 +342,8 @@
         "stopped": false,
         "needsYou": "plan",
         "review": 0,
+        "waiting": 0,
+        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -288,10 +351,19 @@
       "effort": null,
       "outbox": [],
       "bang": null,
+      "bangs": [],
+      "gone": false,
       "agents": [],
       "background": [],
       "stream": null,
-      "held": []
+      "held": [],
+      "openItems": {
+        "items": [],
+        "checks": [],
+        "closed": [],
+        "unread": 0,
+        "note": null
+      }
     }
   ],
   "pending": [

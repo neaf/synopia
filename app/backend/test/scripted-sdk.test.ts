@@ -25,7 +25,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const running = (ago = 0) => ({ ago, message: { type: 'system', subtype: 'session_state_changed', state: 'running' } });
 
 // A fixture tree copied to a temp folder, its script changed by `edit`, and the backend's parts over it.
-async function setup(tree = 'claude', edit?: (s: Script) => void) {
+// `pretend`: the script's home folders count as there (main.ts passes Scripted.pretendFolder).
+async function setup(tree = 'claude', edit?: (s: Script) => void, pretend = false) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-scripted-'));
   const claudeDir = path.join(root, 'claude'), stateDir = path.join(root, 'state');
   fs.cpSync(path.join(FIXTURES, tree), claudeDir, { recursive: true });
@@ -42,7 +43,7 @@ async function setup(tree = 'claude', edit?: (s: Script) => void) {
   let sessions: Sessions | null = null;
   const transcripts = new Transcripts({ claudeDir, home: scripted.home, pollMs: 0, watch: false, onAssistant: (sid, mid, types) => sessions?.landed(sid, mid, types) });
   const publisher = new Publisher({ transcripts, clients: () => new Set([c]), home: scripted.home, recheckMs: 0, onRunning: (sid, r) => sessions?.runningChanged(sid, r) });
-  sessions = new Sessions({ store, transcripts, publisher, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer });
+  sessions = new Sessions({ store, transcripts, publisher, sdk: scripted.sdk, home: scripted.home, now: scripted.clock.now, timer: scripted.clock.timer, ...(pretend ? { pretendFolder: scripted.pretendFolder } : {}) });
   sessions.start();
   scripted.attach(sessions);
   await scripted.whenPlayed();
@@ -101,8 +102,12 @@ test('scripted: the states fixture plays one session per wired state, on the rea
   const { transcripts, publisher, meta, stop } = await setup('claude-states');
   try {
     await sleep(30); // e5e5's stale timer, armed 16 min in the past, is due at once
-    const all = (publisher.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
-    assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'busy', 'busy']);
+    const every = (publisher.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
+    // a8a8: a terminal session whose ended turn has a step auto mode blocked (R8.2)
+    const blocked = every.find((s) => s.id.startsWith('a8a8'));
+    assert.deepEqual([blocked?.status, blocked?.light, blocked?.word, blocked?.mark, blocked?.needsYou], ['idle', 'red', 'Needs you, blocked', 'pause', 'blocked']);
+    const all = every.filter((s) => s !== blocked);
+    assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'idle', 'busy'], 'f6f6: its main turn is over, its subagents run: your turn (2026-11-26)');
     assert.equal(all[0].detail.queued, 1, 'the message sent during the turn');
     assert.deepEqual([all[2].detail.retry?.attempt, all[2].detail.retry?.max], [3, 10]);
     assert.ok(Math.abs((all[2].detail.retry?.at ?? 0) - Date.now() - 38_000) < 2000, 'the retry 38 s off');
@@ -171,8 +176,12 @@ test('scripted: a message that starts a turn and bash mode\'s context go to the 
     const before = fs.readFileSync(file, 'utf8').split('\n').length;
     const proc = (sessions as unknown as { live: Map<string, { proc: { pushQuiet(t: string, u: string): void } }> }).live.get(S1)!.proc;
     proc.pushQuiet('<bash-input>ls</bash-input>', '0d0d0d0d-0000-4000-8000-00000000000d');
+    proc.pushQuiet('<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>', '0d0d0d0d-0000-4000-8000-00000000000e');
     await sleep(10);
-    assert.equal(fs.readFileSync(file, 'utf8').split('\n').length, before + 1);
+    assert.equal(fs.readFileSync(file, 'utf8').split('\n').length, before + 1, 'the two go in one record, as the CLI writes them');
+    const joined = JSON.parse(fs.readFileSync(file, 'utf8').trim().split('\n').pop()!);
+    assert.deepEqual([joined.uuid, joined.queueTranscriptOnly, joined.mergedSendUuids, joined.message.content],
+      ['0d0d0d0d-0000-4000-8000-00000000000d', true, ['0d0d0d0d-0000-4000-8000-00000000000e'], '<bash-input>ls</bash-input>\n<bash-stdout>a</bash-stdout><bash-stderr></bash-stderr>']);
     assert.equal(meta(S1).status, 'idle');
   } finally { stop(); }
 });
@@ -210,5 +219,111 @@ test('scripted: every pid file is a live CLI that isn\'t Synopia\'s; a take-over
     assert.equal(await t.end(held!, 'note', S1), true, 'the pretend CLI exits on the signal');
     assert.equal(t.holder(S1), null);
     t.stop();
+  } finally { stop(); }
+});
+
+test('scripted: a fork with another cwd gets a new id and a file under the new folder with the whole history (docs/Agent SDK.md)', async () => {
+  const t = await setup();
+  const next = path.join(t.root, 'next');
+  const src = path.join(t.claudeDir, 'projects', '-tmp-fixture', `${S2}.jsonl`);
+  const before = fs.readFileSync(src, 'utf8');
+  let push: ((m: unknown) => void) | null = null;
+  const prompt = { async *[Symbol.asyncIterator]() { yield* await new Promise<unknown[]>((r) => { push = (m) => r([m]); }); } };
+  const q = t.scripted.sdk.query({ prompt: prompt as never, options: { cwd: next, resume: S2, forkSession: true, canUseTool: (async () => ({ behavior: 'deny', message: 'no' })) as never } });
+  push!({ type: 'user', message: { role: 'user', content: 'Moved here.' }, parent_tool_use_id: null, uuid: '0e9b7f1c-0000-4000-8000-0000000000f1', shouldQuery: false });
+  await sleep(20);
+  const list = await t.scripted.sdk.listSessions();
+  const fork = list.find((s) => s.cwd === next);
+  assert.ok(fork && fork.sessionId !== S2, 'a new id, listed under the new folder');
+  const file = path.join(t.claudeDir, 'projects', next.replace(/[^A-Za-z0-9]/g, '-'), `${fork!.sessionId}.jsonl`);
+  const recs = fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(recs.length, before.trim().split('\n').length + 1, 'the whole history, then the context line');
+  assert.ok(recs.every((r) => r.sessionId === fork!.sessionId));
+  assert.equal(recs.at(-1).message.content, 'Moved here.');
+  assert.equal(fs.readFileSync(src, 'utf8'), before, 'the old file is left as it was');
+  q.close?.();
+  t.stop();
+});
+
+test('scripted: a call of Synopia\'s own tool asks, runs the tool from the session\'s server and writes both records (live run TL-1)', async () => {
+  const START = 'mcp__synopia__start_session';
+  const jsonLine = (l: string) => { try { return [JSON.parse(l)]; } catch { return []; } }; // the fixture keeps a broken line
+  const t = await setup('claude', (s) => {
+    s.sessions[S1] = { ...s.sessions[S1], steps: [running(), { call: { tool: START, input: { prompt: 'Read HANDOFF.md and go on.', title: 'Next steps' }, toolUseId: 'toolu_start1' } }] };
+  }, true);
+  try {
+    const req = t.publisher.pending().map((p) => p.request).find((r) => r.toolUseId === 'toolu_start1');
+    assert.ok(req, 'the call waits on the card');
+    assert.match((req!.own as { text: string }).text, /^Start a new session in \S+ with: Read HANDOFF\.md and go on\.$/);
+    assert.equal(t.sessions.get(S1)!.answer(req!.id, { choice: 'once' }).ok, true);
+    let file = '';
+    for (let i = 0; i < 100 && !file; i++) {
+      await sleep(20);
+      const f = t.scripted.fileOf(S1, '');
+      const recs = fs.readFileSync(f, 'utf8').split('\n').flatMap(jsonLine);
+      if (recs.some((r) => r.toolUseResult && r.message?.content?.[0]?.tool_use_id === 'toolu_start1')) file = f;
+    }
+    assert.ok(file, 'the tool_result record was written');
+    const recs = fs.readFileSync(file, 'utf8').split('\n').flatMap(jsonLine);
+    const use = recs.find((r) => r.type === 'assistant' && r.message.content[0]?.name === START);
+    assert.deepEqual(use.message.content[0].input, { prompt: 'Read HANDOFF.md and go on.', title: 'Next steps' });
+    const res = recs.find((r) => r.toolUseResult && r.message?.content?.[0]?.tool_use_id === 'toolu_start1');
+    const block = res.message.content[0];
+    assert.equal(block.tool_use_id, 'toolu_start1');
+    assert.equal(block.is_error, undefined, JSON.stringify(block.content));
+    const newId = /Started session (\S+) “Next steps”/.exec(block.content[0].text)?.[1];
+    assert.ok(newId && t.sessions.get(newId), 'the new session is open under its real id');
+    const titled = fs.readdirSync(path.join(t.claudeDir, 'projects'), { recursive: true }).map(String).find((f) => f.endsWith(`${newId}.jsonl`));
+    const newRecs = fs.readFileSync(path.join(t.claudeDir, 'projects', titled!), 'utf8').split('\n').flatMap(jsonLine);
+    assert.equal(newRecs.find((r) => r.type === 'custom-title'), undefined, 'the title is no custom-title record (R3.15)');
+    assert.equal(t.store.state.written[newId!]?.title, 'Next steps', 'it is the first written title');
+  } finally {
+    t.stop();
+  }
+});
+
+test('scripted: MCP status, reconnect, toggle and the pretend login and logout, under mcp.ts (live run MC-1)', async () => {
+  const { Mcp } = await import('../src/mcp.ts');
+  const { mcpProbe } = await import('../src/sdk.ts');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-scripted-mcp-'));
+  const file = path.join(root, SCRIPT_FILE);
+  fs.writeFileSync(file, JSON.stringify({ sessions: {}, mcp: { loginMs: 20, servers: [
+    { name: 'figma', status: 'needs-auth' }, { name: 'db', status: 'failed', kind: 'stdio', scope: 'local' }, { name: 'wiki', status: 'disabled' },
+  ] } }));
+  const scripted = openScripted({ file, claudeDir: path.join(root, 'claude'), stateDir: path.join(root, 'state') });
+  const probe = mcpProbe(scripted.sdk.query, '/tmp');
+  const list = await probe.control!.mcpServerStatus();
+  assert.deepEqual(list.map((s) => [s.name, s.status, s.config && 'type' in s.config ? s.config.type : 'stdio']), [['figma', 'needs-auth', 'http'], ['db', 'failed', 'stdio'], ['wiki', 'disabled', 'http']]);
+  await assert.rejects(probe.control!.reconnectMcpServer('wiki'), /disabled/);
+  await assert.rejects(probe.control!.reconnectMcpServer('nope'), /Server not found/);
+  probe.close();
+  const frames: Msg[] = [];
+  const mcp = new Mcp({ runner: scripted.mcpRunner, probe: (cwd) => mcpProbe(scripted.sdk.query, cwd), send: (m) => frames.push(m as Msg), settleMs: 5 });
+  const t = { id: 's', cwd: '/tmp', terminal: false, control: () => null };
+  const row = (name: string) => (frames.at(-1)!.servers as { name: string; status: string }[]).find((r) => r.name === name);
+  await mcp.act(t, 'figma', 'login');
+  assert.equal(row('figma')?.status, 'connected');
+  await mcp.act(t, 'figma', 'logout');
+  assert.equal(row('figma')?.status, 'needs-auth');
+  await mcp.act(t, 'db', 'reconnect');
+  assert.equal(row('db')?.status, 'connected');
+  await mcp.act(t, 'wiki', 'enable');
+  assert.equal(row('wiki')?.status, 'needs-auth');
+  mcp.stop();
+});
+
+test('scripted: a retry step writes the api_error record and yields api_retry, as the CLI reports one (docs/Agent SDK.md, "Retried requests")', async () => {
+  const C3 = 'c3c3c3c3-0000-4000-8000-00000000000c';
+  const { claudeDir, transcripts, publisher, meta, stop } = await setup('claude-states', (s) => {
+    s.sessions[C3].steps = [running(1000), { retry: { attempt: 4, max: 10, delayMs: 60_000, status: 403, error: 'unknown', text: 'The security token included in the request is expired' } }];
+  });
+  try {
+    transcripts.poll();
+    await sleep(20);
+    const st = meta(C3);
+    assert.deepEqual([st.status, st.word, st.detail.error], ['signedout', 'Needs you, sign-in expired', 'The security token included in the request is expired']);
+    const file = fs.readdirSync(path.join(claudeDir, 'projects'), { recursive: true }).map(String).find((f) => f.endsWith(`${C3}.jsonl`))!;
+    const recs = fs.readFileSync(path.join(claudeDir, 'projects', file), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(recs.filter((r) => r.subtype === 'api_error').map((r) => [r.retryAttempt, r.error.status]), [[4, 403]]);
   } finally { stop(); }
 });

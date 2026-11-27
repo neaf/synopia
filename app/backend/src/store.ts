@@ -1,4 +1,4 @@
-// state.json: the open sessions, the layout, reviewed marks, models, session
+// state.json: the open sessions, the layout, open items, models, session
 // rules, written text, settings and the page's ui state. Loaded once, kept in memory, and written
 // atomically (temp file, then rename) at most once per second.
 import { chmodSync, readFileSync, writeFileSync, renameSync, mkdirSync, unlinkSync } from 'node:fs';
@@ -9,14 +9,15 @@ import { normalizeUi } from './ui-state.ts';
 import type { UiState } from './ui-state.ts';
 import { cleanLayout } from './layout.ts';
 import type { Layout } from './layout.ts';
+import { cleanItems } from './open-items.ts';
+import type { ItemsState } from './open-items.ts';
 
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
-// `newSessionCwd`: the folder of new sessions when set (else newSessionFolder's default).
 // `model`: the model of new sessions when set (else the CLI's default).
-export type Settings = { newSessionCwd?: string; writerModel: string; model?: string };
+// A `newSessionCwd` an older state.json has is dropped: New session asks for the folder (R3.3).
+// `keeperModel`: the open-items keeper's model when set (else keeper.ts DEFAULT_MODEL, sonnet).
+export type Settings = { writerModel: string; keeperModel?: string; model?: string };
 
-// The subagents marked reviewed (R10.2), newest last: the oldest go past this many.
-export const REVIEWED_MAX = 1000;
 // The answer labels and answered plans kept, newest last: the oldest go past these.
 // They label tool items of open or reopened sessions; a plan can be long.
 export const ANSWERS_MAX = 2000;
@@ -35,7 +36,6 @@ export type State = {
   version: 1;
   open: OpenEntry[];
   layout: Layout;
-  reviewed: string[];
   models: Record<string, { model: string; effort?: string | null }>;
   rules: Record<string, string[]>;
   answers: Record<string, string>;
@@ -49,6 +49,12 @@ export type State = {
   // `history`: the titles the writer gave, oldest first (at most 50), for the transcript's title items.
   written: Record<string, { title?: string; now?: string; at: number; history?: { title: string; at: number }[] }>;
   settings: Settings;
+  // The credential refresh command of each folder (creds.ts, 2026-11-26), keyed by its absolute path (the
+  // session's git root, else its folder). creds.ts is its one owner.
+  refresh: Record<string, string>;
+  // The open-items lists (open-items.ts, FR-ITEM-02), its one owner: per list its items with Synopia's state, each
+  // item's lines as last read and the highest number given; `carried`, agent ids marked reviewed with no item yet.
+  items: ItemsState;
   // The page's UI state, restored after a reload, a crash or a quit (ui-state.ts).
   ui: UiState;
 };
@@ -58,7 +64,6 @@ export function defaultState(): State {
     version: 1,
     open: [],
     layout: { groups: [], others: [] },
-    reviewed: [],
     models: {},
     rules: {},
     answers: {},
@@ -68,17 +73,10 @@ export function defaultState(): State {
     ended: {},
     endedFailed: {},
     settings: { writerModel: 'haiku' },
+    refresh: {},
+    items: { lists: {}, carried: [] },
     ui: { sessions: {} },
   };
-}
-
-// The folder a new session opens in (R3.3): the stored setting, else the folder of the most
-// recently opened session, else the home folder.
-export function newSessionFolder(state: State): string {
-  if (state.settings.newSessionCwd) return state.settings.newSessionCwd;
-  let last: OpenEntry | null = null;
-  for (const e of state.open) if (!last || e.openedAt > last.openedAt) last = e;
-  return last ? last.cwd : '~';
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -112,7 +110,6 @@ export function normalize(raw: unknown): State {
     }));
   }
   s.layout = cleanLayout(raw.layout);
-  if (isStrArr(raw.reviewed)) s.reviewed = raw.reviewed.slice(-REVIEWED_MAX);
   // Each entry checked: a wrong-shaped one is dropped, not passed on.
   s.models = entries(raw.models, (v) => isObj(v) && typeof v.model === 'string'
     ? { model: v.model, ...(typeof v.effort === 'string' || v.effort === null ? { effort: v.effort } : {}) } : undefined);
@@ -121,6 +118,7 @@ export function normalize(raw: unknown): State {
   s.plans = newest(entries(raw.plans, (v) => (typeof v === 'string' ? v : undefined)), PLANS_MAX);
   s.status = entries(raw.status, (v) => (isObj(v) && typeof v.status === 'string' && isNum(v.at) ? { status: v.status, at: v.at } : undefined));
   s.ended = entries(raw.ended, (v) => (isNum(v) ? v : undefined));
+  s.refresh = entries(raw.refresh, (v) => (typeof v === 'string' && v.trim() ? v : undefined));
   s.endedFailed = entries(raw.endedFailed, (v) => (typeof v === 'boolean' ? v : undefined));
   s.written = entries(raw.written, (v) => {
     if (!isObj(v) || !isNum(v.at)) return undefined;
@@ -132,11 +130,13 @@ export function normalize(raw: unknown): State {
     }
     return w;
   });
+  // the old `reviewed` marks (phase 1) are carried into `items` once (FR-ITEM-03); the field is not written again
+  s.items = cleanItems(raw.items, raw.reviewed);
   s.ui = normalizeUi(raw.ui);
   if (isObj(raw.settings)) {
     const st = raw.settings;
-    if (typeof st.newSessionCwd === 'string' && st.newSessionCwd) s.settings.newSessionCwd = st.newSessionCwd;
     if (typeof st.writerModel === 'string') s.settings.writerModel = st.writerModel;
+    if (typeof st.keeperModel === 'string' && st.keeperModel) s.settings.keeperModel = st.keeperModel; // the keeper's (keeper.ts, default sonnet)
     if (typeof st.model === 'string' && st.model) s.settings.model = st.model;
   }
   return s;
@@ -220,28 +220,4 @@ export function openStore(stateDir: string, opts: { log?: Log; minIntervalMs?: n
     },
   };
   return store;
-}
-
-// "Mark reviewed" (R10.2): the marks in state.json `reviewed`, with a set to look them up.
-export class ReviewedMarks {
-  private store: Store;
-  private set: Set<string>;
-
-  constructor(store: Store) {
-    this.store = store;
-    this.set = new Set(store.state.reviewed);
-  }
-
-  has(agentId: string): boolean {
-    return this.set.has(agentId);
-  }
-
-  // Stores the mark; false when it was there already. The oldest go past REVIEWED_MAX.
-  mark(agentId: string): boolean {
-    if (this.set.has(agentId)) return false;
-    this.store.state.reviewed = [...this.store.state.reviewed, agentId].slice(-REVIEWED_MAX);
-    this.set = new Set(this.store.state.reviewed);
-    this.store.changed();
-    return true;
-  }
 }

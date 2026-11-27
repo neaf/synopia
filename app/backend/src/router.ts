@@ -11,35 +11,47 @@ import type { Session, SendResult } from './session.ts';
 import type { Publisher } from './publisher.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Menus } from './menu.ts';
-import type { Store, ReviewedMarks } from './store.ts';
+import type { Store } from './store.ts';
+import type { OpenItems } from './open-items.ts';
 import type { Place, Result as LayoutResult } from './layout.ts';
 import type { CardAnswer } from './cards.ts';
 import type { Image } from './sdk.ts';
 import type { Bat } from './preview.ts';
 import { previewFile, themeOf } from './preview.ts';
 import { openTarget } from './open.ts';
+import type { FileRefs } from './file-refs.ts';
 import { patchUi } from './ui-state.ts';
 import { displayPath } from './paths.ts';
+import type { Mcp, Action as McpAction, McpTarget } from './mcp.ts';
+import type { Creds } from './creds.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
+import { find } from './find.ts';
 
 export const STOPPING = 'Synopia is restarting, so that wasn\'t done. Do it again in a moment.';
 export const FAILED = 'Something went wrong in Synopia, so that wasn\'t done. backend.log has the details.';
 export const UNREADABLE = 'Synopia couldn\'t read that message from the page.';
 const GONE: SendResult = { ok: false, error: "That session isn't open any more." };
-const NO_AGENT = "That subagent isn't in an open session any more.";
+const NO_ITEM = "That item isn't in an open session's list any more.";
+const NOT_REVIEW = 'Only a review item can be marked reviewed.';
+const NOT_ITEM = 'A review item is closed with Mark reviewed, not as "Not an item".';
+const NO_UNDO = 'Only a line Synopia closed this turn can be undone.';
+const NO_CREDS: SendResult = { ok: false, error: 'Credentials can\'t be refreshed here.' };
 
 export type RouterOptions = {
   sessions: Sessions;
   transcripts: Transcripts;
   publisher: Publisher;
   menus: Menus;
+  mcp?: Mcp; // /mcp (R5.15)
+  creds?: Creds; // the credential refresh of a session's folder (2026-11-26)
   store: Store;
-  marks: ReviewedMarks;
+  openItems: Pick<OpenItems, 'holds' | 'holdsAny' | 'markReviewed' | 'notItem' | 'undo'>; // the open-items lists (open-items.ts)
   bat: Promise<Bat>;
   home: string;
   log?: Log;
   dryRun?: boolean; // `open` logs and opens nothing (checks)
+  fileRefs?: FileRefs; // paths named in replies (R5.9): `resolvePaths`
 };
 
 type Msg = { t: string; [k: string]: unknown };
@@ -53,6 +65,9 @@ function placeOf(m: Msg, resolve: (id: string) => string): Place | null {
   if ([before, after, group].filter((x) => x !== null).length !== 1) return null;
   return before !== null ? { before: resolve(before) } : after !== null ? { after: resolve(after) } : { group: group as string };
 }
+
+// What mcp.ts needs of a session: its folder, whether a terminal holds it, its process's control calls.
+const mcpTarget = (s: Session): McpTarget => ({ id: s.id, cwd: s.cwd, terminal: s.terminalHolds, control: () => s.mcpControl() });
 
 export class Router {
   private o: RouterOptions;
@@ -137,35 +152,62 @@ export class Router {
   }
 
   private table(): Record<string, Handler> {
-    const { sessions, transcripts, publisher, menus, store, marks, log } = { ...this.o, log: this.log };
+    const { sessions, transcripts, publisher, menus, store, log } = { ...this.o, log: this.log };
     const toastTo = (client: Client) => (text: string) => publisher.toast(text, client);
     const agent = (m: Msg) => str(m.agent);
     return {
       // ---------- requests ----------
       view: (client, m) => {
         const sid = sessions.resolve(m.sid as string);
-        publisher.view(client, sid, agent(m), str(m.from));
+        void publisher.view(client, sid, agent(m), str(m.from), str(m.bg));
+        if (!agent(m) && !str(m.bg)) sessions.get(sid)?.checkFolder(); // the session you chose: its folder gone or not (R3.11)
         const folder = publisher.meta(sid)?.cwd, s = sessions.get(sid);
         if (folder && s) void menus.viewed(client, folder, s.cwd, s.menuSource());
       },
       earlier: (client, m) => { publisher.earlier(client, sessions.resolve(m.sid as string), agent(m), m.before as string); },
+      earlierOutput: (client, m) => publisher.earlierOutput(client, sessions.resolve(m.sid as string), m.bg as string, m.before as number),
+      // ⌘F (R5.12e): the view's matches, in order, with their offsets (find.ts); `seq` comes back so the page drops stale replies
+      find: async (client, m) => {
+        const sid = sessions.resolve(m.sid as string), view = str(m.view), q = m.q as string;
+        const found = find(await publisher.findSource(sid, view), q);
+        publisher.reply(client, { t: 'found', sid, view, q, seq: typeof m.seq === 'number' ? m.seq : null, ...found });
+      },
       toolOutput: async (client, m) => { await publisher.toolOutput(client, sessions.resolve(m.sid as string), agent(m), m.toolUseId as string); },
       listRecent: (client, m) => {
         const filter = str(m.filter) ?? '';
-        return sessions.listRecent(filter).then(
-          (list) => publisher.reply(client, { t: 'recent', filter, sessions: list }),
+        return sessions.searchRecent(filter).then(
+          (r) => publisher.reply(client, { t: 'recent', filter, sessions: r.rows, total: r.total, folders: r.folders, matched: r.matched }),
           (e) => {
             log('sessions.listFailed', { error: String((e as Error)?.name ?? 'error') });
             publisher.reply(client, { t: 'recent', filter, sessions: [], error: true });
           },
         );
       },
+      // the folder list (R3.3, R3.13): known folders (no disk read), one folder's children on Tab, gone checks
+      listFolders: (client) => sessions.listFolders().then(
+        (rows) => publisher.reply(client, { t: 'folders', rows }),
+        (e) => {
+          log('sessions.foldersFailed', { error: String((e as Error)?.name ?? 'error') });
+          publisher.reply(client, { t: 'folders', rows: [], error: true });
+        },
+      ),
+      completeFolder: (client, m) => sessions.folders.complete(m.path as string).then((r) => publisher.reply(client, { t: 'completion', ...r })),
+      checkFolders: (client, m) => sessions.folders.check((m.paths as unknown[]).filter((x): x is string => typeof x === 'string'), m.chosen === true)
+        .then((states) => publisher.reply(client, { t: 'folderState', states })),
       // a text file's read-only preview; anything else opens as `open` does, and the page hears it did
       preview: (client, m) => this.o.bat.then((bat) => previewFile(m.path, {
         bat, theme: themeOf(m.theme), log, display: (p) => displayPath(p, this.o.home), reply: (r) => publisher.reply(client, r), toast: toastTo(client),
         open: (p) => openTarget({ path: p }, { dryRun: this.o.dryRun, log, onError: toastTo(client) }),
       })),
+      // paths named in Claude's replies (R5.9): there or not, file or folder, against the session's folder and home
+      resolvePaths: (client, m) => {
+        const sid = sessions.resolve(m.sid as string), cwd = sessions.get(sid)?.cwd ?? publisher.meta(sid)?.cwd ?? '';
+        if (!this.o.fileRefs) return;
+        return this.o.fileRefs.resolve(sid, cwd, m.paths as unknown[]).then((states) => publisher.reply(client, { t: 'pathState', sid: m.sid as string, states }));
+      },
       open: (client, m) => { openTarget({ path: m.path, url: m.url }, { dryRun: this.o.dryRun, log, onError: toastTo(client) }); },
+      // /mcp (R5.15): the session's MCP servers, as one `mcp` frame (mcp.ts)
+      mcp: (_client, m) => this.act(m.sid, (s) => { void this.o.mcp?.list(mcpTarget(s)); }),
       // ---------- state the page holds ----------
       // the page's UI state (R3.9): stored, returned in hello, never broadcast
       ui: (client, m) => { patchUi(store, m.patch, { resolve: (id) => sessions.resolve(id), known: (id) => transcripts.has(id), toast: toastTo(client) }); },
@@ -176,21 +218,40 @@ export class Router {
         return s.send(str(m.text) ?? '', images, str(m.uuid) ?? undefined, client);
       }),
       bang: (client, m) => this.act(m.sid, (s) => s.runBang(m.command as string, str(m.uuid) ?? undefined, client)), // bash mode (R5.13)
+      bangInput: (_client, m) => this.act(m.sid, (s) => s.bangInput(m.text as string)), // a line typed into the running `!` command
+      // Esc, Esc in a run's shell view (R9.4, 2026-11-26): your `!` command, or Claude's background shell or monitor
+      bangStop: (_client, m) => this.act(m.sid, (s) => s.stopBang(m.bg as string)),
+      stopTask: (_client, m) => this.act(m.sid, (s) => s.stopTask(m.bg as string)),
       answer: (_client, m) => this.act(m.sid, (s) => s.answer(m.requestId as string, (m.answer ?? {}) as CardAnswer)),
       interrupt: (client, m) => this.act(m.sid, (s) => s.interrupt(client)),
       background: (_client, m) => this.act(m.sid, (s) => s.background()), // b, b (R9): an error only when nothing moved
+      // f, f (R9.8): the queued messages go now; session.ts picks the route, the draft goes as a send's
+      sendNow: (client, m) => this.act(m.sid, (s) => {
+        const d = (m.draft && typeof m.draft === 'object' ? m.draft : null) as { text?: unknown; images?: unknown; uuid?: unknown } | null;
+        const images = (Array.isArray(d?.images) ? d!.images as Image[] : []).filter((im) => im && typeof im.mediaType === 'string' && typeof im.data === 'string');
+        return s.sendNow(d ? { text: str(d.text) ?? '', images, uuid: str(d.uuid) ?? undefined } : null, client);
+      }),
       setModel: (_client, m) => this.act(m.sid, (s) => s.setModel(m.model as string, str(m.effort) || null)),
       cancelTakeover: (_client, m) => this.act(m.sid, (s) => s.cancelTakeover()),
       close: (_client, m) => sessions.close(m.sid as string),
-      newSession: () => { sessions.newSession(); },
+      newSession: (_client, m) => sessions.newSessionIn(m.cwd as string, m.create === true),
+      continueSession: (_client, m) => sessions.continueSession(m.sid as string, m.cwd as string, m.create === true),
       openSession: (_client, m) => sessions.openSession(m.sid as string)
         .catch((): SendResult => ({ ok: false, error: "Synopia couldn't read the list of past sessions." })),
-      // a mark only for a subagent an open session has: an unknown id would be stored for nothing;
-      // the 1000 newest marks are kept (store.ts REVIEWED_MAX)
-      reviewed: (_client, m) => {
-        const id = m.agentId as string;
-        if (!transcripts.ids().some((sid) => transcripts.get(sid)?.getAgent(id))) return { ok: false, error: NO_AGENT };
-        if (marks.mark(id)) publisher.reviewed(id);
+      // an open item of an open session's list (FR-ITEM-03): Mark reviewed on a review item; open-items.ts tells
+      // the publisher what changed
+      item: (_client, m) => {
+        const sid = sessions.resolve(m.sid as string), id = m.item as string;
+        if (!transcripts.has(sid)) return { ok: false, error: NO_ITEM };
+        if (m.act === 'undo') { // FR-ITEM-10: a line Synopia closed this turn
+          if (!this.o.openItems.holdsAny(sid, id)) return { ok: false, error: NO_ITEM };
+          if (!this.o.openItems.undo(sid, id)) return { ok: false, error: NO_UNDO };
+          return;
+        }
+        if (!this.o.openItems.holds(sid, id)) return { ok: false, error: NO_ITEM };
+        if (m.act === 'notItem') { if (!this.o.openItems.notItem(sid, id)) return { ok: false, error: NOT_ITEM }; return; }
+        if (m.act !== 'reviewed') return { ok: false, error: UNREADABLE };
+        if (!this.o.openItems.markReviewed(sid, id)) return { ok: false, error: NOT_REVIEW };
       },
       // the sidebar's layout (layout.ts): every session id through its aliases, so an intent sent
       // before a new session got its real id still moves that session
@@ -199,7 +260,12 @@ export class Router {
         return to ? sessions.layout.move(sessions.resolve(m.sid as string), to) : { ok: false, error: UNREADABLE };
       },
       newGroup: (_client, m) => sessions.layout.newGroup(sessions.resolve(m.sid as string), sessions.resolve(m.onto as string), m.group as string, str(m.name) ?? undefined),
+      mcpAction: (_client, m) => this.act(m.sid, (s) => this.o.mcp?.act(mcpTarget(s), m.name as string, m.action as McpAction | 'cancel') ?? { ok: false, error: 'MCP servers can\'t be managed here.' }),
       renameGroup: (_client, m) => sessions.layout.renameGroup(m.group as string, m.name as string),
+      // the credential refresh of the session's folder (creds.ts)
+      credsSave: (_client, m) => this.act(m.sid, (s) => this.o.creds?.save(s.id, s.cwd, m.command as string) ?? NO_CREDS),
+      credsInput: (_client, m) => this.act(m.sid, (s) => this.o.creds?.input(s.id, m.text as string) ?? NO_CREDS),
+      credsCancel: (_client, m) => this.act(m.sid, (s) => this.o.creds?.cancel(s.id) ?? NO_CREDS),
     };
   }
 }

@@ -1,7 +1,7 @@
 // format.js: escaping, durations, clocks and the model label, in Node (the module is DOM-free).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { esc, took, tookLive, dur, left, live, age, until, hhmm, modelLabel } from "../js/format.js";
+import { esc, took, tookLive, dur, left, live, age, until, hhmm, markTime, markAt, modelLabel } from "../js/format.js";
 
 test("esc escapes the five characters, and null as empty", () => {
   assert.equal(esc(`<a href="x" title='y'>&</a>`), "&lt;a href=&quot;x&quot; title=&#39;y&#39;&gt;&amp;&lt;/a&gt;");
@@ -50,6 +50,20 @@ test("hhmm follows the app's 12- or 24-hour setting", () => {
     assert.match(hhmm(ts), /^14.24$/);
     globalThis.SYNOPIA_CLOCK24 = false;
     assert.match(hhmm(ts), /^0?2.24\s?PM$/i);
+  } finally { delete globalThis.SYNOPIA_CLOCK24; }
+});
+
+test("markTime: the time to the second today, the day and month before it on another day, the year in another year", () => {
+  const now = new Date(2026, 10, 26, 18, 0).getTime();
+  try {
+    globalThis.SYNOPIA_CLOCK24 = true;
+    assert.match(markTime(new Date(2026, 10, 26, 16, 34, 12).toISOString(), now), /^16.34.12$/);
+    assert.match(markTime(new Date(2026, 10, 25, 16, 34, 12).getTime(), now), /^25 \S+, 16.34.12$/);
+    assert.match(markTime(new Date(2025, 10, 25, 9, 5, 1).toISOString(), now), /^25 \S+ 2025, 09.05.01$/);
+    assert.equal(markTime(null, now), "");
+    assert.equal(markTime("not a time", now), "");
+    assert.equal(markAt(null), "");
+    assert.equal(markAt(Date.UTC(2026, 10, 26, 16, 34, 12)), ' data-at="2026-11-26T16:34:12.000Z"');
   } finally { delete globalThis.SYNOPIA_CLOCK24; }
 });
 

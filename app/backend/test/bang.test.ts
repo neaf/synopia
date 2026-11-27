@@ -5,8 +5,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, BANG_CAP } from '../src/bang.ts';
+import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, splitBash, BANG_CAP } from '../src/bang.ts';
 import type { BangRun, BangOptions } from '../src/bang.ts';
+import { InputWatch, looksLikePrompt, plainText } from '../src/pty.ts';
+import { cardAt, CARD_AFTER_MS } from '../src/runs.ts';
+import { sessionState } from '../src/status.ts';
 import { Transcript } from '../src/transcript.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
@@ -126,6 +129,115 @@ test('delivery: a command that cannot spawn toasts, and the daemon goes on', asy
   sessions.stop();
 });
 
+// A terminal for the run (R5.13, 2026-11-26): pty.ts, one pseudo-terminal from start to end.
+test('bang: runs in a terminal: stdin and stdout are TTYs, stderr apart, a typed line and an empty Enter reach it, CRLF normalised', async () => {
+  let bang!: Bang;
+  const typed: string[] = [];
+  const r = await new Promise<BangRun>((resolve) => {
+    bang = new Bang({ id: ID, cmd: `[ -t 0 ] && echo tty0; [ -t 1 ] && echo tty1; echo err >&2; printf 'Name: '; read a; echo "got [$a]"; printf 'Press Enter: '; read b; echo "then [$b]"`, cwd: tmp(), shell: '/bin/sh', tickMs: 5,
+      onUpdate: (run) => {
+        if (run.out.includes('Name: ') && !typed.length) { typed.push('demo'); assert.equal(bang.input('demo'), true); }
+        if (run.out.includes('Press Enter: ') && typed.length === 1) { typed.push(''); assert.equal(bang.input(''), true); }
+      },
+      onDone: (run) => resolve({ ...run }) });
+  });
+  assert.equal(r.exit, 0);
+  assert.equal(r.err, 'err\n', 'stderr on its own pipe');
+  assert.match(r.out, /^tty0\ntty1\n/);
+  assert.match(r.out, /got \[demo\]\n/);
+  assert.match(r.out, /then \[\]\n$/);
+  assert.doesNotMatch(r.out, /\r/, 'the CRLF of the pty is LF');
+  assert.equal(bang.input('late'), false, 'nothing to type into once it ended');
+});
+
+test('bang: Esc, Esc ends a command that waits for Enter (TERM to its group)', async () => {
+  let bang!: Bang;
+  const done = new Promise<BangRun>((resolve) => {
+    bang = new Bang({ id: ID, cmd: `printf 'Press Enter: '; read x; echo never`, cwd: tmp(), shell: '/bin/sh', tickMs: 5, onUpdate: () => {}, onDone: (r) => resolve({ ...r }) });
+  });
+  await new Promise((r) => setTimeout(r, 300));
+  bang.kill();
+  const r = await done;
+  assert.equal(r.interrupted, true);
+  assert.equal(r.exit, 143);
+  assert.doesNotMatch(r.out, /never/);
+});
+
+// The waiting rule (pty.ts InputWatch, live run IN-1): a prompt-shaped last line and a quiet while; silence alone
+// is only a hint. The shapes are those IN-1 ran; the counter-examples are its false positives of plain silence.
+test('waits for input: the prompt shapes IN-1 saw, and the quiet lines that are no prompt', () => {
+  for (const t of ['Password: ', 'Continue? [y/N] ', 'Project name? ', 'Enter the MFA code for demo: ', '> ', 'Signed in.\r\nPick one [1-2]: ',
+    'Open the page and sign in.\nPress Enter when done\n', 'Delete 3 files (y/n)', 'Press any key to go on…']) assert.equal(looksLikePrompt(t), true, t);
+  for (const t of ['', 'Building the bundle… ', '\rDownloading 30%', '[####      ] 41%', 'Waiting for the server on :4999\n', 'Randomized with seed 4012\n......',
+    '6 examples, 0 failures\n', 'Total: \n']) assert.equal(looksLikePrompt(t), false, t);
+});
+
+test('waits for input: after the quiet time with a prompt open, cleared by output; quiet alone is a hint, never waiting', async () => {
+  const seen: string[] = [];
+  const w = new InputWatch({ promptMs: 40, hintMs: 120, onChange: (s) => seen.push(s.waiting ? 'waits' : s.quiet ? 'quiet' : 'runs') });
+  w.take('out', 'Found 2 profiles.\r\n');
+  w.take('err', 'Pick one [1-2]: '); // Python writes input()'s prompt to stderr: the stream written last counts
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(w.state.waiting, true);
+  const at = w.state.waitedAt;
+  assert.equal(typeof at, 'number');
+  w.take('out', '1\r\nok\r\n');
+  assert.equal(w.state.waiting, false, 'output again: no longer waiting');
+  await new Promise((r) => setTimeout(r, 160));
+  assert.equal(w.state.waiting, false, 'a closed line is no prompt');
+  assert.equal(w.state.quiet, true, 'a long quiet only hints');
+  assert.equal(w.state.waitedAt, at, 'it keeps when it first waited');
+  w.stop();
+  assert.deepEqual(seen, ['waits', 'runs', 'quiet']);
+});
+
+test('bang: a run that prints a prompt and goes quiet waits for input, and an Enter typed in ends it', async () => {
+  const seen: boolean[] = [];
+  let bang!: Bang;
+  const r = await new Promise<BangRun>((resolve) => {
+    bang = new Bang({ id: ID, cmd: 'printf "Press Enter when done… "; read x; echo "got $x"', cwd: tmp(), shell: '/bin/sh', tickMs: 5, promptMs: 60, hintMs: 5000,
+      onUpdate: (run) => { seen.push(run.waiting); if (run.waiting) bang.input(''); }, onDone: (run) => resolve({ ...run }) });
+  });
+  assert.equal(seen.includes(true), true);
+  assert.equal(r.waiting, false, 'not once it ended');
+  assert.match(r.out, /got/);
+  assert.equal(typeof r.waitedAt, 'number');
+  assert.equal(r.cardAt, r.waitedAt, 'waiting gives it its card at once');
+});
+
+// The card rule (runs.ts, R7.1): 3 s after the start, or as soon as it waits; none for a run over sooner.
+test('card: 3 s after the start, at once when it waits, none for a run that ended sooner', () => {
+  assert.equal(CARD_AFTER_MS, 3000);
+  assert.equal(cardAt(1000, null), 4000, 'running: due at 3 s');
+  assert.equal(cardAt(1000, 1200), null, '! open . ends in 0.2 s: no card, no Past line');
+  assert.equal(cardAt(1000, 3999), null);
+  assert.equal(cardAt(1000, 4000), 4000, 'lasted 3 s');
+  assert.equal(cardAt(1000, null, 1500), 1500, 'waits at 0.5 s: its card then');
+  assert.equal(cardAt(1000, 1800, 1500), 1500, 'waited, then ended at once: it had its card');
+  assert.equal(cardAt(1000, 9000, 6000), 4000, 'waited after 3 s: the 3 s card stands');
+  assert.equal(cardAt(null, null), null);
+});
+
+test('status: your waiting command needs you, over Claude working; a card of Claude\'s comes first', () => {
+  const facts = { pending: [], ask: null, interrupted: false, blocked: false, review: 0, driven: true };
+  const st = sessionState({ status: 'busy', at: 0 }, { ...facts, input: true });
+  assert.deepEqual([st.light, st.word, st.mark, st.needsYou], ['red', 'Needs you, a command waits for input', 'pause', 'input']);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, { ...facts, input: false }).light, 'amber');
+  assert.equal(sessionState({ status: 'waiting', at: 0 }, { ...facts, pending: ['permission'], input: true }).needsYou, 'permission');
+});
+
+test('pty plainText: CRLF as LF, escapes out, a rewritten line as it ended', () => {
+  assert.equal(plainText('a\r\nb\x1b[31mc\x1b[0m\r\nprog 10%\rprog 99%\r\n\x1b]0;title\x07d'), 'a\nbc\nprog 99%\nd');
+  assert.equal(plainText('half\r'), 'half', 'a CR at the end waits for what comes');
+});
+
+test('delivery: a line typed with no command running is refused', async () => {
+  const { sessions, SID } = setup();
+  const r = sessions.get(SID)!.bangInput('x');
+  assert.equal(r.ok, false);
+  sessions.stop();
+});
+
 test('bang format: the CLI tags, the exit and cut lines, and back', () => {
   assert.equal(bashInput('ls -la'), '<bash-input>ls -la</bash-input>');
   const text = bashOutput({ out: 'hi\n', err: 'err\n', cut: false, exit: 3 });
@@ -154,7 +266,78 @@ test('transcript: the CLI records of bash mode make one bang item, no prompt and
   assert.equal(t.turnRunning(Date.parse(ts) + 1000, 60_000), false, 'bash mode starts no turn');
 });
 
-// ---------- the delivery: two shouldQuery:false user messages in the CLI's format ----------
+// The CLI joins the shouldQuery:false messages it holds into one record (docs/Claude Code transcripts.md,
+// "Bash mode records"): the shape seen live, on invented text.
+const ts0 = '2026-11-24T10:00:00.000Z', ts1 = '2026-11-24T10:01:00.000Z', ts2 = '2026-11-24T10:02:00.000Z';
+const joined = (uuid: string, ts: string, content: string, merged: string[] = ['m-2']) =>
+  ({ type: 'user', uuid, timestamp: ts, queueTranscriptOnly: true, mergedSendUuids: merged, promptSource: 'sdk', permissionMode: 'default', message: { role: 'user', content } });
+const shape = (t: Transcript) => t.items.map((i) => [i.id, i.k, i.k === 'bang' ? i.cmd : i.text]);
+
+test('splitBash: one record holds a command and its output, several commands, or the prompt after them', () => {
+  assert.deepEqual(splitBash('<bash-input>open demo.html</bash-input>\n<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
+    { runs: [{ cmd: 'open demo.html', out: { out: '', err: '', cut: false, exit: null } }], rest: '' });
+  assert.deepEqual(splitBash('<bash-input>a</bash-input>\n<bash-stdout>1\n</bash-stdout><bash-stderr>Exit code 1</bash-stderr>\n<bash-input>b</bash-input>\n<bash-stdout>2</bash-stdout><bash-stderr></bash-stderr>\nWhat now?'),
+    { runs: [{ cmd: 'a', out: { out: '1\n', err: '', cut: false, exit: 1 } }, { cmd: 'b', out: { out: '2', err: '', cut: false, exit: null } }], rest: 'What now?' });
+  assert.deepEqual(splitBash('<bash-input>ls</bash-input>'), { runs: [{ cmd: 'ls', out: null }], rest: '' });
+  assert.deepEqual(splitBash('<bash-input>cat x</bash-input>\n<bash-stdout>a</bash-stdout>b</bash-stdout><bash-stderr></bash-stderr>'),
+    { runs: [{ cmd: 'cat x', out: { out: 'a</bash-stdout>b', err: '', cut: false, exit: null } }], rest: '' }, 'an output holding the tag text is read whole');
+  assert.equal(splitBash('Tidy the notes.'), null);
+});
+
+test('transcript: a command and its output in one record land as one bang item, in place', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  t.pushAll([
+    { type: 'user', uuid: 'p-1', timestamp: ts0, message: { role: 'user', content: 'Draft the notes.' } },
+    { type: 'assistant', uuid: 'a-1', timestamp: ts0, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: 'Drafted.' }] } },
+    joined('b-1', ts1, '<bash-input>open demo.html</bash-input>\n<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
+    { type: 'user', uuid: 'p-2', timestamp: ts2, message: { role: 'user', content: 'Now the summary.' } },
+  ]);
+  assert.deepEqual(shape(t), [['p-1', 'you', 'Draft the notes.'], ['a-1:0', 'claude', 'Drafted.'], ['b-1', 'bang', 'open demo.html'], ['p-2', 'you', 'Now the summary.']]);
+  assert.deepEqual(t.get('b-1')?.sh, { out: '', err: '', cut: false, exit: null });
+});
+
+test('transcript: two commands in a row, one with stdout, and the next prompt in the same record', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  t.pushAll([joined('r-1', ts1, '<bash-input>echo one</bash-input>\n<bash-stdout>one\n</bash-stdout><bash-stderr></bash-stderr>\n<bash-input>false</bash-input>\n<bash-stdout></bash-stdout><bash-stderr>Exit code 1</bash-stderr>\nWhat did they print?', ['m-2', 'm-3', 'm-4'])]);
+  assert.deepEqual(shape(t), [['r-1:bang0', 'bang', 'echo one'], ['r-1:bang1', 'bang', 'false'], ['r-1', 'you', 'What did they print?']]);
+  assert.equal(t.get('r-1:bang0')?.sh?.out, 'one\n');
+  assert.equal(t.get('r-1:bang1')?.sh?.exit, 1);
+});
+
+test('transcript: a command a running turn takes in comes as two queued_command attachments: one bang item, no queued prompt', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  const queued = (uuid: string, prompt: string) => ({ type: 'attachment', uuid, timestamp: ts1, attachment: { type: 'queued_command', prompt, source_uuid: uuid, delivery_id: 'd-' + uuid, commandMode: 'prompt', timestamp: ts1 } });
+  t.pushAll([
+    { type: 'user', uuid: 'p-1', timestamp: ts0, message: { role: 'user', content: 'Draft the notes.' } },
+    { type: 'assistant', uuid: 'a-1', timestamp: ts0, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: { file_path: '/tmp/x' } }] } },
+    { type: 'user', uuid: 'r-1', timestamp: ts1, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu-1', content: 'x' }] } },
+    queued('q-1', '<bash-input>open demo.png</bash-input>'),
+    queued('q-2', '<bash-stdout></bash-stdout><bash-stderr></bash-stderr>'),
+    { type: 'assistant', uuid: 'a-2', timestamp: ts2, message: { id: 'msg-2', role: 'assistant', content: [{ type: 'text', text: 'Done.' }] } },
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'you' || i.k === 'bang').map((i) => [i.id, i.k, i.queued]), [['p-1', 'you', undefined], ['q-1', 'bang', true]]);
+  assert.deepEqual(t.get('q-1')?.sh, { out: '', err: '', cut: false, exit: null });
+  const ids = t.items.map((i) => i.id);
+  assert.ok(ids.indexOf('q-1') < ids.indexOf('a-2:0'), 'in place, before the reply after it');
+});
+
+// R5.13, 2026-11-27: Synopia's `!` command end is one querying message, so the CLI writes it as a prompt
+// (no queueTranscriptOnly) when idle, and as one queued_command holding both during a turn (perf/bang-turn.mjs).
+test('transcript: a command sent as a turn opens it (the turn\'s time is its), and one a turn takes in is queued', () => {
+  const t = new Transcript({ home: '/Users/fixture' });
+  t.pushAll([
+    { type: 'user', uuid: 'b-1', timestamp: ts0, promptSource: 'sdk', message: { role: 'user', content: '<bash-input>make fixture</bash-input>\n<bash-stdout>built\n</bash-stdout><bash-stderr></bash-stderr>' } },
+    { type: 'assistant', uuid: 'a-1', timestamp: ts1, message: { id: 'msg-1', role: 'assistant', content: [{ type: 'text', text: 'It built.' }] } },
+    { type: 'system', subtype: 'turn_duration', durationMs: 4000, timestamp: ts1 },
+    { type: 'user', uuid: 'p-2', timestamp: ts1, message: { role: 'user', content: 'Now test it.' } },
+    { type: 'attachment', uuid: 'q-2', timestamp: ts2, attachment: { type: 'queued_command', commandMode: 'prompt', source_uuid: 'b-2', delivery_id: 'd-2', timestamp: ts2,
+      prompt: '<bash-input>ls out</bash-input>\n<bash-stdout>app\n</bash-stdout><bash-stderr></bash-stderr>' } },
+  ]);
+  assert.deepEqual(t.items.filter((i) => i.k === 'you' || i.k === 'bang').map((i) => [i.id, i.k, i.queued ?? false, i.workedMs]), [['b-1', 'bang', false, 4000], ['p-2', 'you', false, undefined], ['q-2', 'bang', true, undefined]]);
+  assert.equal(t.get('q-2')?.sh?.out, 'app\n');
+});
+
+// ---------- the delivery: one message in the CLI's format that starts a turn (R5.13, 2026-11-27) ----------
 function setup() {
   const root = tmp();
   const claudeDir = path.join(root, 'claude');
@@ -173,47 +356,86 @@ function setup() {
   const sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root });
   sessions.start();
   const last = () => [...got].reverse().find((m) => m.t === 'session' && m.id === SID) as { state: { status: string }; bang: (BangRun & { landed?: string }) | null } | undefined;
-  return { sessions, SID, cwd, inputs, q, got, last };
+  return { sessions, SID, cwd, inputs, q, got, last, transcripts, claudeDir };
 }
 const until = async (fn: () => boolean, ms = 3000) => { const t = Date.now(); while (!fn()) { if (Date.now() - t > ms) throw new Error('timed out'); await new Promise((r) => setTimeout(r, 10)); } };
 
-test('delivery: the command and its output go as shouldQuery:false user messages, and no turn starts', async () => {
-  const { sessions, SID, inputs, q, last } = setup();
+test('delivery: the command and its output go as one client_composed message that starts a turn', async () => {
+  const { sessions, SID, inputs, q, last, got } = setup();
   const r = sessions.get(SID)!.runBang('echo hi; echo err >&2; exit 3', ID);
   assert.equal(r.ok, true);
   assert.equal(last()?.bang?.running, true, 'the page sees it running');
-  await until(() => inputs.length === 2);
-  assert.deepEqual(inputs.map((m) => [m.message.content, m.shouldQuery, m.parent_tool_use_id]), [
-    ['<bash-input>echo hi; echo err >&2; exit 3</bash-input>', false, null],
-    ['<bash-stdout>hi\n</bash-stdout><bash-stderr>err\nExit code 3</bash-stderr>', false, null],
+  await until(() => inputs.length === 1);
+  assert.deepEqual(inputs.map((m) => [m.message.content, m.shouldQuery, m.client_composed, m.parent_tool_use_id]), [
+    ['<bash-input>echo hi; echo err >&2; exit 3</bash-input>\n<bash-stdout>hi\n</bash-stdout><bash-stderr>err\nExit code 3</bash-stderr>', undefined, true, null],
   ]);
-  assert.equal(inputs[0].uuid, ID, 'the input record carries the run id, so it lands in place');
-  assert.deepEqual({ ...last()?.bang, at: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0 });
-  // A process started only for this: its init starts no turn.
+  assert.equal(inputs[0].uuid, ID, 'the record carries the run id, so it lands in place');
+  assert.deepEqual({ ...last()?.bang, at: 0, end: 0 }, { id: ID, cmd: 'echo hi; echo err >&2; exit 3', out: 'hi\n', err: 'err\n', cut: false, running: false, exit: 3, interrupted: false, at: 0, end: 0, waiting: false, quiet: false, waitedAt: null, cardAt: null });
+  // Claude's turn runs: the session works, with nothing queued, and no message band of its own.
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID });
-  await new Promise((r) => setTimeout(r, 20));
-  assert.notEqual(last()?.state.status, 'busy');
-  // The next message goes as usual and starts the turn.
-  assert.equal(sessions.get(SID)!.send('what did it print?').ok, true);
-  await until(() => inputs.length === 3);
-  assert.equal(inputs[2].shouldQuery, undefined);
-  assert.equal(last()?.state.status, 'busy');
+  await until(() => last()?.state.status === 'busy');
+  assert.equal((last()?.state as { detail?: { queued?: number } }).detail?.queued, undefined);
+  assert.ok(!got.some((m) => JSON.stringify(m).includes('"outbox":[{')), 'no queued message shows for it');
   sessions.stop();
 });
 
-test('delivery: one command at a time, Esc, Esc ends it, not in a session a terminal holds', async () => {
+test('delivery: one that ends during a turn is queued as your message is; an interrupt that cancels it still gives it to Claude, with no turn', async () => {
+  const { sessions, SID, inputs, q, last, got } = setup();
+  assert.equal(sessions.get(SID)!.send('Build the fixture.').ok, true);
+  await until(() => inputs.length === 1);
+  emit(q.calls[0], { type: 'system', subtype: 'init', session_id: SID, capabilities: ['interrupt_cancel_queued_v1'] });
+  await until(() => last()?.state.status === 'busy');
+  assert.equal(sessions.get(SID)!.runBang('echo ok', ID).ok, true);
+  await until(() => inputs.length === 2);
+  assert.equal(inputs[1].client_composed, true);
+  assert.equal(inputs[1].shouldQuery, undefined);
+  await until(() => (last()?.state as { detail?: { queued?: number } }).detail?.queued === 1);
+  // Esc, Esc: the CLI cancels it; it doesn't go back to the box, it goes in as context
+  q.calls[0].reply = { still_queued: [], cancelled: [ID] };
+  await sessions.get(SID)!.interrupt();
+  await until(() => inputs.length === 3);
+  assert.equal(inputs[2].shouldQuery, false);
+  assert.equal(inputs[2].message.content, inputs[1].message.content);
+  assert.notEqual(inputs[2].uuid, ID);
+  assert.ok(!got.some((m) => m.t === 'restore'), 'nothing goes back to the message box');
+  sessions.stop();
+});
+
+test('delivery: the shown run lands as the item of the prompt record the CLI writes for it, and leaves the end of the log', async () => {
+  const { sessions, SID, cwd, inputs, last, transcripts, claudeDir } = setup();
+  assert.equal(sessions.get(SID)!.runBang('echo hi', ID).ok, true);
+  await until(() => inputs.length === 1 && last()?.bang?.running === false);
+  const dir = path.join(claudeDir, 'projects', cwd.replace(/[^A-Za-z0-9]/g, '-'));
+  fs.mkdirSync(dir, { recursive: true });
+  const at = new Date().toISOString();
+  fs.writeFileSync(path.join(dir, `${SID}.jsonl`), [
+    { type: 'user', uuid: ID, timestamp: at, sessionId: SID, cwd, promptSource: 'sdk', message: { role: 'user', content: inputs[0].message.content } },
+    { type: 'assistant', uuid: 'a-reply', timestamp: at, sessionId: SID, cwd, message: { id: 'msg-r', role: 'assistant', content: [{ type: 'text', text: 'It printed hi.' }] } },
+  ].map((r) => JSON.stringify(r)).join('\n') + '\n');
+  transcripts.poll();
+  try { await until(() => last()?.bang?.landed === ID); } finally { sessions.stop(); }
+  const items = transcripts.get(SID)!.items;
+  assert.deepEqual(items.map((i) => [i.id, i.k]), [[ID, 'bang'], ['a-reply:0', 'claude']], 'one row for it, then Claude\'s reply');
+  assert.equal(items[0].sh?.out, 'hi\n');
+});
+
+test('delivery: one command at a time, Esc, Esc in its shell view ends it (not in the main view), not in a session a terminal holds', async () => {
   const { sessions, SID, inputs, last } = setup();
   assert.equal(sessions.get(SID)!.runBang('sleep 30').ok, true);
   const second = sessions.get(SID)!.runBang('echo again');
   assert.equal(second.ok, false);
   assert.match((second as { error: string }).error, /still running/);
   await sessions.get(SID)!.interrupt();
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal(last()?.bang?.running, true, 'Esc, Esc in the main view stops only the turn');
+  assert.equal(sessions.get(SID)!.stopBang('another id').ok, false);
+  assert.equal(sessions.get(SID)!.stopBang(String(last()?.bang?.id)).ok, true);
   await until(() => last()?.bang?.running === false);
   assert.equal(last()?.bang?.interrupted, true);
   assert.equal(last()?.bang?.exit, 143);
-  await until(() => inputs.length === 2);
-  assert.match(String(inputs[1].message.content), /<bash-stderr>Interrupted by the user, exit code 143<\/bash-stderr>$/);
-  assert.deepEqual(parseBashOutput(String(inputs[1].message.content)), { out: '', err: '', cut: false, exit: 143, interrupted: true });
+  await until(() => inputs.length === 1);
+  assert.match(String(inputs[0].message.content), /<bash-stderr>Interrupted by the user, exit code 143<\/bash-stderr>$/);
+  assert.deepEqual(splitBash(String(inputs[0].message.content))?.runs[0].out, { out: '', err: '', cut: false, exit: 143, interrupted: true });
   assert.equal(sessions.get(SID)!.runBang('  ').ok, false);
   sessions.stop();
 });

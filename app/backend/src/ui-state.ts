@@ -14,7 +14,10 @@ const BLOB_MAX = 64 * 1024; // a card's state, as JSON
 const TEXT_MAX = 1024 * 1024; // a draft's text
 const LIST_MAX = 2000;
 
-export type Anchor = { id: string; off: number } | { bottom: true };
+// where a view was: a block and the pixels into it, `bottom` when it was at its end (then the last block on
+// screen); `seen`, the furthest item you saw (its block's key, "run@<offset>" in a shell's output) and `seenAt`
+// when you last had it on screen (ms); `newAt`, the item the "New since" line sits above and the time it shows (R5.12d)
+export type Anchor = { id?: string; off?: number; bottom?: true; seen?: string; seenAt?: number; newAt?: { id: string; at: number } };
 export type DraftImage = { id: string; mediaType: string; size: number; n?: number }; // n: its [Image #n] tag in the text
 export type Draft = { text: string; cursor: [number, number]; images: DraftImage[] };
 export type UiSession = {
@@ -32,6 +35,8 @@ export type UiState = {
   mode?: 'normal' | 'insert';
   openBg?: string | null;
   openList?: { filter: string } | null;
+  waitingList?: { filter: string } | null; // the Waiting on you list (R9.10)
+  folderList?: { filter: string; sid: string | null } | null; // the folder list (R3.3), and the session it continues (R3.11)
   preview?: { path: string; scroll: number; find: string } | null;
   viewer?: { srcs: string[]; froms?: string[]; i: number } | null;
   theme?: 'light' | 'dark' | null; // the page's theme choice; null follows the system
@@ -65,9 +70,14 @@ const blob = (v: unknown): unknown => {
 };
 function anchorOf(v: unknown): Anchor | undefined {
   if (!isObj(v)) return undefined;
-  if (v.bottom === true) return { bottom: true };
-  if (str(v.id, 1024) && num(v.off)) return { id: v.id, off: Math.round(v.off) };
-  return undefined;
+  const out: Anchor = {};
+  if (v.bottom === true) out.bottom = true;
+  if (str(v.id, 1024) && num(v.off)) { out.id = v.id; out.off = Math.round(v.off); }
+  if (!out.bottom && out.id === undefined) return undefined;
+  if (str(v.seen, 1024)) out.seen = v.seen;
+  if (num(v.seenAt)) out.seenAt = Math.round(v.seenAt);
+  if (isObj(v.newAt) && str(v.newAt.id, 1024) && num(v.newAt.at)) out.newAt = { id: v.newAt.id, at: Math.round(v.newAt.at) };
+  return out;
 }
 
 // One session's fields, each checked; unknown fields are dropped. The draft's images are taken as
@@ -107,6 +117,11 @@ function cleanTop(v: Record<string, unknown>, out: UiState): void {
   if ('theme' in v) out.theme = v.theme === 'light' || v.theme === 'dark' ? v.theme : null;
   if ('openBg' in v) out.openBg = str(v.openBg, 256) ? v.openBg : null;
   if ('openList' in v) out.openList = isObj(v.openList) && str(v.openList.filter, 1024) ? { filter: v.openList.filter } : null;
+  if ('waitingList' in v) out.waitingList = isObj(v.waitingList) && str(v.waitingList.filter, 1024) ? { filter: v.waitingList.filter } : null;
+  if ('folderList' in v) {
+    const f = v.folderList;
+    out.folderList = isObj(f) && str(f.filter, 1024) ? { filter: f.filter, sid: str(f.sid, 256) ? f.sid : null } : null;
+  }
   if ('preview' in v) {
     const p = v.preview;
     out.preview = isObj(p) && str(p.path) ? { path: p.path, scroll: num(p.scroll) ? Math.max(0, Math.round(p.scroll)) : 0, find: str(p.find, 1024) ? p.find : '' } : null;

@@ -4,11 +4,12 @@ Read first:
 - `docs/requirements.md`: the source of truth for behaviour (R-numbers). `prototype/app.html` is the source of truth for the look: match it, don't redesign it.
 - `docs/functional-requirements.md`: the same behaviour as FR ids, the decisions (Q1-Q11) and the known gaps.
 - `docs/architecture.md`: modules, data flow, protocol, state ownership. Keep one owner per piece of state.
-- The topic doc of the external system you touch: `docs/Claude Code transcripts.md`, `docs/Claude Code terminals.md`, `docs/Agent SDK.md`, `docs/Daemon files.md`, `docs/macOS.md`, `docs/WKWebView and AppKit.md`.
+- The topic doc of the external system you touch: `docs/Claude Code transcripts.md`, `docs/Claude Code terminals.md`, `docs/Agent SDK.md`, `docs/Daemon files.md`, `docs/macOS.md`, `docs/WKWebView and AppKit.md`, `docs/Open items.md` (the open-items ledger).
 - `docs/Page checks.md` before you write or change a page check.
 
 Commands (Node 22.13+ on PATH; `(cd app/backend && npm ci)` once):
 - `app/check.sh --page`: must print four pass lines before any change is done. `app/check.sh` alone skips the page checks.
+- While you work, run `app/check.sh` and only the page suites your change touches (`app/web/dev/cdp/run.sh <suite>`). Run the full `--page` once, before the merge; after a rebase, again only when the incoming commits touch the files you changed.
 - `app/web/dev/cdp/run.sh <suite>`: one page check. `app/build.sh`: the app. `app/dev.sh [--script]`: the backend for a browser.
 
 Rules for every change:

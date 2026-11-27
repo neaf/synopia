@@ -9,6 +9,7 @@ import type { PublisherOptions } from '../src/publisher.ts';
 import type { Client } from '../src/server.ts';
 import { Sessions } from '../src/sessions.ts';
 import { openStore } from '../src/store.ts';
+import { OpenItems } from '../src/open-items.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
 
 const CLAUDE = path.join(import.meta.dirname, 'fixtures', 'claude');
@@ -213,23 +214,36 @@ test('state: a turned-down tool reads "Your turn", an Esc Esc stop "Stopped", a 
   transcripts.stop(); publisher.stop();
 });
 
-test('review: a finished "For review: …" subagent is sent with review until marked, and counts in the state (R10.1)', async () => {
-  const reviewed = new Set<string>();
+test('review: a finished "For review: …" subagent is sent with review while its review item is open, and counts in the state (R10.1, FR-ITEM-03)', async () => {
   const clients = new Set<Client>();
-  const { transcripts, publisher } = reading(CLAUDE, () => clients, { reviewed: (a) => reviewed.has(a) });
+  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-publisher-')), { minIntervalMs: 0 });
+  let publisher: Publisher | null = null;
+  const transcripts = new Transcripts({ claudeDir: CLAUDE, home: HOME, pollMs: 0, watch: false });
+  const openItems = new OpenItems({
+    store, home: HOME, lookMs: 0,
+    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
+    onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
+  });
+  publisher = new Publisher({ transcripts, clients: () => clients, home: HOME, recheckMs: 0, openItems });
   const c = client();
   clients.add(c);
   transcripts.open(AGENTS);
   await Promise.resolve();
+  type Hello = { agents: { id: string; review: boolean }[]; state: { review: number; waiting: number; due: number }; openItems: { items: { id: string; kind: string; text: string; agent?: string }[] } };
   const agent = (list: { id: string; review: boolean }[]) => list.find((a) => a.id === 'aaaa0004')?.review;
-  const hello = () => (publisher.sessions() as { agents: { id: string; review: boolean }[]; state: { review: number } }[])[0];
-  assert.deepEqual([agent(hello().agents), hello().state.review], [true, 1]);
+  const hello = () => (publisher!.sessions() as Hello[])[0];
+  assert.deepEqual([agent(hello().agents), hello().state.review, hello().state.waiting, hello().state.due], [true, 1, 0, 0]);
+  const item = hello().openItems.items.find((i) => i.agent === 'aaaa0004')!;
+  assert.deepEqual([item.kind, item.text], ['review', 'Review: Draft the demo release notes']);
+  const frame = c.take('openItems').at(-1) as { sid: string; items: unknown[] } | undefined;
+  assert.deepEqual([frame?.sid, frame?.items.length], [AGENTS, 1], 'every page gets the list');
   c.take();
-  reviewed.add('aaaa0004');
-  publisher.reviewed('aaaa0004');
-  assert.equal(agent(c.take('agents')[0].upsert as { id: string; review: boolean }[]), false);
+  assert.equal(openItems.markReviewed(AGENTS, item.id), true);
+  const got = c.take();
+  assert.equal(agent(got.find((m) => m.t === 'agents')!.upsert as { id: string; review: boolean }[]), false, 'the agent goes again with its flag');
+  assert.deepEqual((got.find((m) => m.t === 'openItems') as { items: unknown[] }).items, [], 'and the list without it');
   assert.deepEqual([agent(hello().agents), hello().state.review], [false, 0]);
-  transcripts.stop(); publisher.stop();
+  transcripts.stop(); publisher.stop(); store.close();
 });
 
 test('model: a new session with no choice shows settings.model, not the CLI default', () => {
@@ -451,7 +465,7 @@ test('rekey: a card, the held messages and the stream preview move to the new id
   assert.deepEqual([s.held, s.stream], [['wait'], 'Partly']);
 });
 
-test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', () => {
+test('meta: the CLI ai-title is the name, shown when it is not the title and a terminal holds it (L3)', () => {
   const id = 'aaaaaaaa-0000-4000-8000-0000000000ce';
   const dir = tempSession(id, you(1) + line({ type: 'ai-title', aiTitle: 'Count the lines', sessionId: id }));
   const clients = new Set<Client>();
@@ -460,7 +474,11 @@ test('meta: the CLI ai-title is the name, shown when it is not the title (L3)', 
   transcripts.open(id);
   assert.deepEqual([publisher.meta(id)?.title, publisher.meta(id)?.name], ['Count the lines', '']);
   written = { title: 'Counting fixture lines' };
+  assert.deepEqual([publisher.meta(id)?.title, publisher.meta(id)?.name], ['Counting fixture lines', ''], 'no tab: Synopia runs it or nothing does');
+  publisher.setStatus(id, 'idle', 5, { terminal: 4242 });
   assert.deepEqual([publisher.meta(id)?.title, publisher.meta(id)?.name], ['Counting fixture lines', 'Count the lines']);
+  publisher.setStatus(id, 'idle', 6);
+  assert.equal(publisher.meta(id)?.name, '', 'the terminal let go of it');
 });
 
 test('work: a question or plan another process asks is a work line until answered (R6.8)', () => {
@@ -596,7 +614,7 @@ test('toolOutput: the full result read again from its line, also after the file 
   publisher.view(c, id, null);
   const item = (c.take('items')[0].upsert as Msg[]).find((i) => i.id === 'toolu_o') as Msg;
   assert.equal(item.input, 'seq 30');
-  assert.deepEqual(item.out, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true });
+  assert.deepEqual({ ...item.out, at: '' }, { text: out.split('\n').slice(0, 20).join('\n'), lines: 30, cut: true, at: '' }, 'the first lines');
   assert.equal(await publisher.toolOutput(c, id, null, 'toolu_o'), true);
   assert.deepEqual(c.take(), [{ t: 'toolOutput', sid: id, agent: null, toolUseId: 'toolu_o', text: out }]);
   fs.appendFileSync(file, you(4) + you(5));
@@ -668,7 +686,6 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   fs.mkdirSync(path.join(claudeDir, 'projects', '-tmp-x'), { recursive: true });
   fs.mkdirSync(cwd, { recursive: true });
   const store = openStore(path.join(root, 'state'), { minIntervalMs: 0 });
-  store.state.settings.newSessionCwd = cwd;
   const a = client(), b = client();
   const clients = new Set<Client>([a, b]);
   let sessions: Sessions | null = null;
@@ -677,7 +694,7 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   const q = fakeQuery();
   sessions = new Sessions({ store, transcripts, publisher, sdk: q.sdk, home: root });
   const tick = () => new Promise((r) => setTimeout(r, 5));
-  const ph = sessions.newSession();
+  const ph = sessions.newSession(cwd);
   sessions.get(ph)!.send('count slowly', [], '0e9b7f1c-0000-4000-8000-0000000000a1', a);
   await tick();
   emit(q.calls[0], { type: 'system', subtype: 'init', session_id: REAL, uuid: 'u-init', capabilities: ['interrupt_cancel_queued_v1'] });
@@ -710,4 +727,66 @@ test('outbox: session.ts owns it; a queued message lands by its record once, an 
   sessions.stop();
   transcripts.stop(); publisher.stop();
   store.close();
+});
+
+test("a shell's and a monitor's view (R7.2): its output as one reset, then what it adds, earlier output, nothing of the main conversation", async () => {
+  const id = 'aaaaaaaa-0000-4000-8000-00000000b0b0';
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-shell-')), 'bsh1.output');
+  fs.writeFileSync(out, 'Serving demo\n');
+  const ts = (s: number) => `2026-11-20T10:00:${String(s).padStart(2, '0')}.000Z`;
+  const dir = tempSession(id, you(1)
+    + line({ type: 'assistant', uuid: 'a1', timestamp: ts(2), message: { id: 'm1', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: 'Bash', input: { command: 'npx serve demo', description: 'Serve the demo', run_in_background: true } }] } })
+    + line({ type: 'user', uuid: 'u2', timestamp: ts(3), toolUseResult: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'bsh1' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_sh', content: `Command running in background with ID: bsh1. Output is being written to: ${out} You will be notified when it completes.` }] } })
+    + line({ type: 'assistant', uuid: 'a2', timestamp: ts(4), message: { id: 'm2', role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_mon', name: 'Monitor', input: { command: 'tail -f build.log', description: 'Watch the build', timeout_ms: 600000 } }] } })
+    + line({ type: 'user', uuid: 'u3', timestamp: ts(5), toolUseResult: { taskId: 'bmon1', timeoutMs: 600000, persistent: false }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_mon', content: 'Monitor started (task bmon1, expires in 10m).' }] } }));
+  const file = path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`);
+  const { clients, transcripts, publisher } = setup(dir);
+  const c = client();
+  clients.add(c);
+  transcripts.open(id);
+  await Promise.resolve();
+  c.take();
+  await publisher.view(c, id, null, null, 'toolu_sh');
+  assert.deepEqual(c.take('output'), [{ t: 'output', sid: id, bg: 'toolu_sh', text: 'Serving demo\n', from: 0, to: 13, total: 13, reset: true }]);
+  // the file grows: the next look sends only what came; a new main item doesn't reach this view
+  fs.appendFileSync(out, 'GET / 200\n');
+  fs.appendFileSync(file, you(9));
+  await transcripts.poll();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(c.take('output').map((m) => [m.text, m.from, m.to, m.reset ?? false]), [['GET / 200\n', 13, 23, false]]);
+  assert.equal(c.take('items').length, 0, 'no main items in a shell view');
+  // a long output: the last window in whole lines, the part before it on asking, and from where the page's began after a reload
+  const rows = Array.from({ length: 15000 }, (_, i) => `row ${i}\n`).join('');
+  fs.appendFileSync(out, rows);
+  const whole = 'Serving demo\nGET / 200\n' + rows;
+  await publisher.view(c, id, null, null, 'toolu_sh');
+  const [tail] = c.take('output') as { text: string; from: number; to: number }[];
+  assert.ok(tail.from > 0 && tail.to === whole.length && whole.slice(tail.from) === tail.text && /^row \d+\n/.test(tail.text));
+  await publisher.earlierOutput(c, id, 'toolu_sh', tail.from);
+  const [before] = c.take('output') as { text: string; from: number; to: number; prepend: boolean }[];
+  assert.ok(before.prepend && before.to === tail.from && whole.slice(before.from, before.to) === before.text);
+  await publisher.view(c, id, null, String(before.from), 'toolu_sh');
+  assert.deepEqual(c.take('output').map((m) => [m.from, m.to]), [[before.from, whole.length]]);
+  // a gone file reads as gone
+  fs.rmSync(out);
+  await publisher.view(c, id, null, null, 'toolu_sh');
+  assert.equal(c.take('output')[0].lost, 'gone');
+  // a monitor: its events
+  const event = (s: number, text: string) => line({ type: 'user', uuid: `ev${s}`, timestamp: ts(s), message: { role: 'user', content: `<task-notification>\n<task-id>bmon1</task-id>\n<summary>Monitor event: "Watch the build"</summary>\n<event>${text}</event>\n</task-notification>` } });
+  fs.appendFileSync(file, event(10, 'step 1 of 2'));
+  await transcripts.poll();
+  await publisher.view(c, id, null, null, 'toolu_mon');
+  assert.deepEqual(c.take('output').map((m) => [m.text, m.from, m.to, m.total, m.reset]), [['step 1 of 2', 0, 1, 1, true]]);
+  fs.appendFileSync(file, event(11, 'step 2 of 2\nbuilt'));
+  await transcripts.poll();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.deepEqual(c.take('output').map((m) => [m.text, m.from, m.to]), [['step 2 of 2\nbuilt', 1, 2]]);
+  // back to the main conversation: items again, no output
+  publisher.view(c, id, null);
+  assert.equal(c.take('items').length, 1);
+  fs.appendFileSync(file, event(12, 'more'));
+  await transcripts.poll();
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(c.take('output').length, 0);
+  transcripts.stop(); publisher.stop();
 });

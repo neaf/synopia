@@ -4,22 +4,30 @@
    on `window` except the test API (test-api.js). */
 import * as state from "./state.js";
 import { store, isCurrent, isViewed } from "./state.js";
-import { connect, hooks } from "./connection.js";
+import { connect, hooks, act } from "./connection.js";
 import * as ui from "./ui-state.js";
 import * as format from "./format.js";
 import * as rail from "./rail.js";
 import * as sidebar from "./sidebar.js";
 import * as preview from "./preview.js";
+import { applyPathState } from "./path-links.js";
 import * as transcript from "./transcript.js";
+import { applyOutput } from "./bg-view.js";
 import { renderCard, qstate } from "./card.js";
-import { syncPrompt, syncTakeover, restoreTexts } from "./composer.js";
-import { want, applyRecent, recentAgain } from "./open-list.js";
+import { syncPrompt, syncTakeover, syncGone, restoreTexts } from "./composer.js";
+import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-list.js";
+import { applyFolders, applyCompletion, applyFolderState, foldersAgain } from "./folder-list.js";
 import { renderAll } from "./keys.js";
+import { applyMcp, mcpAgain } from "./mcp-panel.js";
+import { drawWaitingList } from "./waiting-list.js";
+import { applyCreds } from "./creds-line.js";
 import { setMode } from "./mode.js";
 import { toast } from "./toast.js";
 import { onThemeChange } from "./theme-switch.js";
 import { onGraceEnd } from "./tween.js";
 import { installTestApi } from "./test-api.js";
+import { applyFound } from "./find.js";
+import { installMarkTimes } from "./mark-time.js";
 
 /* render(part): side, header, log, card, rail, or conv (all of the view) */
 function render(...parts) {
@@ -37,7 +45,7 @@ function onMessage(m) {
   switch (m.t) {
     case "hello": {
       state.applyHello(m); ui.applyHello(m.ui); state.pickCurrent(); // the stored ui state first: no default view flashes
-      transcript.clearAsked(); recentAgain(); // requests sent before a drop get no reply: ask again
+      transcript.clearAsked(); recentAgain(); foldersAgain(); mcpAgain(); // requests sent before a drop get no reply: ask again
       showUpdate(m.update);
       /* a reconnect onto the view on screen: it keeps its log until its reset comes, so the log never blanks
          for a frame (hello has no items) and the message box stays as it was */
@@ -55,9 +63,13 @@ function onMessage(m) {
       if (!had && want.new && m.id.startsWith("new-")) { want.new = false; state.select(m.id); setMode("insert", false); renderAll(); break; }
       if (want.open === m.id) { want.open = null; state.select(m.id); renderAll(); break; } // opened from the Open list
       if (!state.current) state.pickCurrent();
-      syncPrompt(); syncTakeover(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
+      syncPrompt(); syncTakeover(); syncGone(); // the turn ended under the "Interrupt?" or "Send to background?" prompt
       if (!had || !state.mounted) { renderAll(); break; }
       render("side", ...(isCurrent(m.id) ? ["header", "log", "card", "rail"] : []));
+      break;
+    }
+    case "started": { // a session started another (R3.15): shown only when you are looking at the one that started it
+      if (state.current === m.from && store.sessions.has(m.sid)) { state.select(m.sid); renderAll(); }
       break;
     }
     case "removed": {
@@ -66,13 +78,23 @@ function onMessage(m) {
     }
     case "items": {
       if (!state.applyItems(m)) break;
-      if (!isViewed(m.sid, m.agent)) break;
+      // the shell view of Claude's foreground Bash (R7.2, 2026-11-26): its step's own item comes while the view is on
+      if (!isViewed(m.sid, m.agent)) { if (m.sid === state.current && !m.agent && state.view && m.upsert.some(i => i.id === state.view)) render("log", "header", "rail"); break; }
       ui.resetIn(m); // the log a view switch held back renders now, once
       if (m.prepend) { transcript.renderLogKeepingPlace(); ui.items(m); break; } // earlier items: the card and header don't change
-      render("log", "card", "header"); // the header drops its Now line while a new session is empty
+      render("log", "card", "header", "rail"); // the header drops its Now line while a new session is empty; a Bash step's card is in the panel (R7.1)
       syncPrompt(); // the marked steps ended or went to the background
       ui.items(m); // a restored scroll waits for these
       runHooks(m);
+      break;
+    }
+    case "output": { // a shown shell's or monitor's output (R7.2)
+      if (!applyOutput(m)) break;
+      ui.resetIn(m);
+      const log = document.getElementById("log"), h = log ? log.scrollHeight : 0, top = log ? log.scrollTop : 0;
+      render("log");
+      if (m.prepend && log) log.scrollTop = top + log.scrollHeight - h; // earlier output: what you read stays in place
+      ui.output(m);
       break;
     }
     case "agents": {
@@ -82,7 +104,13 @@ function onMessage(m) {
     }
     case "background": {
       if (!state.applyBackground(m)) break;
-      render("side", ...(isCurrent(m.sid) ? ["rail", "card"] : []));
+      const shown = isCurrent(m.sid) && m.upsert.some(b => b.toolUseId === state.view); // the shell or monitor on screen changed
+      render("side", ...(isCurrent(m.sid) ? ["rail", "card", ...(shown ? ["header", "log"] : [])] : []));
+      break;
+    }
+    case "openItems": {
+      if (state.applyOpenItems(m) && isCurrent(m.sid)) render("rail");
+      drawWaitingList(); // the Waiting on you list, while it is shown (R9.10)
       break;
     }
     case "pending": {
@@ -106,8 +134,15 @@ function onMessage(m) {
     }
     case "toast": transcript.clearAsked(); toast(m.text); break; // a failed toolOutput replies with a toast
     case "toolOutput": transcript.applyToolOutput(m); break;
+    case "found": applyFound(m); break; // ⌘F's matches (find.js)
     case "recent": applyRecent(m); break;
+    case "mcp": applyMcp(m); break;
+    case "creds": applyCreds(m); render(state.view?.startsWith("creds:") ? "conv" : "card", "rail", "header", "log"); break; // the dock's credential line (creds-line.js) a refresh's shell view goes with its run
+    case "folders": applyFolders(m); break;
+    case "completion": applyCompletion(m); break;
+    case "folderState": applyFolderState(m); applyOpenFolderState(m); break;
     case "preview": preview.showPreview(m); break;
+    case "pathState": applyPathState(m); break;
     case "restore": restoreTexts(m.sid, m.texts, m.images); break;
     case "update": showUpdate(m.pending); break;
     default: break;
@@ -142,13 +177,21 @@ function runHooks(m) {
 
 ui.useLog(transcript.renderLog, transcript.loadEarlier);
 sidebar.onPick(renderAll); // a row's click shows its session
+sidebar.onRendered(drawWaitingList); // the counts changed: the Waiting on you list follows them
+/* a start_session step's link (R3.15): the session it started, or, once closed, opened again from the Open list's route */
+transcript.onSession(sid => {
+  if (store.sessions.has(sid)) { state.select(sid); renderAll(); return; }
+  if (act({ t: "openSession", sid }, { done: ok => { if (!ok && want.open === sid) want.open = null; } })) want.open = sid;
+});
 onThemeChange(preview.previewRetheme); // bat's colours come from the backend
+installMarkTimes(); // the time a transcript row appeared, over its mark
 onGraceEnd(() => render("side", "rail")); // a finished line's grace is over: it leaves
 installTestApi({ inject: onMessage, render });
 
 /* live durations and ages tick once a second, in place */
 setInterval(() => {
-  const now = Date.now(); state.tick(now);
+  const now = Date.now(), was = state.nowish; state.tick(now);
+  const s = state.cur(); if (s && rail.cardsDue(s, was, now)) render("rail"); // a run's card came due (R7.1: 3 s after its start)
   document.querySelectorAll("[data-live]").forEach(el => { el.textContent = format.tookLive(now - new Date(el.dataset.live)); });
   document.querySelectorAll("[data-age]").forEach(el => { el.textContent = format.dur(+el.dataset.age); });
   document.querySelectorAll("[data-until]").forEach(el => { el.textContent = format.left(+el.dataset.until); });

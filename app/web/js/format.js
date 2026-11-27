@@ -1,6 +1,11 @@
 /* Format: escaping, clocks, durations and the model label. DOM-free (app/web/test/format.test.js runs it
    in Node). Every string that goes into HTML, as text or as an attribute, passes through esc. */
 export const esc = s => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+/* A step's line (R5.6, 2026-11-26): one line at any width. `head` and `tail` (HTML) stay whole; `mid` (HTML, the step's
+   target) gives way with an ellipsis, so `Bash(cd ~/… long command…)` keeps its name and its closing bracket. A line
+   break in it reads as a space (app.css .oneln). */
+export const lineHTML = (head, mid = "", tail = "") =>
+  `<span class="oneln">${head ? `<span>${head}</span>` : ""}${mid ? `<span class="oneln-t">${mid}</span>` : ""}${tail ? `<span>${tail}</span>` : ""}</span>`;
 
 /* ---------- durations ---------- */
 /* a step's or a turn's length, as the CLI writes it: "5s", "8m", "1h 12m" */
@@ -21,6 +26,12 @@ export function dur(ms) {
   const h = Math.floor(m / 60);
   return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d`;
 }
+/* how long ago, in one unit, for the Open list and the folder list: "4 min ago", "2 h ago", "3 d ago", and
+   months past 60 days ("9 mo ago") */
+export function ago(ms) {
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000)), d = Math.floor(m / 1440);
+  return m < 60 ? `${m} min ago` : m < 1440 ? `${Math.floor(m / 60)} h ago` : d <= 60 ? `${d} d ago` : `${Math.floor(d / 30)} mo ago`;
+}
 /* a countdown to a time (ms), the rate-limit retry: "in 38s", then "now" */
 export const left = at => { const s = Math.round((at - Date.now()) / 1000); return s > 0 ? `in ${s}s` : "now"; };
 
@@ -39,6 +50,16 @@ export const still = html => html.replace(/(<span data-(?:live|age|until)="[^"]*
 const hourOpts = () => typeof globalThis.SYNOPIA_CLOCK24 === "boolean" ? { hourCycle: globalThis.SYNOPIA_CLOCK24 ? "h23" : "h12" } : {};
 export const hhmm = ts => new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...hourOpts() });
 export const day = ts => new Date(ts).toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+/* when a transcript row appeared, for the tip over its mark (2026-11-26): "16:34:12" today, "25 Nov, 16:34:12" on another
+   day, with the year when it isn't this one; "" for no time */
+export function markTime(ts, now = Date.now()) {
+  const d = new Date(ts), n = new Date(now); if (ts === null || ts === undefined || ts === "" || isNaN(d)) return "";
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", ...hourOpts() });
+  if (d.toDateString() === n.toDateString()) return time;
+  return `${d.getDate()} ${d.toLocaleDateString([], { month: "short" })}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ""}, ${time}`;
+}
+/* the attribute a row's mark carries its time in (mark-time.js shows it); a time in ms becomes ISO */
+export const markAt = ts => ts === null || ts === undefined || ts === "" ? "" : ` data-at="${esc(typeof ts === "number" ? new Date(ts).toISOString() : ts)}"`;
 
 /* ---------- the model ---------- */
 /* A model id as a name, until the folder's menu names it: "eu.anthropic.claude-opus-5-5[1m]" reads

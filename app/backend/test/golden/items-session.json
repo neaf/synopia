@@ -23,7 +23,8 @@
       "out": {
         "text": "The config is in demo.toml.",
         "lines": 1,
-        "cut": false
+        "cut": false,
+        "at": "2026-11-20T13:02:00.000Z"
       }
     },
     {
@@ -36,10 +37,12 @@
       "state": "running",
       "toolUseId": "toolu_ag2",
       "input": "description: Rewrite the demo tests\nsubagent_type: general-purpose\nprompt: made-up\nrun_in_background: true",
+      "bg": true,
       "out": {
         "text": "Async agent launched successfully.",
         "lines": 1,
-        "cut": false
+        "cut": false,
+        "at": "2026-11-20T13:02:00.000Z"
       }
     },
     {
@@ -55,7 +58,8 @@
       "out": {
         "text": "Async agent launched successfully.",
         "lines": 1,
-        "cut": false
+        "cut": false,
+        "at": "2026-11-20T13:02:00.000Z"
       }
     },
     {
@@ -68,10 +72,12 @@
       "state": "running",
       "toolUseId": "toolu_ag4",
       "input": "description: For review: Draft the demo release notes\nprompt: made-up\nrun_in_background: true",
+      "bg": true,
       "out": {
         "text": "Async agent launched successfully.",
         "lines": 1,
-        "cut": false
+        "cut": false,
+        "at": "2026-11-20T13:02:00.000Z"
       }
     },
     {
@@ -87,7 +93,8 @@
       "out": {
         "text": "12 files.",
         "lines": 1,
-        "cut": false
+        "cut": false,
+        "at": "2026-11-20T13:02:00.000Z"
       }
     },
     {
