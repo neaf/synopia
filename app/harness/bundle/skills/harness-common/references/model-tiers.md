@@ -1,6 +1,6 @@
 # Model tiers
 
-Every tiered spawn of a harness skill goes through this procedure. The repo names no model: the user confirms a model per tier at the start of each run, in the tool that runs it.
+Every tiered spawn of a harness skill goes through this procedure. The repo names no model: the user confirms a model per tier once per tool, and later runs reuse that choice.
 
 ## Tiers
 
@@ -26,13 +26,13 @@ Every `SKILL.md` that delegates lists each spawn under a `## Spawns` heading:
 
 ## The gate
 
-Run it when a run starts, and on resume when the resume file has no `Models for this run` table or the table was confirmed in another tool.
+Run it when a run starts, and on resume when the resume file has no `Models for this run` table or the table was confirmed in another tool. It asks the user only the first time in a tool, or when that tool's model list changed (the user, 2026-11-27: ask once per tool, then reuse the choice).
 
-1. List the models the current tool offers.
+1. List the models the current tool offers. When `~/.config/agent-harness/models-<tool>.md` (`claude-code` or `opencode`) holds a table whose models are all still in that list, use it without asking: say in one line which table the run uses, and go to step 3.
    - Claude Code: the allowed values of the Agent tool's `model` parameter, read from the tool definition in this session (`../topics/Claude Code.md` "Model per spawn").
    - opencode: `/usr/bin/python3 -I <harness-common>/scripts/opencode.py models`. It prints one model id per line, or one line naming the problem and exit 1.
 2. Propose one model per tier from that list, using the table above. Ask the user to confirm. This is a gate: no tiered spawn runs before the answer. The user may change any tier, or put every tier on one model.
-3. Write the confirmed table into the run's resume file (`state.md` "Models for this run").
+3. Write the confirmed table into the run's resume file (`state.md` "Models for this run"), and, after a confirmation, into `~/.config/agent-harness/models-<tool>.md` for later runs.
 4. opencode only: apply the table (below).
 
 ## Every spawn passes its tier's model

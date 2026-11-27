@@ -80,4 +80,3 @@ When the user asks for a handoff (`/handoff [notes]`, "hand this off", "continue
 - A subagent working in a separate checkout (worktree) cannot write the notes of the main checkout. It returns the text, the orchestrator writes it.
 - Treat a report as claims. Check the key code claim yourself. Challenge any explanation that dismisses a failure ("flaky", "unrelated", "stale state") without a passing run to compare against.
 - After each report, update the area README, then answer the user.
-- Worktrees: tell the subagent that every shell command starts in the main checkout, so it must `cd <worktree> && ...` or use absolute paths.
