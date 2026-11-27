@@ -118,7 +118,7 @@ Dev and test only (not loaded in production):
 | `js/mark-time.js` | The marks in the transcript's bullet column: no click, and on hover the tip with the time their row appeared (`data-at`). |
 | `js/fuzzy.js` | The one matcher (R3.14): a port of nota's `FuzzyMatch` and `SearchIndex.search` (fzf v2), ranking and the highlight markup. DOM-free; the backend imports it for the Open list. |
 | `js/open-list.js` | Open session list: totals, highlights, gone rows on screen. |
-| `js/waiting-list.js` | The Waiting on you list (R9.10, FR-ITEM-08), a layer in `keys.js` drawn like the Open list: every open Y item of the sessions whose `state.waiting` counts them (so a shared ledger shows once), grouped in sidebar order (`sidebar.js` `KEYS`), filtered with fuzzy.js; Enter hands the session and `Y2 ` to `keys.js`, which renders and calls `composer.js` `writeLine` (this module imports neither: `ui-state.js` imports it). |
+| `js/waiting-list.js` | The Waiting on you list (R9.10, FR-ITEM-13), a layer in `keys.js` drawn like the Open list: every open Y item of the sessions whose `state.waiting` counts them (so a shared ledger shows once), grouped in sidebar order (`sidebar.js` `KEYS`), filtered with fuzzy.js; Enter hands the session and `Y2 ` to `keys.js`, which renders and calls `composer.js` `writeLine` (this module imports neither: `ui-state.js` imports it). |
 | `js/creds-line.js` | The dock's credential line (R8.2): renders the backend's `creds` frame for the session (kept in `state.js`): one line over the run's preview, which opens its shell view (2026-11-26), or the editable command with Save. |
 | `js/mcp-panel.js` | The MCP panel (R5.15), a layer in `keys.js` drawn like the Open list: renders the backend's `mcp` frame, chooses a server and an action, sends `mcpAction`. |
 | `js/folder-list.js` | The folder list (New session and "Continue in a folder"): known folders, path completion on Tab, the create row, gone rows, the fixed list with no open session. |
@@ -446,7 +446,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-ITEM-04 | ledger.ts (`ownedIds`, `ownerOf`), transcript.ts (`ownsOf`), transcripts.ts (`ownsOf`), open-items.ts (`with`), open-items.js and rail.js (under the subagent's card) |
 | FR-ITEM-05 | publisher.ts, protocol.js (`openItems`), state.js (`applyOpenItems`), open-items.js, rail.js, transcript.js (the clicks), composer.js (`writeLine`), app.css, dark.css |
 | FR-ITEM-06 | open-items.ts (`counts`), status.ts (`waiting`, `due`), publisher.ts, sidebar.js (`waitingLine`), tween.js, marks.js (`open`) |
-| FR-ITEM-08 | waiting-list.js, keys.js (w, the layer, Enter to `writeLine`), sidebar.js (the head button, `rowWord`), open-items.js (`itemsOf`, `ageOf`, `focusItem`), fuzzy.js, ui-state.js and ui-state.ts (`waitingList`), main.js (redraws), app.css |
+| FR-ITEM-13 | waiting-list.js, keys.js (w, the layer, Enter to `writeLine`), sidebar.js (the head button, `rowWord`), open-items.js (`itemsOf`, `ageOf`, `focusItem`), fuzzy.js, ui-state.js and ui-state.ts (`waitingList`), main.js (redraws), app.css |
 | FR-ITEM-07 | open-items.ts (`reply`: the quote, the minute, a raised item's report), transcripts.ts (`replies`), open-items.js (the focus), keys.js (J/K, Enter), transcript.js (`openItem`, through ui-state.js `jumpTo`), sidebar.js (the line's click), rail.js (`waitingIds`) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |

@@ -1,4 +1,4 @@
-// The Waiting on you list (R9.10, FR-ITEM-08) on made-up sessions and ledgers: "Ship checkout M2" and "Checkout
+// The Waiting on you list (R9.10, FR-ITEM-13) on made-up sessions and ledgers: "Ship checkout M2" and "Checkout
 // follow-ups" share the ledger /tmp/synopia-waiting/shop/.ai-notes/checkout-m2/open-items.md (the second read it
 // last, so it counts it), "Norway tax rates" has its own in /tmp/synopia-waiting/tax, "Release notes" has none.
 // Checks: the head's "○ 4 waiting on you" button (the shared ledger once); w opens the list over the main area with

@@ -1,4 +1,4 @@
-/* The Waiting on you list (requirements R9.10, FR-ITEM-08): every open item waiting on you in every open session,
+/* The Waiting on you list (requirements R9.10, FR-ITEM-13): every open item waiting on you in every open session,
    over the main area, built like the Open list (open-list.js). `w` in normal mode or the sidebar head's
    "○ N waiting on you" button opens it. Rows are grouped by session in sidebar order (sidebar.js KEYS), each with
    its id box, text, kind and age; the look is prototype/open-items-storyboard.html scenario 9. The page already
