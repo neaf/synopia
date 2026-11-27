@@ -95,7 +95,6 @@ test("Files changed leaves out files with no net change: a command that undid an
   assert.equal(netPatches([{ id: "mv", patch: P("e.ts", ["-moved", "+moved"]) }]).length, 1, "one edit that moves a line stays");
   const big = n => P("big.ts", Array.from({ length: n }, (_, i) => `+l${i}`), { cut: true });
   assert.deepEqual(netPatches([{ id: "g1", patches: [big(500)] }, { id: "g2", patches: [{ ...big(0), add: 0, del: 500, cut: true }] }]), [], "a cut diff and its reverse, by their counts");
-  assert.equal(netPatches([{ id: "l", patch: { ...P(".ai-notes/x/open-items.md", ["+a"]), ledger: true } }]).length, 0, "the ledger is left out (R5.9)");
   const items = [{ id: "u1", k: "you", ts: "2026-11-27T10:00:00.000Z", text: "Merge main, then undo it" },
     { id: "m", k: "tool", ts: "2026-11-27T10:00:01.000Z", name: "Bash", verb: "Ran", obj: "Merge main", state: "done", patches: merge.patches },
     { id: "x", k: "tool", ts: "2026-11-27T10:00:02.000Z", name: "Bash", verb: "Ran", obj: "Abort the merge", state: "done", patches: abort.patches },

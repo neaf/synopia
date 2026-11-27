@@ -32,23 +32,20 @@ async function sendThenHello(...msgs: object[]) {
 }
 const logged = (re: RegExp) => waitFor(() => re.test(d.log()), 5000, String(re));
 
-test('item reviewed: Mark reviewed closes the review item; the next hello shows the deliverable reviewed and the badge drops (R10.2, FR-ITEM-03)', async () => {
-  type S = { id: string; state: { review: number }; agents: { id: string; review: boolean }[]; openItems: { items: { id: string; kind: string; agent?: string }[]; closed: { id: string; note: string }[] } };
+test('reviewed: stored once; the next hello shows the deliverable reviewed and the badge drops (R10.2)', async () => {
+  type S = { id: string; state: { review: number }; agents: { id: string; review: boolean }[] };
   const of = (hello: Record<string, unknown>) => (hello.sessions as S[]).find((s) => s.id === S4)!;
   const badge = async () => ((await (await api(d.info, 'badge')).json()) as { badge: number }).badge;
   const before = of(await sendThenHello());
   assert.equal(before.agents.find((a) => a.id === REVIEW)?.review, true, 'a finished "For review: …" subagent');
   assert.equal(before.state.review, 1);
-  const item = before.openItems.items.find((i) => i.kind === 'review' && i.agent === REVIEW);
-  assert.ok(item, 'its review item');
   const n = await badge();
-  const hello = await sendThenHello({ t: 'item', sid: S4, item: item.id, act: 'reviewed' }, { t: 'item', sid: S4, item: item.id, act: 'reviewed' }, { t: 'item', sid: S4 });
+  const hello = await sendThenHello({ t: 'reviewed', agentId: REVIEW }, { t: 'reviewed', agentId: REVIEW }, { t: 'reviewed' });
   const after = of(hello);
   assert.equal(after.agents.find((a) => a.id === REVIEW)?.review, false);
   assert.equal(after.state.review, 0);
-  assert.equal(after.openItems.items.some((i) => i.id === item.id), false);
   assert.equal(await badge(), n - 1);
-  assert.equal(hello.reviewed, undefined, 'the page gets the marks only as the items and the subagents\' review flag');
+  assert.equal(hello.reviewed, undefined, 'the page gets the marks only as the subagents\' review flag');
 });
 
 test('layout: intents change the layout every page gets, and the next hello has it; a refused one is acked with why', async () => {
@@ -140,8 +137,8 @@ test('actions: one ack each, to the page that sent it, with the error when not d
   const p = await connectPage(d.info), q = await connectPage(d.info);
   p.send({ t: 'close', id: 'c1', sid: 'not-a-session' });
   assert.deepEqual(await p.next('ack', (m) => m.id === 'c1'), { t: 'ack', id: 'c1', ok: false, error: "That session isn't open any more." });
-  p.send({ t: 'item', id: 'r1', sid: S4, item: 'Y99', act: 'reviewed' }); // no such item
-  assert.deepEqual(await p.next('ack', (m) => m.id === 'r1'), { t: 'ack', id: 'r1', ok: false, error: "That item isn't in an open session's list any more." });
+  p.send({ t: 'reviewed', id: 'r1', agentId: 'no-such-agent' }); // not stored
+  assert.deepEqual(await p.next('ack', (m) => m.id === 'r1'), { t: 'ack', id: 'r1', ok: false, error: "That subagent isn't in an open session any more." });
   p.send({ t: 'answer', id: 'a1', sid: S2 }); // no requestId
   assert.deepEqual(await p.next('ack', (m) => m.id === 'a1'), { t: 'ack', id: 'a1', ok: false, error: UNREADABLE });
   await logged(/ router\.invalid t=answer problem="?answer\.requestId missing/);
@@ -149,7 +146,7 @@ test('actions: one ack each, to the page that sent it, with the error when not d
   assert.equal((await p.next('ack', (m) => m.id === 'm1')).ok, true);
   const at = p.frames.length;
   p.send({ t: 'close', sid: 'not-a-session' }); // no id: no ack
-  p.send({ t: 'item', id: 'r2', sid: 'not-a-session', item: 'Y1', act: 'reviewed' });
+  p.send({ t: 'reviewed', id: 'r2', agentId: 'no-such-agent' });
   await p.next('ack', (m) => m.id === 'r2', 5000, at);
   assert.deepEqual(p.frames.slice(at).filter((m) => m.t === 'ack').map((m) => m.id), ['r2']);
   assert.equal(q.frames.some((m) => m.t === 'ack'), false, 'only the page that acted');

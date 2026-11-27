@@ -7,7 +7,6 @@ import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
 import { lineTweens, inGrace } from "./tween.js";
-import { focusItem, firstWaiting } from "./open-items.js";
 import { bgOf, bgState, scanGrace } from "./rail.js";
 
 /* the sessions in sidebar order (Ctrl+J/K, keys.js) */
@@ -24,7 +23,6 @@ export function rowHTML(s) {
       ${waitLine(s)}
       ${bgLine(s)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(s.state.review)}
-      ${waitingLine(s)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
     <span class="merge-hint">+ New group</span>
@@ -67,21 +65,14 @@ function bgLine(s) {
   const word = st === "failed" ? "failed" : st === "timed out" ? "timed out" : st === "stopped" || st === "killed" ? "stopped" : "finished";
   return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))} ${many(gr.length)} ${word}</span>`;
 }
-/* the open items waiting on you, and the follow-ups due (R4.2, FR-ITEM-06): the backend's counts (status.ts), under "N to review" */
-function waitingLine(s) {
-  const n = s.state.waiting || 0, d = s.state.due || 0; if (!n && !d) return "";
-  const text = [...(n ? [`${n} waiting on you`] : []), ...(d ? [`${d} due`] : [])].join(", ");
-  return `<span class="r-agent r-wait" data-line="waiting"><i class="el"></i>${ind("open")} ${text}</span>`;
-}
 /* a run of yours that waits for input (R4.2, 2026-11-26): the only run of yours that reaches the sidebar, as needs you */
 function waitLine(s) {
   const b = bgOf(s).find(x => x.own && x.waiting && bgState(x) === "running"); if (!b) return "";
   return `<span class="r-agent kc-shell" data-line="wait"><i class="el"></i>${ind("pause")} <b class="kw"><span class="who">!</span> ${esc(b.command)}</b> waits</span>`;
 }
-/* the row's state words, as in the status storyboard: working ones without an age, the rest with one (the
-   Waiting on you list's session lines too, waiting-list.js). A command that runs has its timer, from its start
-   (status.ts commandOf); idle with background work has no age (R8.2, 2026-11-27) */
-export function rowWord(s) {
+/* the row's state words, as in the status storyboard: working ones without an age, the rest with one. A command that
+   runs has its timer, from its start (status.ts commandOf); idle with background work has no age (R8.2, 2026-11-27) */
+function rowWord(s) {
   const st = s.state, d = st.detail, n = d.queued;
   if (st.light === "red") return `${esc(st.word)}, ${age(st.since)}`;
   const queued = n ? `, ${esc(n)} message${n > 1 ? "s" : ""} queued` : "";
@@ -133,12 +124,10 @@ export function renderSide() {
   }
   if (groups.length || others.length) html += `<section class="group tree others" data-group="others"><div class="th"><span class="g-name">Not in a group</span></div>
     ${others.length ? others.map(id => rowHTML(byId(id))).join("") : `<div class="g-empty" data-drop-group="others">Drop a session here to take it out of its group</div>`}</section>`;
-  headButton();
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
   rendered.forEach(f => f(el));
-  /* a click on the "○ N waiting on you" line opens the session with its first Waiting on you item focused (R4.2) */
-  el.querySelectorAll(".row").forEach(b => { b.onclick = e => { select(b.dataset.id); if (e.target.closest('[data-line="waiting"]')) focusItem(b.dataset.id, firstWaiting(store.sessions.get(b.dataset.id))?.id, true); picked(); }; });
+  el.querySelectorAll(".row").forEach(b => { b.onclick = () => { select(b.dataset.id); picked(); }; });
   el.querySelectorAll(".g-name").forEach(n => n.ondblclick = () => { renaming = n.closest(".group").dataset.group; renderSide(); });
   const inp = document.getElementById("g-input");
   if (inp) {
@@ -154,14 +143,6 @@ export function renderSide() {
     inp.onkeydown = e => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); };
     inp.onblur = () => done(true);
   }
-}
-/* the head's "○ N waiting on you" button (R9.10): the backend's counts of the sessions shown, added up, so a shared
-   ledger counts once (FR-ITEM-06); none at 0. Its click opens the Waiting on you list (waiting-list.js). */
-function headButton() {
-  const b = document.getElementById("waiting"); if (!b) return;
-  const n = KEYS.reduce((t, id) => t + (store.sessions.get(id)?.state.waiting || 0), 0);
-  b.hidden = !n;
-  if (n && b.dataset.n !== String(n)) { b.dataset.n = n; b.innerHTML = `${ind("open")} ${n} waiting on you`; }
 }
 /* sub-line tweens (R8.1, tween.js): keyed by session id and line (data-line), re-applied after every render */
 const sideTw = lineTweens({

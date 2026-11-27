@@ -14,7 +14,6 @@ import { mode } from "./mode.js";
 import { attachments, prompt } from "./composer.js";
 import { qstate, pendingAsk, askKey } from "./card.js";
 import { openList, openListShown } from "./open-list.js";
-import { wl, waitingListShown } from "./waiting-list.js";
 import { fl, folderListShown } from "./folder-list.js";
 import { mp, mcpShown } from "./mcp-panel.js";
 import { credsAll } from "./creds-line.js";
@@ -63,7 +62,6 @@ export function installTestApi({ inject, render }) {
     preview: () => ({ shown: previewShown(), path: pv.path }),
     find: () => findState(),
     openList: () => ({ shown: openListShown(), filter: openList.filter, totals: openList.totals }),
-    waitingList: () => ({ shown: waitingListShown(), filter: wl.filter, sel: wl.sel, rows: wl.rows.map(r => ({ sid: r.s.id, id: r.i.id })) }), // R9.10
     mcp: () => ({ shown: mcpShown(), sid: mp.sid, servers: copy(mp.servers), error: mp.error, note: mp.note, sel: mp.sel, action: mp.act }), // the MCP panel (R5.15)
     creds: () => credsAll(), // the credential refresh frames, one per folder (creds-line.js)
     folderList: () => ({ shown: folderListShown(), fixed: fl.fixed, sid: fl.sid, filter: fl.filter, rows: fl.rows.map(r => ({ kind: r.kind, path: r.path, gone: r.gone })), sel: fl.sel, known: fl.known.length }),

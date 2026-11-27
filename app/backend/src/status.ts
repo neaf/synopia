@@ -480,9 +480,7 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 //            `Interrupt`; a turned-down tool is not one).
 //   needsYou what the session waits on: the oldest request's kind, or the question or plan
 //            another process asks, `signin` or `input`; null when it waits on nothing.
-//   review   open review items (R10.1, open-items.ts counts): finished "For review: …" subagents not marked reviewed.
-//   waiting  open Y items, review items apart, not answered and not `later` (FR-ITEM-06); due: A items that are due.
-//            A shared ledger counts under one session. Open items never make a session needs you.
+//   review   finished "For review: …" subagents not marked reviewed (R10.1).
 //   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
 //            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
 export type Light = 'red' | 'amber' | 'green';
@@ -493,7 +491,7 @@ export type SessionState = {
   status: Status; since: number; detail: StatusDetail;
   light: Light; tone: Light | 'grey'; word: string; mark: string;
   command: Command | null; background: number; resting: boolean;
-  stopped: boolean; needsYou: Needs | null; review: number; waiting: number; due: number; driven: boolean;
+  stopped: boolean; needsYou: Needs | null; review: number; driven: boolean;
 };
 export type StateFacts = {
   pending: Needs[]; // the session's requests' kinds, oldest first
@@ -503,8 +501,6 @@ export type StateFacts = {
   command?: Command | null; // the command the main turn waits on, past COMMAND_MS (commandOf)
   background?: { running: number; report: boolean }; // Claude's background work (backgroundOf)
   review: number;
-  waiting?: number; // open-items.ts counts (FR-ITEM-06)
-  due?: number;
   driven: boolean;
 };
 
@@ -540,7 +536,7 @@ export function sessionState(e: { status: Status; at: number; detail?: StatusDet
   const tone: Light | 'grey' = light === 'red' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' || resting ? 'grey' : light;
   const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (command ? 'k_shell' : detail.queued ? 'queued' : 'work')
     : resting ? 's_agent' : status === 'failed' ? 'failed' : 'stopped';
-  return { status, since: e.at, detail, light, tone, word, mark, command, background: running, resting, stopped, needsYou, review: f.review, waiting: f.waiting ?? 0, due: f.due ?? 0, driven: f.driven };
+  return { status, since: e.at, detail, light, tone, word, mark, command, background: running, resting, stopped, needsYou, review: f.review, driven: f.driven };
 }
 
 // ---------- what runs: the command the main turn waits on, and the background work ----------

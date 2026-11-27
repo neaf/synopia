@@ -72,8 +72,7 @@ const LIGHT = `(() => {
   return out.slice(0, 8);
 })()`;
 const KEY = ['body', '.side', '.conv', '.panel', '.log', '.dock', '.dock .status', '.composer', '.rail', '.main-row', '.card', '.md pre', '.ln.files .diff', '.dl.a', '.dl.d', '.dl .no', '.prompt', '.toast',
-  '.open-list', '.ol-panel', '.ol-it[aria-selected="true"]', '.slash', '.slash .it[aria-selected="true"]', '.preview', '.pv-panel', '.pl .no', '.viewer', '.nd-head', '.qo', '.o', '.row[aria-current="true"]',
-  '.rv', '.oi', '.oi.ans', '.oi.focus', '.oi-chip', '.oi-fu', '.oi-on', '.oi-cl'];
+  '.open-list', '.ol-panel', '.ol-it[aria-selected="true"]', '.slash', '.slash .it[aria-selected="true"]', '.preview', '.pv-panel', '.pl .no', '.viewer', '.nd-head', '.qo', '.o', '.row[aria-current="true"]'];
 const keyBgs = () => ev(`(${JSON.stringify(KEY)}).flatMap(s => [...document.querySelectorAll(s)].slice(0, 3).map(e => [s, getComputedStyle(e).backgroundColor])).filter(([, b]) => b !== 'rgba(0, 0, 0, 0)')`);
 const lightKeys = (list) => list.filter(([, b]) => { const [r, g, bl] = b.match(/[\d.]+/g).map(Number); return (r + g + bl) / 3 > 110; });
 const failed = [];
@@ -95,15 +94,6 @@ for (const sid of sids) {
   sampled += await sample(sid.slice(0, 8));
   await shot(sid.slice(0, 8));
 }
-// open items in the panel (open-items.js): a made-up list for the shown session, every kind of line
-await ev(`(sid => { __synopia.inject({ t: 'openItems', sid, unread: 1, note: null, closed: [{ id: 'Y3', kind: 'decision', text: 'Run the fix?', how: 'answered', at: Date.now(), note: '"Run it"', by: 'agent' }],
-  checks: [{ id: 'A1', kind: 'follow-up', text: 'Re-check #820.', source: 'agent', at: Date.now(), minute: true, trigger: 'after the stack merges' }],
-  items: [{ id: 'Y1', kind: 'decision', text: 'Run the fix now, or look first?', source: 'agent', at: Date.now(), minute: true, options: ['Run it', 'Look first'], recommended: 'Look first' },
-    { id: 'Y2', kind: 'your task', text: 'Answer the review threads.', source: 'agent', at: Date.now(), minute: true, state: 'answered', answer: 'done' },
-    { id: 'Y8', kind: 'review', text: 'Review: Pricing page copy', source: 'agent', at: null, minute: true, subagent: 'Pricing page copy' }] }); })(__synopia.current())`);
-await ev(`document.querySelector('.rail .oi[data-oi="Y1"]')?.click()`); await sleep(300);
-check('the open items show in the panel', await ev(`!!document.querySelector('.rail .oi.focus') && !!document.querySelector('.rail .rv')`));
-sampled += await sample('open items'); await shot('open-items');
 // the slash menu and the model picker, the Open list, a toast, the image viewer, the file preview
 await ev(`(() => { const t = document.getElementById('msg'); t.focus(); t.value = '/'; t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
 await sleep(300);

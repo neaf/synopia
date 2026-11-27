@@ -9,7 +9,6 @@ import type { PublisherOptions } from '../src/publisher.ts';
 import type { Client } from '../src/server.ts';
 import { Sessions } from '../src/sessions.ts';
 import { openStore } from '../src/store.ts';
-import { OpenItems } from '../src/open-items.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
 
 const CLAUDE = path.join(import.meta.dirname, 'fixtures', 'claude');
@@ -214,36 +213,23 @@ test('state: a turned-down tool reads "Your turn", an Esc Esc stop "Stopped", a 
   transcripts.stop(); publisher.stop();
 });
 
-test('review: a finished "For review: …" subagent is sent with review while its review item is open, and counts in the state (R10.1, FR-ITEM-03)', async () => {
+test('review: a finished "For review: …" subagent is sent with review until marked, and counts in the state (R10.1)', async () => {
+  const reviewed = new Set<string>();
   const clients = new Set<Client>();
-  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-publisher-')), { minIntervalMs: 0 });
-  let publisher: Publisher | null = null;
-  const transcripts = new Transcripts({ claudeDir: CLAUDE, home: HOME, pollMs: 0, watch: false });
-  const openItems = new OpenItems({
-    store, home: HOME, lookMs: 0,
-    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
-    onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
-  });
-  publisher = new Publisher({ transcripts, clients: () => clients, home: HOME, recheckMs: 0, openItems });
+  const { transcripts, publisher } = reading(CLAUDE, () => clients, { reviewed: (a) => reviewed.has(a) });
   const c = client();
   clients.add(c);
   transcripts.open(AGENTS);
   await Promise.resolve();
-  type Hello = { agents: { id: string; review: boolean }[]; state: { review: number; waiting: number; due: number }; openItems: { items: { id: string; kind: string; text: string; agent?: string }[] } };
   const agent = (list: { id: string; review: boolean }[]) => list.find((a) => a.id === 'aaaa0004')?.review;
-  const hello = () => (publisher!.sessions() as Hello[])[0];
-  assert.deepEqual([agent(hello().agents), hello().state.review, hello().state.waiting, hello().state.due], [true, 1, 0, 0]);
-  const item = hello().openItems.items.find((i) => i.agent === 'aaaa0004')!;
-  assert.deepEqual([item.kind, item.text], ['review', 'Review: Draft the demo release notes']);
-  const frame = c.take('openItems').at(-1) as { sid: string; items: unknown[] } | undefined;
-  assert.deepEqual([frame?.sid, frame?.items.length], [AGENTS, 1], 'every page gets the list');
+  const hello = () => (publisher.sessions() as { agents: { id: string; review: boolean }[]; state: { review: number } }[])[0];
+  assert.deepEqual([agent(hello().agents), hello().state.review], [true, 1]);
   c.take();
-  assert.equal(openItems.markReviewed(AGENTS, item.id), true);
-  const got = c.take();
-  assert.equal(agent(got.find((m) => m.t === 'agents')!.upsert as { id: string; review: boolean }[]), false, 'the agent goes again with its flag');
-  assert.deepEqual((got.find((m) => m.t === 'openItems') as { items: unknown[] }).items, [], 'and the list without it');
+  reviewed.add('aaaa0004');
+  publisher.reviewed('aaaa0004');
+  assert.equal(agent(c.take('agents')[0].upsert as { id: string; review: boolean }[]), false);
   assert.deepEqual([agent(hello().agents), hello().state.review], [false, 0]);
-  transcripts.stop(); publisher.stop(); store.close();
+  transcripts.stop(); publisher.stop();
 });
 
 test('model: a new session with no choice shows settings.model, not the CLI default', () => {

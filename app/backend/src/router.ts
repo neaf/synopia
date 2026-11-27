@@ -11,8 +11,7 @@ import type { Session, SendResult } from './session.ts';
 import type { Publisher } from './publisher.ts';
 import type { Transcripts } from './transcripts.ts';
 import type { Menus } from './menu.ts';
-import type { Store } from './store.ts';
-import type { OpenItems } from './open-items.ts';
+import type { Store, ReviewedMarks } from './store.ts';
 import type { Place, Result as LayoutResult } from './layout.ts';
 import type { CardAnswer } from './cards.ts';
 import type { Image } from './sdk.ts';
@@ -32,10 +31,7 @@ export const STOPPING = 'Synopia is restarting, so that wasn\'t done. Do it agai
 export const FAILED = 'Something went wrong in Synopia, so that wasn\'t done. backend.log has the details.';
 export const UNREADABLE = 'Synopia couldn\'t read that message from the page.';
 const GONE: SendResult = { ok: false, error: "That session isn't open any more." };
-const NO_ITEM = "That item isn't in an open session's list any more.";
-const NOT_REVIEW = 'Only a review item can be marked reviewed.';
-const NOT_ITEM = 'A review item is closed with Mark reviewed, not as "Not an item".';
-const NO_UNDO = 'Only a line Synopia closed this turn can be undone.';
+const NO_AGENT = "That subagent isn't in an open session any more.";
 const NO_CREDS: SendResult = { ok: false, error: 'Credentials can\'t be refreshed here.' };
 
 export type RouterOptions = {
@@ -46,7 +42,7 @@ export type RouterOptions = {
   mcp?: Mcp; // /mcp (R5.15)
   creds?: Creds; // the credential refresh of a session's folder (2026-11-26)
   store: Store;
-  openItems: Pick<OpenItems, 'holds' | 'holdsAny' | 'markReviewed' | 'notItem' | 'undo'>; // the open-items lists (open-items.ts)
+  marks: ReviewedMarks;
   bat: Promise<Bat>;
   home: string;
   log?: Log;
@@ -152,7 +148,7 @@ export class Router {
   }
 
   private table(): Record<string, Handler> {
-    const { sessions, transcripts, publisher, menus, store, log } = { ...this.o, log: this.log };
+    const { sessions, transcripts, publisher, menus, store, marks, log } = { ...this.o, log: this.log };
     const toastTo = (client: Client) => (text: string) => publisher.toast(text, client);
     const agent = (m: Msg) => str(m.agent);
     return {
@@ -238,20 +234,12 @@ export class Router {
       continueSession: (_client, m) => sessions.continueSession(m.sid as string, m.cwd as string, m.create === true),
       openSession: (_client, m) => sessions.openSession(m.sid as string)
         .catch((): SendResult => ({ ok: false, error: "Synopia couldn't read the list of past sessions." })),
-      // an open item of an open session's list (FR-ITEM-03): Mark reviewed on a review item; open-items.ts tells
-      // the publisher what changed
-      item: (_client, m) => {
-        const sid = sessions.resolve(m.sid as string), id = m.item as string;
-        if (!transcripts.has(sid)) return { ok: false, error: NO_ITEM };
-        if (m.act === 'undo') { // FR-ITEM-10: a line Synopia closed this turn
-          if (!this.o.openItems.holdsAny(sid, id)) return { ok: false, error: NO_ITEM };
-          if (!this.o.openItems.undo(sid, id)) return { ok: false, error: NO_UNDO };
-          return;
-        }
-        if (!this.o.openItems.holds(sid, id)) return { ok: false, error: NO_ITEM };
-        if (m.act === 'notItem') { if (!this.o.openItems.notItem(sid, id)) return { ok: false, error: NOT_ITEM }; return; }
-        if (m.act !== 'reviewed') return { ok: false, error: UNREADABLE };
-        if (!this.o.openItems.markReviewed(sid, id)) return { ok: false, error: NOT_REVIEW };
+      // a mark only for a subagent an open session has: an unknown id would be stored for nothing;
+      // the 1000 newest marks are kept (store.ts REVIEWED_MAX)
+      reviewed: (_client, m) => {
+        const id = m.agentId as string;
+        if (!transcripts.ids().some((sid) => transcripts.get(sid)?.getAgent(id))) return { ok: false, error: NO_AGENT };
+        if (marks.mark(id)) publisher.reviewed(id);
       },
       // the sidebar's layout (layout.ts): every session id through its aliases, so an intent sent
       // before a new session got its real id still moves that session

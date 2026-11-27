@@ -108,7 +108,3 @@
 :root[data-theme="dark"] .pl.chg .no { box-shadow: inset 2px 0 0 #3FB950; }
 :root[data-theme="dark"] .pl.cut .no { background-image: linear-gradient(#FF7B72, #FF7B72); }
 :root[data-theme="dark"] .creds-line input:focus { border-color: var(--blue-line); box-shadow: 0 0 0 2px var(--blue-bg); }
-
-/* ---------- open items in the background panel (open-items.js): the cards take the panel's own colours; the focus ring wins over To review's blue ---------- */
-:root[data-theme="dark"] .rv.focus { border-color: var(--link); }
-:root[data-theme="dark"] .oi-chip:hover { border-color: var(--ink-3); }

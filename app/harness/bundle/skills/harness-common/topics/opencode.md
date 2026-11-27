@@ -149,7 +149,7 @@ Code: `instructions/global.md` (the `!` prefix rule says opencode support is unv
 | A match between `name` and the folder name is not enforced. | Skills doc |
 | A skill is loaded by the model through the `skill` tool, or by the user with `@<skill-id>` in a prompt. Loading adds the body without frontmatter. | Skills doc, "Loading" (read 2026-11-26) |
 | The skills page names no `/<skill>` invocation and no argument substitution; `$ARGUMENTS` and `$1`, `$2` are documented for commands only (`~/.config/opencode/commands/`). Whether a skill body's `$ARGUMENTS` is replaced, or arrives as literal text with the user's words left in the prompt: `unverified`. Check: type `@handoff test note` in the opencode TUI and see whether the loaded body shows `$ARGUMENTS` or `test note`. | Skills doc; [Commands](https://opencode.ai/docs/commands/), "Arguments" (read 2026-11-26) |
-| Whether a loaded skill's body is kept or attached again after a compaction: `unverified`. The open-items skill does not depend on it: the always-loaded line in `AGENTS.md` sends the agent back to the skill. | none |
+| Whether a loaded skill's body is kept or attached again after a compaction: `unverified`. | none |
 | The global instructions file is `~/.config/opencode/AGENTS.md`. Without it opencode reads `~/.claude/CLAUDE.md`. | Instructions doc, "CLAUDE.md fallback" |
 | Edits to a nested `AGENTS.md` that already loaded are not seen until a new session. | Instructions doc, "Discovery" |
 

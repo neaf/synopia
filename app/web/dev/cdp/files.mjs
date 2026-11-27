@@ -4,8 +4,7 @@
 // file the shell created reads "new", a changed file with no diff has no counts, "and 2 more files",
 // the total, and the Bash step stays a "Bash(…)" line. An expanded Edit or Write step shows its diff in
 // the Files changed markup with +N −M on its line, a long one cut at 20 lines with "Show all", from a closed
-// group too; a failed edit shows its error and no diff; a subagent's edit has no line numbers. The open-items ledger is
-// left out: a turn that only edits it has no Files changed row, another lists its other files without it. A git merge and
+// group too; a failed edit shows its error and no diff; a subagent's edit has no line numbers. A git merge and
 // its abort (reverse diffs, a bare file in both) leave no file; only a real change stays (2026-11-27).
 // Writes files-changed.png and files-edit-step-<theme>.png.
 import path from 'node:path';
@@ -68,22 +67,6 @@ check('the failed Edit shows', await until(`!!${STEP('toolu_editfail')}`));
 await openStep('toolu_editfail');
 const fe = await ev(`(() => { const d = ${STEP('toolu_editfail')}; return { open: d.open, diff: !!d.querySelector('.diff'), counts: !!d.querySelector('.dc'), text: d.querySelector('.step-out').innerText }; })()`);
 check('a failed edit shows its error and no diff', fe.open && !fe.diff && !fe.counts && fe.text.includes('String to replace not found'), JSON.stringify(fe));
-
-// The open-items ledger is left out of Files changed (R5.9, the backend's `ledger` flag; invented items): a turn that
-// only edits .ai-notes/x/open-items.md has no row, and a turn with other changes lists them without it.
-const LED = '/Users/fixture/dev/demo/.ai-notes/x/open-items.md', PLAN = '/Users/fixture/dev/demo/.ai-notes/x/plan.md';
-const pt = (abs, ledger) => ({ file: abs.replace('/Users/fixture', '~'), abs, add: 1, del: 1, created: false, cut: false, hunks: [{ o: 1, n: 1, lines: ['-a', '+b'] }], ...(ledger ? { ledger: true } : {}) });
-const edit = (id, s, abs, ledger) => ({ id, k: 'tool', ts: `2026-11-20T10:${s}:00.000Z`, name: 'Edit', verb: 'Edited', obj: abs.replace('/Users/fixture', '~'), state: 'done', toolUseId: id, patch: pt(abs, ledger) });
-await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: ${JSON.stringify([
-  { id: 'led-you1', k: 'you', ts: '2026-11-20T10:10:00.000Z', text: 'Close Y1.' }, edit('toolu_led1', '11', LED, true),
-  { id: 'led-you2', k: 'you', ts: '2026-11-20T10:12:00.000Z', text: 'And the plan.' }, edit('toolu_led2', '13', LED, true), edit('toolu_plan1', '14', PLAN, false),
-  { id: 'led-you3', k: 'you', ts: '2026-11-20T10:15:00.000Z', text: 'Thanks.' }])}, total: s.total + 6 }); })()`);
-check('the ledger turns show', await until(`!!document.querySelector('#log [data-key="you:led-you3"]')`));
-const led = await ev(`(() => { const keys = [...document.querySelectorAll('#log [data-key^="files:"]')].map(e => e.dataset.key);
-  const plan = document.querySelector('#log [data-key="files:toolu_led2"]');
-  return { keys, only: keys.includes('files:toolu_led1'), rows: plan ? [...plan.querySelectorAll('.frow .fp')].map(r => r.textContent) : null }; })()`);
-check('a turn that only edits the ledger has no Files changed row', !led.only && led.keys.length > 0, JSON.stringify(led));
-check('a turn with other changes lists them without the ledger', JSON.stringify(led.rows) === '[".ai-notes/x/plan.md"]', JSON.stringify(led));
 
 // A fork's edits in a sibling folder outside the session's cwd, whose records have no toolUseResult (an
 // SDK-driven subagent, docs/Claude Code transcripts.md "Quirk: a subagent's edits have no structuredPatch"):
