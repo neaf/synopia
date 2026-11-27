@@ -8,6 +8,7 @@ import path from 'node:path';
 import { Bang, bashInput, bashOutput, parseBashInput, parseBashOutput, splitBash, BANG_CAP } from '../src/bang.ts';
 import type { BangRun, BangOptions } from '../src/bang.ts';
 import { InputWatch, looksLikePrompt, plainText } from '../src/pty.ts';
+import { Terms } from '../src/terms.ts';
 import { cardAt, CARD_AFTER_MS } from '../src/runs.ts';
 import { sessionState } from '../src/status.ts';
 import { Transcript } from '../src/transcript.ts';
@@ -131,13 +132,13 @@ test('delivery: a command that cannot spawn toasts, and the daemon goes on', asy
 
 // A terminal for the run (R5.13, 2026-11-26): pty.ts, one pseudo-terminal from start to end.
 test('bang: runs in a terminal: stdin and stdout are TTYs, stderr apart, a typed line and an empty Enter reach it, CRLF normalised', async () => {
-  let bang!: Bang;
   const typed: string[] = [];
+  const terms = new Terms({ tickMs: 5 });
   const r = await new Promise<BangRun>((resolve) => {
-    bang = new Bang({ id: ID, cmd: `[ -t 0 ] && echo tty0; [ -t 1 ] && echo tty1; echo err >&2; printf 'Name: '; read a; echo "got [$a]"; printf 'Press Enter: '; read b; echo "then [$b]"`, cwd: tmp(), shell: '/bin/sh', tickMs: 5,
+    new Bang({ id: ID, cmd: `[ -t 0 ] && echo tty0; [ -t 1 ] && echo tty1; echo err >&2; printf 'Name: '; read a; echo "got [$a]"; printf 'Press Enter: '; read b; echo "then [$b]"`, cwd: tmp(), shell: '/bin/sh', tickMs: 5, terms,
       onUpdate: (run) => {
-        if (run.out.includes('Name: ') && !typed.length) { typed.push('demo'); assert.equal(bang.input('demo'), true); }
-        if (run.out.includes('Press Enter: ') && typed.length === 1) { typed.push(''); assert.equal(bang.input(''), true); }
+        if (run.out.includes('Name: ') && !typed.length) { typed.push('demo'); assert.equal(terms.input(ID, 'demo\r'), true); }
+        if (run.out.includes('Press Enter: ') && typed.length === 1) { typed.push(''); assert.equal(terms.input(ID, '\r'), true); }
       },
       onDone: (run) => resolve({ ...run }) });
   });
@@ -147,10 +148,34 @@ test('bang: runs in a terminal: stdin and stdout are TTYs, stderr apart, a typed
   assert.match(r.out, /got \[demo\]\n/);
   assert.match(r.out, /then \[\]\n$/);
   assert.doesNotMatch(r.out, /\r/, 'the CRLF of the pty is LF');
-  assert.equal(bang.input('late'), false, 'nothing to type into once it ended');
+  assert.equal(terms.input(ID, 'late'), false, 'nothing to type into once it ended');
+  const raw = terms.get(ID)!.snapshot();
+  assert.equal(raw.live, false);
+  assert.match(raw.data, /tty0\r\ntty1\r\n/, 'the terminal gets the raw stream, CRLF and all');
+  assert.match(raw.data, /\x1b\[31merr\r\n\x1b\[39m/, 'stderr in red, its line ends as the terminal\'s');
 });
 
-test('bang: Esc, Esc ends a command that waits for Enter (TERM to its group)', async () => {
+test('bang: its terminal: Ctrl-C interrupts it, resize reaches it as SIGWINCH, escapes stay raw for the terminal and go from the plain text', async () => {
+  const terms = new Terms({ tickMs: 5 });
+  let sized = false, stopped = false;
+  const r = await new Promise<BangRun>((resolve) => {
+    new Bang({ id: ID, cmd: `trap 'stty size' WINCH; printf '\\033[32mready\\033[0m\\n'; while :; do sleep 0.05; done`, cwd: tmp(), shell: '/bin/sh', tickMs: 5, terms,
+      onUpdate: (run) => {
+        if (run.out.includes('ready') && !sized) { sized = true; assert.equal(terms.resize(ID, 123, 45), true); }
+        if (run.out.includes('45 123') && !stopped) { stopped = true; terms.input(ID, '\x03'); }
+      },
+      onDone: (run) => resolve({ ...run }) });
+  });
+  assert.equal(r.exit, 130, '128 + SIGINT');
+  assert.equal(r.interrupted, true, 'Ctrl-C typed in it reads as stopped by you');
+  assert.match(r.out, /^ready\n/, 'no escapes in the plain text');
+  assert.match(terms.get(ID)!.snapshot().data, /\x1b\[32mready\x1b\[0m/);
+  assert.deepEqual(terms.size, { cols: 123, rows: 45 }, 'the next run starts at the size last given');
+  const again = await run('stty size', { terms });
+  assert.equal(again.run.out.trim(), '45 123');
+});
+
+test('bang: its stop ends a command that waits for Enter (TERM to its group)', async () => {
   let bang!: Bang;
   const done = new Promise<BangRun>((resolve) => {
     bang = new Bang({ id: ID, cmd: `printf 'Press Enter: '; read x; echo never`, cwd: tmp(), shell: '/bin/sh', tickMs: 5, onUpdate: () => {}, onDone: (r) => resolve({ ...r }) });
@@ -193,10 +218,10 @@ test('waits for input: after the quiet time with a prompt open, cleared by outpu
 
 test('bang: a run that prints a prompt and goes quiet waits for input, and an Enter typed in ends it', async () => {
   const seen: boolean[] = [];
-  let bang!: Bang;
+  const terms = new Terms({ tickMs: 5 });
   const r = await new Promise<BangRun>((resolve) => {
-    bang = new Bang({ id: ID, cmd: 'printf "Press Enter when done… "; read x; echo "got $x"', cwd: tmp(), shell: '/bin/sh', tickMs: 5, promptMs: 60, hintMs: 5000,
-      onUpdate: (run) => { seen.push(run.waiting); if (run.waiting) bang.input(''); }, onDone: (run) => resolve({ ...run }) });
+    new Bang({ id: ID, cmd: 'printf "Press Enter when done… "; read x; echo "got $x"', cwd: tmp(), shell: '/bin/sh', tickMs: 5, promptMs: 60, hintMs: 5000, terms,
+      onUpdate: (run) => { seen.push(run.waiting); if (run.waiting) terms.input(ID, '\r'); }, onDone: (run) => resolve({ ...run }) });
   });
   assert.equal(seen.includes(true), true);
   assert.equal(r.waiting, false, 'not once it ended');
@@ -231,11 +256,14 @@ test('pty plainText: CRLF as LF, escapes out, a rewritten line as it ended', () 
   assert.equal(plainText('half\r'), 'half', 'a CR at the end waits for what comes');
 });
 
-test('delivery: a line typed with no command running is refused', async () => {
-  const { sessions, SID } = setup();
-  const r = sessions.get(SID)!.bangInput('x');
-  assert.equal(r.ok, false);
-  sessions.stop();
+test('terms: keys for a terminal that isn\'t there, or ended, are refused', () => {
+  const terms = new Terms();
+  assert.equal(terms.input('nope', 'x'), false);
+  const t = terms.open('t1', { write: () => {}, resize: () => {} });
+  assert.equal(terms.input('t1', 'x'), true);
+  t.end();
+  assert.equal(terms.input('t1', 'x'), false);
+  assert.equal(terms.resize('t1', 80, 24), false);
 });
 
 test('bang format: the CLI tags, the exit and cut lines, and back', () => {

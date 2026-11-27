@@ -7,6 +7,7 @@ import { Creds, guessCommand, gitRoot, screenText, AGAIN_MS } from '../src/creds
 import type { CredsFrame } from '../src/creds.ts';
 import type { PtyEnd, PtyStart } from '../src/pty.ts';
 import { shellPty } from '../src/pty.ts';
+import { Terms } from '../src/terms.ts';
 
 // A fake pty: each start is recorded; the test prints into it and ends it.
 function harness(commands: Record<string, string> = {}, prefill = '') {
@@ -16,24 +17,25 @@ function harness(commands: Record<string, string> = {}, prefill = '') {
     const done = new Promise<PtyEnd>((r) => { end = r; });
     const run = { command, cwd: o.cwd, typed: [] as string[], print: o.onData, end };
     runs.push(run);
-    return { write: (t) => run.typed.push(t), kill: () => end({ code: null, timedOut: false, killed: true }), group: () => null, done };
+    return { write: (t) => run.typed.push(t), resize: () => {}, kill: () => end({ code: null, timedOut: false, killed: true }), group: () => null, done };
   };
   const frames: CredsFrame[] = [];
   const refreshing: [string[], boolean][] = [];
   const refreshed: string[][] = [];
   let clock = 1_000_000, saves = 0;
+  const terms = new Terms({ tickMs: 0 });
   const c = new Creds({
-    start, commands, saved: () => saves++, prefill: async () => prefill, rootOf: async (cwd) => cwd.replace(/\/sub$/, ''),
+    start, commands, terms, saved: () => saves++, prefill: async () => prefill, rootOf: async (cwd) => cwd.replace(/\/sub$/, ''),
     send: (f) => frames.push(f), refreshing: (sids, on) => refreshing.push([sids, on]),
     // the sessions' sign-in clears: their status says so (session.ts onSignedOut)
     refreshed: (sids) => { refreshed.push(sids); for (const sid of sids) void c.signedOut(sid, '/repo', false); },
     now: () => clock,
   });
   const tick = () => new Promise((r) => setImmediate(r));
-  return { c, runs, frames, refreshing, refreshed, commands, saves: () => saves, tick, move: (ms: number) => { clock += ms; } };
+  return { c, terms, runs, frames, refreshing, refreshed, commands, saves: () => saves, tick, move: (ms: number) => { clock += ms; } };
 }
 
-test('creds: a saved command runs on an expiry, its output is shown live, input reaches it, exit 0 clears it', async () => {
+test('creds: a saved command runs on an expiry, its output is shown live, its terminal takes keys, exit 0 clears it', async () => {
   const h = harness({ '/repo': 'bin/aws-login' });
   await h.c.signedOut('s1', '/repo', true);
   assert.equal(h.runs.length, 1);
@@ -42,8 +44,9 @@ test('creds: a saved command runs on an expiry, its output is shown live, input 
   h.runs[0].print('Code: \x1b[1mABCD-1234\x1b[0m\r\nPress Enter: ');
   assert.equal(h.frames.at(-1)?.output, 'Code: ABCD-1234\nPress Enter: ');
   assert.equal(h.frames.at(-1)?.phase, 'running');
-  assert.deepEqual(h.c.input('s1', 'yes'), { ok: true });
-  assert.deepEqual(h.runs[0].typed, ['yes\n']);
+  assert.equal(h.terms.input('creds:/repo', 'yes\r'), true, 'its terminal (terms.ts) by the id the page shows it under');
+  assert.deepEqual(h.runs[0].typed, ['yes\r']);
+  assert.match(h.terms.get('creds:/repo')!.snapshot().data, /\x1b\[1mABCD-1234/, 'the terminal gets the raw stream');
   h.runs[0].end({ code: 0, timedOut: false, killed: false });
   await h.tick();
   assert.deepEqual(h.refreshed, [['s1']]);
@@ -109,7 +112,7 @@ test('creds: an expiry right after a refresh that succeeded doesn\'t run it agai
   assert.deepEqual(h.c.cancel('s1'), { ok: true });
   await h.tick();
   assert.deepEqual([h.frames.at(-1)?.phase, h.frames.at(-1)?.error], ['failed', 'The refresh command was stopped.']);
-  assert.deepEqual(h.c.input('s1', 'x'), { ok: false, error: 'No refresh command is running.' });
+  assert.equal(h.terms.input('creds:/repo', 'x'), false, 'nothing to type into once it ended');
 });
 
 test('creds: the guess is awsAuthRefresh, then an executable bin/aws-login, then empty; the folder is the git root', async () => {

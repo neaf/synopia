@@ -140,8 +140,6 @@ export class Creds {
     return { ok: true };
   }
 
->>>>
-
   cancel(sid: string): { ok: true } | { ok: false; error: string } {
     const f = this.runningFor(sid);
     if (!f?.run) return { ok: false, error: 'No refresh command is running.' };
