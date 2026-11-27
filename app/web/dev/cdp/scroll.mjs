@@ -268,6 +268,26 @@ check('c: visible again, the block you last saw is where it was', wC === 'kept',
 d = await lineAfter('c', { seen: seenC, last: lastC, g });
 if (d) await stays('c', d);
 
+// (e) what you wrote is never new (2026-11-27): a prompt of yours while away, then Claude's reply; the line goes
+// under your prompt, and with only your prompt there is no line
+{
+  await K.G(); await sleep(SEE);
+  const stamp = (s) => s.replace(/"timestamp":"[^"]*"/, `"timestamp":"${now()}"`);
+  check('e: Y shows', await goTo(Y));
+  const tagE = `grown ${++n}`;
+  fs.appendFileSync(xFile, stamp(R.you(X, `x-e${n}-u`, 0, `${tagE}, your question`)));
+  check('e: the backend has your prompt', await backendHas('main', tagE));
+  check('e: X shows again', await goTo(X)); await sleep(200);
+  check('e: only your prompt came: no line', (await divider()) === null, await divider());
+  await K.G(); await sleep(SEE);
+  check('e: Y shows', await goTo(Y));
+  fs.appendFileSync(xFile, stamp(R.you(X, `x-e${n}-u2`, 0, `${tagE}, your next question`)) + stamp(R.said(X, `x-e${n}-a`, 0, `${tagE}, Claude's answer`)));
+  check('e: the backend has the answer', await backendHas('main', `${tagE}, Claude's answer`));
+  check('e: X shows again', await goTo(X)); await sleep(200);
+  const de = await divider();
+  check('e: the line sits under your prompt, above the answer', de?.n === 1 && de.key.startsWith(`x-e${n}-a`) && /^you:/.test(de.prev || ''), de);
+}
+
 // (d) a reload while away; then a reload while it shows keeps it where it was
 async function reloadCase(name, whereTo, count, viewSel, viewKey) {
   if (viewSel) check(`${name}: the view opens`, await openView(viewSel, viewKey));

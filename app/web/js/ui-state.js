@@ -249,8 +249,10 @@ function firstUnseen(log, rec) {
   if (!rec?.seen) return null;
   const all = blocks(log), p = split(rec.seen), i = all.findIndex(c => c.dataset.key === p.key); if (i < 0) return null;
   const at = rec.seenAt || Date.now();
-  if (p.at !== null && +(all[i].dataset.end || 0) > p.at) return { id: rec.seen, at };
-  const el = all[i + 1];
+  /* what you wrote is seen: your messages and `!` commands never start what's new (2026-11-27) */
+  let last = i; all.forEach((c, j) => { if (j > last && /^(you|bang):/.test(c.dataset.key || "")) last = j; });
+  if (last === i && p.at !== null && +(all[i].dataset.end || 0) > p.at) return { id: rec.seen, at };
+  const el = all[last + 1];
   return el ? { id: el.dataset.key, at: timeOf(el.dataset.key) ?? at } : null;
 }
 /* You came back to the view (from another view, or the window shown again): the line goes above the first item you
