@@ -7,7 +7,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 | Command | Runs |
 |---|---|
 | `app/check.sh` | backend unit tests, `swiftc -typecheck` of the shell, `node --check` of every page script and the page unit tests (`node --test app/web/test/*.test.js`); one pass or fail line each |
-| `app/check.sh --page` | the above, then `run.sh all` (32 suites); four pass lines |
+| `app/check.sh --page` | the above, then `run.sh all` (33 suites); four pass lines |
 | `app/web/dev/cdp/run.sh <suite>` | one page suite; the list and what each covers is at the top of `run.sh` |
 | `app/web/dev/cdp/run.sh all` | every suite, 4 at a time (`SYNOPIA_CDP_JOBS`), a table of suite and result in suite order, failures under it; each suite's full output stays in the folder it prints |
 | `SYNOPIA_CDP_THEME=dark app/web/dev/cdp/run.sh <suite>` | the suite with the system appearance dark |
@@ -17,7 +17,7 @@ How Synopia's automated checks run, and the browser and test-runner facts they d
 - Each `run.sh` run starts its own headless browser (a temp `--user-data-dir`, `--remote-debugging-port=0`, the port read from `DevToolsActivePort`) and its own backend (`--port 0`, the port read from the ready line) on a fresh state folder. A `trap` stops both on exit, Ctrl-C too, and only its own pids. So two runs, other agents' runs and an open app never share anything.
 - A run prints `N/M pass`, the failures and where its shots are. Its exit code is the result: 0 only when every check passed and at least one ran.
 - The backend under the suites runs the real Sessions, status, writer and menu code on the scripted SDK (below), over a copy of `app/backend/test/fixtures/claude/` in the run's state folder with its `sdk-script.json`: a multi-select question (`#22222222`), a permission with an "Always allow" suggestion (`#33333333`), a plan (`#55555555`), a working session with subagents and a stream preview (`#44444444`), an idle session with diffs whose process gives the menu (`#11111111`). `run.sh` passes `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`, and `--dry-run` for `preview`.
-- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps`, `scroll`, `agenttools`, `sendnow`, `mcp`, `find` and `items` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`). `items` also writes its made-up ledger to `/tmp/synopia-items/shop/.ai-notes/checkout-m2/open-items.md`, the folder its records name, and rewrites it once.
+- `states` and `rail` use copies of the trees `claude-states` and `claude-rail`. `earlier`, `viewswitch` (through `earlier.mjs make`), `images`, `background`, `close`, `titles`, `queued`, `bang`, `folders`, `preview`, `extcard`, `steps`, `scroll`, `agenttools`, `sendnow`, `mcp`, `find`, `items` and `waiting` write their own tree and script into the run's state folder first (`node <suite>.mjs make …`, called by `run.sh`; `helpers.mjs` `writeScript`, `running`, `terminal`). `items` also writes its made-up ledger to `/tmp/synopia-items/shop/.ai-notes/checkout-m2/open-items.md`, the folder its records name, and rewrites it once; `waiting` writes its two ledgers under `/tmp/synopia-waiting/`.
 - Page hooks: `?agent=<id>` opens a subagent, `&open=1` expands the last diff. `rail.mjs` and `restore.mjs` use them.
 
 ## The scripted SDK
@@ -142,6 +142,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `preview()` | the file preview: `{shown, path}` |
 | `find()` | the transcript's find bar (find.js): `{shown, q, at, total, count, hits, waiting}`, `count` the text it shows ("3 of 12", "No matches") |
 | `openList()` | the Open list: `{shown, filter}` |
+| `waitingList()` | the Waiting on you list: `{shown, filter, sel, rows: [{sid, id}]}`, `sel` "<sid>\n<id>" of the selected row |
 | `mcp()` | the MCP panel: `{shown, sid, servers, error, note, sel, action}` |
 | `marks()` | every mark kind in the marks table |
 | `mark(kind, size)` | a mark's markup, `size` in px |

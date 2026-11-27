@@ -978,3 +978,21 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
 .side .row .r-wait .ind.o-open { color: #9198A1; }
 .side .row[aria-current="true"] .r-wait { color: var(--ink-2); }
 .side .row[aria-current="true"] .r-wait .ind.o-open { color: var(--ink-3); }
+
+/* ---------- the Waiting on you list (R9.10, waiting-list.js): the head's button, and the list built as the Open list
+   (prototype/open-items-storyboard.html scenario 9). The sidebar is dark in both themes, so the button's colours are fixed. ---------- */
+.side-head .wbtn { margin-left: auto; color: #ADBAC7; border-color: #444C56; background: transparent; font-size: 11px; padding: 1px 8px; display: inline-flex; gap: 5px; align-items: center; }
+.side-head .wbtn[hidden] { display: none; }
+.side-head .wbtn:hover { background: #2D333B; color: #E6EDF3; }
+.side-head .wbtn .ind { font-size: 9px; }
+.side-head .wbtn .ind.o-open { color: #9198A1; }
+.side-head .wbtn:not([hidden]) + .conn { margin-left: 0; }
+.wl-h { display: flex; gap: 2ch; padding: 7px 14.5px 2px; font-family: var(--sans); font-size: 12px; font-weight: 700; color: var(--ink); }
+.wl-h:first-child { padding-top: 3px; }
+.wl-h .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wl-h > span:last-child { flex: none; font-weight: 400; color: var(--ink-3); }
+.waiting-list .ol-it .n { gap: 0; align-items: baseline; }
+.waiting-list .ol-it .n .oi-id { flex: none; font-size: 10.5px; margin-right: 1ch; }
+.waiting-list .ol-it .n .oi-id.found { border-style: dashed; } /* what Synopia found, not the agent's record */
+.waiting-list .ol-it .n .x-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.waiting-list .ol-it .f { overflow: hidden; text-overflow: ellipsis; }

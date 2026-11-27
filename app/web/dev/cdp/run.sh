@@ -33,13 +33,14 @@
 #   app/web/dev/cdp/run.sh creds   retried requests and the credential refresh (R8.2): the retry's attempt, sentence and countdown, needs you with the sign-in expired, the guessed command, Save runs it in a pseudo-terminal shared by the folder, its output live, a typed line, exit 0 clears, a later expiry runs it by itself, a failure's editable line, with shots
 #   app/web/dev/cdp/run.sh find    find in the transcript (R5.12e, R9.9) on a generated long transcript: ⌘F in both modes, the count, Enter and Shift+Enter, ⌘G, a match in an earlier page, one in a collapsed group, Esc keeps the place, a subagent's own transcript, no long task over 200 ms, with a shot (also in /tmp/synopia-find/)
 #   app/web/dev/cdp/run.sh items   open items in the background panel (R7.1, R3.16, R10.1) on a made-up session and ledger: the groups and counts, solid id boxes, the buttons writing into the box in insert mode and sending nothing, a subagent's item under its card, the line Synopia can't read, a handed-over review item, Mark reviewed by the item's id, a rewritten ledger followed within 3 s, the sidebar's "○ N waiting on you" line and its click to the first item, J/K into the items, Enter and a click on an item's text jumping to the reply it came from (or only focusing), with shots light and dark
+#   app/web/dev/cdp/run.sh waiting the Waiting on you list (R9.10) on made-up sessions and ledgers, one shared: the head's "○ N waiting on you" button counting a shared ledger once, w and the button open it, rows grouped by session in sidebar order, answered and later items left out, j/k and arrows wrapping, the filter on text, id and session title, a reload keeping it, Enter opening the session with "Y2 " in its box in insert mode and the item focused, Esc and a click outside closing it, with shots light and dark
 # SYNOPIA_CDP_THEME=dark run.sh <name|all> runs any check with the system appearance dark (the page follows it).
 # Each run starts its own headless Chrome (its own profile, a debugging port Chrome picks) and its own backend
 # (a port it picks), so runs in parallel and the app you have open never meet; both stop on exit, Ctrl-C
 # included. Prints "N/M pass" and the failures; exits nonzero on a failure.
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
-SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders tables scroll stream agenttools sendnow mcp creds find items)
+SUITES=(dnd keys menu states earlier csp files steps preview tween images rail motion extcard restore background dark close titles queued bang viewswitch folders tables scroll stream agenttools sendnow mcp creds find items waiting)
 name="${1:-}"
 
 if [ "$name" = all ]; then
@@ -91,7 +92,7 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 if [ "$name" = viewswitch ]; then fix="$state/claude"; node "$here/earlier.mjs" make "$fix" || exit 1; fi
-if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ] || [ "$name" = scroll ] || [ "$name" = stream ] || [ "$name" = agenttools ] || [ "$name" = sendnow ] || [ "$name" = mcp ] || [ "$name" = creds ] || [ "$name" = find ] || [ "$name" = items ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
+if [ "$name" = earlier ] || [ "$name" = images ] || [ "$name" = background ] || [ "$name" = close ] || [ "$name" = titles ] || [ "$name" = queued ] || [ "$name" = bang ] || [ "$name" = folders ] || [ "$name" = scroll ] || [ "$name" = stream ] || [ "$name" = agenttools ] || [ "$name" = sendnow ] || [ "$name" = mcp ] || [ "$name" = creds ] || [ "$name" = find ] || [ "$name" = items ] || [ "$name" = waiting ]; then fix="$state/claude"; node "$here/$name.mjs" make "$fix" || exit 1; fi
 dry=(); if [ "$name" = preview ]; then fix="$state/claude"; dry=(--dry-run); node "$here/preview.mjs" make "$fix" || exit 1; fi
 if [ "$name" = extcard ]; then node "$here/extcard.mjs" make "$fix-ext" "$state/claude" || exit 1; fix="$state/claude"; fi
 if [ "$name" = steps ]; then node "$here/steps.mjs" make "$fix" "$state/claude" || exit 1; fix="$state/claude"; fi
@@ -115,7 +116,7 @@ runCheck "$here/$name.mjs" "$(cat "$state/url")" "$state" "$fix"; code=$?
 case $name in
   menu) echo "picker shot: $state/menu-picker.png" ;; earlier) echo "link shot: $state/earlier-link.png" ;;
   states) echo "shots: $state/states-*.png" ;; files) echo "shot: $state/files-changed.png" ;; steps) echo "shots: $state/steps*.png" ;;
-  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders|tables|scroll|agenttools|sendnow|mcp|creds|find|items) echo "shots: $state/$name-*.png" ;;
+  extcard|preview|images|rail|background|dark|close|titles|queued|bang|folders|tables|scroll|agenttools|sendnow|mcp|creds|find|items|waiting) echo "shots: $state/$name-*.png" ;;
 esac
 if [ "$name" = dnd ]; then stop; start; runCheck "$here/dnd.mjs" "$(cat "$state/url")" "$state" after-restart || code=1; fi
 exit $code

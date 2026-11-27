@@ -34,7 +34,7 @@ export const firstWaiting = s => itemsOf(s).items.find(i => i.kind !== "review" 
 const text = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
 const idBox = id => `<span class="oi-id">${esc(id)}</span>`;
 /* how old: from its `from` stamp, to the minute, or to the day for a stamp with no time (docs/Open items.md) */
-function ageOf(i) {
+export function ageOf(i) {
   if (typeof i.at !== "number") return "";
   if (i.minute !== false) return age(i.at);
   const d = Math.floor((Date.now() - i.at) / 86_400_000);

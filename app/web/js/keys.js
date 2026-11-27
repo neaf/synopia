@@ -1,5 +1,5 @@
 /* Keys (requirements R9): the page's one keyboard dispatcher. What is on top takes the keys, and nothing under
-   it sees them: the file preview, then the image viewer, the Open list, the MCP panel, a sidebar drag; with none of them up,
+   it sees them: the file preview, then the image viewer, the Open list, the Waiting on you list, the MCP panel, a sidebar drag; with none of them up,
    the session keys below. Text fields keep their own editing keys on the field itself (the message box and
    its menu, composer.js; a card's field, card.js; a group's name, sidebar.js; the Open list's filter types):
    the session keys leave a focused field alone, except ⌘⇧[ ] and the box's Esc (composer.js). */
@@ -10,9 +10,10 @@ import { drag, dragKey } from "./dnd.js";
 import { renderConv, loadEarlier, toEnd, openItem } from "./transcript.js";
 import { renderRail, waitingIds } from "./rail.js";
 import { focusedItem, focusItem } from "./open-items.js";
-import { promptKey, askInterrupt, askBackground, askClose, askNow } from "./composer.js";
+import { promptKey, askInterrupt, askBackground, askClose, askNow, writeLine } from "./composer.js";
 import { qaKeys } from "./card.js";
 import { openListShown, openListKey, showOpenList } from "./open-list.js";
+import { waitingListShown, waitingListKey, showWaitingList, onWaitingPick } from "./waiting-list.js";
 import { folderListKeys, folderListKey, openNewSession, showFolderList } from "./folder-list.js";
 import { previewShown, previewKey } from "./preview.js";
 import { viewer, viewerKey } from "./images.js";
@@ -25,6 +26,7 @@ const LAYERS = [
   { shown: previewShown, key: previewKey },
   { shown: () => !!viewer, key: viewerKey },
   { shown: openListShown, key: openListKey },
+  { shown: waitingListShown, key: waitingListKey },
   { shown: mcpShown, key: mcpKey },
   { shown: folderListKeys, key: folderListKey },
   { shown: () => !!drag?.started, key: dragKey },
@@ -67,6 +69,7 @@ function sessionKey(e) {
   switch (e.key) {
     case "n": e.preventDefault(); openNewSession(); break; // New session (R9.7)
     case "o": e.preventDefault(); showOpenList(); break; // Open session (R9.7)
+    case "w": e.preventDefault(); showWaitingList(); break; // the Waiting on you list (R9.10)
     case "Enter": // Continue in a folder (R3.11); else the focused open item, as a click on its text (R9.1); a focused button acts itself
       if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); }
       else if (!view && focusedItem(current) && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); openItem(focusedItem(current)); }
@@ -87,6 +90,9 @@ function sessionKey(e) {
     default: if (e.key.length === 1) e.preventDefault();
   }
 }
+
+/* Enter in the Waiting on you list: its session shown, then the item's id started in the box (R9.10) */
+onWaitingPick((sid, line) => { renderAll(); writeLine(sid, line); });
 
 /* Ctrl+J/K and ⌘⇧[ ]: the next or previous shown session, in sidebar order (KEYS, from renderSide); from
    insert mode the next session's box takes the focus (the render blurs the old one) */

@@ -19,6 +19,7 @@ import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-lis
 import { applyFolders, applyCompletion, applyFolderState, foldersAgain } from "./folder-list.js";
 import { renderAll } from "./keys.js";
 import { applyMcp, mcpAgain } from "./mcp-panel.js";
+import { drawWaitingList } from "./waiting-list.js";
 import { applyCreds } from "./creds-line.js";
 import { setMode } from "./mode.js";
 import { toast } from "./toast.js";
@@ -109,6 +110,7 @@ function onMessage(m) {
     }
     case "openItems": {
       if (state.applyOpenItems(m) && isCurrent(m.sid)) render("rail");
+      drawWaitingList(); // the Waiting on you list, while it is shown (R9.10)
       break;
     }
     case "pending": {
@@ -175,6 +177,7 @@ function runHooks(m) {
 
 ui.useLog(transcript.renderLog, transcript.loadEarlier);
 sidebar.onPick(renderAll); // a row's click shows its session
+sidebar.onRendered(drawWaitingList); // the counts changed: the Waiting on you list follows them
 /* a start_session step's link (R3.15): the session it started, or, once closed, opened again from the Open list's route */
 transcript.onSession(sid => {
   if (store.sessions.has(sid)) { state.select(sid); renderAll(); return; }

@@ -17,6 +17,7 @@ import { viewer, showViewer, imageUrl } from "./images.js";
 import { mode, setMode } from "./mode.js";
 import { themePref, themeSet } from "./theme-switch.js";
 import { openList, openListShown, restoreOpenList } from "./open-list.js";
+import { wl, waitingListShown, restoreWaitingList } from "./waiting-list.js";
 import { fl, folderListShown, restoreFolderList } from "./folder-list.js";
 import { esc, hhmm } from "./format.js";
 import { outEnds, lineAt } from "./bg-view.js";
@@ -26,7 +27,7 @@ const drafts = new Map(); // sid -> { text, cursor, atts } for the sessions not 
 const stored = new Set(); // pasted image ids the backend has as files
 let sentTop = {}, sentSess = {}; // what the backend has, as JSON per field
 let uiLoaded = false, timer = null, firstChange = 0, restoring = null, typing = null, afterFirst = null, lastShown = null;
-const TOP = ["current", "view", "mode", "openList", "folderList", "preview", "viewer", "theme"];
+const TOP = ["current", "view", "mode", "openList", "waitingList", "folderList", "preview", "viewer", "theme"];
 const sess = sid => (uiS[sid] ||= { scroll: {}, earlier: {}, diffs: new Set(), folds: new Set() });
 const viewKey = () => view || "";
 /* the steps opened by a click, "<sid>|<view>|<item id>" (transcript.js): a redraw and a reload keep them */
@@ -82,11 +83,12 @@ export function applyHello(u) {
   sentTop = Object.fromEntries(TOP.map(k => [k, JSON.stringify(u[k] ?? null)]));
   afterFirst = u;
 }
-/* the overlays come back once the view is on screen: the Open list, the file preview, the image viewer */
+/* the overlays come back once the view is on screen: the Open list, the Waiting on you list, the file preview, the image viewer */
 export function afterRender() {
   const u = afterFirst; afterFirst = null; if (!u) return;
   if (u.folderList && typeof u.folderList.filter === "string") restoreFolderList(u.folderList);
   if (u.openList && typeof u.openList.filter === "string") restoreOpenList(u.openList.filter);
+  if (u.waitingList && typeof u.waitingList.filter === "string") restoreWaitingList(u.waitingList.filter);
   if (u.preview && u.preview.path) restorePreview(u.preview);
   if (u.viewer && Array.isArray(u.viewer.srcs) && u.viewer.srcs.length)
     showViewer(u.viewer.srcs.map(s => s.replace("/api/image?", `/api/image?token=${encodeURIComponent(TOKEN)}&`)), +u.viewer.i || 0, Array.isArray(u.viewer.froms) ? u.viewer.froms.map(String) : []);
@@ -423,6 +425,7 @@ function top() {
   return {
     current, view: view || null, mode, theme: themePref(),
     openList: openListShown() ? { filter: openList.filter } : null,
+    waitingList: waitingListShown() ? { filter: wl.filter } : null,
     folderList: folderListShown() && !fl.fixed ? { filter: fl.filter, sid: fl.sid } : null,
     preview: previewShown() && pv.path ? { path: pv.path, scroll: Math.round(code.scrollTop), find: find && !find.hidden ? document.getElementById("pv-q").value : "" } : null,
     viewer: viewer ? (keep => keep.length ? { srcs: keep.map(k => viewer.srcs[k].replace(/([?&])token=[^&]*&?/, "$1")), froms: keep.map(k => viewer.froms[k] || ""), i: Math.max(0, keep.indexOf(viewer.i)) } : null)(viewer.srcs.map((s, k) => k).filter(k => viewer.srcs[k].startsWith("/api/image?"))) : null,

@@ -35,6 +35,7 @@ export type UiState = {
   mode?: 'normal' | 'insert';
   openBg?: string | null;
   openList?: { filter: string } | null;
+  waitingList?: { filter: string } | null; // the Waiting on you list (R9.10)
   folderList?: { filter: string; sid: string | null } | null; // the folder list (R3.3), and the session it continues (R3.11)
   preview?: { path: string; scroll: number; find: string } | null;
   viewer?: { srcs: string[]; froms?: string[]; i: number } | null;
@@ -116,6 +117,7 @@ function cleanTop(v: Record<string, unknown>, out: UiState): void {
   if ('theme' in v) out.theme = v.theme === 'light' || v.theme === 'dark' ? v.theme : null;
   if ('openBg' in v) out.openBg = str(v.openBg, 256) ? v.openBg : null;
   if ('openList' in v) out.openList = isObj(v.openList) && str(v.openList.filter, 1024) ? { filter: v.openList.filter } : null;
+  if ('waitingList' in v) out.waitingList = isObj(v.waitingList) && str(v.waitingList.filter, 1024) ? { filter: v.waitingList.filter } : null;
   if ('folderList' in v) {
     const f = v.folderList;
     out.folderList = isObj(f) && str(f.filter, 1024) ? { filter: f.filter, sid: str(f.sid, 256) ? f.sid : null } : null;

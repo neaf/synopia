@@ -55,8 +55,9 @@ function waitLine(s) {
   const b = bgOf(s).find(x => x.own && x.waiting && bgState(x) === "running"); if (!b) return "";
   return `<span class="r-agent kc-shell" data-line="wait"><i class="el"></i>${ind("pause")} <b class="kw"><span class="who">!</span> ${esc(b.command)}</b> waits</span>`;
 }
-/* the row's state words, as in the status storyboard: working ones without an age, the rest with one */
-function rowWord(s) {
+/* the row's state words, as in the status storyboard: working ones without an age, the rest with one (the
+   Waiting on you list's session lines too, waiting-list.js) */
+export function rowWord(s) {
   const st = s.state, d = st.detail, n = d.queued;
   if (st.light === "red") return `${esc(st.word)}, ${age(st.since)}`;
   if (st.status === "busy") return n ? `Working, ${esc(n)} message${n > 1 ? "s" : ""} queued` : esc(st.word);
@@ -102,6 +103,7 @@ export function renderSide() {
   }
   if (groups.length || others.length) html += `<section class="group tree others" data-group="others"><div class="th"><span class="g-name">Not in a group</span></div>
     ${others.length ? others.map(id => rowHTML(byId(id))).join("") : `<div class="g-empty" data-drop-group="others">Drop a session here to take it out of its group</div>`}</section>`;
+  headButton();
   const el = document.getElementById("groups"), before = lineSnap(el); el.innerHTML = html;
   tweenLines(el, before);
   rendered.forEach(f => f(el));
@@ -122,6 +124,14 @@ export function renderSide() {
     inp.onkeydown = e => { if (e.key === "Enter") done(true); if (e.key === "Escape") done(false); };
     inp.onblur = () => done(true);
   }
+}
+/* the head's "○ N waiting on you" button (R9.10): the backend's counts of the sessions shown, added up, so a shared
+   ledger counts once (FR-ITEM-06); none at 0. Its click opens the Waiting on you list (waiting-list.js). */
+function headButton() {
+  const b = document.getElementById("waiting"); if (!b) return;
+  const n = KEYS.reduce((t, id) => t + (store.sessions.get(id)?.state.waiting || 0), 0);
+  b.hidden = !n;
+  if (n && b.dataset.n !== String(n)) { b.dataset.n = n; b.innerHTML = `${ind("open")} ${n} waiting on you`; }
 }
 /* sub-line tweens (R8.1, tween.js): keyed by session id and line (data-line), re-applied after every render */
 const sideTw = lineTweens({
