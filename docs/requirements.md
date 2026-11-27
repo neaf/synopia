@@ -142,6 +142,7 @@ These requirements come from a day of prototyping against the user's real sessio
   - ⌥1-9 shortcuts.
   - Light sidebar.
   - White mark chips on the dark sidebar.
+- R4.10 The sidebar's head holds the "○ N waiting on you" button, the total across sessions, which opens the Waiting on you list (R9.10).
 
 ## 5. Session view
 
@@ -359,6 +360,7 @@ The conversation pane is one panel from the title down (2026-11-25, prototype/co
     - i/a: insert.
     - `/`: insert with the command menu open.
     - n: New session (the folder list, R3.3); o: Open session (R3.2). See R9.7.
+    - w: the Waiting on you list (R9.10).
   - Insert mode: typing goes to the message box, or to a field in the card. Esc returns to normal; the first Esc closes the command menu. A `!` first in the empty box is bash mode (R5.13), inside insert mode: the same keys, Enter runs the command, Backspace on the empty box leaves it, and the box keeps it when Esc goes to normal.
   - Clicking the message box enters insert mode.
   - In both modes, Ctrl+J/Ctrl+K: next or previous session. In a text field they replace the field's own Ctrl+K (delete to the end of the line) (2026-11-25).
@@ -384,6 +386,12 @@ The conversation pane is one panel from the title down (2026-11-25, prototype/co
   - With nothing queued and no draft, while a card waits (it comes first), or in a session another process runs, f does nothing, silently. In insert mode f types.
   - One prompt at a time: Esc, b or x under it asks theirs instead, and f under theirs asks this.
 - R9.9 Find (decided 2026-11-26): ⌘F opens the transcript's find bar (R5.12e) in normal and insert mode. Enter or ⌘G goes to the next match, Shift+Enter or Shift+⌘G to the one before, wrapping at the ends. Esc closes it, back to the mode it was opened from. Not `/` (the command menu) and not n or N (n is New session, R9.7).
+- R9.10 The Waiting on you list (decided 2026-11-26, R3.16; `prototype/open-items-design.md` 4.6, the storyboard's scenario 9): w in normal mode, or a click on the sidebar head's "○ 7 waiting on you" button, opens a list over the main area, built like the Open list, of everything waiting on you in every open session.
+  - The button sits at the right of "Synopia" in the sidebar's head, with the hollow circle a card uses for "not answered" and a 1px line, and shows the sum of the sessions' "○ N waiting on you" counts (R4.2): a shared ledger counts once. With nothing waiting it isn't there.
+  - The list shows what that count counts: the open Y items, review items aside, not answered and not `later`, of each session that counts its ledger, grouped by session in sidebar order. A group's line has the session's title and its state words; each row the item's id box (dashed for what Synopia found), its text on one line, its kind and its age. The header says "7 items in 3 sessions, in sidebar order."
+  - ↑↓ move across sessions, j/k too while the filter is empty; past the last row it wraps. Typing filters on the item's text, its id and the session's title, with the one matcher (R3.14), and keeps the order; the matched letters are marked. Enter, or a click on a row, opens that session with the item focused in the panel (R9.1) and its id started in the message box (`Y2 `, on a new line after a draft), in insert mode; nothing is sent. Esc or a click outside closes it.
+  - The list and its filter come back after a reload, as the Open list's do (R3.9).
+  - Rejected: a group of items pinned in the sidebar (a row would no longer mean a session, and the items push the sessions down); the sidebar lines alone (you see how many, never what).
 
 ## 10. Deliverables for review
 
