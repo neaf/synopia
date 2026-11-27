@@ -13,7 +13,7 @@ import type { SlashCommand } from '@anthropic-ai/claude-agent-sdk';
 import { SessionProcess, imageError, imagesIn, userContent } from './sdk.ts';
 import type { Content, Image, InterruptResult, McpControl, MenuSource, Returned, Sdk, StartOptions } from './sdk.ts';
 import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
-import { cardOf, answerOf } from './agent-tools.ts';
+import { cardOf } from './agent-tools.ts';
 import { SessionStatus, queuesBehind } from './status.ts';
 import type { Running, StatusEntry, Timer } from './status.ts';
 import type { Terminal } from './cli-terminals.ts';
@@ -195,7 +195,6 @@ export class Session {
       drained: () => this.releaseHeld(),
       context: () => ({ cwd: d.tilde(this.cwd), modeBefore: d.transcripts.facts(this.id)?.modeBeforePlan || 'auto' }),
       own: (name, input) => cardOf(name, input, d.tilde(this.cwd)), // Synopia's own tools word their card
-      auto: answerOf, // and open_items has none (FR-ITEM-12)
       tilde: d.tilde,
       now: d.now,
     });

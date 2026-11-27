@@ -10,7 +10,7 @@ import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import { openStore } from '../src/store.ts';
 import { placeUnder } from '../src/layout.ts';
-import { callServed, cardOf, firstWords, fullName, sessionOf, startedText, stepOf, answerOf } from '../src/agent-tools.ts';
+import { callServed, cardOf, firstWords, fullName, sessionOf, startedText, stepOf } from '../src/agent-tools.ts';
 import { toolLine } from '../src/transcript.ts';
 import { writerOptions } from '../src/sdk.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
@@ -74,7 +74,7 @@ test('agent tools: every session Synopia runs gets the synopia server; the write
   const servers = call.options.mcpServers as Record<string, { type: string; name: string; tools?: unknown[] }>;
   assert.deepEqual(Object.keys(servers), ['synopia']);
   assert.equal(servers.synopia.type, 'sdk');
-  assert.deepEqual(servers.synopia.tools, [{ name: 'start_session', permission_policy: 'always_ask' }, { name: 'open_items', permission_policy: 'always_ask' }], 'each call asks (live run TL-1), open_items too: cards.ts answers it');
+  assert.deepEqual(servers.synopia.tools, [{ name: 'start_session', permission_policy: 'always_ask' }], 'each call asks (live run TL-1)');
   assert.deepEqual(writerOptions('haiku', '/tmp/w', 'x').mcpServers, {});
   assert.equal(writerOptions('haiku', '/tmp/w', 'x').persistSession, false);
 });
@@ -183,14 +183,4 @@ test('agent tools: wording, the step and the result', () => {
   assert.equal(firstWords('  one two\nthree'), 'one two');
   assert.equal(sessionOf(START, 'The prompt is empty.'), null);
   assert.equal(sessionOf('Bash', startedText(NEW1, 'x')), null);
-});
-
-test('agent tools: open_items has no card, its step reads Open items(Y5: text), a subagent\'s call is refused (FR-ITEM-12)', () => {
-  const name = fullName('open_items');
-  assert.equal(cardOf(name, {}, '~/x'), null);
-  assert.deepEqual(stepOf(name, { op: 'close', id: 'Y5', text: 'Can I remove the worktrees?\nmore' }), ['Open items', 'Y5: Can I remove the worktrees?']);
-  assert.deepEqual(stepOf(name, { op: 'open', text: 'Run it?' }), ['Open items', 'Run it?']);
-  assert.deepEqual(stepOf(name, { op: 'list' }), ['Open items', 'list']);
-  assert.equal(answerOf(name, { op: 'list' }, 'agent-1')?.behavior, 'deny');
-  assert.equal(answerOf(name, { op: 'list' }, undefined)?.behavior, 'allow');
 });

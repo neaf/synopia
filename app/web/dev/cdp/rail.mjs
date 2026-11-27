@@ -279,20 +279,18 @@ await c.until(`__synopia.view() === null && ${settled} && !!document.querySelect
 let r = await report('cccc0003');
 check('a card click from a subagent view shows Main conversation with that report near the top of the log', r.view === null && nearTop(r), JSON.stringify(r));
 check('the report is marked with the selection tint and the 1px blue ring of b, b', ringed(r), JSON.stringify(r));
-check('a card click marks nothing reviewed', (await sent('item')).length === 0 && r.rv === 3, JSON.stringify(r));
+check('a card click marks nothing reviewed', (await sent('reviewed')).length === 0 && r.rv === 3, JSON.stringify(r));
 check('the mark fades and goes', await c.until(`!document.querySelector('#log .jump-mark')`, 4000));
 // "Mark reviewed" only marks reviewed: no view change, no scroll, no jump
 await ev(`document.getElementById('log').scrollTop -= 300`); await sleep(100);
 const top0 = (await report('cccc0003')).top;
 sent = await spySent(c);
-await ev(`document.querySelector('.rail .rv:has(.rv-open[data-agent="cccc0003"]) [data-reviewed]').click()`);
+await ev(`document.querySelector('.rail [data-reviewed="cccc0003"]').click()`);
 await c.until(`document.querySelectorAll('.rail .rv').length === 2 && ${settled}`, 5000);
 r = await report('cccc0003');
-const marks = await sent('item');
-await c.until(`(__synopia.cur().openItems?.closed || []).some(i => i.note === 'marked reviewed')`, 5000);
-const rvItem = await ev(`__synopia.cur().openItems?.closed.find(i => i.note === 'marked reviewed' && i.id === ${JSON.stringify(marks[0]?.item ?? '')})?.text || ''`);
-check('"Mark reviewed" sends one item act for its review item, and only marks it: the same view and place, nothing marked', marks.length === 1 && marks[0].act === 'reviewed' && /^Y\d+$/.test(marks[0].item) && !!rvItem && r.view === null && r.top === top0 && !r.marked
-  && (await sent('view', 'earlier')).length === 0, JSON.stringify({ r, top0, marks, rvItem }));
+const marks = await sent('reviewed');
+check('"Mark reviewed" only marks it reviewed: the same view and place, nothing marked', marks.length === 1 && marks[0].agentId === 'cccc0003' && r.view === null && r.top === top0 && !r.marked
+  && (await sent('view', 'earlier')).length === 0, JSON.stringify({ r, top0, marks }));
 // a Past row still opens the subagent's view
 await ev(`document.querySelector('.rail .pr[data-agent="cccc0003"]').click()`);
 await c.until(`__synopia.view() === 'cccc0003' && ${settled}`, 5000);

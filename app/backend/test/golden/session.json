@@ -17,8 +17,6 @@
     "stopped": false,
     "needsYou": null,
     "review": 0,
-    "waiting": 0,
-    "due": 0,
     "driven": true
   },
   "ask": null,

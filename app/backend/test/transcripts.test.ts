@@ -164,36 +164,3 @@ test('resultText: the full result read again from its line, after the file grew;
   assert.equal(await transcripts.resultText(id, null, 'toolu_o'), null);
   transcripts.stop();
 });
-
-test('exchange: your last message; then Claude\'s text, one line per tool step with its result, the turn\'s key once over', () => {
-  const id = 'aaaaaaaa-0000-4000-8000-0000000000ee';
-  const at = (s: number) => new Date(Date.now() - (10 - s) * 1000).toISOString(); // recent: a turn quiet for 30 min reads over
-  const asst = (uuid: string, s: number, content: object[]) => line({ type: 'assistant', uuid, timestamp: at(s), message: { id: `m${uuid}`, role: 'assistant', content } });
-  const res = (uuid: string, s: number, tid: string, text: string) => line({ type: 'user', uuid, timestamp: at(s), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: tid, content: text }] } });
-  const end = line({ type: 'system', subtype: 'turn_duration', uuid: 'td', timestamp: at(9), durationMs: 5000 });
-  const body = you(1, at(1)) + asst('c1', 2, [{ type: 'text', text: 'Running the specs.' }])
-    + asst('c2', 3, [{ type: 'tool_use', id: 'tb', name: 'Bash', input: { command: 'bin/rspec', description: 'Run the specs' } }])
-    + res('r1', 4, 'tb', '3 failed\n41 passed\nextra\nmore')
-    + asst('c3', 5, [{ type: 'tool_use', id: 'tr', name: 'Read', input: { file_path: '/tmp/x/.ai-notes/m2/open-items.md' } }])
-    + res('r2', 6, 'tr', '# Open items: m2')
-    + asst('c4', 7, [{ type: 'text', text: 'Should I fix the 3 failures now?' }]);
-  const dir = tempSession(id, body);
-  const { transcripts } = reading(dir);
-  transcripts.open(id);
-  assert.deepEqual(transcripts.exchange(id, 'you'), { kind: 'you', key: 'u1', segments: [{ src: 'you', text: 'prompt 1' }] });
-  const ex = transcripts.exchange(id, 'turn')!;
-  assert.deepEqual(ex.segments.map((s) => [s.src, s.text]), [
-    ['claude', 'Running the specs.'],
-    ['tool', 'Bash(Run the specs) -> 3 failed / 41 passed / extra'],
-    ['tool', 'Read(/tmp/x/.ai-notes/m2/open-items.md)'],
-    ['claude', 'Should I fix the 3 failures now?'],
-  ]);
-  assert.equal(transcripts.exchangeKeys(id).turn, null, 'the turn still runs');
-  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), end);
-  transcripts.poll();
-  const keys = transcripts.exchangeKeys(id);
-  assert.equal(keys.you?.key, 'u1');
-  assert.equal(keys.turn?.key, ex.key);
-  assert.equal(transcripts.exchange('nope', 'you'), null);
-  transcripts.stop();
-});

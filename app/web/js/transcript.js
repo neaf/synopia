@@ -15,8 +15,7 @@ import { ownRowHTML, ownRun } from "./runs.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
-import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent, writeLine } from "./composer.js";
-import { focusItem, itemOf, dismissable } from "./open-items.js";
+import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent } from "./composer.js";
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
 import { fitTables, watchTables } from "./table-fit.js";
@@ -260,13 +259,7 @@ export function itemsHTML(items, sessionBusy, s) {
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  /* the open-items ledger is left out (R5.9, the backend's `ledger` flag): a turn that only edited it has no row */
-  const flushFiles = () => {
-    flush();
-    const patches = turnPatches.flatMap(t => t.patches || [t.patch]).filter(p => !p.ledger), more = turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0);
-    if (patches.length || more) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(patches, key, more, lastTs)]); }
-    turnPatches = [];
-  };
+  const flushFiles = () => { flush(); if (turnPatches.length) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(turnPatches.flatMap(t => t.patches || [t.patch]), key, turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0), lastTs)]); } turnPatches = []; };
   const endTurn = () => { flushFiles(); if (turnStart && lastTs && (turnMs || new Date(lastTs) > new Date(turnStart))) out.push([`done:${turnKey}`, `<div class="ln doneln"><span class="g"${markAt(lastTs)}>${ind("s_agent")}</span><div>Worked for ${took(turnMs || new Date(lastTs) - new Date(turnStart))}, done ${hhmm(lastTs)}</div></div>`]); };
   /* `mid`: a message the running turn took in from its queue (R5.5): the turn goes on through it, so no
      "Worked for" line before it */
@@ -608,27 +601,10 @@ function carryState(from, to) {
 }
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  /* a "To review" card: anywhere on it but "Mark reviewed" goes to the report; one whose subagent isn't in this
-     transcript (a handoff) only takes the focus (R7.1) */
-  const rv = e.target.closest(".rail .rv");
-  if (rv && !e.target.closest("[data-reviewed]")) {
-    e.preventDefault(); e.stopPropagation();
-    const a = rv.querySelector(".rv-open").dataset.agent;
-    if (a) toReport(a); else { focusItem(cur()?.id, rv.dataset.oi); renderRail(); }
-    return;
-  }
-  /* an open item's button writes its line into the box and sends nothing (R7.1); a click elsewhere on the item focuses it */
-  const undo = e.target.closest(".rail [data-oi-undo]"); // Undo on a line Synopia closed (FR-ITEM-10)
-  if (undo) { e.preventDefault(); e.stopPropagation(); const s = cur(); if (s) act({ t: "item", sid: s.id, item: undo.dataset.oiUndo, act: "undo" }); return; }
-  const chip = e.target.closest(".rail [data-write]");
-  if (chip) { e.preventDefault(); e.stopPropagation(); writeItemLine(chip.dataset.write); return; }
-  const open = e.target.closest(".rail [data-oi-open]"); // its text: to the reply it came from (FR-ITEM-07)
-  if (open) { e.preventDefault(); e.stopPropagation(); openItem(open.dataset.oiOpen); return; }
-  const oi = e.target.closest(".rail [data-oi]");
-  if (oi && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); focusItem(cur()?.id, oi.dataset.oi); renderRail(); return; }
+  const rv = e.target.closest(".rail .rv"); // a "To review" card: anywhere on it but "Mark reviewed" goes to the report
+  if (rv && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); toReport(rv.querySelector(".rv-open").dataset.agent); return; }
   const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], [data-session], #model-label");
   if (!t || t.closest(".qa-card")) return;
-  if (t.closest(".rail") && (t.dataset.agent || t.dataset.bg || t.hasAttribute("data-back-main"))) focusItem(null); // a panel row's view: no item focused
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
   else if (t.matches(".fc")) {
@@ -639,30 +615,11 @@ conv.addEventListener("click", e => {
     selectView(t.dataset.agent); renderConv();
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { selectView(null); renderConv(); }
-  else if (t.dataset.reviewed) { e.stopPropagation(); markReviewed(t.dataset.reviewed); } // the backend's next openItems drops the card
+  else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { if (e.target.closest("a[href]")) return; selectView(t.dataset.bg); renderConv(); } // a shell or monitor opens in the pane, as a subagent does (R7.2)
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });
-/* `d` on the focused open item (R9.1, FR-ITEM-10): "Not an item"; the backend's next openItems moves it to Closed
-   this turn with Undo. False when no item that can be dismissed is focused. */
-export function dismissItem() {
-  const s = cur(), id = !view && dismissable(s);
-  if (!id) return false;
-  act({ t: "item", sid: s.id, item: id, act: "notItem" });
-  focusItem(null);
-  return true;
-}
-/* Mark reviewed on a To review card: closes its review item, by the item's own id (FR-ITEM-03) */
-function markReviewed(id) {
-  const s = cur(); if (s && id) act({ t: "item", sid: s.id, item: id, act: "reviewed" });
-}
-/* an item's button: its line in Main conversation's box, where the box is (composer.js writeLine) */
-function writeItemLine(text) {
-  const s = cur(); if (!s) return;
-  if (view) { selectView(null); renderConv(); }
-  writeLine(s.id, text);
-}
 /* A "To review" card (R7.1): Main conversation, scrolled so that subagent's "Report from" block is near the top,
    briefly marked; its own transcript when this session's transcript has no report from it. Nothing is marked
    reviewed. */
@@ -673,16 +630,6 @@ function toReport(id) {
     if (found) markJump(`report:${id}`);
     else if (cur()?.id === s.id) { selectView(id); renderConv(); }
   });
-}
-/* An open item's text, or Enter on the focused item (R7.1, R9.1): the item takes the focus, and Main conversation
-   scrolls to the reply it came from (the backend's `reply`, a block key) and marks it, as a To review card does.
-   With no such reply it only focuses. */
-export function openItem(id) {
-  const s = cur(); if (!s || !id) return;
-  focusItem(s.id, id);
-  const key = itemOf(s, id)?.reply;
-  if (key && view) { selectView(null); renderConv(); } else renderRail();
-  if (key) ui.jumpTo(`${s.id}|`, key, found => { if (found) markJump(key); });
 }
 /* the block a jump landed on: the selection tint with the 1px blue ring of b, b, held, then faded (css .jump-mark) */
 const JUMP_HOLD = 1500, JUMP_FADE = 600;

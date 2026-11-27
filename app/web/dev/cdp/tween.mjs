@@ -44,10 +44,7 @@ await ev(`(() => {
     // the backend sends a deliverable with review: true and counts it in the session's state (status.ts)
     revOn: () => { put({ t: 'agents', sid: TWID, upsert: [{ id: 'tw-rev', toolUseId: 'tw-rev-t', description: 'For review: tween check', finished: true, review: true, start: iso() }] });
       put({ t: 'session', id: TWID, state: { ...S().state, review: S().state.review + 1 } }); },
-    revOff: () => put({ t: 'session', id: TWID, agents: (S().agents || []).filter(a => a.id !== 'tw-rev'), state: { ...S().state, review: S().state.review - 1 } }),
-    // the backend counts the open items waiting on you in the session's state (status.ts, FR-ITEM-06)
-    waitOn: () => put({ t: 'session', id: TWID, state: { ...S().state, waiting: 2, due: 1 } }),
-    waitOff: () => put({ t: 'session', id: TWID, state: { ...S().state, waiting: 0, due: 0 } }) };
+    revOff: () => put({ t: 'session', id: TWID, agents: (S().agents || []).filter(a => a.id !== 'tw-rev'), state: { ...S().state, review: S().state.review - 1 } }) };
   const geo = () => { const r = row(); if (!r) return null; const b = r.getBoundingClientRect(), tg = r.querySelector('.tg').getBoundingClientRect(), nx = r.nextElementSibling?.getBoundingClientRect();
     return { top: b.top, h: b.height, tgTop: tg.top - b.top, tgBot: tg.bottom - b.bottom, gapNext: nx ? nx.top - b.bottom : null, dragging: r.classList.contains('dragging') }; };
   window.TW_GEO = geo;
@@ -97,7 +94,7 @@ async function aligned(name) {
   check(name + ': geometry afterwards equals a fresh render (lines, L corners, the guide and its tick, the mark box)', a === b, a + '\n  vs ' + b);
 }
 
-for (const [name, on, off, key] of [['background line', 'bgOn', 'bgOff', 'bg'], ['review line', 'revOn', 'revOff', 'review'], ['waiting line', 'waitOn', 'waitOff', 'waiting']]) {
+for (const [name, on, off, key] of [['background line', 'bgOn', 'bgOff', 'bg'], ['review line', 'revOn', 'revOff', 'review']]) {
   judge(name + ' coming', await sample(on, key, 480), true); await aligned(name + ' coming');
   judge(name + ' going', await sample(off, key, 480), false); await aligned(name + ' going');
 }

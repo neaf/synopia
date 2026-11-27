@@ -1,5 +1,5 @@
 /* Keys (requirements R9): the page's one keyboard dispatcher. What is on top takes the keys, and nothing under
-   it sees them: the file preview, then the image viewer, the Open list, the Waiting on you list, the MCP panel, a sidebar drag; with none of them up,
+   it sees them: the file preview, then the image viewer, the Open list, the MCP panel, a sidebar drag; with none of them up,
    the session keys below. Text fields keep their own editing keys on the field itself (the message box and
    its menu, composer.js; a card's field, card.js; a group's name, sidebar.js; the Open list's filter types):
    the session keys leave a focused field alone, except ⌘⇧[ ] and the box's Esc (composer.js). */
@@ -7,13 +7,10 @@ import { current, cur, view, select, selectView, agentById, bgById } from "./sta
 import { mode, setMode, paintMode } from "./mode.js";
 import { KEYS, renderSide } from "./sidebar.js";
 import { drag, dragKey } from "./dnd.js";
-import { renderConv, loadEarlier, toEnd, openItem, dismissItem } from "./transcript.js";
-import { renderRail, waitingIds } from "./rail.js";
-import { focusedItem, focusItem } from "./open-items.js";
-import { promptKey, askInterrupt, askBackground, askClose, askNow, writeLine } from "./composer.js";
+import { renderConv, loadEarlier, toEnd } from "./transcript.js";
+import { promptKey, askInterrupt, askBackground, askClose, askNow } from "./composer.js";
 import { qaKeys } from "./card.js";
 import { openListShown, openListKey, showOpenList } from "./open-list.js";
-import { waitingListShown, waitingListKey, showWaitingList, onWaitingPick } from "./waiting-list.js";
 import { folderListKeys, folderListKey, openNewSession, showFolderList } from "./folder-list.js";
 import { previewShown, previewKey } from "./preview.js";
 import { viewer, viewerKey } from "./images.js";
@@ -26,7 +23,6 @@ const LAYERS = [
   { shown: previewShown, key: previewKey },
   { shown: () => !!viewer, key: viewerKey },
   { shown: openListShown, key: openListKey },
-  { shown: waitingListShown, key: waitingListKey },
   { shown: mcpShown, key: mcpKey },
   { shown: folderListKeys, key: folderListKey },
   { shown: () => !!drag?.started, key: dragKey },
@@ -69,12 +65,7 @@ function sessionKey(e) {
   switch (e.key) {
     case "n": e.preventDefault(); openNewSession(); break; // New session (R9.7)
     case "o": e.preventDefault(); showOpenList(); break; // Open session (R9.7)
-    case "w": e.preventDefault(); showWaitingList(); break; // the Waiting on you list (R9.10)
-    case "Enter": // Continue in a folder (R3.11); else the focused open item, as a click on its text (R9.1); a focused button acts itself
-      if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); }
-      else if (!view && focusedItem(current) && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); openItem(focusedItem(current)); }
-      break;
-    case "d": e.preventDefault(); if (dismissItem()) renderRail(); break; // the focused open item: "Not an item" (R9.1)
+    case "Enter": if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); } break; // Continue in a folder (R3.11)
     case "J": e.preventDefault(); stepView(1); break; // the next or previous conversation inside the session
     case "K": e.preventDefault(); stepView(-1); break;
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;
@@ -92,9 +83,6 @@ function sessionKey(e) {
   }
 }
 
-/* Enter in the Waiting on you list: its session shown, then the item's id started in the box (R9.10) */
-onWaitingPick((sid, line) => { renderAll(); writeLine(sid, line); });
-
 /* Ctrl+J/K and ⌘⇧[ ]: the next or previous shown session, in sidebar order (KEYS, from renderSide); from
    insert mode the next session's box takes the focus (the render blurs the old one) */
 function stepSession(step) {
@@ -104,20 +92,15 @@ function stepSession(step) {
   if (was === "insert" && mode !== "insert" && document.getElementById("msg")) setMode("insert");
 }
 /* J/K: Main conversation, then the subagents, forks, shells and monitors as the background panel shows
-   them, top to bottom (each opens in the pane, R7.2), then the Waiting on you items (R9.1: focused, with
-   Main conversation shown); past the last one it wraps to Main conversation */
+   them, top to bottom (each opens in the pane, R7.2); past the last one it wraps to Main conversation */
 function stepView(step) {
   const s = cur(); if (!s) return;
   const ids = [...new Set([...document.querySelectorAll(".rail [data-agent], .rail [data-bg]")].map(el => el.dataset.agent || el.dataset.bg))].filter(id => agentById(s, id) || bgById(s, id));
-  const items = waitingIds().map(id => ({ item: id }));
-  const order = [null, ...ids, ...items];
-  const f = !view && focusedItem(s.id), at = f ? order.findIndex(x => x?.item === f) : -1;
-  const i = at >= 0 ? at : order.indexOf(view || null);
+  const order = [null, ...ids];
+  const i = order.indexOf(view || null);
   /* a view with no row in the panel (a `!` run under 3 s opened from its row, Claude's foreground Bash opened from
      the live line) steps back to Main conversation either way, as its header's crumb does (2026-11-26) */
-  if (i < 0) { focusItem(null); selectView(null); renderConv(); return; }
+  if (i < 0) { selectView(null); renderConv(); return; }
   if (order.length < 2) return;
-  const next = order[(i + step + order.length) % order.length];
-  if (next && next.item) { focusItem(s.id, next.item, true); if (view) { selectView(null); renderConv(); } else renderRail(); return; }
-  focusItem(null); selectView(next); renderConv();
+  selectView(order[(i + step + order.length) % order.length]); renderConv();
 }

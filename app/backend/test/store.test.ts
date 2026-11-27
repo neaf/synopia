@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { openStore, defaultState } from '../src/store.ts';
-import { AGENT_CLOSED_MAX } from '../src/open-items.ts';
+import { openStore, defaultState, ReviewedMarks, REVIEWED_MAX } from '../src/store.ts';
 
 const tmp = () => mkdtempSync(join(tmpdir(), 'synopia-store-'));
 const wait = (ms: number) => new Promise((ok) => setTimeout(ok, ms));
@@ -21,11 +20,24 @@ test('a partial state file is filled with defaults', () => {
   const dir = tmp();
   writeFileSync(join(dir, 'state.json'), JSON.stringify({ version: 1, reviewed: ['a1'], settings: { writerModel: 'sonnet' }, layout: 7 }));
   const s = openStore(dir);
-  assert.deepEqual(s.state.items, { lists: {}, carried: ['a1'] }, 'the old reviewed marks are carried into items');
-  assert.equal('reviewed' in s.state, false);
+  assert.deepEqual(s.state.reviewed, ['a1']);
   assert.equal(s.state.settings.writerModel, 'sonnet');
   assert.deepEqual(s.state.layout, { groups: [], others: [] });
   assert.deepEqual(s.state.open, []);
+});
+
+test('the reviewed marks an open-items build kept in `items` come back as reviewed marks; `items` is not written', () => {
+  const dir = tmp();
+  const items = { carried: ['agent-old'], lists: { 'session:x': { items: [
+    { id: 'Y1', kind: 'review', agent: 'agent-done', closed: { how: 'done', at: 1, note: 'marked reviewed', by: 'agent' } },
+    { id: 'Y2', kind: 'review', agent: 'agent-open' },
+  ] } } };
+  writeFileSync(join(dir, 'state.json'), JSON.stringify({ version: 1, reviewed: ['agent-old'], items }));
+  const s = openStore(dir);
+  assert.deepEqual(s.state.reviewed, ['agent-old', 'agent-done']);
+  s.changed();
+  s.flush();
+  assert.equal('items' in JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')), false);
 });
 
 test('an older newSessionCwd setting loads and is dropped (R3.3: New session asks)', () => {
@@ -47,24 +59,24 @@ test('a corrupt state file is kept aside, not overwritten', () => {
 test('writes atomically, debounced, and reloads', async () => {
   const dir = tmp();
   const s = openStore(dir, { minIntervalMs: 50 });
-  s.state.items.carried.push('r1');
+  s.state.reviewed.push('r1');
   s.changed();
-  s.state.items.carried.push('r2');
+  s.state.reviewed.push('r2');
   s.changed();
   assert.equal(existsSync(join(dir, 'state.json')), false, 'not written synchronously');
   await wait(20);
   const first = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
-  assert.deepEqual(first.items.carried, ['r1', 'r2']);
+  assert.deepEqual(first.reviewed, ['r1', 'r2']);
   // A second change within the interval waits for it.
-  s.state.items.carried.push('r3');
+  s.state.reviewed.push('r3');
   s.changed();
   await wait(5);
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).items.carried, ['r1', 'r2']);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).reviewed, ['r1', 'r2']);
   await wait(80);
-  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).items.carried, ['r1', 'r2', 'r3']);
+  assert.deepEqual(JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')).reviewed, ['r1', 'r2', 'r3']);
   // No temp file is left behind.
   assert.deepEqual(readdirSync(dir), ['state.json']);
-  assert.deepEqual(openStore(dir).state.items.carried, ['r1', 'r2', 'r3']);
+  assert.deepEqual(openStore(dir).state.reviewed, ['r1', 'r2', 'r3']);
 });
 
 test('flush writes at once', () => {
@@ -131,31 +143,21 @@ test('every map entry is checked on load; a wrong one is dropped', () => {
     a: { at: 9, title: 'Ship it', now: 'Waiting', history: [{ title: 'Ship', at: 1 }] },
     c: { at: 3 }, d: { at: 4, history: [] },
   });
-  // the old reviewed marks: carried into items, the newest AGENT_CLOSED_MAX kept
-  assert.equal(st.items.carried.length, AGENT_CLOSED_MAX);
-  assert.equal(st.items.carried[0], 'agent-5');
-  assert.equal(st.items.carried.at(-1), 'agent-1004');
+  // reviewed marks: the newest REVIEWED_MAX kept
+  assert.equal(st.reviewed.length, REVIEWED_MAX);
+  assert.equal(st.reviewed[0], 'agent-5');
+  assert.equal(st.reviewed.at(-1), 'agent-1004');
 });
 
-test('the items section: validated on load; the reviewed field is carried over once and not written again', () => {
-  const dir = tmp();
-  writeFileSync(join(dir, 'state.json'), JSON.stringify({
-    version: 1, reviewed: ['old'],
-    items: { lists: { '/tmp/shop/.ai-notes/m2/open-items.md': { top: { Y: 3, A: 1 }, items: [
-      { id: 'Y3', kind: 'review', text: 'Review: Copy', fields: { subagent: 'Copy' }, source: 'synopia', agent: 'ag', at: 1, closed: { how: 'done', at: 2, note: 'marked reviewed', by: 'synopia' } },
-      { id: 'Y3', kind: 'decision', text: 'twice', fields: {}, source: 'agent' },
-      { id: 'Z1', kind: 'decision', text: 'bad id', fields: {}, source: 'agent' },
-    ] }, bad: 7 }, carried: ['kept', 3] },
-  }));
-  const s = openStore(dir, { minIntervalMs: 0 });
-  const lists = s.state.items.lists;
-  assert.deepEqual(Object.keys(lists), ['/tmp/shop/.ai-notes/m2/open-items.md']);
-  assert.deepEqual(lists['/tmp/shop/.ai-notes/m2/open-items.md'].items.map((h) => [h.id, h.kind, h.closed?.note]), [['Y3', 'review', 'marked reviewed']]);
-  assert.deepEqual(s.state.items.carried, ['kept', 'old']);
-  s.changed();
-  s.flush();
-  const raw = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'));
-  assert.equal('reviewed' in raw, false);
-  assert.deepEqual(raw.items.carried, ['kept', 'old']);
+test('reviewed marks: a new mark past REVIEWED_MAX drops the oldest', () => {
+  const s = openStore(tmp(), { minIntervalMs: 0 });
+  const marks = new ReviewedMarks(s);
+  for (let i = 0; i < REVIEWED_MAX; i++) marks.mark(`a${i}`);
+  assert.equal(marks.mark('a5'), false, 'marked already');
+  assert.equal(marks.mark('new'), true);
+  assert.equal(s.state.reviewed.length, REVIEWED_MAX);
+  assert.equal(marks.has('a0'), false);
+  assert.equal(marks.has('a1'), true);
+  assert.equal(marks.has('new'), true);
   s.close();
 });

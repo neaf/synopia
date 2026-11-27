@@ -101,9 +101,7 @@ try {
   const st = readJson(join(stateDir, 'state.json')) as typeof seeded | null;
   check(st?.open.some((e) => e.id === SID && e.cwd === root), 'state.json keeps the open list');
   check(st?.layout.groups.some((g) => g.name === 'Kept' && g.ids.includes(SID)), 'state.json keeps the layout');
-  // the reviewed marks became closed review items' marks (`items.carried`), or wait in `reviewed` for the next load (FR-ITEM-03)
-  const carried = (st as { items?: { carried?: string[] } } | null)?.items?.carried ?? [];
-  check(carried.includes('agent-kept') || (st?.reviewed.includes('agent-kept') ?? false), 'the reviewed marks became closed review items');
+  check(st?.reviewed.includes('agent-kept'), 'state.json keeps the reviewed marks');
   check(st?.models[SID]?.model === 'haiku', 'state.json keeps the model choice');
   const log = readFileSync(join(stateDir, 'daemon.log'), 'utf8');
   check(log.trimEnd().split('\n').at(-1)?.endsWith('stop (update)'), 'daemon.log ends with the old stop line (the old shell reads it)');
