@@ -190,8 +190,8 @@ A tool call a permission check said no to never runs. The CLI writes its `tool_r
 
 - Allowed calls carry `permissionDecision` with `decision: "accept"` and no `toolDenialKind`.
 - Synopia reads `automode-blocked` (or the content prefix alone) and `user-rejected` as the tool state `denied`, with `denied: "auto"` or `"you"`. The row reads "Blocked by auto mode" or "Denied", not "Failed". A hook or rule block stays failed: Claude reads its reason and carries on.
-- After the turn ends, a denied step that no later step of the same tool and input redid makes the session "Needs you, blocked" (R8.2). The same holds for a subagent's step once that subagent ended (2026-11-26, see "A subagent resumed by SendMessage"). The auto-mode text is the same in a subagent's file, with `toolDenialKind: automode-blocked`.
-- Code: `claude-jsonl.ts` `Denial`, `toolResultOf`; `transcript.ts` `refreshTool`; `status.ts` `blockedLast`. Test: `claude-jsonl.test.ts` "a call auto mode blocked …", `transcript.test.ts` "a step auto mode blocked …", `status.test.ts` "blockedLast …". Source: shape scan of local transcripts 2026-11-25 (13 auto-mode blocks, 10 terminal denials, 52 hook or rule blocks).
+- A denied step only reads "Blocked by auto mode" or "Denied" on its line; it no longer makes the session need you (R8.2, 2026-11-27: needs you comes only from the SDK's own signal; until then "Needs you, blocked" followed a denied step no later step redid, in the main turn or an ended subagent). The auto-mode text is the same in a subagent's file, with `toolDenialKind: automode-blocked`.
+- Code: `claude-jsonl.ts` `Denial`, `toolResultOf`; `transcript.ts` `refreshTool`. Test: `claude-jsonl.test.ts` "a call auto mode blocked …", `transcript.test.ts` "a step auto mode blocked …", `subagent-status.test.ts` "a subagent ended after a step auto mode blocked …", page check `states` (a8a8). Source: shape scan of local transcripts 2026-11-25 (13 auto-mode blocks, 10 terminal denials, 52 hook or rule blocks).
 
 ## Background work
 
@@ -273,9 +273,9 @@ Rules Synopia uses:
 
 - A subagent runs again when a SendMessage result names it (`resumedAgentId`) after its latest end, or when its file has records more than 2 s after that end. It is counted in "N running in the background" and in the sidebar. It ends at its next notification (the JSONL's, or the SDK's `task_notification` matched by its `task_id`) or at the process's end (stopped). The end before says nothing about the new run.
 - A shell or monitor of its own with no notification, started in a run before the resume, stays ended with that run.
-- Blocked in a subagent (R8.2): a step auto mode blocked or a permission denied after your last message, in a run that ended and wasn't stopped, with no later step of the same tool and input that ran, makes the session "Needs you, blocked" once the main turn is over.
+- A subagent's own subagent (2026-11-27): its meta's `toolUseId` names an Agent step in the parent subagent's file, not the main one; `transcript.ts` `parentOf` sets the `parent` of its `agents` entry, and the sidebar and the panel nest it under that subagent.
 
-Code: `claude-jsonl.ts` `ToolUseResult.resumedAgentId`; `transcript.ts` `resumedAt`, `agentRunning`, `endedRunOf`, `runEnds`, `taskEnded`; `status.ts` `blockedSubagent`; `publisher.ts` `blocked`. Test: `claude-jsonl.test.ts` "toolUseResult …", `status.test.ts` "blockedSubagent …", `subagent-status.test.ts` (fixture `claude-resume`, invented data).
+Code: `claude-jsonl.ts` `ToolUseResult.resumedAgentId`; `transcript.ts` `resumedAt`, `agentRunning`, `endedRunOf`, `taskEnded`, `parentOf`. Test: `claude-jsonl.test.ts` "toolUseResult …", `scripted-sdk.test.ts` "the states fixture …" (f6f6's nested subagent), `subagent-status.test.ts` (fixture `claude-resume`, invented data).
 
 ## Shell edits (`bashEditDiff`)
 
@@ -284,6 +284,7 @@ Code: `claude-jsonl.ts` `ToolUseResult.resumedAgentId`; `transcript.ts` `resumed
 - The CLI writes it only with both the flag setting `bashEditDiffEnabled: true` and a folder in a git repo. Without the setting nothing comes, in a git repo too. With both, `sed -i`, a `python3` write and an `echo >>` were each recorded.
 - Outside a git repo Synopia shows no shell-edit rows (decision Q3, 2026-11-24).
 - `staleReadFileStateHint` (string) flags a command that changed a file Claude had Read; only `sed -i` was recognised.
+- A command that undoes an earlier one records the reverse diff (seen 2026-11-27: a `git merge`, then `git merge --abort`): the same files, `+` and `-` swapped, and the same files in `changedFiles` with no diff. Added up per turn they read `+16 −16`, or no counts for the ones with no diff. Synopia leaves files with no net change out of Files changed (`transcript.js` `netPatches`, test `app/web/test/transcript.test.js`, page check `files`).
 
 Code: `sdk.ts` `buildOptions`, `claude-jsonl.ts` `bashEditOf`, `transcript.ts` `bashPatchesOf`. Source: `.ai-notes/app/README.md` at tag `rearch-base` "Bash edits" (branch `bash-edits`, CLI 2.1.330).
 

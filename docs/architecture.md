@@ -270,7 +270,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 |---|---|---|
 | Session status, word, light, mark, needs-you, stopped, review count, badge | `status.ts` | page renders `session.state`; badge reads the counter |
 | "Interrupted" vs "turned down" | `claude-jsonl.ts` classification | none |
-| A subagent running, waiting, stopped or resumed after its end | `transcript.ts` `agentRunning` (the main conversation's Transcript) | page renders `agents[]`; status.ts reads its runs' ends (`runEnds`) |
+| A subagent running, waiting, stopped or resumed after its end | `transcript.ts` `agentRunning` (the main conversation's Transcript) | page renders `agents[]` (nested by `parent`, 2026-11-27); status.ts `backgroundOf` counts what runs and a report that waits |
 | Pending cards, session rules, answer labels, answered plans | `cards.ts` | page shows `pending`; half-answers in UI state |
 | Held, queued (outbox), after-exit messages | `session.ts` | page shows `session.outbox` |
 | Layout | `layout.ts` | page renders the server layout, sends intents |
@@ -432,7 +432,7 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-BG-06 | session.ts, sdk.ts, router.ts, composer.js, bg-view.js |
 | FR-BG-07 | transcript.ts, claude-jsonl.ts, session.ts, publisher.ts |
 | FR-STAT-01 | marks.js, tween.js, app.css |
-| FR-STAT-02 | status.ts, claude-jsonl.ts, transcript.ts (`runEnds`), publisher.ts (`blocked`), bang.ts, pty.ts |
+| FR-STAT-02 | status.ts (`commandOf`, `backgroundOf`), claude-jsonl.ts, transcript.ts, publisher.ts (`commandOf`, `backgroundOf`), bang.ts, pty.ts |
 | FR-STAT-03 | marks.js |
 | FR-STAT-04 | app.css, dark.css |
 | FR-STAT-05 | status.ts |

@@ -333,8 +333,9 @@ let w = await waitView();
 check('a subagent waiting on its own background work stays in the running part with the still kind mark and says so',
   w.card && w.cardMoves === 0 && /^subagent, started .*, waiting on its background work$/.test(w.cardM) && !w.pastAgent, JSON.stringify(w));
 check('its own background shell runs under it, with the moving mark', w.shell && w.shellMoves > 0 && !w.pastShell, JSON.stringify(w));
-// motion means an agent is doing something (2026-11-26): the main turn is over, so the session is your turn, still
-check('Main conversation counts it, and the session is your turn with no moving mark, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Your turn' && /^Your turn, /.test(w.side) && w.mainMoves === 0 && w.sideMoves === 0 && /^Run the page bench waiting, /.test(w.sub), JSON.stringify(w));
+// motion means an agent is doing something: the main turn is over and background work runs, so the session is idle,
+// still (2026-11-27; your turn until then)
+check('Main conversation counts it, and the session is idle with no moving mark, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Idle' && w.side === 'Idle, 1 running in the background' && w.mainMoves === 0 && w.sideMoves === 0 && /^Run the page bench waiting, /.test(w.sub), JSON.stringify(w));
 check('no live line once the main turn is over, though its subagent and shell run', await ev(`!document.querySelector('#log .liveln')`), await ev(`document.querySelector('#log .liveln')?.textContent || ''`));
 await shot('rail-waiting');
 // its shell ends (notified in its own file), it reports: the subagent and its shell go to Past, the shell done, not stopped

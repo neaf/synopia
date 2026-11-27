@@ -8,8 +8,8 @@
 // and sets the status) marks the session dirty and flushes again after, so the frames of one flush
 // always go in this order: `session`, `agents`, `background`, `openItems`, `items`.
 import os from 'node:os';
-import { transcriptStatus, sessionState, badgeOf, blockedLast, blockedSubagent, turnStartMs } from './status.ts';
-import type { BadgeCounter, Running, SessionState, Needs, Status, StatusDetail } from './status.ts';
+import { transcriptStatus, sessionState, badgeOf, commandOf, backgroundOf, lastWordsMs } from './status.ts';
+import type { BadgeCounter, Command, Running, SessionState, Needs, Status, StatusDetail, Thread } from './status.ts';
 import type { Agent, Item, PendingAsk, Transcript } from './transcript.ts';
 import { Transcripts, WINDOW, effortOf } from './transcripts.ts';
 import type { ReadChanges } from './transcripts.ts';
@@ -93,6 +93,7 @@ type Pub = {
   ran: string; // the last Running given to onRunning
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   since: Map<string, number>; // tool use id -> when a running tool started, from the SDK's tool_progress (R5.6)
+  cmdTimer: NodeJS.Timeout | null; cmdDue: number; // a flush when the step the main turn waits on has run COMMAND_MS
   shown: Shown | null;
   queued: boolean;
   gone: boolean;
@@ -130,6 +131,7 @@ export class Publisher {
     this.recheck = null;
     if (this.outTimer) clearInterval(this.outTimer);
     this.outTimer = null;
+    for (const p of this.pubs.values()) this.armCommand(p, null);
   }
 
   // ---------- sending ----------
@@ -252,7 +254,7 @@ export class Publisher {
   // carries only the elapsed seconds (sdk.d.ts SDKToolProgressMessage, no output), so the tool's
   // start is now minus those. Kept once per tool, until the tool ends: the page's timer counts from
   // it, so later ones change nothing. The tool's item goes again to the pages that show it, with
-  // `since` (ISO).
+  // `since` (ISO). The session's state goes again too: a running command's time counts from it (R8.2, 2026-11-27).
   toolProgress(sid: string, toolUseId: string, elapsedSeconds: number, now = Date.now()): void {
     const p = this.pub(sid);
     if (!p || p.since.has(toolUseId) || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return;
@@ -262,6 +264,7 @@ export class Publisher {
       const t = this.transcripts.get(sid, sub.agent);
       if (t) this.sendUpserts(client, sub, t, [toolUseId]);
     }
+    this.changed(sid); // a command's time counts from here (status.ts commandOf)
   }
 
   // ---------- what pages ask ----------
@@ -608,6 +611,8 @@ export class Publisher {
   // ---------- the reading set's events ----------
 
   private closed(id: string): void {
+    const p = this.pubs.get(id);
+    if (p) this.armCommand(p, null);
     this.pubs.delete(id);
     this.dirty.delete(id);
     this.opts.badge?.drop(id);
@@ -651,7 +656,7 @@ export class Publisher {
     if (p || !this.transcripts.has(sid)) return p;
     p = {
       id: sid, status: null, statusAt: 0, statusDetail: {}, choice: null, pending: [], held: [], stream: null,
-      sent: '', itemsSent: '', reviews: new Set(), ran: '', working: new Set(), since: new Map(), shown: null, queued: false, gone: false,
+      sent: '', itemsSent: '', reviews: new Set(), ran: '', working: new Set(), since: new Map(), cmdTimer: null, cmdDue: 0, shown: null, queued: false, gone: false,
     };
     this.pubs.set(sid, p);
     return p;
@@ -693,7 +698,8 @@ export class Publisher {
         pending: p.pending.map((r) => needsOf(r.kind)),
         ask,
         interrupted: interruptedLast(t.items),
-        blocked: this.blocked(p.id, t),
+        command: this.commandOf(p, t),
+        background: this.backgroundOf(t),
         input: Boolean(p.shown?.bang()?.running && p.shown.bang()?.waiting),
         ...this.countsOf(p.id),
         // a status from Synopia's own process, not the transcript alone nor a terminal that holds it
@@ -741,12 +747,43 @@ export class Publisher {
     return [...this.subs];
   }
 
-  // Blocked (R8.2, FR-STAT-02): the main turn, or a subagent run since your last message (2026-11-26),
-  // has a step auto mode blocked or a permission denied that wasn't redone.
-  private blocked(sid: string, t: Transcript): boolean {
-    if (blockedLast(t.items)) return true;
-    const since = turnStartMs(t.items);
-    return t.agents().some((a) => blockedSubagent(this.transcripts.get(sid, a.id)?.items ?? [], t.runEnds(a.id), since));
+  // The command the main turn waits on (status.ts commandOf, R8.2, 2026-11-27): its own Bash step, or a foreground
+  // subagent's, once it has run COMMAND_MS. A younger one arms a flush for when it gets there.
+  private commandOf(p: Pub, t: Transcript): Command | null {
+    const threadOf = (tr: Transcript): Thread => ({
+      items: tr.items,
+      child: (tid) => {
+        const a = t.agents().find((x) => x.toolUseId === tid);
+        const sub = a && this.transcripts.get(p.id, a.id);
+        return a && sub ? { thread: threadOf(sub), name: a.description } : null;
+      },
+    });
+    const since = (it: Item) => p.since.get(it.id) ?? (it.ts ? Date.parse(it.ts) || null : null);
+    const { command, due } = commandOf(threadOf(t), since, Date.now());
+    this.armCommand(p, due);
+    return command;
+  }
+
+  private armCommand(p: Pub, due: number | null): void {
+    if (due !== null && p.cmdTimer && p.cmdDue === due) return;
+    if (p.cmdTimer) clearTimeout(p.cmdTimer);
+    p.cmdTimer = null;
+    p.cmdDue = due ?? 0;
+    if (due === null) return;
+    p.cmdTimer = setTimeout(() => { p.cmdTimer = null; this.changed(p.id); }, Math.max(0, due - Date.now()) + 50);
+    p.cmdTimer.unref?.();
+  }
+
+  // Claude's background work (status.ts backgroundOf, R8.2, 2026-11-27): what runs, as the Main conversation card counts
+  // it, and whether a job's report waits for Claude to read it. A monitor past its timeout has timed out (runs.js bgState).
+  private backgroundOf(t: Transcript): { running: number; report: boolean } {
+    const now = Date.now();
+    const agents = t.agents().map((a) => ({ id: a.id, running: a.running, stopped: a.stopped, end: a.end, ...(a.parent ? { parent: a.parent } : {}) }));
+    const shells = t.background().map((b) => {
+      const out = b.kind === 'monitor' && typeof b.timeout === 'number' && b.timeout > 0 && !b.persistent && b.start && Date.parse(b.start) + b.timeout < now;
+      return { running: b.status === 'running' && !out, stopped: b.status === 'killed' || b.status === 'stopped', end: b.end, ...(b.agentId ? { agentId: b.agentId } : {}) };
+    });
+    return backgroundOf(agents, shells, lastWordsMs(t.items), now);
   }
 
   // The session's open items as the `openItems` frame carries them (FR-ITEM-05).

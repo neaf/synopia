@@ -128,7 +128,7 @@ const aside = await ev(`(() => { const e = document.querySelector('#log .asideln
   return { text: e.textContent.replace(/\\s+/g, ' ').trim(), struck: !!st && getComputedStyle(st).textDecorationLine.includes('line-through'), why: !/line-through/.test(getComputedStyle(e.querySelector('.why')).textDecorationLine),
     grey: getComputedStyle(e).color, anim: e.getAnimations({ subtree: true }).length, rule: e.classList.contains('rule'),
     reply: txt >= 0 && all[txt].textContent.includes(${JSON.stringify(CUT)}) ? getComputedStyle(all[txt].querySelector('.md')).color : null, order: [txt, all.indexOf(e), you] }; })()`);
-check('interrupt route: "Working", struck through, then "set aside for your messages", not struck', aside.text === 'Working set aside for your messages' && aside.struck && aside.why, JSON.stringify(aside));
+check('interrupt route: "Thinking", struck through, then "set aside for your messages", not struck', aside.text === 'Thinking set aside for your messages' && aside.struck && aside.why, JSON.stringify(aside));
 check('interrupt route: still (no animation) and greyed, not the live line\'s rule', aside.anim === 0 && !aside.rule && aside.grey === aside.reply && aside.grey === (await ev(`(() => { const x = document.createElement('i'); x.style.color = 'var(--ink-3)'; document.getElementById('log').append(x); const v = getComputedStyle(x).color; x.remove(); return v; })()`)), JSON.stringify(aside));
 check('interrupt route: the cut reply greyed above it, your message below it', aside.reply !== null && aside.order[0] < aside.order[1] && aside.order[1] < aside.order[2], JSON.stringify(aside.order));
 await shot(c, path.join(stateDir, `sendnow-aside-${theme}.png`));

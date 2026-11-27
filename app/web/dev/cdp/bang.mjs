@@ -13,7 +13,7 @@
 // its shell view stops it ("Stopped by you"). Its end starts Claude's turn (R5.13, 2026-11-27): one `bang` sent and
 // no `send`, the session works, Claude's reply and "Worked for" follow its row, and no band of its tags shows. A `!`
 // followed by a prompt stays above it, over a reload, two in a row (the second ends during the first one's turn), and
-// one that ends during a turn is queued as a message is (the sidebar's "Working, 1 message queued", no queued band),
+// one that ends during a turn is queued as a message is (the sidebar's "Thinking, 1 message queued", no queued band),
 // then taken in (one queued_command record) as one row inside that turn (no "Worked for" before it), with nothing
 // left at the end; a session Synopia doesn't drive gets no bash mode; a command that waits for Enter runs in a
 // terminal (isatty), stays in place while a message goes after it, waits for input as needs you (the row, its red
@@ -219,12 +219,12 @@ await sleep(300);
 let o = await order('echo second', 'After the commands.');
 check('the ! rows stay above the prompt that followed, nothing left at the end of the log', o.before && !o.lastBang && (await rowsOf('echo second')) === 1, JSON.stringify(o));
 await shot('bang-order.png');
-// during a turn: its end is queued as your message is (R9.8's "Working, 1 message queued"), then the turn takes it
+// during a turn: its end is queued as your message is (R9.8's "Thinking, 1 message queued"), then the turn takes it
 // in (one queued_command record holding the command and its output) and goes on through it
 await sendText('Keep going.');
 await c.until(`__synopia.cur().state.status === 'busy' && __synopia.cur().items.some(i => i.k === 'you' && i.text === 'Keep going.')`, 3000);
 const midRun = runCmd('echo mid');
-check('a ! that ends during a turn is queued: "Working, 1 message queued" in the sidebar, no queued band', await c.until(`__synopia.cur().state.detail?.queued === 1 && /^Working, 1 message queued/.test(document.querySelector('.row[aria-current="true"] .r-state')?.textContent || '')`, 2500)
+check('a ! that ends during a turn is queued: "Thinking, 1 message queued" in the sidebar, no queued band', await c.until(`__synopia.cur().state.detail?.queued === 1 && /^Thinking, 1 message queued/.test(document.querySelector('.row[aria-current="true"] .r-state')?.textContent || '')`, 2500)
   && (await ev(`!(__synopia.cur().outbox || []).length && !document.querySelector('#log .queued')`)), await ev(`JSON.stringify({ st: __synopia.cur().state, row: document.querySelector('.row[aria-current="true"] .r-state')?.textContent })`));
 check('then the turn takes it in: one row', await midRun, await ev(`JSON.stringify(__synopia.cur().items.slice(-4).map(i => [i.k, i.cmd || i.text]))`));
 check('not a queued message: no prompt of its tags, none waiting', await ev(`!__synopia.cur().items.some(i => i.k === 'you' && /^<bash-/.test(i.text || '')) && !(__synopia.cur().outbox || []).length`));

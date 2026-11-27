@@ -9,7 +9,8 @@ import type { Client } from '../src/server.ts';
 
 // docs/Claude Code transcripts.md "A subagent resumed by SendMessage" and "Denied tool calls": fixtures/claude-resume
 // holds invented data in the shapes of a live session (2026-11-26). Two background subagents: the bank check ends after
-// a step auto mode blocked (R8.2); the CSV check ends, a SendMessage resumes it and it ends again (R7.1).
+// a step auto mode blocked (R8.2: your turn, not needs you, 2026-11-27); the CSV check ends, a SendMessage resumes it
+// and it ends again (R7.1).
 const SID = '88888888-0000-4000-8000-000000000008';
 const FROM = path.join(import.meta.dirname, 'fixtures', 'claude-resume', 'projects', '-tmp-fixture');
 const HOME = '/Users/fixture';
@@ -46,17 +47,17 @@ function session() {
   };
 }
 
-test('a subagent ended after a step auto mode blocked: needs you, blocked, until your next message', () => {
+test('a subagent ended after a step auto mode blocked: your turn, its step reads blocked (2026-11-27: needs you only from the SDK)', () => {
   const s = session();
   s.upTo('09:03:06'); // both ended; Claude asks in plain text and its turn is over
   s.transcripts.open(SID);
-  assert.deepEqual([s.state().word, s.state().needsYou], ['Needs you, blocked', 'blocked']);
+  assert.deepEqual([s.state().word, s.state().needsYou, s.state().light], ['Your turn', null, 'amber'], 'no transcript-based needs you');
   const step = s.transcripts.get(SID, 'rrrr0002')!.get('toolu_b2')!;
   assert.deepEqual([step.state, step.denied], ['denied', 'auto'], 'its view reads "Blocked by auto mode"');
   assert.deepEqual(s.running(), [], 'both under Past');
   s.upTo('09:05:00');
   s.transcripts.poll();
-  assert.deepEqual([s.state().needsYou, s.state().word], [null, 'Your turn'], 'your message cleared it (the fixture is old: a quiet turn)');
+  assert.deepEqual([s.state().needsYou, s.state().word], [null, 'Your turn'], 'your message (the fixture is old: a quiet turn)');
   s.stop();
 });
 
@@ -64,7 +65,7 @@ test('a subagent resumed by SendMessage runs again, its shell from the run befor
   const s = session();
   s.upTo('09:05:05'); // a SendMessage resumed the CSV check; the main turn is over
   s.transcripts.open(SID);
-  assert.deepEqual([s.running(), s.state().word], [['rrrr0001'], 'Your turn'], 'running in the background, its meta still says finished');
+  assert.deepEqual([s.running(), s.state().word, s.state().mark], [['rrrr0001'], 'Idle, 1 running in the background', 's_agent'], 'running in the background, its meta still says finished: idle (2026-11-27)');
   assert.deepEqual([s.agent('rrrr0001').finished, s.agent('rrrr0001').stopped, s.agent('rrrr0001').waiting], [false, false, false]);
   const shell = () => s.main().background().find((b) => b.toolUseId === 'toolu_c2')!;
   assert.deepEqual([shell().status, shell().end], ['completed', '2026-11-24T09:02:00.000Z'], 'ended with the run before');

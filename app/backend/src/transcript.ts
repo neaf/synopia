@@ -68,6 +68,7 @@ export type Agent = {
   // (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work)
   waiting: boolean;
   start: string | null; end: string | null; total: number;
+  parent?: string; // the subagent that started it, from its own file; absent for the main conversation's (2026-11-27)
 };
 // A question or plan card waiting in the transcript: an AskUserQuestion or ExitPlanMode tool_use of
 // the latest assistant message with no tool_result yet (Transcript.pendingAsk). `agentId`: the
@@ -1165,17 +1166,6 @@ export class Transcript {
     return last !== null && last - endMs > WOKE_MS ? end.end : null;
   }
 
-  // When each run of a subagent ended (ms), oldest first, and whether it was stopped: its end
-  // notifications, else (none, and it is over) its last record (status.ts blockedSubagent).
-  runEnds(aid: string): { at: number; stopped: boolean }[] {
-    const tid = this.agentMeta.get(aid)?.meta?.toolUseId ?? '';
-    const stopped = (s: string) => s === 'killed' || s === 'stopped';
-    const out = (this.r.ends.get(tid) ?? []).flatMap((e) => { const at = msOf(e.end); return at === null ? [] : [{ at, stopped: stopped(e.status) }]; });
-    if (out.length) return out;
-    const a = this.getAgent(aid), at = msOf(a?.end);
-    return a && !a.running && at !== null ? [{ at, stopped: a.stopped }] : [];
-  }
-
   private setTask(tid: string, task: string): void {
     const r = this.r;
     if (r.taskIds.get(tid) === task) return;
@@ -1407,7 +1397,16 @@ export class Transcript {
       stopped: !running && ((meta?.stoppedByUser === true && !this.r.resumes.has(id)) || status === 'stopped' || status === 'killed' || (!status && this.endedAgent(id))),
       waiting: running && this.idleWaiting(id),
       start: a.sub?.firstTs ?? null, end: a.sub?.lastTs ?? null, total: a.sub?.total ?? 0,
+      ...this.parentOf(id, meta?.toolUseId ?? ''),
     };
+  }
+
+  // The subagent that started this one (its Agent step is in that subagent's own file), none for the main
+  // conversation's: the sidebar and the panel nest it under its parent (R4.2, R7.1, 2026-11-27).
+  private parentOf(id: string, tid: string): { parent?: string } {
+    if (!tid || this.r.byId.has(tid)) return {};
+    for (const [aid, a] of this.agentMeta) if (aid !== id && a.sub?.get(tid)) return { parent: aid };
+    return {};
   }
 
   agents(): Agent[] {

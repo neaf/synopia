@@ -671,6 +671,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 .liveln b { color: var(--green); }
 .liveln[data-state="amber"] b { color: var(--amber); }
 .liveln[data-state="grey"] b { color: var(--ink-3); }
+/* a command on your machine (R8.2, 2026-11-27): "Running" in the shell colour, as its mark */
+.liveln.cmd[data-state] b { color: var(--k-shell); }
 /* the Working line (R5.5, prototype/working-shell-storyboard.html A, 2026-11-25): a 1px rule edge to edge across
    the log through the line's middle, the moving mark and the words sitting on it and breaking it; a pseudo-element,
    so it takes no space. The breaks are the panel's colour (--rule-bg; the "Send to background?" tint while b, b asks).
@@ -773,6 +775,8 @@ body:not(.is-dragging) .g-empty { display: none; }
 
 /* sub-line corner drawn like the tree guides: two equal 7px legs */
 .r-agent { display: flex; align-items: center; gap: 5px; }
+/* a sub-line nested under what started it (R4.2, 2026-11-27): one level per depth, its corner under the parent's mark */
+.r-agent[style*="--depth"] { padding-left: calc(var(--depth) * 17.5px); }
 .r-agent .el { flex: none; width: 7px; height: 7px; margin: -6px 1px 0 2px; border-left: 1px solid var(--guide); border-bottom: 1px solid var(--guide); }
 .r-agent b, .r-agent .ind { flex: none; }
 .r-agent b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 0 1 auto; }

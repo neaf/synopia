@@ -188,6 +188,41 @@ const countsHTML = (add, del) => `<span class="add">+${add}</span> <span class="
    so the href is only for the status bar and copying */
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
+/* The patches of a turn's steps (each an Edit's or Write's `patch`, or a Bash command's `patches`) with the files that
+   have no net change left out (2026-11-27). Why such files came out as "+16 −16" or with no counts: Files changed adds up
+   each step's diff of a file, and a command that undoes an earlier one (a git merge, then `git merge --abort`) records
+   the reverse diff, so the counts add up to the same number both ways; a file both list as changed with no diff (bare)
+   shows no counts. So: a step whose files are an earlier step's and whose diffs are its exact reverse undid it, and both
+   go, their bare files too. Of the rest, a file with several diffs whose added and removed lines cancel has no net
+   change. The ledger is left out (R5.9). */
+const diffed = p => !p.bare;
+/* a patch's changed lines as counts per line (+1 added, -1 removed); null when the patch is cut and they aren't all here */
+function lineCounts(p, into = new Map()) {
+  if (p.cut) return null;
+  for (const h of p.hunks || []) for (const l of h.lines) if (l[0] === "+" || l[0] === "-") into.set(l.slice(1), (into.get(l.slice(1)) || 0) + (l[0] === "+" ? 1 : -1));
+  return into;
+}
+const balanced = m => !!m && [...m.values()].every(n => n === 0);
+/* whether b's diff of a file is a's reversed: the counts swapped, and the lines cancel when both are whole */
+function reverses(a, b) {
+  if (a.add !== b.del || a.del !== b.add || a.add + a.del === 0) return false;
+  if (a.cut || b.cut) return true; // a long diff is cut on the page: the counts are its whole
+  return balanced(lineCounts(b, lineCounts(a)));
+}
+export function netPatches(steps) {
+  const lists = steps.map(t => (t.patches || [t.patch]).filter(p => p && !p.ledger)), gone = new Set();
+  const files = ps => [...new Set(ps.map(p => p.abs || p.file))].sort().join("\n");
+  const undoes = (a, b) => files(a) === files(b) && a.some(diffed) && b.filter(diffed).every(q => { const p = a.find(x => (x.abs || x.file) === (q.abs || q.file) && diffed(x)); return p ? reverses(p, q) : true; })
+    && a.filter(diffed).some(p => b.some(q => diffed(q) && (q.abs || q.file) === (p.abs || p.file)));
+  for (let j = 0; j < lists.length; j++) {
+    if (!lists[j].length) continue;
+    for (let i = j - 1; i >= 0; i--) if (!gone.has(i) && lists[i].length && undoes(lists[i], lists[j])) { gone.add(i); gone.add(j); break; }
+  }
+  const left = lists.filter((_, i) => !gone.has(i)).flat(), byFile = new Map();
+  for (const p of left) { const k = p.abs || p.file; (byFile.get(k) || byFile.set(k, []).get(k)).push(p); }
+  const none = new Set([...byFile].filter(([, ps]) => ps.length > 1 && ps.every(diffed) && balanced(ps.reduce((m, p) => m && lineCounts(p, m), new Map()))).map(([k]) => k));
+  return left.filter(p => !none.has(p.abs || p.file));
+}
 /* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
    shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
 export function filesHTML(patches, key, more = 0, ts = null) { // key: stable diff ids, so an open diff stays open when the block is redrawn
@@ -263,7 +298,7 @@ export function itemsHTML(items, sessionBusy, s) {
   /* the open-items ledger is left out (R5.9, the backend's `ledger` flag): a turn that only edited it has no row */
   const flushFiles = () => {
     flush();
-    const patches = turnPatches.flatMap(t => t.patches || [t.patch]).filter(p => !p.ledger), more = turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0);
+    const patches = netPatches(turnPatches), more = turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0);
     if (patches.length || more) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(patches, key, more, lastTs)]); }
     turnPatches = [];
   };
@@ -347,11 +382,11 @@ function bangHTML(id, cmd, sh, run, opens = false, ts = null) {
 }
 /* the panel's run for a bash item: by the run's id, or the item it landed as */
 const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed === id) : null;
-/* The line f, f's interrupt set aside (R9.8): the still mark, "Working" and the step it named then, struck
+/* The line f, f's interrupt set aside (R9.8): the still mark, "Thinking" and the step it named then, struck
    through, and why. Not a running mark: it doesn't move. */
 function asideHTML(it, s, items) {
   const t = it.step ? items.find(x => x.k === "tool" && x.id === it.step) : null;
-  return `<div class="ln asideln"><span class="g"${markAt(it.ts)}>${ind("s_agent")}</span><div><s><b>Working</b>${t ? ` ${liveName(s, t).join("")}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
+  return `<div class="ln asideln"><span class="g"${markAt(it.ts)}>${ind("s_agent")}</span><div><s><b>Thinking</b>${t ? ` ${liveName(s, t).join("")}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
 }
 /* the reply an aside cut short goes above it, greyed with it, though its partial record lands after */
 function placeAsides(items) {
@@ -407,7 +442,7 @@ const queuedHTML = s => { const q = queuedOf(s); return q.length ? [["queue", `<
 const isAgent = t => t.name === "Agent" || t.name === "Task";
 const liveStep = t => !!t && t.state === "running" && hasStep(t) && !isAgent(t);
 /* the step named on the live line: the turn's own newest step only while it runs, as the CLI's spinner line.
-   Once it's done (Claude writing, thinking, between steps) the line just says Working, rather than naming a
+   Once it's done (Claude writing, thinking, between steps) the line just says Thinking, rather than naming a
    finished step. Background work (`bg`, a background subagent) is never the turn's step: the panel shows it. */
 const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool" && !x.bg); return last && last.state === "running" ? last : null; };
 /* the main conversation's step the live line names, when b, b could send it */
@@ -415,20 +450,29 @@ const liveFg = s => { const t = s.state.light === "green" && !phaseText(s) ? run
 /* what the live line names: a subagent or fork by the panel's kind tag and its name; any other tool by its
    CLI name, Bash(…) */
 const liveName = (s, t) => { if (!isAgent(t)) { const o = objOf(t); return [`${esc(toolName(t))}${o ? "(" : ""}`, o, o ? ")" : ""]; } const a = agentByTool(s, t.toolUseId); return [`${kind(a?.fork ? "fork" : "sub")} `, esc(a ? a.description : t.obj || ""), ""]; };
+/* MCP and web tools keep the arc while they run, with their timer on the line (R8.2, 2026-11-27): their time goes to a server */
+const isRemote = t => !!t && t.state === "running" && (t.name?.startsWith("mcp__") || t.name === "WebFetch" || t.name === "WebSearch");
+const stepTimer = t => { const at = new Date(t.since || t.ts); return isNaN(at) ? "" : ` ${live(at.toISOString(), nowish - at)}`; };
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "", state = A ? "green" : s.state.tone) => {
-    const [pre, mid, post] = extra ? ["", extra, ""] : t ? liveName(s, t) : ["", "", ""];
+  const line = (mark, t, word = "Thinking", extra = "", state = A ? "green" : s.state.tone, cls = "") => {
+    const [pre, mid, post0] = extra ? ["", extra, ""] : t ? liveName(s, t) : ["", "", ""];
+    const post = !extra && (isRemote(t) || (cls && t)) ? `${post0}${stepTimer(t)}` : post0;
     const head = lineHTML(`<b>${esc(word)}</b>${pre || mid ? " " : ""}<span class="dim">${pre}</span>`, mid && `<span class="dim">${mid}</span>`, post && `<span class="dim">${post}</span>`); // one line (R5.6)
     /* a Bash step named here opens its shell view (R5.5, 2026-11-26), even while its own line folds and expands in
        place; a step with no view (a subagent's own Bash, any other tool) expands from here as from its line */
     const opens = !A && !extra && t && isShell(t) && bgById(s, t.id) ? ` data-bg="${esc(t.id)}" title="Open its shell view"` : "";
     const body = !extra && liveStep(t) && !opens ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
-    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g"${markAt(t ? t.since || t.ts : A ? A.start : s.state.since)}>${ind(mark)}</span>${body}</div>`;
+    return `<div class="ln liveln rule${cls}" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g"${markAt(t ? t.since || t.ts : A ? A.start : s.state.since)}>${ind(mark)}</span>${body}</div>`;
   };
   // a subagent waiting on its own background work: still, it runs nothing itself (its shells move in the panel)
   if (A) return A.finished ? "" : A.waiting ? line(A.fork ? "s_fork" : "s_sub", null, "Waiting", "on its own background work") : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
   /* the main turn over: no live line, even while background work runs (2026-11-26): the panel and the sidebar show it */
   if (s.state.light !== "green") return "";
+  /* a command on your machine (R8.2, 2026-11-27): the moving shell mark and "Running Bash(…) 2m 14s", the word in the shell
+     colour; a foreground subagent's own command names it: "Running Bash(Build the docs) 4s in Draft the release notes" */
+  const c = s.state.command;
+  if (c && c.agent) return line("k_shell", null, "Running", `Bash(${esc(c.obj)}) ${live(new Date(c.since).toISOString(), nowish - c.since)} in ${esc(c.agent)}`, s.state.tone, " cmd");
+  if (c) return line("k_shell", runningStep(s.items), "Running", "", s.state.tone, " cmd");
   return line(s.state.mark, runningStep(s.items), s.state.word, phaseText(s));
 }
 /* what the state means, after its word (status.ts: the source of each) */

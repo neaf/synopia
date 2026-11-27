@@ -53,7 +53,7 @@ check('starts in normal mode, nothing asked', (await ev('document.body.dataset.m
 // the live line names the turn's own step, the foreground subagent, as the panel does: kind tag and name, no Agent(…)
 const liveText = () => ev(`document.querySelector('#log .liveln')?.textContent.trim().replace(/\\s+/g, ' ') ?? null`);
 const liveKind = () => ev(`[...document.querySelectorAll('#log .liveln .kind')].map(k => k.className + ':' + k.textContent)`);
-check('the live line names the running foreground subagent by its kind tag and name, not Agent(…)', (await liveText()) === 'Working subagent Look around the demo folder'
+check('the live line names the running foreground subagent by its kind tag and name, not Agent(…)', (await liveText()) === 'Thinking subagent Look around the demo folder'
   && JSON.stringify(await liveKind()) === JSON.stringify(['kind kd-sub:subagent']), JSON.stringify([await liveText(), await liveKind()]));
 // The rule breaks only for the mark and the words: on a wide and a narrow panel, nothing opaque between the
 // live line and the point a few px past the label's last glyph, the middle of the rest, and the panel's right edge,
@@ -130,7 +130,7 @@ check('live line names the foreground Bash: the mark is on the live line, not it
 await K.b();
 check('first b: the prompt, the live line ringed', (await asking()) === PROMPT && (await ev(`(cs => /0px 0px 0px 4px/.test(cs.boxShadow))(getComputedStyle(document.querySelector('#log .liveln')))`)) === true);
 const m2 = await marked();
-check('first b: three steps marked, the live line one of them, the earlier Bash on its fold line and its step', m2.length === 4 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Working/.test(m2[3]), JSON.stringify(m2));
+check('first b: three steps marked, the live line one of them, the earlier Bash on its fold line and its step', m2.length === 4 && m2.filter(t => /npm run build/.test(t)).length === 1 && /^Thinking/.test(m2[3]), JSON.stringify(m2));
 await ev(`__synopia.redraw()`);
 const w1 = await where();
 check('after a redraw: its step line is not marked, the live line still is', w1.live === true && w1.group === false, JSON.stringify(w1));
@@ -150,10 +150,10 @@ const upsert = (list) => ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', a
 const iso = new Date().toISOString();
 await upsert([{ id: 'toolu_bfg', k: 'tool', ts: iso, name: 'Agent', verb: 'Agent', obj: 'Look around the demo folder', state: 'done', toolUseId: 'toolu_bfg' }]);
 await upsert([{ id: 'b-u2', k: 'you', ts: iso, text: 'And the changelog?' }]);
-check('a new turn thinking, a background subagent from before: just "Working"', await c.until(`document.querySelector('#log .liveln')?.textContent.trim() === 'Working'`), await liveText());
-await ruleClear('"Working" alone');
+check('a new turn thinking, a background subagent from before: just "Thinking"', await c.until(`document.querySelector('#log .liveln')?.textContent.trim() === 'Thinking'`), await liveText());
+await ruleClear('"Thinking" alone');
 await upsert([{ id: 'toolu_bnew', k: 'tool', ts: iso, name: 'Bash', verb: 'Bash', obj: 'git log -5', state: 'running', toolUseId: 'toolu_bnew' }]);
-check('its foreground Bash: Bash(…), no Agent( and no kind tag', await c.until(`document.querySelector('#log .liveln')?.textContent.trim() === 'Working Bash(git log -5)'`)
+check('its foreground Bash: Bash(…), no Agent( and no kind tag', await c.until(`document.querySelector('#log .liveln')?.textContent.trim() === 'Thinking Bash(git log -5)'`)
   && (await liveKind()).length === 0, await liveText());
 await ruleClear('a Bash named');
 await upsert([{ id: 'toolu_bnew', k: 'tool', ts: iso, name: 'Bash', verb: 'Bash', obj: 'git log -5', state: 'done', toolUseId: 'toolu_bnew' }]);
@@ -164,7 +164,7 @@ await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur
 check('the turn ending cancels it', (await asking()) === null && (await marked()).length === 0);
 await K.b();
 check('with the turn over, b asks nothing', (await asking()) === null);
-await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'busy', light: 'green', tone: 'green', word: 'Working', mark: 'work', since: Date.now() } })`);
+await ev(`__synopia.inject({ t: 'session', id: '${A}', state: { ...__synopia.cur().state, status: 'busy', light: 'green', tone: 'green', word: 'Thinking', mark: 'work', since: Date.now() } })`);
 await K.b();
 await ev(`(s => __synopia.inject({ t: 'items', sid: '${A}', agent: null, total: s.total, upsert: s.items.filter(i => i.fg).map(i => { const { fg, ...rest } = i; return rest; }) }))(__synopia.cur())`);
 check('the steps no longer foreground: cancelled', (await asking()) === null && (await marked()).length === 0);

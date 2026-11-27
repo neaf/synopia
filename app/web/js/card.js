@@ -204,7 +204,7 @@ function statusLine(s) {
   if (credsState(s)) return credsHTML(s);
   if (s.state.needsYou === "input") return "";
   if (s.state.status === "failed" && s.state.light !== "red") return `<div class="status" data-state="amber"><b>${ind("failed")} Failed</b><span>${esc(s.state.detail.error)}</span></div>`;
-  const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something", blocked: "A step was blocked or denied and Claude needs you to continue" }[s.state.needsYou] || "Claude is waiting for a permission";
+  const why = { plan: "Claude wrote a plan and is waiting for your approval", question: "Claude is asking you something" }[s.state.needsYou] || "Claude is waiting for a permission";
   return `<div class="status" data-state="red"><b>${ind("pause")} Needs you</b><span>${why}, for ${age(s.state.since)}</span></div>`;
 }
 /* The credential line's fields (creds-line.js) across a redraw (its output grows while you type): what you

@@ -49,16 +49,17 @@ export function railHTML(s, A, B = null) { // exported for the escape test
   const past = all.filter(x => !x.shown && !(x.bg && x.running)).sort((p, q) => new Date(q.end) - new Date(p.end));
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
   const running = all.filter(x => x.shown).sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  /* a subagent's own shells and monitors hang under its card; the main thread's (or an orphan's) under Main conversation.
-     A subagent waiting on its own background work runs: its card stays here with the still kind mark and says so,
-     its shells move under it (docs/Claude Code transcripts.md, "A subagent waiting on its own background work") */
-  const parentOf = x => x.bg && x.bg.agentId && running.some(y => y.agent && y.agent.id === x.bg.agentId) ? x.bg.agentId : null;
+  /* a subagent's own shells, monitors and subagents (2026-11-27) hang under its card; the main thread's (or an orphan's)
+     under Main conversation. A subagent waiting on its own background work runs: its card stays here with the still kind
+     mark and says so, its shells move under it (docs/Claude Code transcripts.md, "A subagent waiting on its own background work") */
+  const up = x => x.bg ? x.bg.agentId : x.agent ? x.agent.parent : null;
+  const parentOf = x => up(x) && running.some(y => y.agent && y.agent.id === up(x)) ? up(x) : null;
   const now = running.filter(x => !parentOf(x)), kidsOf = x => x.agent ? running.filter(y => parentOf(y) === x.agent.id) : [];
   const nameOfAgent = id => agentsOf(s).find(a => a.id === id)?.description || "a subagent";
   const attrs = x => x.agent ? `data-agent="${esc(x.agent.id)}" aria-current="${!!(A && A.id === x.agent.id)}"` : `data-bg="${esc(x.key)}" aria-current="${!!(B && B.toolUseId === x.key)}"`;
   return `<aside class="rail panel" aria-label="Background work" data-sid="${esc(s.id)}">
     <div class="now">
-      <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running && (!x.bg || isClaudeBg(x.bg))).length)}</span><span class="w">${esc(s.state.light === "red" ? "Needs you" : s.state.word)}</span></button>
+      <button class="main-row" data-back-main data-state="${s.state.light}" aria-current="${!A && !B}">${sessionMark(s)}<b>Main conversation</b><span class="m">${(n => n ? `${n} running in the background` : "Nothing running in the background")(now.filter(x => x.running && (!x.bg || isClaudeBg(x.bg))).length)}</span><span class="w">${esc(s.state.light === "red" ? "Needs you" : s.state.resting ? "Idle" : s.state.word)}</span></button>
       ${(function kids(xs) { return xs.length ? `<div class="kids">${xs.map(x => { const ks = kidsOf(x); return `<div class="kid${ks.length ? " parent" : ""}" data-line="${esc(x.key)}"><i class="tg"></i><button class="card kc-${kindKey(x)}${x.running ? "" : " ended"}${x.waiting ? " waiting" : ""}${x.waits ? " waits" : ""}" ${attrs(x)}>${x.waits ? ind("pause") : x.waiting ? ind("s_" + kindKey(x)) : x.running ? ind(bgMarkKey(x)) : `<span class="pm">${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))}</span>`}<span class="n">${whoHTML(x.who)}${esc(x.name)}</span><span class="m"><span class="kw">${esc(KG[kindKey(x)][0])}</span>, ${x.waits ? "waits for input" : `started ${x.who === "you" ? "by you " : x.who === "synopia" ? "by Synopia " : ""}${hhmm(x.start)}`}${x.waiting ? ", waiting on its background work" : ""}</span><span class="d">${x.running ? live(x.start, x.ms) : took(x.ms)}</span></button>${x.agent && x.running ? ownedHTML(s, x.agent) : ""}${kids(ks)}</div>`; }).join("")}</div>` : ""; })(now)}
     </div>
     <div class="rail-mid">${reviewHTML(s, new Set(running.filter(x => x.agent).map(x => x.agent.id)))}${groupsHTML(s, new Set(running.filter(x => x.agent && x.running).map(x => x.agent.id)), running.filter(x => x.bg && x.running && isClaudeBg(x.bg)).map(x => x.bg))}</div>

@@ -100,7 +100,7 @@ export function setConnected(on) { store.ui.connected = on; }
 
 /* ---------- applying server messages ---------- */
 /* a session the server hasn't described yet: shown as your turn until its `session` frame */
-const blankState = () => ({ status: "idle", since: Date.now(), detail: {}, light: "amber", tone: "amber", word: "Your turn", mark: "stopped", stopped: false, needsYou: null, review: 0, waiting: 0, due: 0, driven: false });
+const blankState = () => ({ status: "idle", since: Date.now(), detail: {}, light: "amber", tone: "amber", word: "Your turn", mark: "stopped", command: null, background: 0, resting: false, stopped: false, needsYou: null, review: 0, waiting: 0, due: 0, driven: false });
 const blankSession = id => ({ id, title: "", now: "", cwd: "", prs: [], state: blankState(), items: [], total: 0, agents: [], background: [], stream: null, outbox: [] });
 function upsertById(list, upsert, keep) {
   const at = new Map(list.map((x, i) => [x.id ?? x.toolUseId, i]));
