@@ -267,6 +267,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 |---|---|---|
 | Session status, word, light, mark, needs-you, stopped, review count, badge | `status.ts` | page renders `session.state`; badge reads the counter |
 | "Interrupted" vs "turned down" | `claude-jsonl.ts` classification | none |
+| A main turn ended, and its "Worked for" time | `transcript.ts` (`turnEnd` from the turn-end records and markers; `sdkResult` from the SDK's `result` for Synopia's own process, which `session.ts` passes on) | page draws "Worked for" from `workedMs`; status.ts reads `turnRunning` for a session no process of Synopia's drives |
 | A subagent running, waiting, stopped or resumed after its end | `transcript.ts` `agentRunning` (the main conversation's Transcript) | page renders `agents[]` (nested by `parent`, 2026-11-27); status.ts `backgroundOf` counts what runs and a report that waits |
 | Pending cards, session rules, answer labels, answered plans | `cards.ts` | page shows `pending`; half-answers in UI state |
 | Held, queued (outbox), after-exit messages | `session.ts` | page shows `session.outbox` |

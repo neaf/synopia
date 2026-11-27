@@ -182,7 +182,7 @@ Claude Code files (CLI 2.1.325-2.1.330), [Claude Code transcripts](Claude%20Code
 - CON-CC-01: Transcripts are `~/.claude/projects/<cwd realpath, non-alphanumerics as ->/<sid>.jsonl`; subagents `<sid>/subagents/agent-<aid>.jsonl` + `.meta.json` (agentType, isFork, description, toolUseId, spawnDepth, finished). Meta can lag, be half-written, or lack `finished`.
 - CON-CC-02: Each assistant record holds one content block; records of one response share `message.id`.
 - CON-CC-03: A mid-turn message lands as an `attachment` `queued_command` (string or block array), not a user record.
-- CON-CC-04: An SDK-driven CLI rarely writes `turn_duration` but writes `stop_hook_summary`; interrupted turns write neither.
+- CON-CC-04: An SDK-driven CLI writes no turn-end record unless a Stop hook ran (then `stop_hook_summary`), and `turn_duration` hardly ever; interrupted turns write neither. For Synopia's own process the SDK's `result` is the turn's end (2026-11-27).
 - CON-CC-05: `[Request interrupted by user]` is a stop; `… for tool use]` is a tool turned down; tool_result errors precede the marker.
 - CON-CC-06: Background: `toolUseResult.backgroundTaskId` for moved Bash; `status: async_launched` for async Agent; a re-woken subagent notifies by task id only; a monitor event has no tool-use id and must not end it.
 - CON-CC-07: `bashEditDiff` is written only with the flag setting `bashEditDiffEnabled: true` and a folder in a git repo.

@@ -7,7 +7,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Transcripts } from '../src/transcripts.ts';
-import { Transcript } from '../src/transcript.ts';
 import { Publisher } from '../src/publisher.ts';
 import { Sessions } from '../src/sessions.ts';
 import { Writer } from '../src/writer.ts';
@@ -195,8 +194,9 @@ test('scripted: a message that starts a turn and bash mode\'s context go to the 
 });
 
 // R5.13: a `!` command's end starts a turn. Its reply can land in the same millisecond as the command's
-// record, so only the turn end the SDK-driven CLI writes (stop_hook_summary) gives it a time (bang.mjs "Worked for").
-test('scripted: a turn a `!` command woke ends with stop_hook_summary, and the command\'s row has its time', async () => {
+// record, and the SDK-driven CLI writes no turn end (docs/Claude Code transcripts.md, "Turn ends"), so the
+// SDK's result gives the turn its end and its time (bang.mjs "Worked for").
+test('scripted: a turn a `!` command woke writes no turn end; its result gives the command\'s row its time', async () => {
   const { claudeDir, sessions, transcripts, meta, stop } = await setup('claude', (s) => {
     s.sessions = { [S1]: { start: true, onSend: [
       { append: [{ type: 'assistant', message: { id: 'msg-woke', role: 'assistant', content: [{ type: 'text', text: 'Seen it.' }] } }] },
@@ -214,16 +214,15 @@ test('scripted: a turn a `!` command woke ends with stop_hook_summary, and the c
     assert.equal(meta(S1).status, 'idle');
     const recs = fs.readFileSync(file, 'utf8').trim().split('\n').flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } }); // the fixture holds a broken line
     const at = recs.findIndex((r) => r.uuid === uuid);
-    assert.deepEqual(recs.slice(at).map((r) => r.subtype ?? r.type), ['user', 'assistant', 'stop_hook_summary'], 'the turn end after the reply');
-    const t = new Transcript({ home: '/Users/fixture' });
-    t.pushAll(recs);
-    const row = t.get(uuid);
+    assert.deepEqual(recs.slice(at).map((r) => r.subtype ?? r.type), ['user', 'assistant'], 'no turn end after the reply');
+    const row = transcripts.get(S1)!.get(uuid);
     assert.equal(row?.k, 'bang');
-    assert.ok((row?.workedMs ?? 0) >= 25, `the turn's time is the command's: ${row?.workedMs}`);
+    assert.ok((row?.workedMs ?? 0) >= 25, `the turn's time is the command's, to its result: ${row?.workedMs}`);
+    assert.equal(transcripts.running(S1).turn, false, 'the result closed the turn');
   } finally { stop(); }
 });
 
-test('scripted: an interrupted turn writes no turn end', async () => {
+test('scripted: an interrupted turn writes no turn end either', async () => {
   const { claudeDir, sessions, transcripts, stop } = await setup('claude', (s) => {
     s.sessions = { [S1]: { start: true, onSend: [{ after: 5000, message: { type: 'result', subtype: 'success', is_error: false, result: '' } }] } };
   });
@@ -234,7 +233,7 @@ test('scripted: an interrupted turn writes no turn end', async () => {
     await sessions.get(S1)!.interrupt();
     await sleep(20);
     transcripts.poll();
-    assert.ok(!fs.readFileSync(file, 'utf8').includes('stop_hook_summary'));
+    assert.ok(!/stop_hook_summary|turn_duration/.test(fs.readFileSync(file, 'utf8')));
   } finally { stop(); }
 });
 

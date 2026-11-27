@@ -133,23 +133,24 @@ Since 2026-11-27 (R5.13) Synopia shares a `!` command as one message that starts
 
 ## Turn ends
 
-A turn opens with a prompt you typed (user record, slash command or `queued_command`) and closes with `turn_duration`, `stop_hook_summary`, an interrupt marker or the result of a permission request nobody answered (below).
+A turn opens with a prompt you typed (user record, slash command or `queued_command`) and closes with `turn_duration`, `stop_hook_summary`, an interrupt marker or the result of a permission request nobody answered (below). For a session Synopia's own process drives, the SDK's `result` closes it too.
 
 | Writer | Writes at a normal turn end |
 |---|---|
 | interactive CLI (`entrypoint: cli`) | `stop_hook_summary`, then `turn_duration` (1,464 of 1,466) |
-| SDK-driven CLI (`entrypoint: sdk-cli`) | `stop_hook_summary`; `turn_duration` rarely (2 of 19, 0 in scratch runs) |
+| SDK-driven CLI (`entrypoint: sdk-ts`; `sdk-cli` in older files) | nothing, unless a Stop hook ran: then `stop_hook_summary` with `hookCount` 1 or more, before the SDK's `result`. `turn_duration` hardly ever (2 of 19 in older files, 0 in run TE-1) |
 | either, interrupted or `error_max_turns` | neither |
 | interactive CLI, API-error turn | `turn_duration` only (5 of 5) |
 
 - An interrupt marker is followed by neither record in 28 of 32 cases; the marker itself closes the turn.
+- Live run TE-1, 2026-11-27 (SDK 0.3.330, CLI 2.1.330; haiku; scratch folder `/tmp/synopia-turnend/` with a throwaway `CLAUDE_CONFIG_DIR`, script outside the repo; shapes only). With no Stop hook, a text-only turn, a turn with a foreground Bash, a turn that started a background shell, the turn of that shell's notification and a turn that took in a queued message each wrote, after the prompt, only attachments, the `assistant` records, a `tool_result` and the untimed `last-prompt`, `cost-state` and `ai-title` records: no `system` record at all. With `settings: {hooks: {Stop: [...]}}` (one command hook), each turn wrote one main-thread `stop_hook_summary` (`hookCount: 1`, `hookInfos`, `hookErrors`, `failedHookErrorIndexes`, `hookAdditionalContext`, `preventedContinuation`, `stopReason`, `hasOutput`, `level`, `toolUseID`) after the reply and before `result`. A background task's notification runs as a turn of its own: `queue-operation` enqueue and dequeue, then a `user` record. The SDK's order for every turn: `session_state_changed: running`, `system/init`, `system/status`, the replies, `result`, `session_state_changed: idle`, also with the background shell still running.
 
-### Quirk: SDK-driven turns have no duration
+### Quirk: SDK-driven turns have no turn end
 
-- Symptom: "worked for" missing on sessions Synopia drives.
-- Cause: the SDK-driven CLI rarely writes `turn_duration`.
-- Workaround: a main-thread `stop_hook_summary` sets `workedMs` from your prompt's time; a later `turn_duration` wins.
-- Code: `transcript.ts` `turnEnd`. Test: `transcript.test.ts` "worked for: an SDK-driven turn ends with stop_hook_summary only".
+- Symptom: "Worked for" missing on sessions Synopia drives, or shown only once your next prompt lands, above it; the transcript's turn stays open, so with no process of Synopia's the session reads Thinking for up to `QUIET_MS`.
+- Cause: the SDK-driven CLI writes no turn-end record unless a Stop hook ran (run TE-1). Before 2026-11-27 the scripted SDK wrote a `stop_hook_summary` at every turn's end, which hid it from the page checks.
+- Workaround: for Synopia's own process the SDK's `result` is the turn's end: `session.ts` passes it to `Transcripts.sdkResult` (the file read first), and `Transcript.sdkResult` closes the turn and gives your latest prompt of the turn its time, from the turn's start to the result, when Claude wrote in it. A main-thread `stop_hook_summary` does the same from its own time; a later `turn_duration` wins. A message the turn took in carries the whole turn's time; one taken in after the end begins the next turn. A reset or a restart rebuilds the transcript from the file without the results; the page then counts from your prompt to the turn's last item.
+- Code: `transcript.ts` `turnEnd`, `sdkResult`, `closeTurn`; `transcripts.ts` `sdkResult`; `session.ts` `onMessage`. Test: `transcript.test.ts` "turn end: an SDK-driven turn writes none …", "turn end: a message the turn took in …", "turn end: with a Stop hook …", "worked for: an SDK-driven turn ends with stop_hook_summary only …"; `scripted-sdk.test.ts` "a turn a `!` command woke writes no turn end …"; page check `bang.mjs` "the turn ends with "Worked for" after Claude's reply".
 
 ### Quirk: a failed turn read from the file alone looks running
 

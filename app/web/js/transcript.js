@@ -365,7 +365,10 @@ export function itemsHTML(items, sessionBusy, s) {
     if (it.ts) lastTs = it.ts;
   }
   flush();
-  if (waiting) flushFiles(); else if (!sessionBusy) endTurn(); else flushFiles();
+  /* a message sent while idle (R5.5) starts the next turn: the one before it is over, so its "Worked for" stays
+     while the send waits for its record, which then lands below it, with nothing moving */
+  const ended = !sessionBusy || (!!s && !view && waitingOf(s).some(q => q.queued === false));
+  if (waiting) flushFiles(); else if (ended) endTurn(); else flushFiles();
   putTitles();
   return out;
 }
