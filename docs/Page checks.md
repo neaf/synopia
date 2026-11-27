@@ -97,6 +97,13 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 
 `run.sh all` runs 4 suites at a time: about 80 s for 31 suites, against about 270 s one after the other; 3 runs passed. At 6 at a time it takes about 64 s, but `steps` "Shell in Claude's turn" (a timing check) failed once in 2 runs, so 4 is the default. Source: runs on the baseline machine (8 cores), 2026-11-26.
 
+### A shell view is a terminal
+
+- Since 2026-11-27 a shell view's output is drawn by xterm.js (term.js), not as text in the DOM: read it with `__synopia.term().lines`, not `.bg-run .out`. Its DOM renderer puts each row in a `.xterm-rows` span with its colour as a computed style, which is how `bang` checks the palette.
+- A key to the program: focus it with `i` (`term().focused`), then `c.key()` or `Input.insertText`; it goes out as `termInput`, which `spy()`/`sent('termInput')` show. Ctrl-C is `c.key('c', { code: 'KeyC', vk: 67, ctrl: true })`. Enter goes as `"\r"`.
+- A resize: `Emulation.setDeviceMetricsOverride` shrinks the page; the terminal refits and the pty gets SIGWINCH (`bang` reads `stty size` from a WINCH trap). Clear the override after.
+- `bang` covers the terminal: a `read` prompt gets typed keys and Backspace, Esc to normal mode then Esc to the program as ESC (a raw one-byte read), Ctrl-C interrupts, resizing changes `stty size`, red drawn in the light and dark palettes (the theme switch). `creds` types into the refresh's terminal; `rail` reads Claude's shells and monitors there, and g/G on its scrollback.
+
 ## Writing a check
 
 - `connect()` from `cdp.mjs` needs `SYNOPIA_CHROME_PORT`, which `run.sh` sets. Each check times out after 180 s.
@@ -141,6 +148,7 @@ Two `run.sh all` at once pass, but `tween` and `motion` sample animation frames,
 | `cards()` | every card's state, keyed `"<sid>:<request id>"` |
 | `preview()` | the file preview: `{shown, path}` |
 | `find()` | the transcript's find bar (find.js): `{shown, q, at, total, count, hits, waiting}`, `count` the text it shows ("3 of 12", "No matches") |
+| `term()` | a shell view's terminal (term.js, 2026-11-27): `{id, writable, cols, rows, focused, lines, top, atTop, atEnd}`, `lines` its scrollback and screen as text (wrapped rows joined, trailing spaces and empty lines off), `top` the first line on screen; null with no terminal |
 | `openList()` | the Open list: `{shown, filter}` |
 | `mcp()` | the MCP panel: `{shown, sid, servers, error, note, sel, action}` |
 | `marks()` | every mark kind in the marks table |
