@@ -1,6 +1,6 @@
 # Open items
 
-The open-items ledger, `.ai-notes/<area>/open-items.md`, as Synopia reads it. The agent and the agent-harness `open-items` skill write it; the skill owns the format (`references/format.md`, checked by `scripts/ledger.py check`). Synopia reads version 1 (FR-ITEM-01) and does not write the file yet. Sources: the skill's format page, `ledger.py` and its tests, read 2026-11-26.
+The open-items ledger, `.ai-notes/<area>/open-items.md`, as Synopia reads it. The agent and the agent-harness `open-items` skill write it; the skill owns the format (`references/format.md`, checked by `scripts/ledger.py check`). Synopia reads version 1 (FR-ITEM-01) and, between turns, writes it back (FR-ITEM-11, "Writing the ledger"). Sources: the skill's format page, `ledger.py` and its tests, read 2026-11-26.
 
 The one reader is `app/backend/src/ledger.ts`. It is pure: the caller reads the file. Test: `app/backend/test/ledger.test.ts`, on `app/backend/test/fixtures/ledger/` (invented ledgers; `checkout-m2.md` and `subagent.md` are the two examples of `format.md`, copied as they are).
 
@@ -61,6 +61,18 @@ A subagent brief names the ids the subagent owns, with their text: `Open items: 
 - `transcript.ts` reads the line once, when the Agent (or Task) tool use lands in the main conversation, and keeps only the ids (`ownsOf(toolUseId)`), never the prompt.
 
 Test: "ownedIds: ...", "ownerOf: ..."; `transcript.test.ts` "open items: the last ledger the main conversation named, and the ids each Agent brief owns".
+
+## Writing the ledger
+
+`serialize(doc)` writes the whole file from a list (FR-ITEM-11); it is the only code that writes the shapes. The caller (`open-items.ts`, the write-back) passes the area, the file's own version comment line, the open items in list order and the closed items with the time each closed.
+
+- The title, a blank line, the version comment as the file had it (`COMMENT`, the skill's own line, when it had none that fits), then `## Waiting on you` (the `Y` items), `## Claude will check` (the `A` items) and `## Closed`, each always there, as `ledger.py check` wants.
+- An item Synopia didn't change is written as its lines were read (`lines`), so the agent's wording and any field Synopia can't read stay. A changed or new one is written in the v1 shape: one line, then its fields in the format's order; a `state` that isn't `answered`, `due` or `later` is left out; every value is one line.
+- A closed line: `[x] <id> · answered|done|went ahead <stamp> · <notes>`, `[-] <id> · dropped <stamp> · <why>` (`no longer needed` when there is none), `[>] <id> · superseded by <id> · <stamp>`. A ` · ` inside a note becomes ` - `, so the line splits as written.
+- Closed lines kept: the newest 30 by close time and the closed line of the highest id of each prefix, as `ledger.py prune` keeps them, oldest first. Synopia's own list keeps more (FR-ITEM-02); a number Synopia retired without a line in the file is not in the file, so `ledger.py next` may give it again; Synopia renumbers its own item on such a clash (FR-ITEM-02).
+- An item Synopia found has `from: Synopia, "<session title>", <local stamp>, "<quote>"` (`open-items.ts` `fromField`; a `"` in the title or quote becomes `'`, so the `from` shape still reads). A `from: Synopia` item adopted from a file is "found by Synopia" (a dashed box), review items aside.
+
+Test: `ledger.test.ts` "serialize: …": a fixture read and written unchanged keeps every block and is stable; Synopia's items and closes; the 30-line rule; and, when the skill's `ledger.py` is on the Mac (`~/dev/agent-harness/…`, or `LEDGER_PY`), every text the tests wrote passes `ledger.py check` (a dev check: `check.sh` doesn't depend on it, and skips it elsewhere).
 
 ## Quirks
 

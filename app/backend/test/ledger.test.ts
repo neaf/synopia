@@ -6,7 +6,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse, blockOf, nextId, optionsOf, fromOf, stampTime, isLedgerPath, ledgerPathOf, ledgerPathIn, ownedIds, ownerOf } from '../src/ledger.ts';
+import { parse, blockOf, nextId, optionsOf, fromOf, stampTime, isLedgerPath, ledgerPathOf, ledgerPathIn, ownedIds, ownerOf, serialize, CLOSED_KEPT } from '../src/ledger.ts';
+import type { Doc } from '../src/ledger.ts';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
 
 const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'ledger');
 const fixture = (name: string) => fs.readFileSync(path.join(dir, name), 'utf8');
@@ -190,4 +193,73 @@ test('ownerOf: the brief that names the id, else the subagent field by name, run
   assert.equal(ownerOf(y1, [copy]), null);
   assert.equal(ownerOf(y8, [copy, { ...rebase, running: false }]), null, 'a finished brief that names it: no field fallback');
   assert.equal(ownerOf(y8, [{ ...copy, running: false }]), null);
+});
+
+// ---------- serialize (FR-ITEM-11) ----------
+
+// The skill's checker, when it is on this Mac (a dev check: check.sh doesn't depend on it). LEDGER_PY overrides.
+const LEDGER_PY = process.env.LEDGER_PY ?? path.join(os.homedir(), 'dev', 'agent-harness', 'skills', 'open-items', 'scripts', 'ledger.py');
+const checker = fs.existsSync('/usr/bin/python3') && fs.existsSync(LEDGER_PY);
+function pyCheck(text: string): string {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-ledger-'));
+  const f = path.join(d, 'open-items.md');
+  fs.writeFileSync(f, text);
+  try {
+    return execFileSync('/usr/bin/python3', ['-I', LEDGER_PY, 'check', f, '-v'], { encoding: 'utf8' }).trim();
+  } catch (e) {
+    return String((e as { stdout?: string }).stdout ?? e).trim();
+  } finally {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+}
+// A parsed ledger as a Doc, every item's lines as read.
+const asDoc = (text: string): Doc => {
+  const led = parse(text);
+  return {
+    area: led.area ?? '', comment: text.split('\n').find((l) => l.startsWith('<!-- open-items v1.')) ?? '',
+    open: led.items.map((i) => ({ id: i.id, kind: i.kind, text: i.text, fields: i.fields, lines: i.lines })),
+    closed: led.closed.map((c, n) => ({ id: c.id, box: c.box, how: c.how, when: c.when, notes: c.notes, by: c.by ?? undefined, at: n, lines: c.lines })),
+  };
+};
+const written: string[] = []; // every serialized text, for the checker
+
+test('serialize: a file read and written unchanged keeps every item\'s lines and parses the same', () => {
+  for (const name of ['checkout-m2.md', 'subagent.md', 'empty-sections.md', 'date-only.md']) {
+    const text = fixture(name), out = serialize(asDoc(text));
+    written.push(out);
+    const a = parse(text), b = parse(out);
+    assert.deepEqual(b.unread, [], name);
+    assert.deepEqual(b.items.map(blockOf), a.items.map(blockOf), name);
+    assert.deepEqual(b.closed.map(blockOf), a.closed.map(blockOf), name);
+    assert.equal(serialize(asDoc(out)), out, `${name}: stable`);
+  }
+});
+
+test('serialize: Synopia\'s items and closes in the v1 shapes; the newest 30 closed lines and the highest ids kept', () => {
+  const closed = Array.from({ length: 40 }, (_, i) => ({ id: `Y${i + 1}`, box: 'x' as const, how: 'done', when: '2026-11-26 10:00', notes: ['closed by Synopia: it · ran'], at: i }));
+  closed[0] = { ...closed[0], id: 'A3', box: '-' as const, how: 'dropped', notes: [], at: -1 };
+  const out = serialize({
+    area: 'checkout\nm2', comment: '',
+    open: [
+      { id: 'Y41', kind: 'decision', text: 'Can I remove\nthe worktrees?', fields: { from: 'Synopia, "Ship M2", 2026-11-26 14:02, "Can I remove"', options: 'Remove both | Keep them', state: 'bogus' } },
+      { id: 'A1', kind: 'follow-up', text: 'Re-check #820.', fields: { trigger: 'after the M2 stack merges', from: 'Synopia, "Ship M2", 2026-11-26 14:02' } },
+    ],
+    closed: [...closed, { id: 'Y42', box: '>', how: 'superseded', when: '2026-11-26 15:12', by: 'Y41', notes: [], at: 99 }],
+  });
+  written.push(out);
+  const led = parse(out);
+  assert.deepEqual(led.unread, []);
+  assert.equal(led.area, 'checkout m2');
+  assert.equal(out.split('\n')[2], "<!-- open-items v1. Kept by AI: the open-items skill, and Synopia when it runs the session. Don't edit by hand; say it in the session instead. -->");
+  assert.deepEqual(led.items[0].lines, ['- [ ] Y41 · decision · Can I remove the worktrees?', '  - options: Remove both | Keep them', '  - from: Synopia, "Ship M2", 2026-11-26 14:02, "Can I remove"']);
+  assert.equal(led.closed.length, CLOSED_KEPT + 1, 'the newest 30, and A3 as the highest A');
+  assert.ok(led.closed.some((c) => c.id === 'A3' && c.notes[0] === 'no longer needed'));
+  assert.equal(led.closed[led.closed.length - 1].lines[0], '- [>] Y42 · superseded by Y41 · 2026-11-26 15:12');
+  assert.ok(led.closed.some((c) => c.lines[0] === '- [x] Y40 · done 2026-11-26 10:00 · closed by Synopia: it - ran'));
+  assert.equal(nextId(led, 'Y'), 'Y43');
+});
+
+test('serialize: every written text passes ledger.py check', { skip: !checker && 'ledger.py is not on this Mac' }, () => {
+  assert.ok(written.length >= 5);
+  for (const t of written) assert.match(pyCheck(t), /^ok: /, t);
 });

@@ -242,3 +242,63 @@ export function ownerOf(item: OpenItem, agents: Brief[]): string | null {
   const field = item.fields.subagent;
   return field ? (agents.find((a) => a.running && a.name === field)?.agent ?? null) : null;
 }
+
+// ---------- writing (FR-ITEM-11) ----------
+
+// One item to write: an open one, or a closed line. `lines`: the item's lines as last read, written as they
+// are when Synopia didn't change it (the agent's own wording stays). `at`: when a closed item closed (ms), for
+// which closed lines are kept.
+export type SerialOpen = { id: string; kind: string; text: string; fields: Record<string, string>; lines?: string[] };
+export type SerialClosed = {
+  id: string; box: Exclude<Box, ' '>; how: string; when: string; notes: string[]; by?: string; at: number; lines?: string[];
+};
+export type Doc = { area: string; comment: string; open: SerialOpen[]; closed: SerialClosed[] };
+export const CLOSED_KEPT = 30;
+export const COMMENT = "<!-- open-items v1. Kept by AI: the open-items skill, and Synopia when it runs the session. Don't edit by hand; say it in the session instead. -->";
+
+// One line of text as a value: no line break, no leading space (a field is `key: \S.*`).
+const oneLine = (s: string): string => s.replace(/\s+/g, ' ').trim();
+const idParts = (id: string): [Prefix, number] => [id[0] as Prefix, Number(id.slice(1))];
+
+// The whole file, in the version 1 shapes `ledger.py check` accepts: the title, the version comment as the file
+// had it, the three sections always, and under Closed the newest CLOSED_KEPT closed lines plus the highest id of
+// each prefix (ledger.py prune's rule), oldest first. An open item keeps its place in `open`.
+export function serialize(doc: Doc): string {
+  const section = (prefix: Prefix): string[] => {
+    const lines = doc.open.filter((i) => idParts(i.id)[0] === prefix).flatMap(openLines);
+    return lines.length ? [...lines, ''] : [];
+  };
+  const top: Record<Prefix, number> = { Y: 0, A: 0 };
+  for (const i of [...doc.open, ...doc.closed]) { const [p, n] = idParts(i.id); top[p] = Math.max(top[p], n); }
+  const newest = new Set([...doc.closed].sort((a, b) => b.at - a.at).slice(0, CLOSED_KEPT));
+  const kept = doc.closed.filter((c) => { const [p, n] = idParts(c.id); return newest.has(c) || n === top[p]; });
+  kept.sort((a, b) => a.at - b.at);
+  const out = [
+    `# Open items: ${oneLine(doc.area) || 'notes'}`, '',
+    VERSION_COMMENT.test(doc.comment) ? doc.comment : COMMENT, '',
+    `## ${WAITING}`, '', ...section('Y'),
+    `## ${CHECKS}`, '', ...section('A'),
+    `## ${CLOSED}`, '', ...kept.flatMap(closedLines),
+  ];
+  return out.join('\n').replace(/\n+$/, '') + '\n';
+}
+
+function openLines(i: SerialOpen): string[] {
+  if (i.lines?.length) return i.lines;
+  const lines = [`- [ ] ${i.id}${SEP}${oneLine(i.kind)}${SEP}${oneLine(i.text) || '(no text)'}`];
+  for (const k of FIELDS) {
+    const v = i.fields[k] !== undefined ? oneLine(i.fields[k]) : '';
+    if (v && (k !== 'state' || STATES.includes(v))) lines.push(`  - ${k}: ${v}`);
+  }
+  return lines;
+}
+
+function closedLines(c: SerialClosed): string[] {
+  if (c.lines?.length) return c.lines;
+  const when = STAMP.exec(c.when)?.[0] ?? c.when;
+  const notes = c.notes.map((n) => oneLine(n).split(SEP).join(' - ')).filter(Boolean);
+  const rest = notes.map((n) => SEP + n).join('');
+  if (c.box === '>') return [`- [>] ${c.id}${SEP}superseded by ${c.by}${SEP}${when}${rest}`];
+  if (c.box === '-') return [`- [-] ${c.id}${SEP}dropped ${when}${notes.length ? rest : `${SEP}no longer needed`}`];
+  return [`- [x] ${c.id}${SEP}${c.how} ${when}${rest}`];
+}
