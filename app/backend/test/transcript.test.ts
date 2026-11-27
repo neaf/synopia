@@ -1162,6 +1162,13 @@ test('open items: the last ledger the main conversation named, and the ids each 
   t.push(use('a5', 7, 'tp', 'Read', { file_path: `${CWD}/.ai-notes/checkout-m2/plan.md` }));
   t.push(use('a6', 8, 'tq', 'Bash', { command: 'cat .ai-notes/open-items.md' }));
   assert.equal(t.ledger!.toolUseId, 'tb');
+  // open_items' `ledger` names one from the main conversation; a subagent's call is ignored (FR-ITEM-12)
+  t.push(use('a5b', 8, 'toi', 'mcp__synopia__open_items', { op: 'open', kind: 'decision', text: 'x', ledger: OTHER }));
+  assert.deepEqual([t.ledger!.path, t.ledger!.toolUseId], [OTHER, 'toi']);
+  t.push(use('a5c', 8, 'tos', 'mcp__synopia__open_items', { op: 'list', ledger: LED }, { isSidechain: true }));
+  sub.push(use('s2', 8, 'tos2', 'mcp__synopia__open_items', { op: 'list', ledger: LED }, { isSidechain: true }));
+  assert.deepEqual([t.ledger!.path, sub.ledger], [OTHER, null]);
+  t.push(use('a5d', 8, 'tb2', 'Bash', { command: `cat '${LED}'` }));
   // the brief's `Open items:` line
   const prompt = 'Merge the rates branch.\n\nOpen items: Y5 (keep main\'s Norway rates, answered "Main\'s"), A2 (re-run the tax specs on PR 818)\n\nNo review.';
   t.push(use('a7', 9, 'tA', 'Agent', { description: 'Merge rates', prompt }));

@@ -51,6 +51,7 @@ export type SessionsOptions = {
   idleMs?: number;
   // The writer: a session's turn ended, and a stored session was opened.
   onTurnEnded?: (sid: string) => void;
+  items?: { toolOp(sid: string, input: Record<string, unknown>, cwd: string): Promise<{ ok: boolean; text: string }> }; // open_items (open-items.ts)
   onOpened?: (sid: string) => void;
   // A card waiting on you appeared or ended (ours, or one another process asks): the Now line follows.
   onWaiting?: (sid: string) => void;
@@ -333,6 +334,10 @@ export class Sessions {
       });
     },
     tilde: (p) => this.tilde(p),
+    items: (caller, input) => {
+      const s = this.get(caller);
+      return this.opts.items?.toolOp(this.resolve(caller), input, s?.cwd ?? '') ?? Promise.resolve({ ok: false, text: 'Synopia can\'t keep open items here.' });
+    },
   };
 
   // ---------- the set ----------

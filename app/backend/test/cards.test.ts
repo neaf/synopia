@@ -1,3 +1,4 @@
+import { answerOf, fullName, SUBAGENT_REFUSED } from '../src/agent-tools.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -141,6 +142,7 @@ function cards() {
     store, sid: () => SID, show: (r) => shown.push(r.id), clear: (id) => cleared.push(id), count: (n) => counts.push(n),
     context: () => ({ cwd: '~/x', modeBefore: 'auto' }), drained: () => drained++, now: () => 1,
     tilde: (p) => displayPath(p, '/Users/me'),
+    auto: answerOf,
   });
   return { c, store, shown, cleared, counts, get drained() { return drained; } };
 }
@@ -200,4 +202,16 @@ test('cards: answer labels and plans keep the newest ANSWERS_MAX and PLANS_MAX',
   const big = normalize({ answers: Object.fromEntries(Array.from({ length: ANSWERS_MAX + 5 }, (_, i) => [`a${i}`, 'x'])) });
   assert.equal(Object.keys(big.answers).length, ANSWERS_MAX);
   assert.equal(Object.keys(big.answers)[0], 'a5');
+});
+
+test('cards: open_items is answered at once with no card: allowed from the main conversation, refused from a subagent (FR-ITEM-12)', async () => {
+  const t = cards();
+  const ac = new AbortController();
+  const input = { op: 'open', kind: 'decision', text: 'Run it?' };
+  const main = await t.c.park(fullName('open_items'), input, opts('rq-m', ac.signal, { agentID: undefined }));
+  assert.deepEqual(main, { behavior: 'allow', updatedInput: input });
+  const sub = await t.c.park(fullName('open_items'), input, opts('rq-s', ac.signal, { agentID: 'a123' }));
+  assert.deepEqual(sub, { behavior: 'deny', message: SUBAGENT_REFUSED });
+  assert.deepEqual([t.shown, t.counts], [[], []], 'no card');
+  assert.equal(answerOf(fullName('start_session'), {}, undefined), null, 'start_session keeps its card');
 });

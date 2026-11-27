@@ -4,7 +4,8 @@
 // transcript see a tool as `mcp__synopia__<name>` (docs/Agent SDK.md, "Synopia's tools for agents").
 // A tool is one entry of TOOLS:
 //   name, description, input  what the model reads (input is a zod shape)
-//   card(input, folder)       how the permission card words a call (each call asks, cards.ts)
+//   card(input, folder)       how the permission card words a call (each call asks, cards.ts); none: answered
+//                             with no card (allowed from the main conversation, refused from a subagent)
 //   step(input)               the step's object in the transcript, after `verb`
 //   run(input, caller, host)  what it does, for the session that called it
 // To add a tool: write its Tool here, add it to TOOLS, and give `Host` what it needs from Sessions.
@@ -13,7 +14,7 @@
 import { z } from 'zod';
 import { toolServer as sdkToolServer } from './sdk.ts';
 import type { ToolDef, ToolResult } from './sdk.ts';
-import type { McpSdkServerConfigWithInstance } from '@anthropic-ai/claude-agent-sdk';
+import type { McpSdkServerConfigWithInstance, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import { limit, MAX_TITLE } from './writer.ts';
 
 export const SERVER = 'synopia';
@@ -35,6 +36,8 @@ export type Host = {
   started(sid: string, caller: string): void;
   // The new session's real id once its system/init comes, else the id it has after `ms`.
   idOf(sid: string, ms: number): Promise<string>;
+  // The session's open items (open-items.ts toolOp): one `open_items` call, its result's text.
+  items?(caller: string, input: Record<string, unknown>): Promise<{ ok: boolean; text: string }>;
   tilde(p: string): string;
 };
 
@@ -48,7 +51,7 @@ type Tool = {
   description: string;
   input: z.ZodRawShape;
   verb: string;
-  card(input: Input, folder: string): CardText;
+  card?(input: Input, folder: string): CardText;
   step(input: Input): string;
   run(input: Input, caller: string, host: Host): Promise<ToolResult>;
 };
@@ -114,7 +117,51 @@ const startSession: Tool = {
   },
 };
 
-const TOOLS: Tool[] = [startSession];
+// ---------- open_items (R3.15, R3.16, FR-ITEM-12) ----------
+
+export const ITEM_OPS = ['open', 'update', 'close', 'list'] as const;
+export const ITEM_KINDS = ['decision', 'your task', 'default', 'review', 'follow-up'] as const;
+// What a subagent reads when it calls the tool: it is refused, and told what to do instead.
+export const SUBAGENT_REFUSED = 'Only the main conversation keeps the open items. Put this item in your report instead (a question for the user, or "Closed: <id> (<what was done>)"), and the main conversation records it.';
+
+const openItems: Tool = {
+  name: 'open_items',
+  description: 'The session\'s open items, kept by Synopia: loose ends waiting on the user (Y ids) or on you (A ids, follow-ups). '
+    + 'Record them here instead of editing the open-items ledger file; Synopia gives the ids and writes the file between turns. '
+    + 'op "open": kind, text (one sentence), and for a decision its options and recommended one, for a follow-up or a default its trigger, and the quote it came from; returns the new id. '
+    + 'op "update": id, and state (answered, due or later), answer, or a better text. '
+    + 'op "close": id and as (done, went ahead, dropped, superseded or answered), why, and by (the id that supersedes it). '
+    + 'op "list": the open items and the newest 10 closed, for you to read. Never print the list in your reply: the user sees it in Synopia. '
+    + 'Give ledger (the absolute path of .ai-notes/<area>/open-items.md) when the session has none yet. Only the main conversation calls this tool; a subagent puts its items in its report.',
+  input: {
+    op: z.enum(ITEM_OPS).describe('What to do'),
+    id: z.string().optional().describe('The item, for update and close: Y3, A1'),
+    kind: z.enum(ITEM_KINDS).optional().describe('For open: who acts and how'),
+    text: z.string().optional().describe('For open, or a better text on update: one sentence'),
+    options: z.array(z.string()).optional().describe('For a decision: its set answers'),
+    recommended: z.string().optional().describe('For a decision: the option you would pick'),
+    trigger: z.string().optional().describe('For a follow-up: when to check; for a default: when it goes ahead'),
+    quote: z.string().optional().describe('For open: the words it came from'),
+    state: z.enum(['answered', 'due', 'later']).optional().describe('For update'),
+    answer: z.string().optional().describe('For update with state answered: the user\'s answer'),
+    as: z.enum(['done', 'went ahead', 'dropped', 'superseded', 'answered']).optional().describe('For close: how it closed'),
+    why: z.string().optional().describe('For close: what was done, or why it was dropped'),
+    by: z.string().optional().describe('For close as superseded: the id that replaces it'),
+    ledger: z.string().optional().describe('The absolute path of the area\'s .ai-notes/<area>/open-items.md'),
+  },
+  verb: 'Open items',
+  step: (input) => {
+    const id = str(input.id), t = firstLine(str(input.text));
+    return id && t ? `${id}: ${t}` : id || t || str(input.op);
+  },
+  async run(input, callerId, host) {
+    if (!host.items) return refuse('Synopia can\'t keep open items here.');
+    const r = await host.items(callerId, input);
+    return r.ok ? text(r.text) : refuse(r.text);
+  },
+};
+
+const TOOLS: Tool[] = [startSession, openItems];
 const byName = new Map(TOOLS.map((t) => [fullName(t.name), t]));
 
 // ---------- for the rest of the backend ----------
@@ -153,9 +200,18 @@ export function defs(host: Host, caller: () => string): ToolDef[] {
 
 export const isOurs = (toolName: string): boolean => byName.has(toolName);
 
-// The card's words for a call of one of ours, or null for another tool.
+// The card's words for a call of one of ours, or null for another tool and for a tool with no card.
 export function cardOf(toolName: string, input: Input, folder: string): CardText | null {
-  return byName.get(toolName)?.card(input, folder) ?? null;
+  return byName.get(toolName)?.card?.(input, folder) ?? null;
+}
+
+// A call of one of our tools with no card, answered at once (FR-ITEM-12): allowed from the main conversation,
+// refused from a subagent (`agentID` is set only for a subagent's call, docs/Agent SDK.md, "Live run TL-2").
+// Null for every other tool: it goes to a card.
+export function answerOf(toolName: string, input: Input, agentID: string | undefined): PermissionResult | null {
+  const t = byName.get(toolName);
+  if (!t || t.card) return null;
+  return agentID !== undefined ? { behavior: 'deny', message: SUBAGENT_REFUSED } : { behavior: 'allow', updatedInput: input };
 }
 
 // The step's verb and object in the transcript, or null for another tool.

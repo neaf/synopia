@@ -443,3 +443,33 @@ test('the write-back leaves alone a file with no version comment, or with a line
     assert.equal(fs.readFileSync(p, 'utf8'), text);
   }
 });
+
+test('open_items: the agent records items by call, Synopia gives the ids; a named ledger is used at once (FR-ITEM-12)', async () => {
+  const k = keeperSetup();
+  const p = ledgerIn(k.dir);
+  await k.items.sync('s1'); // no ledger named yet
+  k.running.on = true; // in the turn: nothing written yet
+  const bad = await k.items.toolOp('s1', { op: 'open', kind: 'decision', text: 'x', ledger: 'notes.md' });
+  assert.equal(bad.ok, false);
+  const o = await k.items.toolOp('s1', { op: 'open', kind: 'decision', text: 'Can I remove the worktrees?', options: ['Yes', 'Keep them'], quote: 'Can I remove', ledger: p });
+  assert.deepEqual(o, { ok: true, text: 'Opened Y8.' });
+  const v = k.items.view('s1').items.find((i) => i.id === 'Y8')!;
+  assert.deepEqual([v.source, v.found, v.options], ['agent', undefined, ['Yes', 'Keep them']], 'the agent\'s record: a solid box');
+  assert.equal((await k.items.toolOp('s1', { op: 'update', id: 'Y1', state: 'answered', answer: 'Run it' })).ok, true);
+  assert.equal(k.items.view('s1').items.find((i) => i.id === 'Y1')?.answer, '"Run it"');
+  assert.deepEqual(await k.items.toolOp('s1', { op: 'close', id: 'Y2', as: 'done', why: 'threads answered' }), { ok: true, text: 'Closed Y2.' });
+  assert.equal((await k.items.toolOp('s1', { op: 'close', id: 'Y2', as: 'done' })).ok, false, 'closed already');
+  assert.equal((await k.items.toolOp('s1', { op: 'close', id: 'Y4', as: 'superseded', by: 'Y99' })).ok, false);
+  const list = await k.items.toolOp('s1', { op: 'list' });
+  assert.match(list.text, /^Open:\nY1 · decision · .*\(answered\)$/m);
+  assert.match(list.text, /^Y2 · done · Answer the 2 review threads/m);
+  await k.items.flushWrites();
+  assert.equal(fs.readFileSync(p, 'utf8'), fixture('checkout-m2.md'), 'not during the turn');
+  k.running.on = false;
+  await k.items.look();
+  await k.items.flushWrites();
+  const text = fs.readFileSync(p, 'utf8');
+  assert.match(text, /^- \[ \] Y8 · decision · Can I remove the worktrees\?$/m);
+  assert.match(text, /^ {2}- from: Claude, "Ship 'checkout' M2", \d{4}-\d\d-\d\d \d\d:\d\d, "Can I remove"$/m);
+  assert.match(text, /^- \[x\] Y2 · done \d{4}-\d\d-\d\d \d\d:\d\d · threads answered$/m);
+});

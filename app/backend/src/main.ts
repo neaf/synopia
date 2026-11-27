@@ -201,6 +201,7 @@ const sessions = new Sessions({
   },
   onSignedOut: (sid, cwd, on) => void creds.signedOut(sid, cwd, on),
   onGone: (sid) => creds.forget(sid),
+  items: openItems,
   onClosed: (sid) => openItems.close(sid),
   onRekeyed: (from, to) => openItems.rekey(from, to),
 });

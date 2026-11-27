@@ -8,7 +8,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { parse, blockOf, fromOf, optionsOf, stampTime, ownerOf, serialize, FIELDS } from './ledger.ts';
+import { parse, blockOf, fromOf, optionsOf, stampTime, ownerOf, serialize, ledgerPathOf, FIELDS } from './ledger.ts';
 import type { OpenItem, ClosedItem, Prefix, Brief, Doc, SerialClosed } from './ledger.ts';
 import { isProtected } from './folders.ts';
 import type { Agent, LedgerFact } from './transcript.ts';
@@ -184,6 +184,7 @@ export class OpenItems {
   private cursors = new Map<string, { you: string | null; turn: string | null }>(); // the exchanges asked about
   private pending = new Set<string>(); // ledgers whose list Synopia changed since the file was written (FR-ITEM-11)
   private writing = new Map<string, Promise<boolean>>(); // the write-back running per ledger
+  private named = new Map<string, { path: string; at: number }>(); // a ledger open_items named, until the transcript has it
 
   constructor(o: {
     store: Store; facts: ItemFacts; io?: FileIo; home?: string; log?: Log; now?: () => number;
@@ -217,7 +218,10 @@ export class OpenItems {
   // ledger when the transcript shows a new tool result for it (before the review items, so a ledger's own review
   // item ties to its subagent first).
   async sync(sid: string): Promise<void> {
-    const fact = this.facts.ledgerOf(sid);
+    let fact = this.facts.ledgerOf(sid);
+    const named = this.named.get(sid); // open_items named a ledger the transcript may not show yet (FR-ITEM-12)
+    if (named && (!fact || (Date.parse(fact.at ?? '') || 0) < named.at - 5000)) fact = { path: named.path, at: new Date(named.at).toISOString(), toolUseId: '', results: this.uses.get(sid)?.results ?? 0 };
+    else if (named) this.named.delete(sid);
     const key = fact ? fact.path : `session:${sid}`;
     const prev = this.uses.get(sid);
     const use: Use = { key, at: fact?.at ? Date.parse(fact.at) || 0 : 0, results: fact?.results ?? 0, path: fact?.path ?? null };
@@ -258,6 +262,7 @@ export class OpenItems {
     this.uses.delete(sid);
     this.links.delete(sid);
     this.cursors.delete(sid);
+    this.named.delete(sid);
     if (l) {
       for (const h of l.items) if (h.agent && h.closed) this.carry(h.agent);
       delete this.state.lists[key];
@@ -474,6 +479,79 @@ export class OpenItems {
     h.kept = true;
     this.after(sid);
     return true;
+  }
+
+  // ---------- the open_items tool (FR-ITEM-12) ----------
+
+  // One call of the agent's `open_items` tool, from the main conversation of a session Synopia runs (cards.ts
+  // refused a subagent's). The agent's record: a solid box, ids from the list, written to the file after the turn.
+  async toolOp(sid: string, input: Record<string, unknown>, cwd = ''): Promise<{ ok: boolean; text: string }> {
+    const s = (v: unknown) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
+    if (!this.uses.has(sid)) await this.sync(sid);
+    if (!this.uses.has(sid)) return { ok: false, text: 'This session isn\'t open in Synopia.' };
+    const given = s(input.ledger);
+    if (given) {
+      const abs = ledgerPathOf(given, cwd, this.home);
+      if (!abs) return { ok: false, text: `${given} is not a ledger: give the absolute path of .ai-notes/<area>/open-items.md.` };
+      if (this.uses.get(sid)!.key !== abs) { this.named.set(sid, { path: abs, at: this.now() }); await this.sync(sid); }
+    }
+    const u = this.uses.get(sid)!, l = this.list(u.key), now = this.now();
+    const op = s(input.op), id = s(input.id);
+    if (op === 'list') return { ok: true, text: this.listText(l) };
+    if (op === 'open') {
+      const kind = s(input.kind), text = s(input.text).slice(0, 300);
+      if (!['decision', 'your task', 'default', 'review', 'follow-up'].includes(kind)) return { ok: false, text: 'Give a kind: decision, your task, default, review or follow-up.' };
+      if (!text) return { ok: false, text: 'Give the item\'s text, one sentence.' };
+      const prefix: Prefix = kind === 'follow-up' ? 'A' : 'Y';
+      l.top[prefix] += 1;
+      const fields: Record<string, string> = {};
+      const options = Array.isArray(input.options) ? input.options.map(s).filter(Boolean).map((o) => o.replace(/\s*\|\s*/g, ' / ')) : [];
+      if (options.length) fields.options = options.join(' | ');
+      if (s(input.recommended)) fields.recommended = s(input.recommended);
+      if (s(input.trigger)) fields[kind === 'default' ? 'goes ahead' : 'trigger'] = s(input.trigger);
+      fields.from = fromField(this.facts.title?.(sid) ?? '', now, s(input.quote)).replace(/^Synopia, /, 'Claude, ');
+      const h: Held = { id: `${prefix}${l.top[prefix]}`, prefix, n: l.top[prefix], kind, text, fields, source: 'agent', at: now, mine: true, touched: now };
+      l.items.push(h);
+      this.after(sid);
+      return { ok: true, text: `Opened ${h.id}.` };
+    }
+    const h = l.items.find((x) => x.id === id);
+    if (!h || h.closed) return { ok: false, text: `${id || 'No id'}: no open item has that id. Call op list to see them.` };
+    if (op === 'update') {
+      const state = s(input.state);
+      if (state && !['answered', 'due', 'later'].includes(state)) return { ok: false, text: 'state is answered, due or later.' };
+      if (state) h.fields = withField(h.fields, 'state', state);
+      if (s(input.answer)) h.fields = withField(h.fields, 'answer', `"${s(input.answer).replace(/"/g, "'")}"`);
+      if (s(input.text)) h.text = s(input.text).slice(0, 300);
+      this.agents(h);
+      this.after(sid);
+      return { ok: true, text: `Updated ${h.id}.` };
+    }
+    if (op === 'close') {
+      const as = s(input.as), by = s(input.by);
+      if (!['done', 'went ahead', 'dropped', 'superseded', 'answered'].includes(as)) return { ok: false, text: 'as is done, went ahead, dropped, superseded or answered.' };
+      if (as === 'superseded' && !l.items.some((x) => x.id === by && !x.closed)) return { ok: false, text: 'Superseded needs by: the open id that replaces it.' };
+      const why = s(input.why) || (as === 'answered' && s(input.answer) ? `"${s(input.answer)}"` : '');
+      h.closed = { how: as, at: now, note: as === 'superseded' ? `superseded by ${by}` : why, by: 'agent', ...(by ? { to: by } : {}) };
+      this.agents(h);
+      this.after(sid);
+      return { ok: true, text: `Closed ${h.id}.` };
+    }
+    return { ok: false, text: 'op is open, update, close or list.' };
+  }
+
+  // The agent's record on an item: Synopia's marks on it go (FR-ITEM-09).
+  private agents(h: Held): void {
+    h.touched = this.now();
+    h.mine = true;
+    delete h.found; delete h.flips; delete h.kept;
+  }
+
+  // What `list` returns: the open items, then the newest 10 closed, one line each.
+  private listText(l: List): string {
+    const open = l.items.filter((h) => !h.closed).map((h) => `${h.id} · ${h.kind} · ${h.text}${h.fields.state ? ` (${h.fields.state})` : ''}`);
+    const closed = l.items.filter((h) => h.closed).sort((a, b) => b.closed!.at - a.closed!.at).slice(0, 10).map((h) => `${h.id} · ${h.closed!.how}${h.text ? ` · ${h.text}` : ''}`);
+    return [open.length ? 'Open:' : 'Nothing open.', ...open, ...(closed.length ? ['Closed lately:', ...closed] : [])].join('\n');
   }
 
   // Whether an open session's list holds this item, open or closed (router.ts, for Undo).

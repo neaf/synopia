@@ -302,6 +302,18 @@ Transcript records:
 - `tool_result` of a call that ran: a `user` record, block `{type: 'tool_result', content: [{type: 'text', text}]}`, `toolUseResult` the same array; record keys besides the usual: `mcpCallNotReadOnly`, `permissionDecision`, `promptId`, `serverClassifierContext` (not always), `sourceToolAssistantUUID`.
 - A handler's `isError: true` and a denial: `is_error: true`, `content` and `toolUseResult` a plain string; a denial adds `toolDenialKind` and `holdsPersonsWords`.
 
+### Live run TL-2
+
+One scripted check for the `open_items` tool, 2026-11-27 (haiku; scratch folder `/tmp/synopia-tl2/work`; SDK 0.3.330 with its bundled CLI; the user's `defaultMode: auto`; `persistSession: false`, so no session was saved; shapes only). The script is outside the repo, at `/tmp/synopia-tl2/check.mjs`. A server `probe` with one tool, `always_ask` and `destructiveHint: true`, its input `{op: z.enum(['open', 'update', 'close', 'list']), text?: string, id?: string}`; the main conversation called it, then a general-purpose subagent called it; `canUseTool` answered `{behavior: 'allow', updatedInput: input}` at once.
+
+| Question | What happened |
+|---|---|
+| Does a subagent's call reach `canUseTool`, and with what? | Both calls reached it, one each. Both `options` have the same keys (`agentID, blockedPath, decisionReason, decisionReasonType, defaultToNo, description, displayName, mcpServer, requestId, serverPolicyAskOnly, signal, suggestions, suppressAlwaysAllowRule, title, toolUseID`); `agentID` is `undefined` for the main conversation's call and a string for the subagent's. The subagent's `tool_use` came in an `assistant` message with a `parent_tool_use_id`. |
+| Does an immediate allow run the tool with no further prompt? | Yes: the handler ran once per call, right after the allow; no second `canUseTool` call, `result/success`, no `permission_denials`. |
+| Does the enum reach the handler typed? | Yes: `args.op` a string of the enum, the optional fields present only when given (`{op, text}`, then `{op}`). |
+
+So `cards.ts` tells a subagent's call by `options.agentID !== undefined` (FR-ITEM-12), and the tool keeps `always_ask`.
+
 ### Live run MC-2
 
 One scripted check, 2026-11-25 (same SDK and CLI; `/tmp/synopia-mcp-login/check.mjs`, outside the repo; details in [Claude Code terminals](Claude%20Code%20terminals.md#claude-mcp-login-and-logout)). The user's Sign in on an HTTP server had failed with "this isn't an interactive terminal".
@@ -312,6 +324,7 @@ One scripted check, 2026-11-25 (same SDK and CLI; `/tmp/synopia-mcp-login/check.
 
 - Every tool is `always_ask` with `destructiveHint: true` (`sdk.ts` `toolServer`), so each call reaches the card under `auto` too.
 - The CLI suggests no rule, so Synopia makes the "Always allow" row itself: an `addRules` session suggestion for the tool's name, stored in `state.json` `rules` as a card's rule is, and a later call it covers is allowed without a card (`cards.ts` `park`). The CLI's own copy of the rule changes nothing, as `always_ask` overrides it. It goes when the session closes (Q6).
+- `open_items` (FR-ITEM-12) has no card: `cards.ts` `park` asks `agent-tools.ts` `answerOf` first, which allows a main-conversation call at once and denies one whose `options.agentID` is set (a subagent's, live run TL-2) with a sentence telling it to report the item. `always_ask` stays, so auto mode's classifier never approves a subagent's call in Synopia's place.
 - The transcript names the new session through the result's text (`agent-tools.ts` `startedText`, `startedFrom`); a refused call's string content has no id.
 - Code: `agent-tools.ts`, `sdk.ts` `toolServer`, `buildOptions`; `cards.ts` `park`; `transcript.ts` `toolLine`. Test: `agent-tools.test.ts`, `scripted-sdk.test.ts`.
 

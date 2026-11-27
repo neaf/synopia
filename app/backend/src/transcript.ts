@@ -6,7 +6,9 @@ import os from 'node:os';
 import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
 import { BANG_CAP } from './bang.ts';
-import { stepOf, sessionOf } from './agent-tools.ts';
+import { stepOf, sessionOf, fullName } from './agent-tools.ts';
+// A subagent's open_items call names no ledger: only the main conversation's facts are read (`sidechain`).
+const OPEN_ITEMS = fullName('open_items');
 import type { BashOutput } from './bang.ts';
 import { classify, agentMetaOf } from './claude-jsonl.ts';
 import { isLedgerPath, ledgerPathOf, ledgerPathIn, ownedIds } from './ledger.ts';
@@ -807,8 +809,9 @@ export class Transcript {
   private openItemFacts(b: ToolUse, tid: string, ts: string | null, cwd: string): void {
     const r = this.r, name = b.name;
     const p = typeof b.input.file_path === 'string' ? b.input.file_path : '';
+    const tl = name === OPEN_ITEMS && typeof b.input.ledger === 'string' ? b.input.ledger : ''; // open_items' `ledger` (FR-ITEM-12)
     const led = name === 'Read' || name === 'Write' || name === 'Edit' ? (p ? ledgerPathOf(p, cwd, this.home) : null)
-      : name === 'Bash' ? ledgerPathIn(b.command, cwd, this.home) : null;
+      : name === 'Bash' ? ledgerPathIn(b.command, cwd, this.home) : tl ? ledgerPathOf(tl, cwd, this.home) : null;
     if (led) {
       r.ledger = { path: led, at: ts, toolUseId: tid };
       r.ledgerUses.add(tid);
