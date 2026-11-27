@@ -242,6 +242,7 @@ The conversation pane is one panel from the title down (2026-11-25, prototype/co
   - the last row is always "type your own"
   - a footer with generic key hints and Send
 - R6.4 Keys, in normal mode, while a card waits:
+  - A card that appears while you type in the message box takes the keys (2026-11-27, the user: "When question/permissions confirmation appear, it should steal focus from the message box"): normal mode, the box blurred, the draft kept; once per request, so i after it types in the box again.
   - j/k (or ↓/↑) move the cursor through every option of every question as one list; moving past the last row opens the next question.
   - Space selects only: radio for single choice, toggle for multiple choice. It never advances.
   - i types in place, on the row:

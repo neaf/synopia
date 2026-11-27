@@ -217,6 +217,9 @@ function keepFields(dock) {
 /* The dock above the composer: the card for the oldest pending request, or the status line when Claude
    needs you without one. Redrawn only when its HTML changed, so a half-typed answer stays. */
 let lastCard = null;
+/* a question, permission or plan card that just appeared takes the keys from the message box (2026-11-27, the
+   user: "it should steal focus from the message box"): normal mode, the draft kept, once per request */
+let tookFocusFor = null;
 /* the view's frame was rebuilt (transcript.js renderConv): its dock has no card yet */
 export function resetCard() { lastCard = null; }
 export function renderCard() {
@@ -231,6 +234,7 @@ export function renderCard() {
   [...dock.children].forEach(el => { if (el !== composer) el.remove(); });
   if (html) composer.insertAdjacentHTML("beforebegin", html);
   if (!pa) { kept(); if (credsState(s)) wireCreds(s); return; }
+  if (pa.id !== tookFocusFor) { tookFocusFor = pa.id; if (mode === "insert" && document.activeElement === document.getElementById("msg")) setMode("normal"); }
   const st = qs(s, pa);
   conv.querySelectorAll(".acc[data-qi]").forEach(b => b.onclick = () => { st.qi = +b.dataset.qi; st.oi = 0; renderCard(); });
   conv.querySelectorAll(".qa-card .o").forEach(b => b.onclick = () => { st.oi = +b.dataset.oi; qaPick(s, pa); if (mode !== "insert") renderCard(); });

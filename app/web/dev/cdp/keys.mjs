@@ -166,6 +166,16 @@ check('permission: j reaches Always allow', (await st()) === '0:1', await st());
 await K.enter();
 check('permission: Enter on Always allow sends always, the Enter prevented', await kept() && await c.until(`__synopia.sent('answer').length === ${sent0 + 1}`) && (await answers())[sent0] === 'always', JSON.stringify(await answers()));
 check('permission: the answered card goes', await c.until(`!__synopia.pending('${perm}').length`));
+// a card that appears takes the keys from the message box (2026-11-27): normal mode, the draft kept
+await K.i();
+await ev(`(() => { const t = document.getElementById('msg'); t.value = 'half a thought'; t.dispatchEvent(new Event('input')); })()`);
+const typing = (await mode()) === 'insert' && (await ev('document.activeElement.id')) === 'msg';
+await ev(`__synopia.inject({ t: 'pending', sid: '${perm}', request: { ...${JSON.stringify(req)}, id: 'focus-steal-1' } })`); await sleep(200);
+check('a new card takes the focus from the box: normal mode, the draft kept', typing && (await mode()) === 'normal' && (await ev('document.activeElement.id')) !== 'msg' && (await ev(`document.getElementById('msg').value`)) === 'half a thought');
+await K.j();
+check('its keys work at once: j moves its cursor', (await st()) === '0:1', await st());
+await ev(`(() => { const t = document.getElementById('msg'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
+await ev(`__synopia.inject({ t: 'pending', sid: '${perm}', cleared: 'focus-steal-1' })`); await sleep(150);
 // the same request again, under ids of its own: the backend has nothing to resolve, the page sends anyway
 const again = async (id) => { await ev(`__synopia.inject({ t: 'pending', sid: '${perm}', request: { ...${JSON.stringify(req)}, id: '${id}' } })`); await sleep(100); };
 await again('req-permission-again');
