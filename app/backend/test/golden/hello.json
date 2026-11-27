@@ -1,6 +1,6 @@
 {
   "t": "hello",
-  "v": 5,
+  "v": 6,
   "code": "<code>",
   "sessions": [
     {
@@ -23,11 +23,12 @@
         "tone": "amber",
         "word": "Your turn",
         "mark": "stopped",
+        "command": null,
+        "background": 0,
+        "resting": false,
         "stopped": false,
         "needsYou": null,
         "review": 0,
-        "waiting": 0,
-        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -40,14 +41,7 @@
       "agents": [],
       "background": [],
       "stream": null,
-      "held": [],
-      "openItems": {
-        "items": [],
-        "checks": [],
-        "closed": [],
-        "unread": 0,
-        "note": null
-      }
+      "held": []
     },
     {
       "id": "22222222-0000-4000-8000-000000000002",
@@ -64,11 +58,12 @@
         "tone": "red",
         "word": "Needs you",
         "mark": "pause",
+        "command": null,
+        "background": 0,
+        "resting": false,
         "stopped": false,
         "needsYou": "question",
         "review": 0,
-        "waiting": 0,
-        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -81,14 +76,7 @@
       "agents": [],
       "background": [],
       "stream": null,
-      "held": [],
-      "openItems": {
-        "items": [],
-        "checks": [],
-        "closed": [],
-        "unread": 0,
-        "note": null
-      }
+      "held": []
     },
     {
       "id": "33333333-0000-4000-8000-000000000003",
@@ -105,11 +93,12 @@
         "tone": "red",
         "word": "Needs you",
         "mark": "pause",
+        "command": null,
+        "background": 1,
+        "resting": false,
         "stopped": false,
         "needsYou": "permission",
         "review": 0,
-        "waiting": 0,
-        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -160,14 +149,7 @@
         }
       ],
       "stream": null,
-      "held": [],
-      "openItems": {
-        "items": [],
-        "checks": [],
-        "closed": [],
-        "unread": 0,
-        "note": null
-      }
+      "held": []
     },
     {
       "id": "44444444-0000-4000-8000-000000000004",
@@ -182,13 +164,14 @@
         "detail": {},
         "light": "green",
         "tone": "green",
-        "word": "Working",
+        "word": "Thinking",
         "mark": "work",
+        "command": null,
+        "background": 2,
+        "resting": false,
         "stopped": false,
         "needsYou": null,
         "review": 1,
-        "waiting": 0,
-        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -304,25 +287,7 @@
       ],
       "background": [],
       "stream": "Two subagents are still running. I'll merge their changes when both report back.",
-      "held": [],
-      "openItems": {
-        "items": [
-          {
-            "id": "Y1",
-            "kind": "review",
-            "text": "Review: Draft the demo release notes",
-            "source": "synopia",
-            "at": 1795180319000,
-            "minute": true,
-            "subagent": "Draft the demo release notes",
-            "agent": "aaaa0004"
-          }
-        ],
-        "checks": [],
-        "closed": [],
-        "unread": 0,
-        "note": null
-      }
+      "held": []
     },
     {
       "id": "55555555-0000-4000-8000-000000000005",
@@ -339,11 +304,12 @@
         "tone": "red",
         "word": "Needs you",
         "mark": "pause",
+        "command": null,
+        "background": 0,
+        "resting": false,
         "stopped": false,
         "needsYou": "plan",
         "review": 0,
-        "waiting": 0,
-        "due": 0,
         "driven": true
       },
       "ask": null,
@@ -356,14 +322,7 @@
       "agents": [],
       "background": [],
       "stream": null,
-      "held": [],
-      "openItems": {
-        "items": [],
-        "checks": [],
-        "closed": [],
-        "unread": 0,
-        "note": null
-      }
+      "held": []
     }
   ],
   "pending": [

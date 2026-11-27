@@ -103,11 +103,18 @@ test('scripted: the states fixture plays one session per wired state, on the rea
   try {
     await sleep(30); // e5e5's stale timer, armed 16 min in the past, is due at once
     const every = (publisher.sessions() as { id: string; state: SessionState }[]).map((s) => ({ id: s.id, ...s.state }));
-    // a8a8: a terminal session whose ended turn has a step auto mode blocked (R8.2)
+    // a8a8: a terminal session whose ended turn has a step auto mode blocked: your turn, needs you comes only from the
+    // SDK's own signals (R8.2, 2026-11-27)
     const blocked = every.find((s) => s.id.startsWith('a8a8'));
-    assert.deepEqual([blocked?.status, blocked?.light, blocked?.word, blocked?.mark, blocked?.needsYou], ['idle', 'red', 'Needs you, blocked', 'pause', 'blocked']);
+    assert.deepEqual([blocked?.status, blocked?.light, blocked?.word, blocked?.mark, blocked?.needsYou], ['idle', 'amber', 'Your turn', 'stopped', null]);
     const all = every.filter((s) => s !== blocked);
-    assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'idle', 'busy'], 'f6f6: its main turn is over, its subagents run: your turn (2026-11-26)');
+    assert.deepEqual(all.map((s) => s.status), ['busy', 'compacting', 'retrying', 'signedout', 'stale', 'idle', 'busy'], 'f6f6: its main turn is over, its subagents run');
+    assert.deepEqual([all[5].word, all[5].tone, all[5].mark, all[5].resting], ['Idle, 2 running in the background', 'grey', 's_agent', true], 'f6f6: idle, not your turn (2026-11-27)');
+    // f6f6's "Rewrite the demo tests" started a subagent and a monitor of its own: they nest under it, not counted above
+    const f6 = (publisher.sessions() as { id: string; agents: { id: string; parent?: string; running: boolean }[]; background: { toolUseId: string; agentId?: string; status: string }[] }[]).find((s) => s.id.startsWith('f6f6'))!;
+    assert.deepEqual(f6.agents.filter((a) => a.parent).map((a) => [a.id, a.parent, a.running]), [['aaaa0007', 'aaaa0002', true]], 'a subagent\'s subagent names its parent');
+    assert.deepEqual(f6.background.map((b) => [b.toolUseId, b.agentId, b.status]), [['toolu_ag2mon', 'aaaa0002', 'running']]);
+    assert.deepEqual([all[6].word, all[6].mark, all[6].command?.obj], ['Running a command', 'k_shell', 'Run the tests'], 'f7f7: its foreground Bash has run for days');
     assert.equal(all[0].detail.queued, 1, 'the message sent during the turn');
     assert.deepEqual([all[2].detail.retry?.attempt, all[2].detail.retry?.max], [3, 10]);
     assert.ok(Math.abs((all[2].detail.retry?.at ?? 0) - Date.now() - 38_000) < 2000, 'the retry 38 s off');

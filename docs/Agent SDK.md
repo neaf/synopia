@@ -312,7 +312,7 @@ One scripted check for the `open_items` tool, 2026-11-27 (haiku; scratch folder 
 | Does an immediate allow run the tool with no further prompt? | Yes: the handler ran once per call, right after the allow; no second `canUseTool` call, `result/success`, no `permission_denials`. |
 | Does the enum reach the handler typed? | Yes: `args.op` a string of the enum, the optional fields present only when given (`{op, text}`, then `{op}`). |
 
-So `cards.ts` tells a subagent's call by `options.agentID !== undefined` (FR-ITEM-12), and the tool keeps `always_ask`.
+So a subagent's call is told by `options.agentID !== undefined`. Nothing in Synopia uses this since the `open_items` tool was removed with open items (2026-11-27); the fact stays for a later tool.
 
 ### Live run MC-2
 
@@ -323,9 +323,7 @@ One scripted check, 2026-11-25 (same SDK and CLI; `/tmp/synopia-mcp-login/check.
 ### What Synopia does with it
 
 - Every tool is `always_ask` with `destructiveHint: true` (`sdk.ts` `toolServer`), so each call reaches the card under `auto` too.
-- The CLI suggests no rule, so Synopia makes the "Always allow" row itself: an `addRules` session suggestion for the tool's name, stored in `state.json` `rules` as a card's rule is, and a later call it covers is allowed without a card (`cards.ts` `park`). The CLI's own copy of the rule changes nothing, as `always_ask` overrides it. It goes when the session closes (Q6).
-- `open_items` (FR-ITEM-12) has no card: `cards.ts` `park` asks `agent-tools.ts` `answerOf` first, which allows a main-conversation call at once and denies one whose `options.agentID` is set (a subagent's, live run TL-2) with a sentence telling it to report the item. `always_ask` stays, so auto mode's classifier never approves a subagent's call in Synopia's place.
-- The transcript names the new session through the result's text (`agent-tools.ts` `startedText`, `startedFrom`); a refused call's string content has no id.
+- The CLI suggests no rule, so Synopia makes the "Always allow" row itself: an `addRules` session suggestion for the tool's name, stored in `state.json` `rules` as a card's rule is, and a later call it covers is allowed without a card (`cards.ts` `park`). The CLI's own copy of the rule changes nothing, as `always_ask` overrides it. It goes when the session closes (Q6).- The transcript names the new session through the result's text (`agent-tools.ts` `startedText`, `startedFrom`); a refused call's string content has no id.
 - Code: `agent-tools.ts`, `sdk.ts` `toolServer`, `buildOptions`; `cards.ts` `park`; `transcript.ts` `toolLine`. Test: `agent-tools.test.ts`, `scripted-sdk.test.ts`.
 
 ## MCP servers: status, sign-in

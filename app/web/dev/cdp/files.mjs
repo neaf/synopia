@@ -4,8 +4,8 @@
 // file the shell created reads "new", a changed file with no diff has no counts, "and 2 more files",
 // the total, and the Bash step stays a "Bash(…)" line. An expanded Edit or Write step shows its diff in
 // the Files changed markup with +N −M on its line, a long one cut at 20 lines with "Show all", from a closed
-// group too; a failed edit shows its error and no diff; a subagent's edit has no line numbers. The open-items ledger is
-// left out: a turn that only edits it has no Files changed row, another lists its other files without it.
+// group too; a failed edit shows its error and no diff; a subagent's edit has no line numbers. A git merge and
+// its abort (reverse diffs, a bare file in both) leave no file; only a real change stays (2026-11-27).
 // Writes files-changed.png and files-edit-step-<theme>.png.
 import path from 'node:path';
 import { shot } from './helpers.mjs';
@@ -68,22 +68,6 @@ await openStep('toolu_editfail');
 const fe = await ev(`(() => { const d = ${STEP('toolu_editfail')}; return { open: d.open, diff: !!d.querySelector('.diff'), counts: !!d.querySelector('.dc'), text: d.querySelector('.step-out').innerText }; })()`);
 check('a failed edit shows its error and no diff', fe.open && !fe.diff && !fe.counts && fe.text.includes('String to replace not found'), JSON.stringify(fe));
 
-// The open-items ledger is left out of Files changed (R5.9, the backend's `ledger` flag; invented items): a turn that
-// only edits .ai-notes/x/open-items.md has no row, and a turn with other changes lists them without it.
-const LED = '/Users/fixture/dev/demo/.ai-notes/x/open-items.md', PLAN = '/Users/fixture/dev/demo/.ai-notes/x/plan.md';
-const pt = (abs, ledger) => ({ file: abs.replace('/Users/fixture', '~'), abs, add: 1, del: 1, created: false, cut: false, hunks: [{ o: 1, n: 1, lines: ['-a', '+b'] }], ...(ledger ? { ledger: true } : {}) });
-const edit = (id, s, abs, ledger) => ({ id, k: 'tool', ts: `2026-11-20T10:${s}:00.000Z`, name: 'Edit', verb: 'Edited', obj: abs.replace('/Users/fixture', '~'), state: 'done', toolUseId: id, patch: pt(abs, ledger) });
-await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, upsert: ${JSON.stringify([
-  { id: 'led-you1', k: 'you', ts: '2026-11-20T10:10:00.000Z', text: 'Close Y1.' }, edit('toolu_led1', '11', LED, true),
-  { id: 'led-you2', k: 'you', ts: '2026-11-20T10:12:00.000Z', text: 'And the plan.' }, edit('toolu_led2', '13', LED, true), edit('toolu_plan1', '14', PLAN, false),
-  { id: 'led-you3', k: 'you', ts: '2026-11-20T10:15:00.000Z', text: 'Thanks.' }])}, total: s.total + 6 }); })()`);
-check('the ledger turns show', await until(`!!document.querySelector('#log [data-key="you:led-you3"]')`));
-const led = await ev(`(() => { const keys = [...document.querySelectorAll('#log [data-key^="files:"]')].map(e => e.dataset.key);
-  const plan = document.querySelector('#log [data-key="files:toolu_led2"]');
-  return { keys, only: keys.includes('files:toolu_led1'), rows: plan ? [...plan.querySelectorAll('.frow .fp')].map(r => r.textContent) : null }; })()`);
-check('a turn that only edits the ledger has no Files changed row', !led.only && led.keys.length > 0, JSON.stringify(led));
-check('a turn with other changes lists them without the ledger', JSON.stringify(led.rows) === '[".ai-notes/x/plan.md"]', JSON.stringify(led));
-
 // A fork's edits in a sibling folder outside the session's cwd, whose records have no toolUseResult (an
 // SDK-driven subagent, docs/Claude Code transcripts.md "Quirk: a subagent's edits have no structuredPatch"):
 // they show in its Files changed, grouped by folder, and the diff has no line numbers.
@@ -111,5 +95,24 @@ for (const theme of ['light', 'dark']) {
   const box = await ev(`(() => { const r = document.querySelector('.ln.files').getBoundingClientRect(); return { x: Math.max(0, r.left - 20), y: Math.max(0, r.top - 10), width: Math.min(900, r.width + 40), height: Math.min(700, r.height + 20), scale: 1 }; })()`);
   await shot(c, path.join(stateDir, `files-subagent-${theme}.png`), box);
 }
+
+// No net change (2026-11-27): a git merge, then `git merge --abort`, records reverse diffs; Files changed leaves both out,
+// their bare files too, and lists only the file a third command really changed. Made-up items in the open session.
+await ev(`document.querySelector('#groups .row[data-id^="11111111"]').click()`);
+await until(`__synopia.mounted()?.startsWith('11111111') && __synopia.mounted().endsWith('|') && !!document.querySelector('.ln.files')`);
+const P = (file, lines, more = {}) => ({ file: `~/dev/demo/${file}`, abs: `/Users/fixture/dev/demo/${file}`, add: lines.filter((l) => l[0] === '+').length, del: lines.filter((l) => l[0] === '-').length, created: false, cut: false, hunks: [{ o: 1, n: 1, lines }], ...more });
+const bare = (file) => ({ ...P(file, []), bare: true, hunks: [] });
+const at = (s) => new Date(Date.now() + s * 1000).toISOString();
+const turn = [
+  { id: 'nz-u1', k: 'you', ts: at(0), text: 'Merge main into the branch, then undo it.' },
+  { id: 'nz-m', k: 'tool', ts: at(1), name: 'Bash', verb: 'Ran', obj: 'Merge main', input: 'git merge main', state: 'done', patches: [P('src/app.ts', Array.from({ length: 16 }, (_, i) => `-old ${i}`).concat(Array.from({ length: 16 }, (_, i) => `+new ${i}`))), bare('assets/logo.png')] },
+  { id: 'nz-x', k: 'tool', ts: at(2), name: 'Bash', verb: 'Ran', obj: 'Abort the merge', input: 'git merge --abort', state: 'done', patches: [P('src/app.ts', Array.from({ length: 16 }, (_, i) => `-new ${i}`).concat(Array.from({ length: 16 }, (_, i) => `+old ${i}`))), bare('assets/logo.png')] },
+  { id: 'nz-e', k: 'tool', ts: at(3), name: 'Bash', verb: 'Ran', obj: 'Note the attempt', input: 'echo tried >> NOTES.md', state: 'done', patches: [P('NOTES.md', ['+tried'])] },
+  { id: 'nz-c', k: 'claude', ts: at(4), text: 'The merge is undone.' },
+];
+await ev(`(s => __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + ${turn.length}, upsert: ${JSON.stringify(turn)} }))(__synopia.cur())`);
+await until(`!!document.querySelector('#log .ln.claude') && [...document.querySelectorAll('#log .ln.claude')].some(l => l.textContent.includes('The merge is undone.'))`);
+const net = await ev(`(() => { const f = [...document.querySelectorAll('#log .ln.files')].pop(); return f ? { rows: [...f.querySelectorAll('.frow .fp')].map(a => a.textContent), total: f.querySelector('.name + .dim').textContent } : null; })()`);
+check('a merge and its abort leave no file in Files changed; the real change stays', !!net && JSON.stringify(net.rows) === '["NOTES.md"]' && /^1 file,/.test(net.total), JSON.stringify(net));
 c.print();
 c.close();

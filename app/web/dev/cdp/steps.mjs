@@ -213,7 +213,8 @@ const reload = async (u, extra) => { await c.cdp('Page.navigate', { url: 'about:
 const LIVE = `document.querySelector('#log .liveln')`;
 const OWN = `document.querySelector('#log details.step[data-step="toolu_live1"]:not(.live)')`;
 await reload(`${url}#${S.slice(0, 8)}`, `__synopia.current() === '${S}' && !!__synopia.mounted() && __synopia.cur().state.driven === true && __synopia.cur().items.some(i => i.id === 'toolu_live1' && i.since)`);
-check('the live line names the running step', (await ev(`${LIVE}?.textContent.replace(/\\s+/g, ' ').trim()`)) === `Working Bash(${DESC})`, await ev(`${LIVE}?.outerHTML`));
+// past 3 s it is a command on your machine: the shell mark, "Running" and its timer (R8.2, 2026-11-27)
+check('the live line names the running step, a command: Running Bash(…) and its timer', new RegExp(`^Running Bash\\(${DESC}\\) \\d+(m \\d+)?s$`).test(await ev(`${LIVE}?.textContent.replace(/\\s+/g, ' ').trim()`)) && await ev(`${LIVE}.classList.contains('cmd') && !!${LIVE}.querySelector('.g .bounce')`), await ev(`${LIVE}?.outerHTML`));
 check('its own line is a step in a fold, not a run row: Bash(description), Running', await until(`!!${OWN} && !document.querySelector('#log .runrow') && ${OWN}.closest('.ln.tool').classList.contains('running') && ${OWN}.querySelector('summary').textContent.startsWith('Bash(${DESC})')`), await ev(`document.getElementById('log').innerHTML.slice(-800)`));
 { // a dot and a spinner: the same, not text, no click; the tip says when the row started, today's to the second
   const DOT = `${OWN}.closest('.ln.tool').querySelector(':scope > .g')`, SPIN = `${LIVE}.querySelector(':scope > .g')`;

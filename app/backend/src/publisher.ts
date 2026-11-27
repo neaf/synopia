@@ -1,15 +1,15 @@
 // Server to page (FR-VIEW-01, -04, -05, -13, -14, -17): the only module that sends frames. It sends
-// `session` meta (with `state` from status.ts), `agents`, `background`, `openItems`, `pending` and `removed` to
+// `session` meta (with `state` from status.ts), `agents`, `background`, `pending` and `removed` to
 // every page, and `items` and the `stream` preview only to the pages viewing that conversation: a reset with the
 // last WINDOW items (or from the page's `from`) on `view`, then upserts of changed ids, and the WINDOW
 // items before the oldest shown on `earlier`. `restore` and an action's `toast` go to the page that
 // acted, when it is still connected.
 // One flush per change batch, guarded: a change made while a flush runs (status.ts hears what runs
 // and sets the status) marks the session dirty and flushes again after, so the frames of one flush
-// always go in this order: `session`, `agents`, `background`, `openItems`, `items`.
+// always go in this order: `session`, `agents`, `background`, `items`.
 import os from 'node:os';
-import { transcriptStatus, sessionState, badgeOf, blockedLast, blockedSubagent, turnStartMs } from './status.ts';
-import type { BadgeCounter, Running, SessionState, Needs, Status, StatusDetail } from './status.ts';
+import { transcriptStatus, sessionState, badgeOf, commandOf, backgroundOf, lastWordsMs } from './status.ts';
+import type { BadgeCounter, Command, Running, SessionState, Needs, Status, StatusDetail, Thread } from './status.ts';
 import type { Agent, Item, PendingAsk, Transcript } from './transcript.ts';
 import { Transcripts, WINDOW, effortOf } from './transcripts.ts';
 import type { ReadChanges } from './transcripts.ts';
@@ -23,7 +23,6 @@ import { VERSION } from '../../web/js/protocol.js';
 import { outputTail, outputBefore, outputSize, readOutput, eventTail, eventsFrom, eventsBefore } from './task-output.ts';
 import type { OutputPart } from './task-output.ts';
 import { FIND_READ } from './find.ts';
-import type { OpenItems } from './open-items.ts';
 import type { FindSource } from './find.ts';
 import type { Terms, TermPart } from './terms.ts';
 
@@ -60,9 +59,8 @@ export type PublisherOptions = {
   written?: (sid: string) => { title?: string; now?: string } | undefined;
   // settings.model: what a session with no choice and no model in its transcript starts with.
   defaultModel?: () => string | undefined;
-  // The open-items lists (open-items.ts): each flush syncs the session's, sends its view when it changed, and
-  // takes the counts and the subagents' review flags from it. Without it (tests): no items, nothing to review.
-  openItems?: Pick<OpenItems, 'sync' | 'view' | 'counts' | 'reviewOpen'>;
+  // Whether a subagent's deliverable was marked reviewed (state.json `reviewed`).
+  reviewed?: (agentId: string) => boolean;
   // The Dock badge's count: each session's share is set whenever its state is worked out.
   badge?: BadgeCounter;
   // What runs by the transcript changed: subagents and forks, the main turn and its ask.
@@ -92,11 +90,10 @@ type Pub = {
   status: Status | null; statusAt: number; statusDetail: StatusDetail; // set by session.ts; null: from the transcript
   choice: ModelChoice | null; pending: PendingRequest[]; held: string[]; stream: string | null;
   sent: string; // the last `session` meta sent
-  itemsSent: string; // the last `openItems` view sent
-  reviews: Set<string>; // the subagents last sent with `review` true
   ran: string; // the last Running given to onRunning
   working: Set<string>; // background work and subagents seen running, to tell when one ends
   since: Map<string, number>; // tool use id -> when a running tool started, from the SDK's tool_progress (R5.6)
+  cmdTimer: NodeJS.Timeout | null; cmdDue: number; // a flush when the step the main turn waits on has run COMMAND_MS
   shown: Shown | null;
   queued: boolean;
   gone: boolean;
@@ -135,6 +132,7 @@ export class Publisher {
     this.recheck = null;
     if (this.outTimer) clearInterval(this.outTimer);
     this.outTimer = null;
+    for (const p of this.pubs.values()) this.armCommand(p, null);
   }
 
   // ---------- sending ----------
@@ -257,7 +255,7 @@ export class Publisher {
   // carries only the elapsed seconds (sdk.d.ts SDKToolProgressMessage, no output), so the tool's
   // start is now minus those. Kept once per tool, until the tool ends: the page's timer counts from
   // it, so later ones change nothing. The tool's item goes again to the pages that show it, with
-  // `since` (ISO).
+  // `since` (ISO). The session's state goes again too: a running command's time counts from it (R8.2, 2026-11-27).
   toolProgress(sid: string, toolUseId: string, elapsedSeconds: number, now = Date.now()): void {
     const p = this.pub(sid);
     if (!p || p.since.has(toolUseId) || !Number.isFinite(elapsedSeconds) || elapsedSeconds < 0) return;
@@ -266,6 +264,17 @@ export class Publisher {
       if (sub.sid !== sid || sub.bg) continue;
       const t = this.transcripts.get(sid, sub.agent);
       if (t) this.sendUpserts(client, sub, t, [toolUseId]);
+    }
+    this.changed(sid); // a command's time counts from here (status.ts commandOf)
+  }
+
+  // "Mark reviewed" (the caller stores it): the subagent's line and its session's count change.
+  reviewed(agentId: string): void {
+    for (const sid of this.transcripts.ids()) {
+      const a = this.transcripts.get(sid)?.getAgent(agentId);
+      if (!a) continue;
+      this.broadcast({ t: 'agents', sid, upsert: this.agentsOut([a]) });
+      this.changed(sid);
     }
   }
 
@@ -479,7 +488,7 @@ export class Publisher {
     return this.transcripts.ids().map((id) => {
       const p = this.pub(id) as Pub;
       const t = this.transcripts.get(id) as Transcript;
-      return { ...this.metaOf(p), agents: this.agentsOut(id, t.agents()), background: t.background(), stream: p.stream, held: p.held, openItems: this.itemsOf(id) };
+      return { ...this.metaOf(p), agents: this.agentsOut(t.agents()), background: t.background(), stream: p.stream, held: p.held };
     });
   }
 
@@ -555,7 +564,6 @@ export class Publisher {
       this.opts.onRunning?.(sid, ran);
     }
     if (this.pubs.get(sid) !== p) return; // closed or moved meanwhile
-    void this.opts.openItems?.sync(sid); // review items open before the meta counts them; a read tells us when done
     const meta = this.metaOf(p);
     this.opts.badge?.set(sid, badgeOf(meta.state));
     const key = JSON.stringify(meta);
@@ -563,22 +571,11 @@ export class Publisher {
       p.sent = key;
       this.broadcast({ t: 'session', ...meta });
     }
-    // the changed subagents, and those whose review item opened or closed (Mark reviewed changes no transcript)
-    const reviews = new Set(this.agentsOut(sid, t.agents()).filter((a) => a.review).map((a) => a.id));
-    const agentIds = new Set(ch.agents);
-    for (const id of reviews) if (!p.reviews.has(id)) agentIds.add(id);
-    for (const id of p.reviews) if (!reviews.has(id)) agentIds.add(id);
-    p.reviews = reviews;
-    if (agentIds.size) {
-      this.broadcast({ t: 'agents', sid, upsert: this.agentsOut(sid, [...agentIds].map((id) => t.getAgent(id)).filter((a): a is Agent => Boolean(a))) });
+    if (ch.agents.length) {
+      this.broadcast({ t: 'agents', sid, upsert: this.agentsOut(ch.agents.map((id) => t.getAgent(id)).filter((a): a is Agent => Boolean(a))) });
     }
     if (ch.background.length) {
       this.broadcast({ t: 'background', sid, upsert: ch.background.map((id) => t.getBackground(id)).filter(Boolean) });
-    }
-    const items = this.itemsOf(sid), itemsKey = JSON.stringify(items);
-    if (itemsKey !== p.itemsSent) {
-      p.itemsSent = itemsKey;
-      this.broadcast({ t: 'openItems', sid, ...items });
     }
     this.sendItems(sid, t, ch);
     this.outMore(sid);
@@ -628,6 +625,8 @@ export class Publisher {
   // ---------- the reading set's events ----------
 
   private closed(id: string): void {
+    const p = this.pubs.get(id);
+    if (p) this.armCommand(p, null);
     this.pubs.delete(id);
     this.dirty.delete(id);
     this.opts.badge?.drop(id);
@@ -648,7 +647,6 @@ export class Publisher {
     if (!next) return;
     next.id = to;
     next.ran = '';
-    next.itemsSent = '';
     this.pubs.set(to, next);
     const meta = this.metaOf(next);
     next.sent = JSON.stringify(meta);
@@ -671,7 +669,7 @@ export class Publisher {
     if (p || !this.transcripts.has(sid)) return p;
     p = {
       id: sid, status: null, statusAt: 0, statusDetail: {}, choice: null, pending: [], held: [], stream: null,
-      sent: '', itemsSent: '', reviews: new Set(), ran: '', working: new Set(), since: new Map(), shown: null, queued: false, gone: false,
+      sent: '', ran: '', working: new Set(), since: new Map(), cmdTimer: null, cmdDue: 0, shown: null, queued: false, gone: false,
     };
     this.pubs.set(sid, p);
     return p;
@@ -713,9 +711,10 @@ export class Publisher {
         pending: p.pending.map((r) => needsOf(r.kind)),
         ask,
         interrupted: interruptedLast(t.items),
-        blocked: this.blocked(p.id, t),
+        command: this.commandOf(p, t),
+        background: this.backgroundOf(t),
         input: Boolean(p.shown?.bang()?.running && p.shown.bang()?.waiting),
-        ...this.countsOf(p.id),
+        review: t.agents().filter((a) => a.finished && this.toReview(a)).length,
         // a status from Synopia's own process, not the transcript alone nor a terminal that holds it
         driven: p.status !== null && !p.statusDetail.terminal && !p.statusDetail.external,
       }),
@@ -761,27 +760,53 @@ export class Publisher {
     return [...this.subs];
   }
 
-  // Blocked (R8.2, FR-STAT-02): the main turn, or a subagent run since your last message (2026-11-26),
-  // has a step auto mode blocked or a permission denied that wasn't redone.
-  private blocked(sid: string, t: Transcript): boolean {
-    if (blockedLast(t.items)) return true;
-    const since = turnStartMs(t.items);
-    return t.agents().some((a) => blockedSubagent(this.transcripts.get(sid, a.id)?.items ?? [], t.runEnds(a.id), since));
+  // The command the main turn waits on (status.ts commandOf, R8.2, 2026-11-27): its own Bash step, or a foreground
+  // subagent's, once it has run COMMAND_MS. A younger one arms a flush for when it gets there.
+  private commandOf(p: Pub, t: Transcript): Command | null {
+    const threadOf = (tr: Transcript): Thread => ({
+      items: tr.items,
+      child: (tid) => {
+        const a = t.agents().find((x) => x.toolUseId === tid);
+        const sub = a && this.transcripts.get(p.id, a.id);
+        return a && sub ? { thread: threadOf(sub), name: a.description } : null;
+      },
+    });
+    const since = (it: Item) => p.since.get(it.id) ?? (it.ts ? Date.parse(it.ts) || null : null);
+    const { command, due } = commandOf(threadOf(t), since, Date.now());
+    this.armCommand(p, due);
+    return command;
   }
 
-  // The session's open items as the `openItems` frame carries them (FR-ITEM-05).
-  private itemsOf(sid: string): object {
-    return this.opts.openItems?.view(sid) ?? { items: [], checks: [], closed: [], unread: 0, note: null };
+  private armCommand(p: Pub, due: number | null): void {
+    if (due !== null && p.cmdTimer && p.cmdDue === due) return;
+    if (p.cmdTimer) clearTimeout(p.cmdTimer);
+    p.cmdTimer = null;
+    p.cmdDue = due ?? 0;
+    if (due === null) return;
+    p.cmdTimer = setTimeout(() => { p.cmdTimer = null; this.changed(p.id); }, Math.max(0, due - Date.now()) + 50);
+    p.cmdTimer.unref?.();
   }
 
-  // The session's counts for its state (FR-ITEM-06): review items open, items waiting on you, follow-ups due.
-  private countsOf(sid: string): { review: number; waiting: number; due: number } {
-    return this.opts.openItems?.counts(sid) ?? { review: 0, waiting: 0, due: 0 };
+  // Claude's background work (status.ts backgroundOf, R8.2, 2026-11-27): what runs, as the Main conversation card counts
+  // it, and whether a job's report waits for Claude to read it. A monitor past its timeout has timed out (runs.js bgState).
+  private backgroundOf(t: Transcript): { running: number; report: boolean } {
+    const now = Date.now();
+    const agents = t.agents().map((a) => ({ id: a.id, running: a.running, stopped: a.stopped, end: a.end, ...(a.parent ? { parent: a.parent } : {}) }));
+    const shells = t.background().map((b) => {
+      const out = b.kind === 'monitor' && typeof b.timeout === 'number' && b.timeout > 0 && !b.persistent && b.start && Date.parse(b.start) + b.timeout < now;
+      return { running: b.status === 'running' && !out, stopped: b.status === 'killed' || b.status === 'stopped', end: b.end, ...(b.agentId ? { agentId: b.agentId } : {}) };
+    });
+    return backgroundOf(agents, shells, lastWordsMs(t.items), now);
   }
 
-  // Subagents as the pages get them: `review` is true while the subagent has an open review item (R10.1).
-  private agentsOut(sid: string, list: Agent[]): Agent[] {
-    return list.map((a) => (a.review && !this.opts.openItems?.reviewOpen(sid, a.id) ? { ...a, review: false } : a));
+  // A "For review: …" subagent not marked reviewed yet (R10.1).
+  private toReview(a: Agent): boolean {
+    return a.review && !this.opts.reviewed?.(a.id);
+  }
+
+  // Subagents as the pages get them: `review` is true while the deliverable waits to be reviewed.
+  private agentsOut(list: Agent[]): Agent[] {
+    return list.map((a) => (a.review && !this.toReview(a) ? { ...a, review: false } : a));
   }
 }
 

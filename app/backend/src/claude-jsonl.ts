@@ -234,7 +234,7 @@ export type UserRecord = Base & {
   toolUse: ToolUseResult | null; notes: TaskNote[]; body: UserBody; unanswered: string;
 };
 export type AssistantRecord = Base & {
-  kind: 'assistant'; cwd: string; messageId: string; requestedModel: unknown; effort: unknown; blocks: AssistantBlock[];
+  kind: 'assistant'; messageId: string; requestedModel: unknown; effort: unknown; blocks: AssistantBlock[];
 };
 export type ClaudeRecord =
   | (Base & { kind: 'ai-title'; title: string })
@@ -372,7 +372,7 @@ export function classify(d: JsonRecord): ClaudeRecord {
     });
     // One content block per record; the records of one response share `message.id`
     // (docs/Claude Code transcripts.md#assistant-records-one-block-per-record).
-    return { ...base, kind: 'assistant', cwd: str(d.cwd), messageId: str(m.id), requestedModel: d.requestedModel, effort: d.effort, blocks };
+    return { ...base, kind: 'assistant', messageId: str(m.id), requestedModel: d.requestedModel, effort: d.effort, blocks };
   }
   return { ...base, kind: 'other' };
 }

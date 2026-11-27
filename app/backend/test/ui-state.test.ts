@@ -19,21 +19,19 @@ function setup() {
 
 test('ui: a patch merges top-level fields and per-session fields; null removes; unknown fields are ignored', () => {
   const { store } = setup();
-  patchUi(store, { current: SID, view: 'agent-1', mode: 'insert', bogus: 1, openList: { filter: 'demo' }, waitingList: { filter: 'y2', x: 1 }, sessions: { [SID]: { steps: ['|toolu_1'], scroll: { '': { id: 'run:toolu_1', off: 12.4 } }, junk: true } } });
+  patchUi(store, { current: SID, view: 'agent-1', mode: 'insert', bogus: 1, openList: { filter: 'demo' }, sessions: { [SID]: { steps: ['|toolu_1'], scroll: { '': { id: 'run:toolu_1', off: 12.4 } }, junk: true } } });
   const ui = store.state.ui;
   assert.equal(ui.current, SID);
   assert.equal(ui.view, 'agent-1');
   assert.equal(ui.mode, 'insert');
   assert.deepEqual(ui.openList, { filter: 'demo' });
-  assert.deepEqual(ui.waitingList, { filter: 'y2' }, 'the Waiting on you list and its filter, nothing else');
   assert.equal((ui as Record<string, unknown>).bogus, undefined);
   assert.deepEqual(ui.sessions[SID], { steps: ['|toolu_1'], scroll: { '': { id: 'run:toolu_1', off: 12 } } });
   // a second patch keeps what it doesn't name
-  patchUi(store, { mode: 'normal', openList: null, waitingList: 7, sessions: { [SID]: { diffs: ['|diff-x-0'], steps: null } } });
+  patchUi(store, { mode: 'normal', openList: null, sessions: { [SID]: { diffs: ['|diff-x-0'], steps: null } } });
   assert.equal(ui.current, SID);
   assert.equal(ui.mode, 'normal');
   assert.equal(ui.openList, null);
-  assert.equal(ui.waitingList, null, 'a bad value clears it');
   assert.deepEqual(ui.sessions[SID], { scroll: { '': { id: 'run:toolu_1', off: 12 } }, diffs: ['|diff-x-0'] });
   // a bad mode and a bad anchor are dropped, not stored
   patchUi(store, { mode: 'visual', sessions: { [SID]: { scroll: { '': { id: 3 }, a: { bottom: true } } } } });

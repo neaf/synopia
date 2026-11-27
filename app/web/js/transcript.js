@@ -15,8 +15,7 @@ import { ownRowHTML, ownRun } from "./runs.js";
 import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
-import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent, writeLine } from "./composer.js";
-import { focusItem, itemOf, dismissable } from "./open-items.js";
+import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent } from "./composer.js";
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
 import { fitTables, watchTables } from "./table-fit.js";
@@ -188,6 +187,41 @@ const countsHTML = (add, del) => `<span class="add">+${add}</span> <span class="
    so the href is only for the status bar and copying */
 const absOf = f => f.list.find(p => p.abs)?.abs || "";
 const fileUrl = f => "file://" + absOf(f).split("/").map(encodeURIComponent).join("/");
+/* The patches of a turn's steps (each an Edit's or Write's `patch`, or a Bash command's `patches`) with the files that
+   have no net change left out (2026-11-27). Why such files came out as "+16 −16" or with no counts: Files changed adds up
+   each step's diff of a file, and a command that undoes an earlier one (a git merge, then `git merge --abort`) records
+   the reverse diff, so the counts add up to the same number both ways; a file both list as changed with no diff (bare)
+   shows no counts. So: a step whose files are an earlier step's and whose diffs are its exact reverse undid it, and both
+   go, their bare files too. Of the rest, a file with several diffs whose added and removed lines cancel has no net
+   change. */
+const diffed = p => !p.bare;
+/* a patch's changed lines as counts per line (+1 added, -1 removed); null when the patch is cut and they aren't all here */
+function lineCounts(p, into = new Map()) {
+  if (p.cut) return null;
+  for (const h of p.hunks || []) for (const l of h.lines) if (l[0] === "+" || l[0] === "-") into.set(l.slice(1), (into.get(l.slice(1)) || 0) + (l[0] === "+" ? 1 : -1));
+  return into;
+}
+const balanced = m => !!m && [...m.values()].every(n => n === 0);
+/* whether b's diff of a file is a's reversed: the counts swapped, and the lines cancel when both are whole */
+function reverses(a, b) {
+  if (a.add !== b.del || a.del !== b.add || a.add + a.del === 0) return false;
+  if (a.cut || b.cut) return true; // a long diff is cut on the page: the counts are its whole
+  return balanced(lineCounts(b, lineCounts(a)));
+}
+export function netPatches(steps) {
+  const lists = steps.map(t => (t.patches || [t.patch]).filter(Boolean)), gone = new Set();
+  const files = ps => [...new Set(ps.map(p => p.abs || p.file))].sort().join("\n");
+  const undoes = (a, b) => files(a) === files(b) && a.some(diffed) && b.filter(diffed).every(q => { const p = a.find(x => (x.abs || x.file) === (q.abs || q.file) && diffed(x)); return p ? reverses(p, q) : true; })
+    && a.filter(diffed).some(p => b.some(q => diffed(q) && (q.abs || q.file) === (p.abs || p.file)));
+  for (let j = 0; j < lists.length; j++) {
+    if (!lists[j].length) continue;
+    for (let i = j - 1; i >= 0; i--) if (!gone.has(i) && lists[i].length && undoes(lists[i], lists[j])) { gone.add(i); gone.add(j); break; }
+  }
+  const left = lists.filter((_, i) => !gone.has(i)).flat(), byFile = new Map();
+  for (const p of left) { const k = p.abs || p.file; (byFile.get(k) || byFile.set(k, []).get(k)).push(p); }
+  const none = new Set([...byFile].filter(([, ps]) => ps.length > 1 && ps.every(diffed) && balanced(ps.reduce((m, p) => m && lineCounts(p, m), new Map()))).map(([k]) => k));
+  return left.filter(p => !none.has(p.abs || p.file));
+}
 /* patches: an Edit's or Write's, and those of a Bash command (bashEditDiff). A bare one is a file the
    shell changed with no diff: its path shows without counts. more: files the shell changed past its list. */
 export function filesHTML(patches, key, more = 0, ts = null) { // key: stable diff ids, so an open diff stays open when the block is redrawn
@@ -260,10 +294,9 @@ export function itemsHTML(items, sessionBusy, s) {
     if (agents.length) out.push([`wave:${agents[0].id}`, waveHTML(agents, s)]);
     run = [];
   };
-  /* the open-items ledger is left out (R5.9, the backend's `ledger` flag): a turn that only edited it has no row */
   const flushFiles = () => {
     flush();
-    const patches = turnPatches.flatMap(t => t.patches || [t.patch]).filter(p => !p.ledger), more = turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0);
+    const patches = netPatches(turnPatches), more = turnPatches.reduce((n, t) => n + (+t.moreFiles || 0), 0);
     if (patches.length || more) { const key = turnPatches[0].id; out.push([`files:${key}`, filesHTML(patches, key, more, lastTs)]); }
     turnPatches = [];
   };
@@ -347,11 +380,11 @@ function bangHTML(id, cmd, sh, run, opens = false, ts = null) {
 }
 /* the panel's run for a bash item: by the run's id, or the item it landed as */
 const ownOf = (s, id) => s ? ownBg(s).find(b => b.toolUseId === id || b.landed === id) : null;
-/* The line f, f's interrupt set aside (R9.8): the still mark, "Working" and the step it named then, struck
+/* The line f, f's interrupt set aside (R9.8): the still mark, "Thinking" and the step it named then, struck
    through, and why. Not a running mark: it doesn't move. */
 function asideHTML(it, s, items) {
   const t = it.step ? items.find(x => x.k === "tool" && x.id === it.step) : null;
-  return `<div class="ln asideln"><span class="g"${markAt(it.ts)}>${ind("s_agent")}</span><div><s><b>Working</b>${t ? ` ${liveName(s, t).join("")}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
+  return `<div class="ln asideln"><span class="g"${markAt(it.ts)}>${ind("s_agent")}</span><div><s><b>Thinking</b>${t ? ` ${liveName(s, t).join("")}` : ""}</s> <span class="why">set aside for your messages</span></div></div>`;
 }
 /* the reply an aside cut short goes above it, greyed with it, though its partial record lands after */
 function placeAsides(items) {
@@ -407,7 +440,7 @@ const queuedHTML = s => { const q = queuedOf(s); return q.length ? [["queue", `<
 const isAgent = t => t.name === "Agent" || t.name === "Task";
 const liveStep = t => !!t && t.state === "running" && hasStep(t) && !isAgent(t);
 /* the step named on the live line: the turn's own newest step only while it runs, as the CLI's spinner line.
-   Once it's done (Claude writing, thinking, between steps) the line just says Working, rather than naming a
+   Once it's done (Claude writing, thinking, between steps) the line just says Thinking, rather than naming a
    finished step. Background work (`bg`, a background subagent) is never the turn's step: the panel shows it. */
 const runningStep = items => { const last = [...(items || [])].reverse().find(x => x.k === "tool" && !x.bg); return last && last.state === "running" ? last : null; };
 /* the main conversation's step the live line names, when b, b could send it */
@@ -415,20 +448,29 @@ const liveFg = s => { const t = s.state.light === "green" && !phaseText(s) ? run
 /* what the live line names: a subagent or fork by the panel's kind tag and its name; any other tool by its
    CLI name, Bash(…) */
 const liveName = (s, t) => { if (!isAgent(t)) { const o = objOf(t); return [`${esc(toolName(t))}${o ? "(" : ""}`, o, o ? ")" : ""]; } const a = agentByTool(s, t.toolUseId); return [`${kind(a?.fork ? "fork" : "sub")} `, esc(a ? a.description : t.obj || ""), ""]; };
+/* MCP and web tools keep the arc while they run, with their timer on the line (R8.2, 2026-11-27): their time goes to a server */
+const isRemote = t => !!t && t.state === "running" && (t.name?.startsWith("mcp__") || t.name === "WebFetch" || t.name === "WebSearch");
+const stepTimer = t => { const at = new Date(t.since || t.ts); return isNaN(at) ? "" : ` ${live(at.toISOString(), nowish - at)}`; };
 function liveLine(s, A) {
-  const line = (mark, t, word = "Working", extra = "", state = A ? "green" : s.state.tone) => {
-    const [pre, mid, post] = extra ? ["", extra, ""] : t ? liveName(s, t) : ["", "", ""];
+  const line = (mark, t, word = "Thinking", extra = "", state = A ? "green" : s.state.tone, cls = "") => {
+    const [pre, mid, post0] = extra ? ["", extra, ""] : t ? liveName(s, t) : ["", "", ""];
+    const post = !extra && (isRemote(t) || (cls && t)) ? `${post0}${stepTimer(t)}` : post0;
     const head = lineHTML(`<b>${esc(word)}</b>${pre || mid ? " " : ""}<span class="dim">${pre}</span>`, mid && `<span class="dim">${mid}</span>`, post && `<span class="dim">${post}</span>`); // one line (R5.6)
     /* a Bash step named here opens its shell view (R5.5, 2026-11-26), even while its own line folds and expands in
        place; a step with no view (a subagent's own Bash, any other tool) expands from here as from its line */
     const opens = !A && !extra && t && isShell(t) && bgById(s, t.id) ? ` data-bg="${esc(t.id)}" title="Open its shell view"` : "";
     const body = !extra && liveStep(t) && !opens ? `<details class="step live"${stepOpen(t)}><summary>${head}</summary>${stepHTML(t)}</details>` : `<div><span class="lh">${head}</span></div>`;
-    return `<div class="ln liveln rule" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g"${markAt(t ? t.since || t.ts : A ? A.start : s.state.since)}>${ind(mark)}</span>${body}</div>`;
+    return `<div class="ln liveln rule${cls}" data-state="${state}"${!A && !extra && t && t.id === onLive ? " data-fg" : ""}${opens}><span class="g"${markAt(t ? t.since || t.ts : A ? A.start : s.state.since)}>${ind(mark)}</span>${body}</div>`;
   };
   // a subagent waiting on its own background work: still, it runs nothing itself (its shells move in the panel)
   if (A) return A.finished ? "" : A.waiting ? line(A.fork ? "s_fork" : "s_sub", null, "Waiting", "on its own background work") : line(A.fork ? "k_fork" : "k_sub", runningStep(A.items));
   /* the main turn over: no live line, even while background work runs (2026-11-26): the panel and the sidebar show it */
   if (s.state.light !== "green") return "";
+  /* a command on your machine (R8.2, 2026-11-27): the moving shell mark and "Running Bash(…) 2m 14s", the word in the shell
+     colour; a foreground subagent's own command names it: "Running Bash(Build the docs) 4s in Draft the release notes" */
+  const c = s.state.command;
+  if (c && c.agent) return line("k_shell", null, "Running", `Bash(${esc(c.obj)}) ${live(new Date(c.since).toISOString(), nowish - c.since)} in ${esc(c.agent)}`, s.state.tone, " cmd");
+  if (c) return line("k_shell", runningStep(s.items), "Running", "", s.state.tone, " cmd");
   return line(s.state.mark, runningStep(s.items), s.state.word, phaseText(s));
 }
 /* what the state means, after its word (status.ts: the source of each) */
@@ -608,27 +650,10 @@ function carryState(from, to) {
 }
 /* one click handler for the whole view, so redrawn panels need no rebinding */
 conv.addEventListener("click", e => {
-  /* a "To review" card: anywhere on it but "Mark reviewed" goes to the report; one whose subagent isn't in this
-     transcript (a handoff) only takes the focus (R7.1) */
-  const rv = e.target.closest(".rail .rv");
-  if (rv && !e.target.closest("[data-reviewed]")) {
-    e.preventDefault(); e.stopPropagation();
-    const a = rv.querySelector(".rv-open").dataset.agent;
-    if (a) toReport(a); else { focusItem(cur()?.id, rv.dataset.oi); renderRail(); }
-    return;
-  }
-  /* an open item's button writes its line into the box and sends nothing (R7.1); a click elsewhere on the item focuses it */
-  const undo = e.target.closest(".rail [data-oi-undo]"); // Undo on a line Synopia closed (FR-ITEM-10)
-  if (undo) { e.preventDefault(); e.stopPropagation(); const s = cur(); if (s) act({ t: "item", sid: s.id, item: undo.dataset.oiUndo, act: "undo" }); return; }
-  const chip = e.target.closest(".rail [data-write]");
-  if (chip) { e.preventDefault(); e.stopPropagation(); writeItemLine(chip.dataset.write); return; }
-  const open = e.target.closest(".rail [data-oi-open]"); // its text: to the reply it came from (FR-ITEM-07)
-  if (open) { e.preventDefault(); e.stopPropagation(); openItem(open.dataset.oiOpen); return; }
-  const oi = e.target.closest(".rail [data-oi]");
-  if (oi && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); focusItem(cur()?.id, oi.dataset.oi); renderRail(); return; }
+  const rv = e.target.closest(".rail .rv"); // a "To review" card: anywhere on it but "Mark reviewed" goes to the report
+  if (rv && !e.target.closest("[data-reviewed]")) { e.preventDefault(); e.stopPropagation(); toReport(rv.querySelector(".rv-open").dataset.agent); return; }
   const t = e.target.closest(".frow .fc, [data-earlier], [data-full], [data-agent],[data-back], [data-back-main], [data-reviewed], [data-bg], [data-unattach], [data-session], #model-label");
   if (!t || t.closest(".qa-card")) return;
-  if (t.closest(".rail") && (t.dataset.agent || t.dataset.bg || t.hasAttribute("data-back-main"))) focusItem(null); // a panel row's view: no item focused
   if (t.hasAttribute("data-earlier")) loadEarlier();
   else if (t.dataset.full) showAll(t.dataset.full);
   else if (t.matches(".fc")) {
@@ -639,30 +664,11 @@ conv.addEventListener("click", e => {
     selectView(t.dataset.agent); renderConv();
   }
   else if (t.hasAttribute("data-back") || t.hasAttribute("data-back-main")) { selectView(null); renderConv(); }
-  else if (t.dataset.reviewed) { e.stopPropagation(); markReviewed(t.dataset.reviewed); } // the backend's next openItems drops the card
+  else if (t.dataset.reviewed) { e.stopPropagation(); act({ t: "reviewed", agentId: t.dataset.reviewed }); } // the backend sends the subagent back with review false
   else if (t.dataset.bg) { if (e.target.closest("a[href]")) return; selectView(t.dataset.bg); renderConv(); } // a shell or monitor opens in the pane, as a subagent does (R7.2)
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });
-/* `d` on the focused open item (R9.1, FR-ITEM-10): "Not an item"; the backend's next openItems moves it to Closed
-   this turn with Undo. False when no item that can be dismissed is focused. */
-export function dismissItem() {
-  const s = cur(), id = !view && dismissable(s);
-  if (!id) return false;
-  act({ t: "item", sid: s.id, item: id, act: "notItem" });
-  focusItem(null);
-  return true;
-}
-/* Mark reviewed on a To review card: closes its review item, by the item's own id (FR-ITEM-03) */
-function markReviewed(id) {
-  const s = cur(); if (s && id) act({ t: "item", sid: s.id, item: id, act: "reviewed" });
-}
-/* an item's button: its line in Main conversation's box, where the box is (composer.js writeLine) */
-function writeItemLine(text) {
-  const s = cur(); if (!s) return;
-  if (view) { selectView(null); renderConv(); }
-  writeLine(s.id, text);
-}
 /* A "To review" card (R7.1): Main conversation, scrolled so that subagent's "Report from" block is near the top,
    briefly marked; its own transcript when this session's transcript has no report from it. Nothing is marked
    reviewed. */
@@ -673,16 +679,6 @@ function toReport(id) {
     if (found) markJump(`report:${id}`);
     else if (cur()?.id === s.id) { selectView(id); renderConv(); }
   });
-}
-/* An open item's text, or Enter on the focused item (R7.1, R9.1): the item takes the focus, and Main conversation
-   scrolls to the reply it came from (the backend's `reply`, a block key) and marks it, as a To review card does.
-   With no such reply it only focuses. */
-export function openItem(id) {
-  const s = cur(); if (!s || !id) return;
-  focusItem(s.id, id);
-  const key = itemOf(s, id)?.reply;
-  if (key && view) { selectView(null); renderConv(); } else renderRail();
-  if (key) ui.jumpTo(`${s.id}|`, key, found => { if (found) markJump(key); });
 }
 /* the block a jump landed on: the selection tint with the 1px blue ring of b, b, held, then faded (css .jump-mark) */
 const JUMP_HOLD = 1500, JUMP_FADE = 600;

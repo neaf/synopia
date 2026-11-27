@@ -9,7 +9,6 @@ import type { PublisherOptions } from '../src/publisher.ts';
 import type { Client } from '../src/server.ts';
 import { Sessions } from '../src/sessions.ts';
 import { openStore } from '../src/store.ts';
-import { OpenItems } from '../src/open-items.ts';
 import { emit, fakeQuery } from './support/fake-query.ts';
 
 const CLAUDE = path.join(import.meta.dirname, 'fixtures', 'claude');
@@ -210,40 +209,27 @@ test('state: a turned-down tool reads "Your turn", an Esc Esc stop "Stopped", a 
   assert.equal(publisher.meta(id)!.title, 'Renamed');
   assert.deepEqual(word(), ['Stopped', true, 'stopped'], 'a retitle is no new turn');
   publisher.setStatus(id, 'busy', 6);
-  assert.deepEqual(word(), ['Working', false, 'work']);
+  assert.deepEqual(word(), ['Thinking', false, 'work']);
   transcripts.stop(); publisher.stop();
 });
 
-test('review: a finished "For review: …" subagent is sent with review while its review item is open, and counts in the state (R10.1, FR-ITEM-03)', async () => {
+test('review: a finished "For review: …" subagent is sent with review until marked, and counts in the state (R10.1)', async () => {
+  const reviewed = new Set<string>();
   const clients = new Set<Client>();
-  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-publisher-')), { minIntervalMs: 0 });
-  let publisher: Publisher | null = null;
-  const transcripts = new Transcripts({ claudeDir: CLAUDE, home: HOME, pollMs: 0, watch: false });
-  const openItems = new OpenItems({
-    store, home: HOME, lookMs: 0,
-    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
-    onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
-  });
-  publisher = new Publisher({ transcripts, clients: () => clients, home: HOME, recheckMs: 0, openItems });
+  const { transcripts, publisher } = reading(CLAUDE, () => clients, { reviewed: (a) => reviewed.has(a) });
   const c = client();
   clients.add(c);
   transcripts.open(AGENTS);
   await Promise.resolve();
-  type Hello = { agents: { id: string; review: boolean }[]; state: { review: number; waiting: number; due: number }; openItems: { items: { id: string; kind: string; text: string; agent?: string }[] } };
   const agent = (list: { id: string; review: boolean }[]) => list.find((a) => a.id === 'aaaa0004')?.review;
-  const hello = () => (publisher!.sessions() as Hello[])[0];
-  assert.deepEqual([agent(hello().agents), hello().state.review, hello().state.waiting, hello().state.due], [true, 1, 0, 0]);
-  const item = hello().openItems.items.find((i) => i.agent === 'aaaa0004')!;
-  assert.deepEqual([item.kind, item.text], ['review', 'Review: Draft the demo release notes']);
-  const frame = c.take('openItems').at(-1) as { sid: string; items: unknown[] } | undefined;
-  assert.deepEqual([frame?.sid, frame?.items.length], [AGENTS, 1], 'every page gets the list');
+  const hello = () => (publisher.sessions() as { agents: { id: string; review: boolean }[]; state: { review: number } }[])[0];
+  assert.deepEqual([agent(hello().agents), hello().state.review], [true, 1]);
   c.take();
-  assert.equal(openItems.markReviewed(AGENTS, item.id), true);
-  const got = c.take();
-  assert.equal(agent(got.find((m) => m.t === 'agents')!.upsert as { id: string; review: boolean }[]), false, 'the agent goes again with its flag');
-  assert.deepEqual((got.find((m) => m.t === 'openItems') as { items: unknown[] }).items, [], 'and the list without it');
+  reviewed.add('aaaa0004');
+  publisher.reviewed('aaaa0004');
+  assert.equal(agent(c.take('agents')[0].upsert as { id: string; review: boolean }[]), false);
   assert.deepEqual([agent(hello().agents), hello().state.review], [false, 0]);
-  transcripts.stop(); publisher.stop(); store.close();
+  transcripts.stop(); publisher.stop();
 });
 
 test('model: a new session with no choice shows settings.model, not the CLI default', () => {
@@ -595,6 +581,80 @@ test("toolProgress: a running tool's start (now minus the elapsed time) goes wit
   type Inner = { pubs: Map<string, { since: Map<string, number> }> };
   assert.equal((publisher as unknown as Inner).pubs.get(id)?.since.size, 0, 'its start is dropped when it ends');
   transcripts.stop(); publisher.stop();
+});
+
+test('state: thinking, then running a command once the Bash step has run 3 s by its tool_progress; thinking again at its result (R8.2, 2026-11-27)', async () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000d2';
+  const dir = tempSession(id, you(1) + line({
+    type: 'assistant', uuid: 'a1', timestamp: new Date().toISOString(),
+    message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_cmd', name: 'Bash', input: { command: 'git worktree remove ../wt-3', description: 'Remove the worktree' } }] },
+  }));
+  const { clients, transcripts, publisher } = setup(dir);
+  const c = client();
+  clients.add(c);
+  transcripts.open(id);
+  transcripts.poll();
+  publisher.setStatus(id, 'busy', Date.now());
+  const st = () => publisher.meta(id)!.state;
+  assert.deepEqual([st().word, st().mark, st().command], ['Thinking', 'work', null], 'under 3 s: the arc');
+  publisher.toolProgress(id, 'toolu_cmd', 2.8); // after Allow once, it has run 2.8 s
+  c.take();
+  await new Promise((r) => setTimeout(r, 400));
+  const sent = c.take('session').at(-1) as { state?: { word: string; mark: string; command: { obj: string; since: number } } } | undefined;
+  assert.deepEqual([sent?.state?.word, sent?.state?.mark, sent?.state?.command.obj], ['Running a command', 'k_shell', 'Remove the worktree'], 'a flush when it reached 3 s');
+  assert.ok(Math.abs(Date.now() - 400 - 2800 - (sent?.state?.command.since ?? 0)) < 150, 'its time counts from tool_progress');
+  fs.appendFileSync(path.join(dir, 'projects', '-tmp-x', `${id}.jsonl`), line({
+    type: 'user', uuid: 'r1', timestamp: new Date().toISOString(),
+    message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_cmd', content: 'ok' }] },
+  }));
+  transcripts.poll();
+  assert.deepEqual([st().word, st().mark, st().command], ['Thinking', 'work', null], 'its result landed: the model again');
+  transcripts.stop(); publisher.stop();
+});
+
+test('state: a foreground subagent\'s command reaches the row; a background one leaves it idle, then your turn when it ended and Claude wrote (R8.2, 2026-11-27)', () => {
+  const id = 'aaaaaaaa-0000-4000-8000-0000000000d3';
+  const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+  const tu = (uuid: string, s: number, tid: string, name: string, input: object) => line({ type: 'assistant', uuid, timestamp: ago(s), message: { role: 'assistant', content: [{ type: 'tool_use', id: tid, name, input }] } });
+  const dir = tempSession(id, you(1) + tu('a1', 60, 'toolu_fg', 'Agent', { description: 'Draft the release notes', prompt: 'made-up' }));
+  const sub = path.join(dir, 'projects', '-tmp-x', id, 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  fs.writeFileSync(path.join(sub, 'agent-ffff0001.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Draft the release notes', toolUseId: 'toolu_fg', spawnDepth: 1 }));
+  fs.writeFileSync(path.join(sub, 'agent-ffff0001.jsonl'), line({ type: 'user', uuid: 's-u1', isSidechain: true, timestamp: ago(59), message: { role: 'user', content: 'made-up' } })
+    + line({ type: 'assistant', uuid: 's-a1', isSidechain: true, timestamp: ago(41), message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_docs', name: 'Bash', input: { command: 'npm run docs:build', description: 'Build the docs' } }] } }));
+  const { transcripts, publisher } = setup(dir);
+  transcripts.open(id);
+  transcripts.poll();
+  publisher.setStatus(id, 'busy', Date.now());
+  const st = () => publisher.meta(id)!.state;
+  assert.deepEqual([st().word, st().mark, st().command?.obj, st().command?.agent], ['Running a command', 'k_shell', 'Build the docs', 'Draft the release notes']);
+  publisher.setStatus(id, 'idle', Date.now());
+  assert.deepEqual([st().command, st().mark], [null, 's_agent'], 'no command once the turn is over (its subagent still runs)');
+  transcripts.stop(); publisher.stop();
+  // the main turn is over and a background subagent runs: idle, then its end leaves a report to read
+  const id2 = 'aaaaaaaa-0000-4000-8000-0000000000d4';
+  const dir2 = tempSession(id2, you(1) + tu('b1', 30, 'toolu_bg', 'Agent', { description: 'Profile the resize step', prompt: 'made-up', run_in_background: true })
+    + line({ type: 'user', uuid: 'b2', timestamp: ago(29), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'Async agent launched successfully.' }] } })
+    + line({ type: 'assistant', uuid: 'b3', timestamp: ago(28), message: { role: 'assistant', content: [{ type: 'text', text: 'It runs; I will go on when it reports.' }] } }));
+  const sub2 = path.join(dir2, 'projects', '-tmp-x', id2, 'subagents');
+  fs.mkdirSync(sub2, { recursive: true });
+  fs.writeFileSync(path.join(sub2, 'agent-ffff0002.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Profile the resize step', toolUseId: 'toolu_bg', spawnDepth: 1 }));
+  fs.writeFileSync(path.join(sub2, 'agent-ffff0002.jsonl'), line({ type: 'user', uuid: 'p-u1', isSidechain: true, timestamp: ago(29), message: { role: 'user', content: 'made-up' } }));
+  const r2 = setup(dir2);
+  r2.transcripts.open(id2);
+  r2.transcripts.poll();
+  r2.publisher.setStatus(id2, 'idle', Date.now());
+  const st2 = () => r2.publisher.meta(id2)!.state;
+  assert.deepEqual([st2().word, st2().tone, st2().mark, st2().light, st2().background], ['Idle, 1 running in the background', 'grey', 's_agent', 'amber', 1]);
+  fs.appendFileSync(path.join(sub2, 'agent-ffff0002.jsonl'), line({ type: 'assistant', uuid: 'p-a1', isSidechain: true, timestamp: ago(1), message: { role: 'assistant', content: [{ type: 'text', text: 'The resize step takes 6 of the 9 minutes.' }] } }));
+  r2.transcripts.poll();
+  r2.transcripts.taskEnded(id2, 'toolu_bg', 'completed', 'Done', new Date().toISOString());
+  r2.publisher.changed(id2);
+  assert.deepEqual([st2().word, st2().background], ['Idle', 0], 'ended, its report not read yet');
+  fs.appendFileSync(path.join(dir2, 'projects', '-tmp-x', `${id2}.jsonl`), line({ type: 'assistant', uuid: 'b4', timestamp: new Date(Date.now() + 1000).toISOString(), message: { role: 'assistant', content: [{ type: 'text', text: 'The resize step is the slow part.' }] } }));
+  r2.transcripts.poll();
+  assert.equal(st2().word, 'Your turn', 'Claude read the report');
+  r2.transcripts.stop(); r2.publisher.stop();
 });
 
 test('toolOutput: the full result read again from its line, also after the file grew; a toast when it is gone', async () => {

@@ -54,8 +54,6 @@ export type CardsHooks = {
   now: () => number;
   // The card's words for a call of one of Synopia's own tools (agent-tools.ts cardOf), else null.
   own?: (toolName: string, input: Record<string, unknown>) => CardText | null;
-  // A call of one of Synopia's own tools answered with no card (agent-tools.ts answerOf, FR-ITEM-12), else null.
-  auto?: (toolName: string, input: Record<string, unknown>, agentID: string | undefined) => PermissionResult | null;
 };
 
 export class Cards {
@@ -74,8 +72,6 @@ export class Cards {
   // canUseTool: never returns null; the promise settles when you answer or the signal aborts.
   park(toolName: string, input: Record<string, unknown>, options: Options): Promise<PermissionResult> {
     const o = options as Options & Record<string, unknown>;
-    const now = this.hooks.auto?.(toolName, input, options.agentID) ?? null; // open_items: no card
-    if (now) return Promise.resolve(now);
     // Synopia's own tools always ask and the CLI suggests no rule for them (docs/Agent SDK.md,
     // "Synopia's tools for agents"): their "Always allow" is a session rule kept here, and a call
     // it covers is allowed with no card.

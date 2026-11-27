@@ -1,7 +1,11 @@
 // One status per session (FR-STAT-02), from the SDK's events and the session's own state,
 // in the page's vocabulary:
-//   busy       working: `session_state_changed: running`, or the session started a turn
-//   waiting    needs you: a pending canUseTool request, which wins over everything
+//   busy       thinking (2026-11-27, was working): `session_state_changed: running`, or the session started a turn
+//   waiting    needs you: a pending canUseTool request, which wins over everything. Only the SDK's own signals (a
+//              pending canUseTool request or question, sign-in expired) and your `!` command waiting for input make
+//              a session need you (2026-11-27, the user: "Use it only when we get the actual sdk flag like it was
+//              before."): the transcript-based blocked or denied rule of 2026-11-26 is gone, and the step still
+//              reads "Blocked by auto mode" or "Denied".
 //   idle       your turn: idle after a normal `result`, or the process isn't running
 //   stopped    stopped by you: idle after a turn that ended by interrupt
 //   failed     a `result` that is an error and not an interrupt, or the process failed
@@ -22,10 +26,20 @@
 //              (assistant or stream_event), a `system/status`, or the turn's end.
 //   compacting `system/status` with status `compacting`. Clears on a `system/status` with any
 //              other status, a `system/compact_boundary`, or the turn's end.
-// Background work (requirements R8.2, 2026-11-26; was working while subagents ran, 2026-11-23): with the
-// main turn over the session is your turn, whatever still runs in the background (subagents, forks,
-// shells, monitors). Working, with its moving mark, means the main turn itself runs: motion means an
-// agent is doing something. The panel's Main conversation card and the sidebar's sub-lines show what runs.
+// Thinking and running a command (requirements R8.2, 2026-11-27): while the main turn runs, the agent's
+// turning arc and "Thinking" mean it waits on the model, or on a step that isn't a command (MCP and web tools
+// keep the arc, with the tool's name and timer on the live line). Once a Bash step the main turn waits on has
+// run COMMAND_MS (its own newest step, or that of a foreground subagent it waits on, at any depth), the moving
+// shell mark and "Running a command, <time>" (commandOf). Its time counts from the SDK's tool_progress (the
+// elapsed seconds, so it starts at your Allow once), else from its tool_use; publisher.ts flushes again when
+// the step reaches COMMAND_MS.
+// Background work (requirements R8.2, 2026-11-27; it replaces 2026-11-26's "your turn whatever runs in the
+// background"): with the main turn over and Claude's background work running (subagents, forks, background
+// shells, monitors), or a job that ended with a report Claude hasn't read yet, the session is idle: the still
+// agent mark and "Idle, N running in the background", grey, so only the sub-lines move. It becomes your turn
+// once the last job has ended and Claude wrote after that end (it handled the report), or at once when the job
+// was stopped (no report to read) (backgroundOf). A never-ending dev server keeps it idle. Motion means an
+// agent is doing something: the arc turns only while the main turn runs.
 // A turn in another process (2026-11-23): with no process of Synopia's, a main turn the transcript
 // shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
 // and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
@@ -422,8 +436,9 @@ export function queuesBehind(s: Status): boolean {
   return s === 'busy' || s === 'retrying' || s === 'compacting';
 }
 
-// The status of a session no process of ours set (the transcript alone): working while its main turn
-// runs, else your turn (background work aside, 2026-11-26). A question or plan waiting there is needs you.
+// The status of a session no process of ours set (the transcript alone): busy while its main turn
+// runs, else idle (sessionState reads it idle with background work, or your turn, 2026-11-27). A question or
+// plan waiting there is needs you.
 export function transcriptStatus(r: Running): Status {
   return r.ask ? 'waiting' : r.turn ? 'busy' : 'idle';
 }
@@ -444,42 +459,48 @@ function sameDetail(a: StatusDetail, b: StatusDetail): boolean {
 
 // ---------- what the page shows: the one derivation ----------
 // The page renders `session.state` and decides nothing about status itself.
-//   light    red: needs you (signed out too). green: a turn runs, interruptible (working, compacting,
-//            retrying, no updates), or the credentials are being refreshed. amber: your turn (idle,
-//            stopped, failed).
-//   tone     the state word's colour: red for needs you, amber for retrying, grey for no updates, else the light.
-//   word     "Needs you", "Working", "Your turn", "Stopped", "Failed", or the turn's phase
-//            ("No updates", "Retrying, attempt 4 of 10", "Compacting", "Refreshing credentials…").
-//            "Needs you, blocked": your turn after a main turn with a step denied and not retried
-//            (blockedLast), or after a subagent run with one (blockedSubagent). "Needs you, sign-in expired": signed out (2026-11-26). "Needs you, a command waits
-//            for input": your `!` command waits for input (bang.ts, pty.ts InputWatch; R8.2, 2026-11-26).
-//   mark     the session mark's key (marks.js).
+//   light    red: needs you (signed out too). green: a turn runs, interruptible (thinking, running a command,
+//            compacting, retrying, no updates), or the credentials are being refreshed. amber: your turn (idle,
+//            stopped, failed), idle with background work too.
+//   tone     the state word's colour: red for needs you, amber for retrying, grey for no updates and for idle
+//            with background work (2026-11-27), else the light.
+//   word     "Needs you", "Thinking" (2026-11-27, was "Working"), "Running a command", "Idle, N running in the
+//            background", "Your turn", "Stopped", "Failed", or the turn's phase ("No updates", "Retrying, attempt
+//            4 of 10", "Compacting", "Refreshing credentials…"). "Needs you, sign-in expired": signed out
+//            (2026-11-26). "Needs you, a command waits for input": your `!` command waits for input (bang.ts, pty.ts
+//            InputWatch; R8.2, 2026-11-26).
+//   mark     the session mark's key (marks.js): `k_shell` while a command runs, `s_agent` (the still agent mark)
+//            while only background work runs (2026-11-27).
+//   command  the Bash step the main turn waits on, once it has run COMMAND_MS (commandOf): its start (ms), its
+//            description, and the foreground subagent that runs it; null otherwise.
+//   background  how many of Claude's background jobs run (backgroundOf), whatever the status.
+//   resting  idle with background work: the main turn is over, background work runs or its report waits.
 //   stopped  stopped by you: the status `stopped`, or your turn after an Esc Esc interrupt the
 //            transcript shows (the latest item is a `stop` interrupt marker, claude-jsonl.ts
 //            `Interrupt`; a turned-down tool is not one).
 //   needsYou what the session waits on: the oldest request's kind, or the question or plan
-//            another process asks, `signin`, `input` or `blocked`; null when it waits on nothing.
-//   review   open review items (R10.1, open-items.ts counts): finished "For review: …" subagents not marked reviewed.
-//   waiting  open Y items, review items apart, not answered and not `later` (FR-ITEM-06); due: A items that are due.
-//            A shared ledger counts under one session. Open items never make a session needs you.
+//            another process asks, `signin` or `input`; null when it waits on nothing.
+//   review   finished "For review: …" subagents not marked reviewed (R10.1).
 //   driven   the status comes from Synopia's own process: not the transcript alone (`external`),
 //            nor a terminal that holds the session. Only then are Esc Esc, b b and bash mode offered.
 export type Light = 'red' | 'amber' | 'green';
-export type Needs = 'question' | 'permission' | 'plan' | 'blocked' | 'signin' | 'input';
+export type Needs = 'question' | 'permission' | 'plan' | 'signin' | 'input';
+// since: when the command started (ms); obj: its description or command; agent: the foreground subagent that runs it.
+export type Command = { since: number; obj: string; agent?: string };
 export type SessionState = {
   status: Status; since: number; detail: StatusDetail;
   light: Light; tone: Light | 'grey'; word: string; mark: string;
-  stopped: boolean; needsYou: Needs | null; review: number; waiting: number; due: number; driven: boolean;
+  command: Command | null; background: number; resting: boolean;
+  stopped: boolean; needsYou: Needs | null; review: number; driven: boolean;
 };
 export type StateFacts = {
   pending: Needs[]; // the session's requests' kinds, oldest first
   ask: { kind: 'question' | 'plan' } | null; // a card another process waits on
   interrupted: boolean; // the latest item (titles aside) is a `stop` interrupt marker
-  blocked: boolean; // the latest main turn, or a subagent run that ended since your last message, has a denied step not redone (blockedLast, blockedSubagent)
   input?: boolean; // your running `!` command waits for input (bang.ts BangRun.waiting)
+  command?: Command | null; // the command the main turn waits on, past COMMAND_MS (commandOf)
+  background?: { running: number; report: boolean }; // Claude's background work (backgroundOf)
   review: number;
-  waiting?: number; // open-items.ts counts (FR-ITEM-06)
-  due?: number;
   driven: boolean;
 };
 
@@ -493,72 +514,96 @@ const PHASE: Partial<Record<Status, { word: string; mark: string }>> = {
   compacting: { word: 'Compacting', mark: 'compact' },
   refreshing: { word: 'Refreshing credentials…', mark: 'work' },
 };
-const NEEDS_WORD: Partial<Record<Needs, string>> = { blocked: 'Needs you, blocked', signin: 'Needs you, sign-in expired', input: 'Needs you, a command waits for input' };
+const NEEDS_WORD: Partial<Record<Needs, string>> = { signin: 'Needs you, sign-in expired', input: 'Needs you, a command waits for input' };
 // "Retrying, attempt 4 of 10"
 const retryWord = (r: Retry | undefined): string => !r || !r.attempt ? 'Retrying' : `Retrying, attempt ${r.attempt}${r.max ? ` of ${r.max}` : ''}`;
 
 export function sessionState(e: { status: Status; at: number; detail?: StatusDetail }, f: StateFacts): SessionState {
   const status = e.status, detail = e.detail ?? {};
-  // your turn after a turn whose step was blocked or denied: Claude can't go on without you
-  const blocked = status === 'idle' && f.blocked && !f.interrupted;
-  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : status === 'signedout' ? 'signin' : f.input ? 'input' : blocked ? 'blocked' : null);
+  const needsYou: Needs | null = f.pending[0] ?? (status === 'waiting' ? (f.ask?.kind ?? 'permission') : status === 'signedout' ? 'signin' : f.input ? 'input' : null);
   const light: Light = needsYou ? 'red' : LIGHT[status];
   const phase = light === 'red' ? undefined : PHASE[status];
   const stopped = light === 'amber' && !phase && status !== 'failed' && (status === 'stopped' || f.interrupted);
-  const word = phase ? (status === 'retrying' ? retryWord(detail.retry) : phase.word) : light === 'red' ? (NEEDS_WORD[needsYou as Needs] ?? 'Needs you') : light === 'green' ? 'Working'
-    : status === 'failed' ? 'Failed' : stopped ? 'Stopped' : 'Your turn';
-  const tone: Light | 'grey' = light === 'red' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' ? 'grey' : light;
-  // your turn shows the grey square, whether or not background work runs
-  const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (detail.queued ? 'queued' : 'work')
-    : status === 'failed' ? 'failed' : 'stopped';
-  return { status, since: e.at, detail, light, tone, word, mark, stopped, needsYou, review: f.review, waiting: f.waiting ?? 0, due: f.due ?? 0, driven: f.driven };
+  // a command runs: only while the main turn itself runs, with no phase of its own
+  const command = light === 'green' && status === 'busy' ? f.command ?? null : null;
+  const running = f.background?.running ?? 0;
+  // the main turn over, background work runs or its report waits: idle, not your turn (2026-11-27)
+  const resting = light === 'amber' && status === 'idle' && !stopped && (running > 0 || f.background?.report === true);
+  const word = phase ? (status === 'retrying' ? retryWord(detail.retry) : phase.word) : light === 'red' ? (NEEDS_WORD[needsYou as Needs] ?? 'Needs you')
+    : light === 'green' ? (command ? 'Running a command' : 'Thinking')
+      : resting ? (running ? `Idle, ${running} running in the background` : 'Idle')
+        : status === 'failed' ? 'Failed' : stopped ? 'Stopped' : 'Your turn';
+  const tone: Light | 'grey' = light === 'red' ? 'red' : status === 'retrying' ? 'amber' : status === 'stale' || resting ? 'grey' : light;
+  const mark = light === 'red' ? 'pause' : phase ? phase.mark : light === 'green' ? (command ? 'k_shell' : detail.queued ? 'queued' : 'work')
+    : resting ? 's_agent' : status === 'failed' ? 'failed' : 'stopped';
+  return { status, since: e.at, detail, light, tone, word, mark, command, background: running, resting, stopped, needsYou, review: f.review, driven: f.driven };
 }
 
-// Blocked (R8.2, FR-STAT-02): the latest main turn (from your last message, a `!` command or a message a
-// turn took in) has a step auto mode blocked or a permission denied (tool state `denied`), with no later
-// step of the same tool and input that ran. Read once the turn is over: sessionState applies it to your
-// turn only, so it shows for sessions Synopia runs and terminal ones alike, and a new message clears it.
-export function blockedLast(items: Item[]): boolean {
-  const from = turnFrom(items);
-  return unredone(items.slice(from).filter((it) => it.k === 'tool')).length > 0;
-}
+// ---------- what runs: the command the main turn waits on, and the background work ----------
+// 3 s: a quicker step keeps the arc, so a turn of short git calls doesn't swap the mark (R8.2, 2026-11-27).
+export const COMMAND_MS = 3000;
+// A thread as commandOf reads it: its items, and the foreground subagent a tool use id started (its thread and name).
+export type Thread = { items: Item[]; child: (toolUseId: string) => { thread: Thread; name: string } | null };
 
-// Where the latest main turn starts in `items`: your last message, a `!` command or a resumed turn.
-function turnFrom(items: Item[]): number {
-  let from = items.length;
-  while (from > 0) {
-    const it = items[from - 1];
-    if ((it.k === 'you' && !it.turnedDown && !it.interrupted) || it.k === 'bang' || it.k === 'resumed') break;
-    from--;
+// The step a thread waits on: its newest step that isn't background work, while that step runs.
+export function waitedStep(items: Item[]): Item | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.k === 'tool' && !it.bg) return it.state === 'running' ? it : null;
   }
-  return from;
+  return null;
 }
 
-// When the latest main turn started (turnFrom), in ms; null when no message opened one.
-export function turnStartMs(items: Item[]): number | null {
-  const from = turnFrom(items);
-  return from > 0 ? msOf(items[from - 1].ts) : null;
+// The Bash step the main turn waits on (R8.2, 2026-11-27): its own newest running step, or, when that is a foreground
+// subagent, the one that subagent waits on, at any depth. `since`: when a step started (the SDK's tool_progress,
+// else its tool_use). Gives the command once it has run COMMAND_MS, and `due`, when a younger one reaches it (ms).
+export function commandOf(main: Thread, since: (it: Item) => number | null, now: number): { command: Command | null; due: number | null } {
+  let thread: Thread | null = main;
+  let agent: string | undefined;
+  for (let depth = 0; thread && depth < 8; depth++) {
+    const step = waitedStep(thread.items);
+    if (!step) break;
+    if (step.name === 'Bash') {
+      const at = since(step);
+      if (at === null) break;
+      if (now - at < COMMAND_MS) return { command: null, due: at + COMMAND_MS };
+      return { command: { since: at, obj: step.obj ?? '', ...(agent ? { agent } : {}) }, due: null };
+    }
+    if (step.name !== 'Agent' && step.name !== 'Task') break;
+    const child = thread.child(step.toolUseId ?? step.id);
+    thread = child?.thread ?? null;
+    agent = child?.name;
+  }
+  return { command: null, due: null };
 }
 
-// The denied steps (auto mode blocked them, or a permission was denied) that no later step of the same
-// tool and input redid.
-function unredone(steps: Item[]): Item[] {
-  return steps.filter((d, i) => d.state === 'denied' && !steps.slice(i + 1).some((it) => it.state === 'done' && it.name === d.name && it.input === d.input));
+// 60 s: a job that ended with a report keeps the session idle this long at most while Claude hasn't written since.
+// The CLI wakes Claude at once to read it, so a longer wait means it never will (its process went away).
+export const REPORT_MS = 60_000;
+type Job = { running: boolean; stopped: boolean; end: string | null };
+// Claude's background work (R8.2, 2026-11-27): how many jobs run that the Main conversation card counts (a subagent's
+// own shells, monitors and subagents count under it, not here), and whether a job ended, not stopped, after Claude's
+// last words or step (`lastMs`) and less than REPORT_MS ago: its report waits to be read.
+export function backgroundOf(agents: (Job & { id: string; parent?: string })[], shells: (Job & { agentId?: string })[], lastMs: number | null, now: number): { running: number; report: boolean } {
+  const runs = new Set(agents.filter((a) => a.running).map((a) => a.id));
+  const top = (parent: string | undefined) => !parent || !runs.has(parent);
+  const running = agents.filter((a) => a.running && top(a.parent)).length + shells.filter((b) => b.running && top(b.agentId)).length;
+  const waits = (j: Job) => {
+    const end = msOf(j.end);
+    return !j.running && !j.stopped && end !== null && (lastMs === null || end > lastMs) && now - end < REPORT_MS;
+  };
+  return { running, report: agents.some(waits) || shells.some(waits) };
 }
 
-// Blocked in a subagent (R8.2, FR-STAT-02, 2026-11-26): the same rule for a subagent's thread. `steps`:
-// its transcript's items; `ends`: when each of its runs ended and whether it was stopped (Transcript
-// runEnds); `since`: when your last message opened the main turn (turnStartMs). A step denied after
-// `since` that no later step of its thread redid, in a run that ended (not stopped), blocks: Claude
-// can't go on without you. Your next message clears it; so does that subagent, resumed, redoing it.
-export function blockedSubagent(steps: Item[], ends: { at: number; stopped: boolean }[], since: number | null): boolean {
-  if (!ends.some((e) => since === null || e.at > since)) return false;
-  const tools = steps.filter((it) => it.k === 'tool' && (since === null || (msOf(it.ts) ?? -Infinity) > since));
-  return unredone(tools).some((d) => {
-    const at = msOf(d.ts) ?? -Infinity;
-    const end = ends.find((e) => e.at >= at);
-    return end !== undefined && !end.stopped;
-  });
+// Claude's last words or step in a thread (ms): where a report counts as read (backgroundOf).
+export function lastWordsMs(items: Item[]): number | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.k !== 'claude' && it.k !== 'tool') continue;
+    const ms = msOf(it.ts);
+    if (ms !== null) return ms;
+  }
+  return null;
 }
 
 const msOf = (ts: string | null | undefined): number | null => {
@@ -567,7 +612,7 @@ const msOf = (ts: string | null | undefined): number | null => {
 };
 
 // What a session adds to the Dock badge (R2.6): 1 while it needs you, plus its deliverables to review.
-// No updates, retrying, compacting, refreshing and working don't count; signed out needs you (2026-11-26).
+// No updates, retrying, compacting, refreshing, thinking, running a command and idle don't count; signed out needs you (2026-11-26).
 export const badgeOf = (s: SessionState): number => (s.needsYou ? 1 : 0) + s.review;
 
 // The Dock badge's count, kept as sessions change: the shell polls it every 2 s and nothing is rebuilt

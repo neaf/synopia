@@ -2,7 +2,7 @@
 import "./stub-dom.js";
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { itemsHTML, filesHTML } from "../js/transcript.js";
+import { itemsHTML, filesHTML, netPatches } from "../js/transcript.js";
 import { live, age, until, still } from "../js/format.js";
 
 test("the ticking spans don't change a block's signature, other text does", () => {
@@ -78,4 +78,26 @@ test("R5.9: edits in a sibling worktree show in Files changed while the turn run
     assert.match(files[1], /<div class="root">~\/dev\/demo\.other<\/div>/);
     assert.equal([...files[1].matchAll(/<span class="no">([^<]*)<\/span>/g)].map(m => m[1]).join(""), "");
   }
+});
+
+test("Files changed leaves out files with no net change: a command that undid an earlier one, and edits that cancel (2026-11-27)", () => {
+  const P = (file, lines, more = {}) => ({ file: `~/dev/app/${file}`, abs: `/Users/fixture/dev/app/${file}`, add: lines.filter(l => l[0] === "+").length, del: lines.filter(l => l[0] === "-").length, created: false, cut: false, hunks: [{ o: 1, n: 1, lines }], ...more });
+  const bare = file => ({ file: `~/dev/app/${file}`, abs: `/Users/fixture/dev/app/${file}`, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true });
+  const merge = { id: "m", patches: [P("a.ts", [" k", "-old", "+new"]), P("b.ts", ["+one", "+two"]), bare("logo.png")] };
+  const abort = { id: "x", patches: [P("a.ts", [" k", "-new", "+old"]), P("b.ts", ["-one", "-two"]), bare("logo.png")] };
+  assert.deepEqual(netPatches([merge, abort]), [], "git merge, then git merge --abort: nothing left, the bare file too");
+  const edit = { id: "e", patch: P("c.ts", ["-a", "+b"]) };
+  assert.deepEqual(netPatches([merge, edit, abort]).map(p => p.file), ["~/dev/app/c.ts"], "a real change in between stays");
+  const back = { id: "r", patch: P("c.ts", ["-b", "+a"]) };
+  assert.deepEqual(netPatches([edit, back]), [], "an edit and the edit that put it back");
+  const two = [{ id: "e1", patch: P("d.ts", ["+x"]) }, { id: "e2", patch: P("d.ts", ["+y"]) }];
+  assert.equal(netPatches(two).length, 2, "two edits that add up stay");
+  assert.equal(netPatches([{ id: "mv", patch: P("e.ts", ["-moved", "+moved"]) }]).length, 1, "one edit that moves a line stays");
+  const big = n => P("big.ts", Array.from({ length: n }, (_, i) => `+l${i}`), { cut: true });
+  assert.deepEqual(netPatches([{ id: "g1", patches: [big(500)] }, { id: "g2", patches: [{ ...big(0), add: 0, del: 500, cut: true }] }]), [], "a cut diff and its reverse, by their counts");
+  const items = [{ id: "u1", k: "you", ts: "2026-11-27T10:00:00.000Z", text: "Merge main, then undo it" },
+    { id: "m", k: "tool", ts: "2026-11-27T10:00:01.000Z", name: "Bash", verb: "Ran", obj: "Merge main", state: "done", patches: merge.patches },
+    { id: "x", k: "tool", ts: "2026-11-27T10:00:02.000Z", name: "Bash", verb: "Ran", obj: "Abort the merge", state: "done", patches: abort.patches },
+    { id: "c", k: "claude", ts: "2026-11-27T10:00:03.000Z", text: "Undone." }];
+  assert.ok(!itemsHTML(items, false, s).some(([k]) => k.startsWith("files:")), "no Files changed block for a turn with no net change");
 });

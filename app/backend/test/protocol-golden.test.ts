@@ -1,6 +1,6 @@
 // The server's frames on the fixture tree, through a real daemon's socket, equal the recorded ones in
 // test/golden/: hello, items (a session and a subagent), session, pending (a request and a clear),
-// agents, the menu a hello carries once a folder's menu is read, and openItems after Mark reviewed. Every frame the page got fits the
+// agents, and the menu a hello carries once a folder's menu is read. Every frame the page got fits the
 // shared schema (app/web/js/protocol.js), with no field it doesn't name.
 // SYNOPIA_GOLDEN=update rewrites the files (then read the diff).
 import { test } from 'node:test';
@@ -85,16 +85,6 @@ test('protocol: the fixture tree\'s frames equal the goldens', async (t) => {
   const cached = (q.hello.menu as Record<string, unknown>)[menu.cwd as string];
   assert.deepEqual(cached, { commands: menu.commands, models: menu.models });
   golden('hello-menu', n(q.hello.menu as Msg));
-
-  // Mark reviewed on S4's review item (FR-ITEM-03): the list goes to every page again, without it
-  type S = { id: string; openItems: { items: { id: string; kind: string; agent?: string }[] } };
-  const item = (p.hello.sessions as S[]).find((s) => s.id === S4)!.openItems.items.find((i) => i.kind === 'review')!;
-  at = p.frames.length;
-  p.send({ t: 'item', id: 'i1', sid: S4, item: item.id, act: 'reviewed' });
-  const marked = n(await p.next('openItems', (m) => m.sid === S4, 5000, at)) as { closed: { at: unknown }[] };
-  for (const c of marked.closed) c.at = '<time>'; // when it was marked
-  golden('open-items', marked);
-  assert.equal((await p.next('ack', (m) => m.id === 'i1', 5000, at)).ok, true);
 
   assert.equal(p.hello.v, VERSION);
   for (const m of [...p.frames, q.hello]) assert.equal(problem(SERVER, m, true), null, JSON.stringify(m).slice(0, 300));

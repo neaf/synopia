@@ -3,12 +3,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary, blockedLast, blockedSubagent } from '../src/status.ts';
-import type { StatusEntry, StateFacts, Status, StatusDetail } from '../src/status.ts';
+import { SessionStatus, transcriptStatus, outcomeOf, restored, sessionState, badgeOf, BadgeCounter, quitSummary, commandOf, backgroundOf, lastWordsMs, waitedStep, COMMAND_MS, REPORT_MS } from '../src/status.ts';
+import type { StatusEntry, StateFacts, Status, StatusDetail, Thread } from '../src/status.ts';
 import { Transcripts } from '../src/transcripts.ts';
 import { Publisher } from '../src/publisher.ts';
-import { openStore } from '../src/store.ts';
-import { OpenItems } from '../src/open-items.ts';
 import type { Client } from '../src/server.ts';
 import type { Item } from '../src/transcript.ts';
 
@@ -437,15 +435,15 @@ test('status: a question another process asks is needs you over working, aged fr
 });
 
 // ---------- sessionState: what the page shows ----------
-const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, blocked: false, review: 0, driven: true, ...f });
+const facts = (f: Partial<StateFacts> = {}): StateFacts => ({ pending: [], ask: null, interrupted: false, review: 0, driven: true, ...f });
 const show = (status: Status, f: Partial<StateFacts> = {}, detail: StatusDetail = {}) => {
   const st = sessionState({ status, at: 7, detail }, facts(f));
   return [st.light, st.tone, st.word, st.mark];
 };
 
 test('state: each status has its light, tone, word and mark (R8.2)', () => {
-  assert.deepEqual(show('busy'), ['green', 'green', 'Working', 'work']);
-  assert.deepEqual(show('busy', {}, { queued: 2 }), ['green', 'green', 'Working', 'queued']);
+  assert.deepEqual(show('busy'), ['green', 'green', 'Thinking', 'work']);
+  assert.deepEqual(show('busy', {}, { queued: 2 }), ['green', 'green', 'Thinking', 'queued']);
   assert.deepEqual(show('compacting'), ['green', 'green', 'Compacting', 'compact']);
   assert.deepEqual(show('retrying'), ['green', 'amber', 'Retrying', 'ratelimit']);
   assert.deepEqual(show('retrying', {}, { retry: { attempt: 4, max: 10, at: 0, text: 'x' } }), ['green', 'amber', 'Retrying, attempt 4 of 10', 'ratelimit']);
@@ -476,46 +474,86 @@ test('state: stopped by you is the stop marker on your turn, not a turned-down t
   assert.equal(sessionState({ status: 'stopped', at: 0 }, facts()).stopped, true);
   assert.equal(sessionState({ status: 'idle', at: 0 }, facts()).stopped, false);
   assert.deepEqual(show('failed', { interrupted: true }), ['amber', 'amber', 'Failed', 'failed'], 'a failed turn says so');
-  assert.deepEqual(show('busy', { interrupted: true }), ['green', 'green', 'Working', 'work'], 'a new turn runs');
+  assert.deepEqual(show('busy', { interrupted: true }), ['green', 'green', 'Thinking', 'work'], 'a new turn runs');
   assert.deepEqual(show('signedout', { interrupted: true }), ['red', 'red', 'Needs you, sign-in expired', 'pause']);
 });
 
-test('state: your turn after a blocked step is needs you, blocked (R8.2)', () => {
-  assert.deepEqual(show('idle', { blocked: true }), ['red', 'red', 'Needs you, blocked', 'pause']);
-  assert.equal(sessionState({ status: 'idle', at: 0 }, facts({ blocked: true })).needsYou, 'blocked');
-  assert.equal(badgeOf(sessionState({ status: 'idle', at: 0 }, facts({ blocked: true }))), 1);
-  assert.deepEqual(show('busy', { blocked: true }), ['green', 'green', 'Working', 'work'], 'while the turn runs');
-  assert.deepEqual(show('failed', { blocked: true }), ['amber', 'amber', 'Failed', 'failed']);
-  assert.deepEqual(show('idle', { blocked: true, interrupted: true }), ['amber', 'amber', 'Stopped', 'stopped'], 'you stopped it');
-  assert.deepEqual(show('waiting', { blocked: true, pending: ['question'] }), ['red', 'red', 'Needs you', 'pause'], 'a card says what it waits on');
+test('state: thinking while the main turn waits on the model, running a command once its Bash step has run 3 s (R8.2, 2026-11-27)', () => {
+  const command = { since: 7, obj: 'Remove the worktree' };
+  assert.deepEqual(show('busy', { command }), ['green', 'green', 'Running a command', 'k_shell']);
+  assert.deepEqual(show('busy', { command }, { queued: 1 }), ['green', 'green', 'Running a command', 'k_shell'], 'the shell mark over the queued arc');
+  assert.deepEqual(sessionState({ status: 'busy', at: 0 }, facts({ command: { ...command, agent: 'Draft the notes' } })).command, { ...command, agent: 'Draft the notes' });
+  assert.deepEqual(show('compacting', { command }), ['green', 'green', 'Compacting', 'compact'], 'a phase of the turn wins');
+  assert.deepEqual(show('stale', { command }), ['green', 'grey', 'No updates', 'stale']);
+  assert.deepEqual(show('busy', { command, pending: ['permission'] }), ['red', 'red', 'Needs you', 'pause']);
+  assert.equal(sessionState({ status: 'idle', at: 0 }, facts({ command })).command, null, 'only while the turn runs');
+  assert.equal(badgeOf(sessionState({ status: 'busy', at: 0 }, facts({ command }))), 0);
 });
 
-test('blockedLast: a denied step in the latest turn, not retried, blocks it; your next message clears it', () => {
-  let n = 0;
-  const you = (extra: Partial<Item> = {}): Item => ({ id: `y${n++}`, k: 'you', ts: null, text: 'go', ...extra });
-  const step = (state: string, input = 'git push', name = 'Bash'): Item => ({ id: `s${n++}`, k: 'tool', ts: null, name, input, state });
-  const claude: Item = { id: 'c', k: 'claude', ts: null, text: 'I need you to run it.' };
-  assert.equal(blockedLast([you(), step('done', 'ls'), step('denied'), claude]), true);
-  assert.equal(blockedLast([you(), step('denied'), step('done'), claude]), false, 'retried and ran');
-  assert.equal(blockedLast([you(), step('denied'), step('done', 'git status'), claude]), true, 'another command ran');
-  assert.equal(blockedLast([you(), step('denied'), claude, you()]), false, 'you wrote since');
-  assert.equal(blockedLast([you(), step('denied'), claude, { id: 'b', k: 'bang', ts: null, cmd: 'git push' }]), false, 'you ran a command');
-  assert.equal(blockedLast([you(), step('denied'), you({ turnedDown: true }), claude]), true, 'a turned-down marker is not your message');
-  assert.equal(blockedLast([you(), step('failed'), claude]), false);
+test('state: idle while background work runs or its report waits, your turn once nothing is left (R8.2, 2026-11-27)', () => {
+  const bg = (running: number, report = false) => ({ background: { running, report } });
+  assert.deepEqual(show('idle', bg(1)), ['amber', 'grey', 'Idle, 1 running in the background', 's_agent']);
+  assert.deepEqual(show('idle', bg(3)), ['amber', 'grey', 'Idle, 3 running in the background', 's_agent']);
+  assert.deepEqual(show('idle', bg(0, true)), ['amber', 'grey', 'Idle', 's_agent'], 'a finished job\'s report waits for Claude');
+  assert.deepEqual(show('idle', bg(0)), ['amber', 'amber', 'Your turn', 'stopped']);
+  const st = sessionState({ status: 'idle', at: 7 }, facts(bg(2)));
+  assert.deepEqual([st.resting, st.background, st.stopped, st.needsYou, badgeOf(st)], [true, 2, false, null, 0]);
+  assert.deepEqual(show('busy', bg(2)), ['green', 'green', 'Thinking', 'work'], 'a turn runs beside it');
+  assert.deepEqual(show('stopped', bg(1)), ['amber', 'amber', 'Stopped', 'stopped']);
+  assert.deepEqual(show('idle', { ...bg(1), interrupted: true }), ['amber', 'amber', 'Stopped', 'stopped']);
+  assert.deepEqual(show('failed', bg(1)), ['amber', 'amber', 'Failed', 'failed']);
+  assert.deepEqual(show('waiting', { ...bg(1), pending: ['question'] }), ['red', 'red', 'Needs you', 'pause']);
+  assert.equal(sessionState({ status: 'busy', at: 0 }, facts(bg(2))).background, 2, 'the count goes with every state');
 });
 
-test('blockedSubagent: a subagent run that ended after a denied step it did not redo blocks; your message, a stop or a redo clears it', () => {
-  let n = 0;
-  const at = (s: number) => `2026-11-24T09:00:${String(s).padStart(2, '0')}.000Z`;
-  const step = (s: number, state: string, input = 'npm run migrate'): Item => ({ id: `s${n++}`, k: 'tool', ts: at(s), name: 'Bash', input, state });
-  const end = (s: number, stopped = false) => ({ at: Date.parse(at(s)), stopped });
-  assert.equal(blockedSubagent([step(10, 'denied'), step(20, 'done', 'ls')], [end(30)], null), true);
-  assert.equal(blockedSubagent([step(10, 'denied')], [], null), false, 'still in its first run: it may redo it');
-  assert.equal(blockedSubagent([step(10, 'denied')], [end(30)], Date.parse(at(40))), false, 'you wrote since');
-  assert.equal(blockedSubagent([step(10, 'denied')], [end(30, true)], null), false, 'that run was stopped');
-  assert.equal(blockedSubagent([step(10, 'denied'), step(45, 'done')], [end(30)], null), false, 'resumed, it redid the step');
-  assert.equal(blockedSubagent([step(10, 'denied'), step(45, 'running', 'ls')], [end(30)], null), true, 'resumed, the step not redone yet');
-  assert.equal(blockedSubagent([step(10, 'failed')], [end(30)], null), false);
+test('state: needs you only from the SDK\'s own signals, never from a denied step in the transcript (2026-11-27)', () => {
+  assert.deepEqual(show('idle'), ['amber', 'amber', 'Your turn', 'stopped']);
+  assert.deepEqual(show('idle', { input: true }), ['red', 'red', 'Needs you, a command waits for input', 'pause']);
+  assert.equal(sessionState({ status: 'signedout', at: 0 }, facts()).needsYou, 'signin');
+  assert.equal(sessionState({ status: 'waiting', at: 0 }, facts({ pending: ['permission'] })).needsYou, 'permission');
+});
+
+test('commandOf: the Bash step the main turn waits on, or its foreground subagent\'s, once it has run 3 s', () => {
+  const T0 = Date.parse('2026-11-27T10:00:00.000Z');
+  const iso = (ms: number) => new Date(T0 + ms).toISOString();
+  const step = (id: string, name: string, at: number, state = 'running', more: Partial<Item> = {}): Item => ({ id, k: 'tool', ts: iso(at), name, obj: `${name} ${id}`, state, ...more });
+  const thread = (items: Item[], kids: Record<string, [Thread, string]> = {}): Thread => ({ items, child: (tid) => (kids[tid] ? { thread: kids[tid][0], name: kids[tid][1] } : null) });
+  const since = (it: Item) => (it.ts ? Date.parse(it.ts) : null);
+  const at = (t: Thread, ms: number, s = since) => commandOf(t, s, T0 + ms);
+  const own = thread([{ id: 'u', k: 'you', ts: iso(0), text: 'go' }, step('b1', 'Bash', 1000)]);
+  assert.deepEqual(at(own, 3000), { command: null, due: T0 + 1000 + COMMAND_MS }, 'under 3 s: the arc, and when it gets there');
+  assert.deepEqual(at(own, 4000), { command: { since: T0 + 1000, obj: 'Bash b1' }, due: null });
+  assert.deepEqual(at(own, 4000, (it) => (it.id === 'b1' ? T0 + 2500 : since(it))), { command: null, due: T0 + 2500 + COMMAND_MS }, 'tool_progress: from the Allow once');
+  assert.deepEqual(at(thread([step('b1', 'Bash', 0, 'done')]), 9000), { command: null, due: null }, 'its result came');
+  assert.deepEqual(at(thread([step('m1', 'mcp__github__create_pull_request', 0), step('w1', 'WebFetch', 0)]), 9000).command, null, 'MCP and web tools keep the arc');
+  assert.deepEqual(at(thread([step('b1', 'Bash', 0), step('r1', 'Read', 1000)]), 9000).command, null, 'the newest step is what it waits on');
+  assert.deepEqual(at(thread([step('b1', 'Bash', 0), step('a1', 'Agent', 1000, 'running', { bg: true })]), 9000).command?.obj, 'Bash b1', 'a background subagent is not the turn\'s step');
+  // a foreground subagent that runs a command, and one a level deeper
+  const deep = thread([step('d1', 'Bash', 2000)]);
+  const sub = thread([step('s1', 'Read', 1000, 'done'), step('s2', 'Bash', 1500)]);
+  assert.deepEqual(at(thread([step('a1', 'Agent', 0, 'running', { toolUseId: 'a1' })], { a1: [sub, 'Draft the notes'] }), 9000).command, { since: T0 + 1500, obj: 'Bash s2', agent: 'Draft the notes' });
+  const mid = thread([step('a2', 'Agent', 1000, 'running', { toolUseId: 'a2' })], { a2: [deep, 'Check the links'] });
+  assert.deepEqual(at(thread([step('a1', 'Agent', 0, 'running', { toolUseId: 'a1' })], { a1: [mid, 'Draft the notes'] }), 9000).command, { since: T0 + 2000, obj: 'Bash d1', agent: 'Check the links' });
+  assert.deepEqual(at(thread([step('a1', 'Agent', 0, 'running', { toolUseId: 'a1' })], { a1: [thread([step('s1', 'Grep', 0)]), 'x'] }), 9000).command, null, 'the subagent thinks or reads');
+  assert.equal(waitedStep([step('b1', 'Bash', 0), { id: 'c', k: 'claude', ts: iso(1), text: 'Done.' }])?.id, 'b1', 'words after a step it still waits on');
+});
+
+test('backgroundOf: the jobs the Main conversation card counts, and a report that waits to be read', () => {
+  const T0 = Date.parse('2026-11-27T10:00:00.000Z');
+  const iso = (ms: number) => new Date(T0 + ms).toISOString();
+  const job = (running: boolean, end: number | null = null, stopped = false) => ({ running, stopped, end: end === null ? null : iso(end) });
+  const agents = [{ id: 'a1', ...job(true) }, { id: 'a2', parent: 'a1', ...job(true) }, { id: 'a3', ...job(false, 1000) }];
+  const shells = [{ ...job(true) }, { agentId: 'a1', ...job(true) }, { agentId: 'a3', ...job(true) }];
+  assert.deepEqual(backgroundOf(agents, shells, T0 + 5000, T0 + 6000), { running: 3, report: false }, 'a running subagent\'s own work counts under it');
+  assert.equal(backgroundOf([{ id: 'a1', ...job(false, 8000) }], [], T0 + 5000, T0 + 9000).report, true, 'ended after Claude\'s last words: its report waits');
+  assert.equal(backgroundOf([], [job(false, 8000)], T0 + 5000, T0 + 9000).report, true, 'a shell\'s end wakes Claude too');
+  assert.equal(backgroundOf([{ id: 'a1', ...job(false, 8000, true) }], [], T0 + 5000, T0 + 9000).report, false, 'stopped: no report to read');
+  assert.equal(backgroundOf([{ id: 'a1', ...job(false, 8000) }], [], T0 + 9000, T0 + 9500).report, false, 'Claude wrote since: handled');
+  assert.equal(backgroundOf([{ id: 'a1', ...job(false, 8000) }], [], T0 + 5000, T0 + 8000 + REPORT_MS).report, false, 'nobody read it for REPORT_MS');
+  assert.equal(backgroundOf([{ id: 'a1', ...job(false, 8000) }], [], null, T0 + 9000).report, true, 'Claude has written nothing yet');
+  const items: Item[] = [{ id: 'c', k: 'claude', ts: iso(1000), text: 'x' }, { id: 't', k: 'tool', ts: iso(2000), name: 'Read' }, { id: 'r', k: 'report', ts: iso(3000) }, { id: 'y', k: 'you', ts: iso(4000), text: 'y' }];
+  assert.equal(lastWordsMs(items), T0 + 2000, 'a report or your message is not Claude\'s');
+  assert.equal(lastWordsMs([]), null);
 });
 
 test('state: the badge share is needs you plus the deliverables to review (R2.6)', () => {
@@ -549,18 +587,11 @@ const AGENTS = '44444444-0000-4000-8000-000000000004';
 const REVIEW = 'aaaa0004'; // "For review: Draft the demo release notes", finished in the fixture
 const tick = () => new Promise((r) => setImmediate(r));
 
-function badgeReading(claudeDir = CLAUDE) {
+function badgeReading(claudeDir = CLAUDE, reviewed: Set<string> = new Set()) {
   const badge = new BadgeCounter();
   const transcripts = new Transcripts({ claudeDir, home: '/Users/fixture', pollMs: 0, watch: false });
-  const store = openStore(fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-badge-')), { minIntervalMs: 0 });
-  let publisher: Publisher | null = null;
-  const openItems = new OpenItems({
-    store, home: '/Users/fixture', lookMs: 0,
-    facts: { ledgerOf: (sid) => transcripts.ledgerOf(sid), ownsOf: (sid, t) => transcripts.ownsOf(sid, t), agents: (sid) => transcripts.get(sid)?.agents() ?? [], lastYouAt: (sid) => transcripts.lastYouAt(sid), replies: (sid) => transcripts.replies(sid) },
-    onChange: (sids) => { for (const s of sids) publisher?.changed(s); },
-  });
-  publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, openItems });
-  return { badge, transcripts, publisher, openItems };
+  const publisher = new Publisher({ transcripts, clients: () => new Set<Client>(), home: '/Users/fixture', recheckMs: 0, badge, reviewed: (id) => reviewed.has(id) });
+  return { badge, transcripts, publisher, reviewed };
 }
 
 test('badge: needs-you sessions and deliverables to review, open sessions only', async () => {
@@ -568,7 +599,7 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   // records are older, so its file counts as just changed, whenever it was checked out.
   const now = new Date();
   fs.utimesSync(path.join(CLAUDE, 'projects', '-tmp-fixture', `${ASKS}.jsonl`), now, now);
-  const { transcripts, publisher, badge, openItems } = badgeReading();
+  const { transcripts, publisher, badge, reviewed } = badgeReading();
   transcripts.open(IDLE);
   transcripts.open(ASKS);
   transcripts.open(AGENTS);
@@ -586,8 +617,8 @@ test('badge: needs-you sessions and deliverables to review, open sessions only',
   publisher.setStatus(IDLE, 'waiting');
   assert.equal(badge.count, 3, 'the status waiting alone');
 
-  const item = openItems.view(AGENTS).items.find((i) => i.agent === REVIEW)!;
-  assert.equal(openItems.markReviewed(AGENTS, item.id), true);
+  reviewed.add(REVIEW);
+  publisher.reviewed(REVIEW);
   assert.equal(badge.count, 2, 'marked reviewed drops it');
   assert.equal(publisher.meta(AGENTS)?.state.review, 0);
 
@@ -602,7 +633,7 @@ test('badge: a session whose turn runs in another process, with nothing pending,
   transcripts.open('f7f7f7f7-0000-4000-8000-000000000007');
   transcripts.poll();
   const st = publisher.meta('f7f7f7f7-0000-4000-8000-000000000007')!.state;
-  assert.deepEqual([st.status, st.word, st.driven, st.detail.external], ['busy', 'Working', false, undefined]);
+  assert.deepEqual([st.status, st.word, st.driven, st.detail.external], ['busy', 'Running a command', false, undefined]);
   assert.equal(badge.count, 0);
   transcripts.stop(); publisher.stop();
 });

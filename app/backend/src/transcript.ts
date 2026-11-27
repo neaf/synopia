@@ -6,21 +6,17 @@ import os from 'node:os';
 import type { JsonRecord, Span } from './tail.ts';
 import { displayIn } from './paths.ts';
 import { BANG_CAP } from './bang.ts';
-import { stepOf, sessionOf, fullName } from './agent-tools.ts';
-// A subagent's open_items call names no ledger: only the main conversation's facts are read (`sidechain`).
-const OPEN_ITEMS = fullName('open_items');
+import { stepOf, sessionOf } from './agent-tools.ts';
 import type { BashOutput } from './bang.ts';
 import { classify, agentMetaOf } from './claude-jsonl.ts';
-import { isLedgerPath, ledgerPathOf, ledgerPathIn, ownedIds } from './ledger.ts';
 import type { AgentMeta, AssistantRecord, BashEdit, ClaudeRecord, Denial, FileEdit, ImageBlock, Question, RawHunk, TaskNote, ToolUse, UserRecord } from './claude-jsonl.ts';
 
 export type { Question } from './claude-jsonl.ts';
 export type Hunk = { o: number; n: number; lines: string[] };
 // `bare`: a file a shell command changed with no diff in the record (bashEditDiff.changedFiles).
 // `unnumbered`: a diff from the tool's input, with no line numbers (claude-jsonl.ts inputEditOf).
-// `ledger`: the file is an open-items ledger (ledger.ts isLedgerPath), which Files changed leaves out (R5.9).
 export type Patch = {
-  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean; unnumbered?: true; ledger?: true;
+  file: string; abs: string; add: number; del: number; created: boolean; cut: boolean; hunks: Hunk[]; bare?: boolean; unnumbered?: true;
 };
 // A tool result's preview: its first PREVIEW_LINES lines, PREVIEW_BYTES at most; `lines` counts all
 // of them, `cut` says the preview isn't all (the page asks for the rest with `toolOutput`).
@@ -68,6 +64,7 @@ export type Agent = {
   // (docs/Claude Code transcripts.md#a-subagent-waiting-on-its-own-background-work)
   waiting: boolean;
   start: string | null; end: string | null; total: number;
+  parent?: string; // the subagent that started it, from its own file; absent for the main conversation's (2026-11-27)
 };
 // A question or plan card waiting in the transcript: an AskUserQuestion or ExitPlanMode tool_use of
 // the latest assistant message with no tool_result yet (Transcript.pendingAsk). `agentId`: the
@@ -75,10 +72,6 @@ export type Agent = {
 export type PendingAsk = { kind: 'question' | 'plan'; toolUseId: string; agentId: string | null; since: number; qs?: Question[]; plan?: string };
 // A title Synopia's writer gave the session, and when (ms): state.json `written[sid].history`.
 export type WrittenTitle = { title: string; at: number };
-// The session's ledger by its transcript (FR-ITEM-01): the last `.ai-notes/<area>/open-items.md` the main
-// conversation named in a Read, Write or Edit, or in a Bash command; `at` that tool use's time, `results` how many
-// results of such tool uses have landed (a new one: read the file again).
-export type LedgerFact = { path: string; at: string | null; toolUseId: string; results: number };
 export type Changes = { items: string[]; background: string[]; agents: string[]; meta: boolean };
 // One event of a monitor (its notification's `<event>`): `n` counts its events from 0, so a reader's
 // place survives the oldest ones being dropped past MAX_EVENTS.
@@ -153,8 +146,7 @@ export function bashPatchesOf(edit: BashEdit, home: string): { patches: Patch[];
   const patches = edit.files.map((f) => patchFrom(f.hunks, f.filePath, f.created, home));
   for (const file of edit.changedFiles) {
     if (!patches.some((x) => x.abs === file)) {
-      const bare: Patch = { file: tilde(file, home), abs: file, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true };
-      patches.push(isLedgerPath(file) ? { ...bare, ledger: true } : bare);
+      patches.push({ file: tilde(file, home), abs: file, add: 0, del: 0, created: false, cut: false, hunks: [], bare: true });
     }
   }
   return { patches, more: edit.moreFiles };
@@ -177,8 +169,7 @@ function patchFrom(hunks: RawHunk[], abs: string, created: boolean, home: string
     out.push({ o: h.oldStart, n: h.newStart, lines });
     if (budget <= 0) break;
   }
-  const p: Patch = { file: tilde(abs, home), abs, add, del, created, cut: budget <= 0, hunks: out };
-  return isLedgerPath(abs) ? { ...p, ledger: true } : p;
+  return { file: tilde(abs, home), abs, add, del, created, cut: budget <= 0, hunks: out };
 }
 
 export const PREVIEW_LINES = 20;
@@ -359,11 +350,6 @@ class ReadState {
   prompted = false;
   writtenAt = -Infinity;
   // f, f's interrupt route (R9.8): the claude items of each message, and the aside that cut a message short.
-  // the main conversation's open-items facts (FR-ITEM-01, FR-ITEM-04); a subagent's Transcript keeps none
-  ledger: Omit<LedgerFact, 'results'> | null = null;
-  ledgerUses = new Set<string>(); // tool uses that named a ledger
-  ledgerResults = 0;
-  owns = new Map<string, string[]>(); // an Agent tool use id -> the ids its brief's `Open items:` line names
   textsOf = new Map<string, string[]>();
   asideOf = new Map<string, string>();
 
@@ -421,16 +407,6 @@ export class Transcript {
   get firstTs(): string | null { return this.r.firstTs; }
   get lastTs(): string | null { return this.r.lastTs; }
   get apiError(): { text: string; status: number | null; credential: boolean } | null { return this.r.apiError; }
-
-  // The session's ledger by this transcript (main conversation only), or null.
-  get ledger(): LedgerFact | null {
-    return this.r.ledger ? { ...this.r.ledger, results: this.r.ledgerResults } : null;
-  }
-
-  // The ids an Agent tool use's brief owns (its `Open items:` line), [] when none.
-  ownsOf(toolUseId: string): string[] {
-    return this.r.owns.get(toolUseId) ?? [];
-  }
 
   get title(): string | null {
     return this.r.customTitle || this.r.aiTitle;
@@ -621,7 +597,6 @@ export class Transcript {
       const errors: string[] = [];
       for (const res of u.results) {
         const tid = res.toolUseId;
-        if (!r.results.has(tid) && r.ledgerUses.has(tid)) r.ledgerResults++;
         r.results.set(tid, res.isError);
         if (res.outputFile) r.outFiles.set(tid, res.outputFile);
         // A shell or monitor started in the background runs from its result, not its tool use: a permission card
@@ -806,27 +781,6 @@ export class Transcript {
       const tid = b.id || `${uuid}:${b.index}`;
       r.message.uses.push({ id: tid, ts, name: b.name });
       this.toolUse(b, tid, ts);
-      if (!this.sidechain) this.openItemFacts(b, tid, ts, a.cwd);
-    }
-  }
-
-  // FR-ITEM-01, FR-ITEM-04: a tool use naming a ledger, and an Agent brief's owned ids. Only the brief's
-  // ids are kept, not its prompt.
-  private openItemFacts(b: ToolUse, tid: string, ts: string | null, cwd: string): void {
-    const r = this.r, name = b.name;
-    const p = typeof b.input.file_path === 'string' ? b.input.file_path : '';
-    const tl = name === OPEN_ITEMS && typeof b.input.ledger === 'string' ? b.input.ledger : ''; // open_items' `ledger` (FR-ITEM-12)
-    const led = name === 'Read' || name === 'Write' || name === 'Edit' ? (p ? ledgerPathOf(p, cwd, this.home) : null)
-      : name === 'Bash' ? ledgerPathIn(b.command, cwd, this.home) : tl ? ledgerPathOf(tl, cwd, this.home) : null;
-    if (led) {
-      r.ledger = { path: led, at: ts, toolUseId: tid };
-      r.ledgerUses.add(tid);
-      if (r.results.has(tid)) r.ledgerResults++; // its result came first
-    }
-    if ((name === 'Agent' || name === 'Task') && typeof b.input.prompt === 'string') {
-      const ids = ownedIds(b.input.prompt);
-      if (ids.length) r.owns.set(tid, ids);
-      else r.owns.delete(tid);
     }
   }
 
@@ -1165,17 +1119,6 @@ export class Transcript {
     return last !== null && last - endMs > WOKE_MS ? end.end : null;
   }
 
-  // When each run of a subagent ended (ms), oldest first, and whether it was stopped: its end
-  // notifications, else (none, and it is over) its last record (status.ts blockedSubagent).
-  runEnds(aid: string): { at: number; stopped: boolean }[] {
-    const tid = this.agentMeta.get(aid)?.meta?.toolUseId ?? '';
-    const stopped = (s: string) => s === 'killed' || s === 'stopped';
-    const out = (this.r.ends.get(tid) ?? []).flatMap((e) => { const at = msOf(e.end); return at === null ? [] : [{ at, stopped: stopped(e.status) }]; });
-    if (out.length) return out;
-    const a = this.getAgent(aid), at = msOf(a?.end);
-    return a && !a.running && at !== null ? [{ at, stopped: a.stopped }] : [];
-  }
-
   private setTask(tid: string, task: string): void {
     const r = this.r;
     if (r.taskIds.get(tid) === task) return;
@@ -1407,7 +1350,16 @@ export class Transcript {
       stopped: !running && ((meta?.stoppedByUser === true && !this.r.resumes.has(id)) || status === 'stopped' || status === 'killed' || (!status && this.endedAgent(id))),
       waiting: running && this.idleWaiting(id),
       start: a.sub?.firstTs ?? null, end: a.sub?.lastTs ?? null, total: a.sub?.total ?? 0,
+      ...this.parentOf(id, meta?.toolUseId ?? ''),
     };
+  }
+
+  // The subagent that started this one (its Agent step is in that subagent's own file), none for the main
+  // conversation's: the sidebar and the panel nest it under its parent (R4.2, R7.1, 2026-11-27).
+  private parentOf(id: string, tid: string): { parent?: string } {
+    if (!tid || this.r.byId.has(tid)) return {};
+    for (const [aid, a] of this.agentMeta) if (aid !== id && a.sub?.get(tid)) return { parent: aid };
+    return {};
   }
 
   agents(): Agent[] {

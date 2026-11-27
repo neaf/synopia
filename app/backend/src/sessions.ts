@@ -52,7 +52,6 @@ export type SessionsOptions = {
   idleMs?: number;
   // The writer: a session's turn ended, and a stored session was opened.
   onTurnEnded?: (sid: string) => void;
-  items?: { toolOp(sid: string, input: Record<string, unknown>, cwd: string): Promise<{ ok: boolean; text: string }> }; // open_items (open-items.ts)
   onOpened?: (sid: string) => void;
   // A card waiting on you appeared or ended (ours, or one another process asks): the Now line follows.
   onWaiting?: (sid: string) => void;
@@ -61,9 +60,6 @@ export type SessionsOptions = {
   // A session's model sign-in expired, or works again (creds.ts); a session closed or took another id.
   onSignedOut?: (sid: string, cwd: string, signedOut: boolean) => void;
   onGone?: (sid: string) => void;
-  // A session closed, or its id changed (open-items.ts moves or drops its `session:` list).
-  onClosed?: (sid: string) => void;
-  onRekeyed?: (from: string, to: string) => void;
   // The terminals that hold sessions (cli-terminals.ts); none without it.
   terminals?: TerminalSource;
   terms?: Terms; // the terminals of the `!` runs (terms.ts)
@@ -277,7 +273,6 @@ export class Sessions {
     this.layout.sync(); // a placeholder's id goes; a stored one keeps its place, hidden
     this.transcripts.close(id); // the pages get `removed` (publisher.ts)
     this.opts.onGone?.(id);
-    this.opts.onClosed?.(id);
     this.log('sessions.close', { sid: id, running });
     return { ok: true, sid: id };
   }
@@ -336,10 +331,6 @@ export class Sessions {
       });
     },
     tilde: (p) => this.tilde(p),
-    items: (caller, input) => {
-      const s = this.get(caller);
-      return this.opts.items?.toolOp(this.resolve(caller), input, s?.cwd ?? '') ?? Promise.resolve({ ok: false, text: 'Synopia can\'t keep open items here.' });
-    },
   };
 
   // ---------- the set ----------
@@ -402,7 +393,6 @@ export class Sessions {
     this.layout.rename(old, newId); // before the `session` frame with `replaces`, which carries it
     st.status[newId] = { status: s.status.status, at: s.status.at };
     rekeyUi(this.store, old, newId); // the page's state for it moves too (R3.9)
-    this.opts.onRekeyed?.(old, newId);
     this.store.changed();
     this.transcripts.rekey(old, newId); // the reading starts again; the pages follow (publisher.ts)
     this.log('sessions.swap', { from: old, to: newId, why });
