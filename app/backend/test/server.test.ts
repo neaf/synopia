@@ -151,6 +151,30 @@ test('path traversal is refused', async () => {
   }
 });
 
+test('with the daemon\'s page files it serves those, with the same types and path rules, and never the disk', async () => {
+  const page = new Map([['index.html', Buffer.from('<p>start</p>')], [join('css', 'app.css'), Buffer.from('a{}')]]);
+  const s = await startServer({ port: 0, token: TOKEN, webRoot, page, quitCheck: () => ({ running: [], background: [], counts: {}, summary: '' }) });
+  const at = (path: string) => new Promise<Res & { type: string }>((ok, fail) => {
+    request({ host: '127.0.0.1', port: s.port, path }, (res) => {
+      let body = '';
+      res.on('data', (c) => (body += c));
+      res.on('end', () => ok({ status: res.statusCode ?? 0, body, type: String(res.headers['content-type'] ?? '') }));
+    }).on('error', fail).end();
+  });
+  try {
+    assert.equal((await at('/')).body, '<p>start</p>', 'not index.html on disk');
+    assert.equal((await at('/index.html')).type, 'text/html; charset=utf-8');
+    const css = await at('/css//app.css');
+    assert.deepEqual([css.status, css.body, css.type], [200, 'a{}', 'text/css; charset=utf-8']);
+    assert.equal((await at('/fonts/a.woff2')).status, 404, 'on disk, not in the map');
+    for (const p of ['/../secret.txt', '/%2e%2e/secret.txt', '/css/..%2f..%2fsecret.txt', '/css/%2e%2e/secret.txt', '/%00index.html']) {
+      assert.equal((await at(p)).status, 404, p);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
 test('a wrong Host is refused for http', async () => {
   assert.equal((await get('/', { Host: `localhost:${server.port}` })).status, 403);
   assert.equal((await get('/', { Host: 'evil.example' })).status, 403);

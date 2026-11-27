@@ -1,4 +1,4 @@
-// HTTP for app/web/ and the WebSocket on /ws, bound to 127.0.0.1 only.
+// HTTP for app/web/ (from disk, or the daemon's copy read at start) and the WebSocket on /ws, bound to 127.0.0.1 only.
 // The upgrade checks Host and Origin; the first frame must be the token. No routing here: each
 // later frame goes to onMessage (router.ts), and the hello to onAuthed (publisher.ts).
 // A page that doesn't read its socket (asleep, hung) gets no more stream previews once SEND_SOFT bytes
@@ -28,6 +28,9 @@ export type ServerOptions = {
   port: number;
   token: string;
   webRoot: string;
+  // The page files under webRoot as the daemon read them at start (daemon.ts `PageFiles`), served in
+  // place of webRoot's: a page always meets the daemon of its own code. Without it each request reads webRoot.
+  page?: ReadonlyMap<string, Buffer>;
   // A page's token was taken: its hello goes out (publisher.ts).
   onAuthed?: (client: Client) => void;
   // GET /api/quit-check: what Stop All Work and Restart Backend ask with (status.ts quitSummary).
@@ -97,9 +100,9 @@ function deny(res: ServerResponse, code: number) {
   res.end(`${code}\n`);
 }
 
-// Resolves a request path to a file inside root, or null. Rejects encoded
-// slashes, NUL, dot segments and symlinks that point out of root.
-async function resolveStatic(root: string, pathname: string): Promise<string | null> {
+// Resolves a request path to a path inside root, or null. Rejects encoded
+// slashes, NUL and dot segments.
+function staticPath(root: string, pathname: string): string | null {
   let rel: string;
   try {
     rel = decodeURIComponent(pathname);
@@ -110,7 +113,13 @@ async function resolveStatic(root: string, pathname: string): Promise<string | n
   if (rel.split('/').some((p) => p === '..' || p === '.')) return null;
   if (rel.endsWith('/')) rel += 'index.html';
   const file = resolve(root, '.' + rel);
-  if (!file.startsWith(root + sep)) return null;
+  return file.startsWith(root + sep) ? file : null;
+}
+
+// The file on disk for a request path, or null; also rejects symlinks that point out of root.
+async function resolveStatic(root: string, pathname: string): Promise<string | null> {
+  const file = staticPath(root, pathname);
+  if (!file) return null;
   try {
     const real = await realpath(file);
     if (!real.startsWith(root + sep)) return null;
@@ -195,15 +204,18 @@ export async function startServer(opts: ServerOptions): Promise<Server> {
     }
 
     if (req.method !== 'GET' && req.method !== 'HEAD') return deny(res, 405);
-    const file = await resolveStatic(root, url.pathname);
-    if (!file) return deny(res, 404);
-    try {
-      const body = await readFile(file);
-      res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
-      res.end(req.method === 'HEAD' ? undefined : body);
-    } catch {
-      deny(res, 404);
+    const page = opts.page;
+    let file: string | null, body: Buffer | undefined;
+    if (page) {
+      file = staticPath(root, url.pathname);
+      body = file === null ? undefined : page.get(file.slice(root.length + 1));
+    } else {
+      file = await resolveStatic(root, url.pathname);
+      body = file === null ? undefined : await readFile(file).catch(() => undefined);
     }
+    if (!file || !body) return deny(res, 404);
+    res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
+    res.end(req.method === 'HEAD' ? undefined : body);
   }
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_PAYLOAD });
