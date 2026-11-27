@@ -295,12 +295,16 @@ class ReadState {
   effort: unknown = null;
   firstTs: string | null = null;
   lastTs: string | null = null;
-  // The main thread's turn, for a session no Synopia process drives (status.ts): opened by a prompt
-  // you typed (a user record, a slash command or a queued_command attachment), closed by
-  // system/turn_duration, system/stop_hook_summary, an interrupt marker or the result of a permission
-  // request nobody answered. An assistant record after a marker or that result opens it again.
+  // The main thread's turn (docs/Claude Code transcripts.md#turn-ends): opened by a prompt you typed (a
+  // user record, a slash command or a queued_command attachment), closed by system/turn_duration,
+  // system/stop_hook_summary, an interrupt marker or the result of a permission request nobody answered,
+  // or, for a session Synopia's own process drives, by the SDK's `result` (sdkResult): an SDK-driven CLI
+  // writes no turn end without a Stop hook. An assistant record after a marker or that result opens it
+  // again. status.ts reads it for a session no Synopia process drives.
   turnOpen = false;
   afterMarker = false;
+  turnFrom: string | null = null; // when the open turn began: its "Worked for" counts from here
+  replied = false; // Claude wrote in the main thread since the turn began
   // The request the CLI retries now: the main thread's latest record is a system/api_error (status.ts).
   apiError: { text: string; status: number | null; credential: boolean } | null = null;
   // The tool uses of the latest assistant message: every record of its `message.id` (one block per
@@ -521,6 +525,7 @@ export class Transcript {
         return;
       case 'queued':
         if (foreign) return;
+        if (!r.turnOpen) this.opened(ts); // taken in after the turn ended: it begins the next one
         r.turnOpen = true; // written when a turn takes it in
         r.afterMarker = false;
         if (rec.user) this.user(rec.user, rec.uuid || `attachment@${r.seq}`, true);
@@ -542,25 +547,50 @@ export class Transcript {
   // turn_duration or stop_hook_summary (docs/Claude Code transcripts.md#turn-ends).
   private turnEnd(by: 'turn_duration' | 'stop_hook_summary', durationMs: number | null, sidechain: boolean, ts: string | null): void {
     const r = this.r;
-    r.turnOpen = false;
-    r.afterMarker = false;
     const you = r.lastYou;
     if (by === 'turn_duration') {
+      this.closeTurn();
       if (you && durationMs !== null) {
         you.workedMs = durationMs;
         r.changed.add(you.id);
       }
       return;
     }
-    // An SDK-driven CLI (entrypoint sdk-cli, as Synopia's own sessions are) writes stop_hook_summary
-    // but rarely turn_duration (2 of 19 turns seen): the time from your prompt to it stands in, and a
-    // turn_duration after it (the interactive CLI writes one right after) wins.
-    if (sidechain || this.sidechain || !you || you.workedMs !== undefined || you.interrupted) return;
-    const from = msOf(you.ts), to = msOf(ts);
+    // An SDK-driven CLI writes stop_hook_summary only when a Stop hook ran, and turn_duration hardly
+    // ever: the time from the turn's start to it stands in, and a turn_duration after it (the
+    // interactive CLI writes one right after) wins.
+    this.closeTurn(sidechain ? null : ts);
+  }
+
+  // The SDK's `result` for the main turn of the process Synopia drives (session.ts, through
+  // Transcripts.sdkResult) at `at` (ISO): the turn's end, as a turn-end record would be. Nothing when
+  // the turn already has its time (a turn-end record came first) or ended on an interrupt marker. A turn
+  // a `!` command started leaves turnOpen as it was (a CLI's own `!` starts none), so it isn't the guard.
+  sdkResult(at: string): void {
+    if (this.sidechain) return;
+    this.closeTurn(this.r.replied ? at : null); // a local command Claude never answered: no "Worked for"
+  }
+
+  // The turn ends (docs/Claude Code transcripts.md#turn-ends). With `at`, the latest prompt of yours
+  // gets the turn's time, from the turn's start to `at` (the page's "Worked for"), unless it has one
+  // or was a stop.
+  private closeTurn(at: string | null = null): void {
+    const r = this.r;
+    r.turnOpen = false;
+    r.afterMarker = false;
+    const you = r.lastYou;
+    if (at === null || this.sidechain || !you || you.workedMs !== undefined || you.interrupted) return;
+    const from = msOf(r.turnFrom ?? you.ts), to = msOf(at);
     if (from !== null && to !== null && to >= from) {
       you.workedMs = to - from;
       r.changed.add(you.id);
     }
+  }
+
+  // A turn begins at `ts`.
+  private opened(ts: string | null): void {
+    this.r.turnFrom = ts;
+    this.r.replied = false;
   }
 
   private user(u: UserRecord, uuid: string, queued = false): void {
@@ -656,6 +686,7 @@ export class Transcript {
         r.afterMarker = false;
         r.lastErrors = [];
         r.lastYou = r.lastBang;
+        this.opened(u.ts);
       }
       if (!then) return;
       text = body.rest;
@@ -680,6 +711,7 @@ export class Transcript {
       r.afterMarker = false;
       r.lastErrors = [];
       r.lastYou = this.put({ id: uuid, k: 'resumed', ts: u.ts });
+      this.opened(u.ts);
       return;
     }
     for (const n of u.notes) this.note(n, u.ts);
@@ -697,6 +729,7 @@ export class Transcript {
       r.lastYou = this.put({ id: uuid, k: 'you', ts: u.ts, text: body.text });
       r.turnOpen = true;
       r.afterMarker = false;
+      this.opened(u.ts);
       return;
     }
     const images = u.images.length;
@@ -723,11 +756,12 @@ export class Transcript {
       if (body.interrupt === 'stop') r.lastYou = put;
       return;
     }
-    // Any other prompt you typed opens a turn.
+    // Any other prompt you typed opens a turn (one the running turn took in goes on through it).
     r.turnOpen = true;
     r.afterMarker = false;
     r.lastErrors = [];
     r.lastYou = this.put(item);
+    if (!queued) this.opened(u.ts);
   }
 
   // One task notification: the task it ends, and a subagent's last message as its report.
@@ -766,6 +800,7 @@ export class Transcript {
     if (a.effort !== undefined) r.effort = a.effort;
     if (r.afterMarker) r.turnOpen = true;
     r.afterMarker = false;
+    r.replied = true;
     // One block per record: the latest message's tool uses span all records of its id.
     const key = a.messageId || `record:${uuid}`;
     if (r.message.key !== key) r.message = { key, uses: [] };

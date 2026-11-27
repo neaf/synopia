@@ -225,6 +225,17 @@ check('a ! with stdout, run while idle, lands', await runCmd('echo before'), awa
 check('two ! in a row land, each once', (await runCmd('echo second')) && (await rowsOf('echo before')) === 1 && (await rowsOf('echo second')) === 1);
 await c.load(`${url}#${D.slice(0, 8)}`, `__synopia.current() === '${D}' && !!__synopia.mounted() && __synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'echo second')`);
 check('after a reload before the next prompt: each row once, no live run', (await rowsOf('echo before')) === 1 && (await rowsOf('echo second')) === 1 && !(await ev(`__synopia.cur().bang && !__synopia.cur().bang.landed`)));
+// a message sent while idle starts the next turn, so the one before it is over: its "Worked for" stays while the send
+// waits for its record (the status already says Thinking), and the band shows below it (R5.5). Injected, so the
+// wait doesn't depend on how fast the scripted SDK writes the record.
+await idle();
+await c.until(`!!document.querySelector('#log .log-inner')?.lastElementChild?.classList.contains('doneln')`, 3000); // the turn's line ends the log
+const doneKey = await ev(`[...document.querySelectorAll('#log .doneln')].pop()?.dataset.key ?? null`);
+const was = await ev(`JSON.stringify({ state: __synopia.cur().state, outbox: __synopia.cur().outbox || [] })`);
+await ev(`__synopia.inject({ t: 'session', id: '${D}', state: { ...__synopia.cur().state, status: 'busy', light: 'green', word: 'Thinking', mark: 'work' }, outbox: [{ id: 'sent-idle-1', text: 'Sent while idle.', queued: false }] })`);
+check('sent while idle: the turn before keeps its "Worked for", the band below it', !!doneKey && await ev(`(() => { const d = [...document.querySelectorAll('#log .doneln')].pop(), p = [...document.querySelectorAll('#log .prompt')].find(x => x.textContent.includes('Sent while idle.'));
+  return !!d && d.dataset.key === ${JSON.stringify(doneKey)} && !!p && !!(d.compareDocumentPosition(p) & Node.DOCUMENT_POSITION_FOLLOWING); })()`), await ev(`document.getElementById('log').textContent.slice(-200)`));
+await ev(`__synopia.inject({ t: 'session', id: '${D}', ...${was} })`);
 await sendText('After the commands.');
 check('the next prompt lands and its turn ends', await c.until(`__synopia.cur().items.some(i => i.k === 'you' && i.text === 'After the commands.') && __synopia.cur().state.status !== 'busy'`, 8000));
 await sleep(300);

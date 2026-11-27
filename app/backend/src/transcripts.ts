@@ -301,6 +301,13 @@ export class Transcripts {
     this.edit(sid, (t) => t.processEnded(new Date(at).toISOString(), failed));
   }
 
+  // The SDK's `result` of the main turn at `at` (ms): the turn's end (Transcript.sdkResult). The file is
+  // read first, so the turn's own records are in.
+  sdkResult(sid: string, at: number): void {
+    this.live.get(sid)?.tailer?.check();
+    this.edit(sid, (t) => t.sdkResult(new Date(at).toISOString()));
+  }
+
   // The SDK's task_notification for one of the session's background tasks (its tool use id; its task id
   // names a resumed subagent, whose tool use id is then the SendMessage's).
   taskEnded(sid: string, toolUseId: string, status: string, summary: string, taskId = ''): void {

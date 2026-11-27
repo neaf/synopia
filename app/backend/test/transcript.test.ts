@@ -773,6 +773,57 @@ test('worked for: an SDK-driven turn ends with stop_hook_summary only; a turn_du
   assert.equal(byId(t, 'w-u3').workedMs, undefined);
 });
 
+// Live run TE-1 (docs/Claude Code transcripts.md, "Turn ends"; CLI 2.1.330): an SDK-driven turn with no Stop hook
+// writes no turn-end record at all. These are the records of one such turn, in order, with made-up content.
+const sdkTurn = (n: string, at: (s: number) => string): JsonRecord[] => [
+  { type: 'queue-operation', operation: 'enqueue', timestamp: at(0), sessionId: SID, content: 'Go' },
+  { type: 'queue-operation', operation: 'dequeue', timestamp: at(0), sessionId: SID },
+  { ...typed(`${n}-u`, 'Go', at(0)), entrypoint: 'sdk-ts', isSidechain: false, promptId: `${n}-p`, promptSource: 'sdk' },
+  { type: 'attachment', uuid: `${n}-at1`, timestamp: at(0), isSidechain: false, entrypoint: 'sdk-ts', attachment: { type: 'prompt_snapshot' } },
+  { ...replied(`${n}-a`, at(30), [{ type: 'text', text: 'Done.' }]), entrypoint: 'sdk-ts', isSidechain: false },
+  { type: 'attachment', uuid: `${n}-at2`, timestamp: at(30), isSidechain: false, entrypoint: 'sdk-ts', attachment: { type: 'prompt_snapshot' } },
+  { type: 'last-prompt', sessionId: SID }, { type: 'cost-state', sessionId: SID },
+];
+const sec = (base: number) => (s: number) => new Date(NOW - base * 60_000 + s * 1000).toISOString();
+
+test('turn end: an SDK-driven turn writes none; the SDK\'s result ends it and gives its time', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll(sdkTurn('e1', sec(5)));
+  assert.equal(t.turnRunning(NOW, QUIET), true, 'by the file alone the turn is still open');
+  assert.equal(byId(t, 'e1-u').workedMs, undefined);
+  t.sdkResult(sec(5)(31));
+  assert.equal(t.turnRunning(NOW, QUIET), false);
+  assert.equal(byId(t, 'e1-u').workedMs, 31_000, 'prompt to result');
+  t.sdkResult(sec(5)(40));
+  assert.equal(byId(t, 'e1-u').workedMs, 31_000, 'a second result changes nothing');
+  // a local command Claude never answered: the turn ends with no time
+  t.pushAll([typed('e2-u', '/cost', sec(3)(0))]);
+  t.sdkResult(sec(3)(1));
+  assert.deepEqual([t.turnRunning(NOW, QUIET), byId(t, 'e2-u').workedMs], [false, undefined]);
+});
+
+test('turn end: a message the turn took in carries the time from the turn\'s start; one after the result begins the next', () => {
+  const t = new Transcript({ home: HOME });
+  const at = sec(5);
+  const queued = (uuid: string, s: number): JsonRecord => ({ type: 'attachment', uuid, timestamp: at(s), isSidechain: false, attachment: { type: 'queued_command', prompt: 'and this', commandMode: 'prompt' } });
+  t.pushAll([typed('q-u1', 'Go', at(0)), replied('q-a1', at(10), [bashUse('toolu_q1')]), queued('q-q1', 20), toolResult('q-r1', at(25), 'toolu_q1'), replied('q-a2', at(30), [{ type: 'text', text: 'Both done.' }])]);
+  t.sdkResult(at(32));
+  assert.deepEqual([byId(t, 'q-u1').workedMs, byId(t, 'q-q1').workedMs], [undefined, 32_000], 'the latest message of yours holds the whole turn\'s time');
+  t.pushAll([queued('q-q2', 40), replied('q-a3', at(45), [{ type: 'text', text: 'Next.' }])]);
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+  t.sdkResult(at(50));
+  assert.equal(byId(t, 'q-q2').workedMs, 10_000, 'taken in after the result: its own turn');
+});
+
+test('turn end: with a Stop hook the SDK-driven CLI writes stop_hook_summary before the result', () => {
+  const t = new Transcript({ home: HOME });
+  const at = sec(5);
+  t.pushAll([...sdkTurn('h1', at).slice(0, 6), { ...stopHooks('h1-s', at(31), 'sdk-ts'), hookCount: 1, hookInfos: [{ command: 'true', durationMs: 20 }], failedHookErrorIndexes: [] }]);
+  assert.deepEqual([t.turnRunning(NOW, QUIET), byId(t, 'h1-u').workedMs], [false, 31_000]);
+  t.sdkResult(at(32));
+  assert.equal(byId(t, 'h1-u').workedMs, 31_000, 'the record came first: the result changes nothing');
+});
+
 test('a permission-mode record and a queue-operation in their real shapes', () => {
   const t = new Transcript({ home: HOME });
   t.pushAll([
