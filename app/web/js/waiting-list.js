@@ -100,7 +100,7 @@ export function drawWaitingList() {
     if (r.s.id !== group) { group = r.s.id; html += `<div class="wl-h"><span class="t">${esc(r.s.title || "New session")}</span><span>${rowWord(r.s)}</span></div>`; }
     const id = r.i.id, kind = `${esc(r.i.kind)}${r.i.with ? `, with ${esc(r.i.with.name)}` : ""}`;
     html += `<div class="ol-it" role="option" data-i="${n}" data-sid="${esc(r.s.id)}" data-oi="${esc(id)}" aria-selected="${keyOf(r) === wl.sel}">`
-      + `<span class="n"><span class="oi-id${r.i.source === "synopia" ? " found" : ""}">${marked(id, r.at)}</span><span class="x-t">${marked(r.text, r.at, id.length + 1)}</span></span>`
+      + `<span class="n"><span class="oi-id${r.i.found ? " found" : ""}">${marked(id, r.at)}</span><span class="x-t">${marked(r.text, r.at, id.length + 1)}</span></span>`
       + `<span class="f">${kind}</span><span class="a">${ageOf(r.i)}</span></div>`;
   });
   box.innerHTML = html;

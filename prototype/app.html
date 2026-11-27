@@ -500,6 +500,8 @@
   /* open items in the panel (?demo=items; the same rules as app/web/css/app.css's open-items block) */
   .oi-id { display: inline-block; font: 700 10.5px/1 var(--mono); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px; padding: 2px 3px 1.5px; min-width: 2.6ch; text-align: center; box-sizing: border-box; }
   .oi-id.q { border-style: dotted; color: var(--ink-3); }
+  .oi-id.found { border-style: dashed; }
+  .oi-undo { font-size: 11px; }
   .oi-group { border-bottom: 1px solid var(--line-2); padding: 8px 0 3px; }
   .oi-group h3 { color: var(--ink); }
   .oi-closed h3 { color: var(--faint); }
@@ -868,14 +870,16 @@ function applyDemo() {
       items: [{ id: "Y1", kind: "decision", text: "Run `bin/schema-lint --fix` now, or look at the 14 warnings first?", at, options: ["Run it", "Look first"], recommended: "Look first" },
         { id: "Y2", kind: "your task", text: "Answer the 2 review threads from Mira on #812.", at },
         { id: "Y4", kind: "default", text: "Mark #812 to #815 ready in this order: #812, #814, #813, #815.", at, goesAhead: "when CI is green on all four, unless you object" },
+        { id: "Y5", kind: "decision", text: "Can I remove the worktrees ~/dev/shop-wt-cart and ~/dev/shop-wt-tax?", at, options: ["Remove both", "Keep them"], found: true },
         { id: "Y9", kind: "review", text: "Review: Pricing page copy", at: null, subagent: "Pricing page copy" }],
       checks: [{ id: "A1", kind: "follow-up", text: "Re-check #820, which GitHub shows as conflicting.", at, trigger: "after the M2 stack merges" }],
-      closed: [{ id: "Y3", kind: "decision", text: "", how: "answered", at: Date.now() - 60_000, note: "“Run it” · done: 14 entries added", by: "agent" }] };
+      closed: [{ id: "Y3", kind: "decision", text: "", how: "answered", at: Date.now() - 60_000, note: "“Run it” · done: 14 entries added", by: "agent" },
+        { id: "Y6", kind: "decision", text: "Should the tax table be cached per request?", how: "dropped", at: Date.now() - 30_000, note: "not an item: you said so", by: "synopia", found: true, undo: true }] };
     /* the Waiting on you list (R9.10, w): two more sessions with items of their own */
     const more = data.filter(x => x !== s).slice(0, 2), empty = { checks: [], closed: [], unread: 0, note: null };
     if (more[0]) more[0].openItems = { ...empty, items: [{ id: "Y2", kind: "decision", text: "Round per line or per invoice?", at: Date.now() - 62 * 60_000, options: ["Per line", "Per invoice"], recommended: "Per invoice" },
       { id: "Y3", kind: "your task", text: "Ask finance for the 2027 reduced rate.", at: Date.now() - 120 * 60_000 }] };
-    if (more[1]) more[1].openItems = { ...empty, items: [{ id: "Y1", kind: "your task", text: "Review the draft of the retry section.", at: Date.now() - 3 * 3600_000, source: "synopia" }] };
+    if (more[1]) more[1].openItems = { ...empty, items: [{ id: "Y1", kind: "your task", text: "Review the draft of the retry section.", at: Date.now() - 3 * 3600_000, found: true }] };
   } else if (DEMO === "ask") {
     const i = s.items.map(x => x.k).lastIndexOf("ask");
     if (i < 0) return;
@@ -1382,7 +1386,7 @@ const bgOf = s => s.background || [];
 const OI = s => s.openItems || { items: [], checks: [], closed: [], unread: 0, note: null };
 const hasItems = s => { const o = OI(s); return !!(o.items.length || o.checks.length || o.unread || o.note); };
 const oiText = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
-const oiId = id => `<span class="oi-id">${esc(id)}</span>`;
+const oiId = (id, found) => `<span class="oi-id${found ? " found" : ""}">${esc(id)}</span>`;
 const oiAge = i => typeof i.at === "number" ? `${Math.max(0, Math.round((Date.now() - i.at) / 60000))} min` : "";
 function oiChips(i) {
   if (i.state === "answered") return "";
@@ -1390,7 +1394,7 @@ function oiChips(i) {
   const out = i.kind === "decision" ? (i.options || []).map(o => b(o, o === i.recommended)) : i.kind === "your task" ? [b("Done")] : i.kind === "default" ? [b("Object")] : [];
   return out.length ? `<span class="oi-acts">${out.join("")}</span>` : "";
 }
-const oiItem = (i, f) => `<div class="oi${i.state === "answered" ? " ans" : ""}${f === i.id ? " focus" : ""}">${oiId(i.id)}<span class="oi-k">${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}</span><span class="oi-age">${oiAge(i)}</span><button class="oi-t">${oiText(i.text)}</button>${i.goesAhead ? `<span class="oi-w">Goes ahead ${esc(i.goesAhead)}</span>` : ""}${oiChips(i)}</div>`;
+const oiItem = (i, f) => `<div class="oi${i.state === "answered" ? " ans" : ""}${f === i.id ? " focus" : ""}">${oiId(i.id, i.found)}<span class="oi-k">${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}${i.found ? ", found by Synopia" : ""}</span><span class="oi-age">${oiAge(i)}</span><button class="oi-t">${oiText(i.text)}</button>${i.goesAhead ? `<span class="oi-w">Goes ahead ${esc(i.goesAhead)}</span>` : ""}${oiChips(i)}</div>`;
 function oiReview(s) {
   const rv = OI(s).items.filter(i => i.kind === "review"); if (!rv.length) return "";
   return `<div class="review"><h3>To review <span class="cnt">${rv.length}</span></h3>${rv.map(i => `<div class="rv"><button class="rv-open">${ind("review")}<span class="n">${oiId(i.id)}${esc(i.subagent || i.text)}</span><span class="m">${kind("sub")} handed over</span></button><button class="btn quiet rv-done">Mark reviewed</button></div>`).join("")}</div>`;
@@ -1400,7 +1404,7 @@ function oiGroups(s) {
   const bad = o.unread ? `<div class="oi bad"><span class="oi-id q">?</span><span class="oi-k">${o.unread} line${o.unread > 1 ? "s" : ""} Synopia can't read, in open-items.md</span></div>` : "";
   return (wait.length || bad ? `<section class="oi-group oi-wait"><h3>Waiting on you <span class="cnt">${wait.length}</span></h3>${wait.map(i => oiItem(i, o.focus)).join("")}${bad}</section>` : "")
     + (o.checks.length ? `<section class="oi-group oi-check"><h3>Claude will check <span class="cnt">${o.checks.length}</span></h3>${o.checks.map(a => `<div class="oi-fu">${oiId(a.id)}<button class="oi-t">${oiText(a.text)}</button><span class="oi-w"><span>${esc(a.trigger || "")}</span></span></div>`).join("")}</section>` : "")
-    + (o.closed.length ? `<section class="oi-group oi-closed"><h3>Closed this turn <span class="cnt">${o.closed.length}</span></h3>${o.closed.map(c => `<div class="pr oi-cl"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${oiId(c.id)}${esc((c.how[0].toUpperCase() + c.how.slice(1)) + (c.note ? `: ${c.note}` : ""))}</span><span class="d">${hhmm(c.at)}</span></div>`).join("")}</section>` : "");
+    + (o.closed.length ? `<section class="oi-group oi-closed"><h3>Closed this turn <span class="cnt">${o.closed.length}</span></h3>${o.closed.map(c => `<div class="pr oi-cl"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${oiId(c.id, c.found)}${esc(c.by === "synopia" ? c.note[0].toUpperCase() + c.note.slice(1) : (c.how[0].toUpperCase() + c.how.slice(1)) + (c.note ? `: ${c.note}` : ""))}</span><span class="d">${c.undo ? `<button class="link oi-undo">Undo</button>` : hhmm(c.at)}</span></div>`).join("")}</section>` : "");
 }
 const hasBackground = s => agentsOf(s).length || bgOf(s).length || hasItems(s);
 function bgState(b) {

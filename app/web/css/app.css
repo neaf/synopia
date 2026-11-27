@@ -928,6 +928,8 @@ html.in-app:not(.fullscreen) .side-head { padding-top: 3.5px; }
 /* an item's id in a solid 1px box (a dashed one, found by Synopia, comes with the keeper) */
 .oi-id { display: inline-block; font: 700 10.5px/1 var(--mono); color: var(--ink); border: 1px solid var(--ink-3); border-radius: 3px; padding: 2px 3px 1.5px; min-width: 2.6ch; text-align: center; box-sizing: border-box; }
 .oi-id.q { border-style: dotted; color: var(--ink-3); }
+.oi-id.found { border-style: dashed; } /* found by Synopia's keeper, against Claude's solid box (R7.1) */
+.oi-undo { font-size: 11px; }
 .oi-group { border-bottom: 1px solid var(--line-2); padding: 8px 0 3px; }
 .oi-group h3 { color: var(--ink); }
 .oi-closed h3 { color: var(--faint); }

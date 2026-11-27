@@ -50,7 +50,8 @@ export const PAGE = {
   openSession: { id: "str?", sid: "str" },
   cancelTakeover: { id: "str?", sid: "str" },
   setModel: { id: "str?", sid: "str", model: "str", effort: "str?" },
-  /* an open item of the session's list (open-items.ts, FR-ITEM-03): act "reviewed" is Mark reviewed on a review item;
+  /* an open item of the session's list (open-items.ts, FR-ITEM-03, -10): act "reviewed" is Mark reviewed on a review
+     item, "notItem" is `d` on an open item that isn't a review item, "undo" reopens a line Synopia closed this turn;
      refused for an item no open session's list holds */
   item: { id: "str?", sid: "str", item: "str", act: "str" },
   /* the sidebar's layout, which the backend owns (layout.ts): a session moves before or after another, or last

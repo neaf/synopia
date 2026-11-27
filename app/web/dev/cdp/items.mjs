@@ -7,7 +7,9 @@
 // Synopia can't read; the handed-over review item with its id and Mark reviewed, a click only focusing it; Mark
 // reviewed sends one `item` and the card leaves; J/K into the items, Enter and a click on an item's text going to the reply it
 // came from, the sidebar line's click focusing the first item, an item with no reply only focused (R9.1, FR-ITEM-07);
-// a rewritten ledger shows within 3 s; shots light and dark.
+// a rewritten ledger shows within 3 s; an item Synopia found has a dashed box and "found by Synopia", `d` on it
+// sends `notItem` and it moves to Closed this turn with Undo, which sends `undo` and brings it back (FR-ITEM-10);
+// shots light and dark.
 // usage: node items.mjs make <claude-dir>   writes the tree, the script and the ledger (run.sh does this first)
 //        node items.mjs <url> <state-dir>   writes items-light.png and items-dark.png
 import fs from 'node:fs';
@@ -205,5 +207,23 @@ const top = await ev(`document.getElementById('log').scrollTop`);
 await ev(`document.querySelector('.rail .oi[data-oi="Y11"] .oi-t').click()`); await sleep(400);
 p = await at();
 check('an item with no reply in this transcript: a click only focuses it', (await reply('Y11')) === null && p.focus === 'Y11' && p.mark === null && p.view === null && (await ev(`document.getElementById('log').scrollTop`)) === top, JSON.stringify(p));
+
+// ---------- found by Synopia, d and Undo (R7.1, R9.1, FR-ITEM-10) ----------
+fs.writeFileSync(LEDGER, ledger().replace('- Y8 ask Mira about the refund flow??\n', '').replace('## Claude will check', `- [ ] Y12 · decision · Should the tax table be cached per request?\n  - from: Synopia, "Ship checkout M2", ${stamp(now0 - 60_000)}, "Should the tax table be cached"\n\n## Claude will check`));
+await c.until(`!!document.querySelector('.rail .oi[data-oi="Y12"]')`, 3000);
+const y12 = await J(`(e => e && { box: getComputedStyle(e.querySelector('.oi-id')).borderTopStyle, k: e.querySelector('.oi-k').textContent })(document.querySelector('.rail .oi[data-oi="Y12"]'))`);
+check('an item Synopia found: a dashed id box and "found by Synopia"', !!y12 && y12.box === 'dashed' && y12.k === 'decision, found by Synopia', JSON.stringify(y12));
+sent = await spySent(c);
+await ev(`document.querySelector('.rail .oi[data-oi="Y12"] .oi-k').click()`); await sleep(150);
+await K.d();
+const gone = await c.until(`!document.querySelector('.rail .oi-wait .oi[data-oi="Y12"]') && !!document.querySelector('.rail .oi-closed [data-oi-undo="Y12"]')`, 5000);
+const dn = await sent('item');
+check('d on the focused item sends notItem; it moves to Closed this turn with Undo', gone && dn.length === 1 && dn[0].item === 'Y12' && dn[0].act === 'notItem', JSON.stringify(dn));
+const cl = await J(`(e => ({ text: e.querySelector('.n').textContent, box: getComputedStyle(e.querySelector('.oi-id')).borderTopStyle }))(document.querySelector('.rail .oi-closed [data-oi-undo="Y12"]').closest('.oi-cl'))`);
+check('its closed line: "Not an item: you said so", still dashed', cl.text === 'Y12Not an item: you said so' && cl.box === 'dashed', JSON.stringify(cl));
+await ev(`document.querySelector('.rail [data-oi-undo="Y12"]').click()`);
+const back = await c.until(`!!document.querySelector('.rail .oi-wait .oi[data-oi="Y12"]') && !document.querySelector('.rail [data-oi-undo="Y12"]')`, 5000);
+const un = (await sent('item')).filter((m) => m.act === 'undo');
+check('Undo sends undo and the item comes back', back && un.length === 1 && un[0].item === 'Y12', JSON.stringify(un));
 c.print();
 c.close();

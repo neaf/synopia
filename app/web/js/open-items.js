@@ -28,11 +28,14 @@ export function takeReveal() { const r = reveal; reveal = false; return r; }
 export const itemOf = (s, id) => { const o = itemsOf(s); return o.items.find(i => i.id === id) || o.checks.find(i => i.id === id) || null; };
 /* the first Waiting on you item, for a click on the sidebar's line (R4.2): none a running subagent holds */
 export const firstWaiting = s => itemsOf(s).items.find(i => i.kind !== "review" && !i.with) || null;
+/* `d` (R9.1, FR-ITEM-10): the focused open item, when it can be "Not an item" (not a review item) */
+export const dismissable = s => { const id = focusedItem(s?.id); const i = id && itemOf(s, id); return i && i.kind !== "review" ? i.id : null; };
 
 /* ---------- pieces ---------- */
 /* an item's text: plain, with its `code` spans as code */
 const text = t => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>");
-const idBox = id => `<span class="oi-id">${esc(id)}</span>`;
+/* the id in its 1px box: solid when Claude recorded the item, dashed when Synopia's keeper found it (R7.1) */
+const idBox = (id, found) => `<span class="oi-id${found ? " found" : ""}">${esc(id)}</span>`;
 /* how old: from its `from` stamp, to the minute, or to the day for a stamp with no time (docs/Open items.md) */
 export function ageOf(i) {
   if (typeof i.at !== "number") return "";
@@ -55,9 +58,9 @@ const goesAhead = w => { const t = `Goes ahead ${w.trim()}`; return /unless you 
    or what you answered; its buttons */
 function itemHTML(i, focused) {
   const ans = i.state === "answered";
-  const k = `${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}${i.state === "later" ? ", later" : ""}`;
+  const k = `${esc(i.kind)}${i.raisedBy ? `, from ${esc(i.raisedBy)}` : ""}${i.found ? ", found by Synopia" : ""}${i.state === "later" ? ", later" : ""}`;
   const w = ans ? `Answered${i.answer ? `: “${esc(i.answer)}”` : ""}` : i.kind === "default" && i.goesAhead ? esc(goesAhead(i.goesAhead)) : "";
-  return `<div class="oi${ans ? " ans" : ""}${focused ? " focus" : ""}" data-oi="${esc(i.id)}">${idBox(i.id)}<span class="oi-k">${k}</span><span class="oi-age">${ageOf(i)}</span>`
+  return `<div class="oi${ans ? " ans" : ""}${focused ? " focus" : ""}" data-oi="${esc(i.id)}">${idBox(i.id, i.found)}<span class="oi-k">${k}</span><span class="oi-age">${ageOf(i)}</span>`
     + `<button class="oi-t" data-oi-open="${esc(i.id)}">${text(i.text)}</button>${w ? `<span class="oi-w">${w}</span>` : ""}${chips(i)}</div>`;
 }
 /* the watcher's run when the panel shows it running: a shell or monitor whose description or command names the `watch` */
@@ -66,14 +69,15 @@ const watcherOf = (watch, runs) => { const w = (watch || "").trim(); return w ? 
 function checkHTML(a, runs, focused) {
   const run = a.state !== "due" && watcherOf(a.watch, runs);
   const w = a.state === "due" ? `<b>Due:</b> ${esc(a.trigger || "now")}` : `${run ? ind(run.kind === "monitor" ? "k_mon" : "k_shell") : ""}<span>${esc(a.trigger || "")}</span>`;
-  return `<div class="oi-fu${a.state === "due" ? " due" : ""}${focused ? " focus" : ""}" data-oi="${esc(a.id)}">${idBox(a.id)}<button class="oi-t" data-oi-open="${esc(a.id)}">${text(a.text)}</button><span class="oi-w">${w}</span></div>`;
+  return `<div class="oi-fu${a.state === "due" ? " due" : ""}${focused ? " focus" : ""}" data-oi="${esc(a.id)}">${idBox(a.id, a.found)}<button class="oi-t" data-oi-open="${esc(a.id)}">${text(a.text)}</button><span class="oi-w">${w}</span></div>`;
 }
 /* what closed it, as the closed line says: "Answered: “Run it” · done: …", "Marked reviewed", "Removed from the ledger" */
 const HOW = { answered: "Answered", done: "Done", "went ahead": "Went ahead", dropped: "Dropped", superseded: "Superseded" };
 const cap = t => t ? t[0].toUpperCase() + t.slice(1) : "";
 const closedWhy = c => c.how === "superseded" || c.by === "synopia" ? cap(c.note) || HOW[c.how] || cap(c.how) : `${HOW[c.how] || cap(c.how)}${c.note ? `: ${c.note}` : c.text ? `: ${c.text}` : ""}`;
-/* a closed line: dim like a Past line; the check for done, the grey square for dropped and superseded */
-const closedHTML = c => `<div class="pr oi-cl" title="${esc(c.text || "")}"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${idBox(c.id)}${esc(closedWhy(c))}</span><span class="d">${hhmm(c.at)}</span></div>`;
+/* a closed line: dim like a Past line; the check for done, the grey square for dropped and superseded. One Synopia
+   closed (the keeper, or d) has Undo for this turn in place of its time (FR-ITEM-10) */
+const closedHTML = c => `<div class="pr oi-cl" title="${esc(c.text || "")}"><span class="pm">${ind(c.how === "dropped" || c.how === "superseded" ? "stopped" : "done")}</span><span class="n">${idBox(c.id, c.found)}${esc(closedWhy(c))}</span><span class="d">${c.undo ? `<button class="link oi-undo" data-oi-undo="${esc(c.id)}">Undo</button>` : hhmm(c.at)}</span></div>`;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 /* ---------- the panel's parts ---------- */
@@ -93,7 +97,7 @@ export function reviewHTML(s, hide = new Set()) {
 /* the items a running subagent owns, under its card (R7.1, FR-ITEM-04): id box, text, "with <name>" and its moving mark */
 export function ownedHTML(s, agent) {
   const o = itemsOf(s), mine = [...o.items, ...o.checks].filter(i => i.kind !== "review" && i.with?.agent === agent.id);
-  return mine.map(i => `<div class="oi-on" data-oi="${esc(i.id)}">${idBox(i.id)}<button class="oi-t" data-oi-open="${esc(i.id)}">${text(i.text)}</button><span class="oi-w">${ind(agent.fork ? "k_fork" : "k_sub")}<span>with ${esc(i.with.name)}</span></span></div>`).join("");
+  return mine.map(i => `<div class="oi-on" data-oi="${esc(i.id)}">${idBox(i.id, i.found)}<button class="oi-t" data-oi-open="${esc(i.id)}">${text(i.text)}</button><span class="oi-w">${ind(agent.fork ? "k_fork" : "k_sub")}<span>with ${esc(i.with.name)}</span></span></div>`).join("");
 }
 /* Waiting on you, Claude will check, Closed this turn (R7.1). `shown`: the running subagents with a card, whose items
    hang under it instead; `runs`: the running shells and monitors, for a check's watcher */

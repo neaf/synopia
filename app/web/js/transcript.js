@@ -16,7 +16,7 @@ import { thumbsHTML } from "./images.js";
 import { previewClick } from "./preview.js";
 import { renderCard, resetCard, withPending, extAsk } from "./card.js";
 import { mountComposer, modelName, paintBash, unattach, openModelPicker, takeSent, writeLine } from "./composer.js";
-import { focusItem, itemOf } from "./open-items.js";
+import { focusItem, itemOf, dismissable } from "./open-items.js";
 import { mode, setMode } from "./mode.js";
 import { syncFixed } from "./folder-list.js";
 import { fitTables, watchTables } from "./table-fit.js";
@@ -618,6 +618,8 @@ conv.addEventListener("click", e => {
     return;
   }
   /* an open item's button writes its line into the box and sends nothing (R7.1); a click elsewhere on the item focuses it */
+  const undo = e.target.closest(".rail [data-oi-undo]"); // Undo on a line Synopia closed (FR-ITEM-10)
+  if (undo) { e.preventDefault(); e.stopPropagation(); const s = cur(); if (s) act({ t: "item", sid: s.id, item: undo.dataset.oiUndo, act: "undo" }); return; }
   const chip = e.target.closest(".rail [data-write]");
   if (chip) { e.preventDefault(); e.stopPropagation(); writeItemLine(chip.dataset.write); return; }
   const open = e.target.closest(".rail [data-oi-open]"); // its text: to the reply it came from (FR-ITEM-07)
@@ -642,6 +644,15 @@ conv.addEventListener("click", e => {
   else if (t.dataset.unattach) unattach(+t.dataset.unattach); // with its [Image #N] tag (composer.js)
   else if (t.id === "model-label") { if (view) { selectView(null); renderConv(); } openModelPicker(); } // the session's model: picked in Main conversation, where the box is
 });
+/* `d` on the focused open item (R9.1, FR-ITEM-10): "Not an item"; the backend's next openItems moves it to Closed
+   this turn with Undo. False when no item that can be dismissed is focused. */
+export function dismissItem() {
+  const s = cur(), id = !view && dismissable(s);
+  if (!id) return false;
+  act({ t: "item", sid: s.id, item: id, act: "notItem" });
+  focusItem(null);
+  return true;
+}
 /* Mark reviewed on a To review card: closes its review item, by the item's own id (FR-ITEM-03) */
 function markReviewed(id) {
   const s = cur(); if (s && id) act({ t: "item", sid: s.id, item: id, act: "reviewed" });

@@ -286,8 +286,8 @@ The conversation pane is one panel from the title down (2026-11-25, prototype/co
   - Open items (2026-11-26, R3.16):
     - "Waiting on you": one block per open Y item, review items aside. Its id in a solid 1px box, the kind word, the text in up to two lines, and its age. A decision shows its options as small buttons, the recommended one marked; your task shows Done; a default shows when it goes ahead and Object. An answered item stays, shaded, until Claude acts; a `later` item says "later". An item a subagent raised says so in its kind line: "decision, from <name>".
     - "Claude will check": one line per A item with its trigger, and the watcher's moving mark when it watches a run the panel shows.
-    - "Closed this turn": one dim line per item closed since your last message, like a Past line, with what closed it. A line Synopia closed itself (the keeper, or `d`) has Undo, which reopens the item as it was (planned).
-    - An item Synopia's keeper found has a dashed id box and "found by Synopia" in its kind line, against Claude's solid one (planned).
+    - "Closed this turn": one dim line per item closed since your last message, like a Past line, with what closed it. A line Synopia closed itself (the keeper, or `d`) has Undo, which reopens the item as it was.
+    - An item Synopia's keeper found has a dashed id box and "found by Synopia" in its kind line, against Claude's solid one.
     - The buttons write prose into the message box and never send: an option writes `Y1 Run it`, Done writes `Y2 done`, Object writes `Y4 wait: `, each on a new line of the draft, in insert mode. You add more or send with Enter: the box stays the one way to answer.
     - An item a running subagent owns (its brief names the id) shows under that subagent's card, with its id box, "with <name>" and the subagent's moving mark, and leaves its group while the subagent runs. When the subagent ends, the item closes if the ledger says so, else it goes back to its group.
     - A click on an item's text (or Enter on it) scrolls Main conversation to the reply it came from and marks it as a To review card does; for an item a subagent raised, to that subagent's report. With no such reply it only focuses the item.
@@ -359,7 +359,7 @@ The conversation pane is one panel from the title down (2026-11-25, prototype/co
 
 - R9.1 Vim-like modes:
   - Normal mode is the default:
-    - J/K: next or previous conversation inside the session: Main conversation, then the background panel's rows top to bottom (subagents, forks, shells and monitors, R7.2), then the Waiting on you items (2026-11-26, R7.1); after the last one, back to Main conversation. Enter on a focused item does what a click on its text does. The focused item isn't kept over a reload. `d` on a focused open item says "Not an item" (R3.16, planned): it moves to Closed this turn with Undo.
+    - J/K: next or previous conversation inside the session: Main conversation, then the background panel's rows top to bottom (subagents, forks, shells and monitors, R7.2), then the Waiting on you items (2026-11-26, R7.1); after the last one, back to Main conversation. Enter on a focused item does what a click on its text does. The focused item isn't kept over a reload. `d` on a focused open item says "Not an item" (R3.16): it moves to Closed this turn with Undo.
     - j/k: scroll the transcript, or move the card cursor while a card waits.
     - g/G: top or bottom of the transcript; g at the top loads earlier items (R5.12a).
     - i/a: insert.

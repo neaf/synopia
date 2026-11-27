@@ -7,7 +7,7 @@ import { current, cur, view, select, selectView, agentById, bgById } from "./sta
 import { mode, setMode, paintMode } from "./mode.js";
 import { KEYS, renderSide } from "./sidebar.js";
 import { drag, dragKey } from "./dnd.js";
-import { renderConv, loadEarlier, toEnd, openItem } from "./transcript.js";
+import { renderConv, loadEarlier, toEnd, openItem, dismissItem } from "./transcript.js";
 import { renderRail, waitingIds } from "./rail.js";
 import { focusedItem, focusItem } from "./open-items.js";
 import { promptKey, askInterrupt, askBackground, askClose, askNow, writeLine } from "./composer.js";
@@ -74,6 +74,7 @@ function sessionKey(e) {
       if (gone) { e.preventDefault(); showFolderList({ sid: cur().id }); }
       else if (!view && focusedItem(current) && !(e.target.closest && e.target.closest("button"))) { e.preventDefault(); openItem(focusedItem(current)); }
       break;
+    case "d": e.preventDefault(); if (dismissItem()) renderRail(); break; // the focused open item: "Not an item" (R9.1)
     case "J": e.preventDefault(); stepView(1); break; // the next or previous conversation inside the session
     case "K": e.preventDefault(); stepView(-1); break;
     case "j": e.preventDefault(); log?.scrollBy({ top: 60 }); break;
