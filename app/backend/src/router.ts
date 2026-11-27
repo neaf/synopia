@@ -24,6 +24,7 @@ import { patchUi } from './ui-state.ts';
 import { displayPath } from './paths.ts';
 import type { Mcp, Action as McpAction, McpTarget } from './mcp.ts';
 import type { Creds } from './creds.ts';
+import type { Terms } from './terms.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { find } from './find.ts';
@@ -45,6 +46,7 @@ export type RouterOptions = {
   menus: Menus;
   mcp?: Mcp; // /mcp (R5.15)
   creds?: Creds; // the credential refresh of a session's folder (2026-11-26)
+  terms?: Terms; // the terminals of the runs Synopia holds a pty for (2026-11-27)
   store: Store;
   openItems: Pick<OpenItems, 'holds' | 'holdsAny' | 'markReviewed' | 'notItem' | 'undo'>; // the open-items lists (open-items.ts)
   bat: Promise<Bat>;
@@ -218,8 +220,10 @@ export class Router {
         return s.send(str(m.text) ?? '', images, str(m.uuid) ?? undefined, client);
       }),
       bang: (client, m) => this.act(m.sid, (s) => s.runBang(m.command as string, str(m.uuid) ?? undefined, client)), // bash mode (R5.13)
-      bangInput: (_client, m) => this.act(m.sid, (s) => s.bangInput(m.text as string)), // a line typed into the running `!` command
-      // Esc, Esc in a run's shell view (R9.4, 2026-11-26): your `!` command, or Claude's background shell or monitor
+      // a run's terminal (terms.ts, 2026-11-27): the keys typed in its shell view, and the size it has there
+      termInput: (_client, m) => { this.o.terms?.input(m.bg as string, m.data as string); },
+      termSize: (_client, m) => { this.o.terms?.resize(m.bg as string, Math.floor(m.cols as number), Math.floor(m.rows as number)); },
+      // your `!` command; Claude's background shell or monitor (Esc, Esc in its shell view, R9.4)
       bangStop: (_client, m) => this.act(m.sid, (s) => s.stopBang(m.bg as string)),
       stopTask: (_client, m) => this.act(m.sid, (s) => s.stopTask(m.bg as string)),
       answer: (_client, m) => this.act(m.sid, (s) => s.answer(m.requestId as string, (m.answer ?? {}) as CardAnswer)),
@@ -264,7 +268,6 @@ export class Router {
       renameGroup: (_client, m) => sessions.layout.renameGroup(m.group as string, m.name as string),
       // the credential refresh of the session's folder (creds.ts)
       credsSave: (_client, m) => this.act(m.sid, (s) => this.o.creds?.save(s.id, s.cwd, m.command as string) ?? NO_CREDS),
-      credsInput: (_client, m) => this.act(m.sid, (s) => this.o.creds?.input(s.id, m.text as string) ?? NO_CREDS),
       credsCancel: (_client, m) => this.act(m.sid, (s) => this.o.creds?.cancel(s.id) ?? NO_CREDS),
     };
   }

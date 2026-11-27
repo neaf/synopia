@@ -25,6 +25,7 @@ import type { OutputPart } from './task-output.ts';
 import { FIND_READ } from './find.ts';
 import type { OpenItems } from './open-items.ts';
 import type { FindSource } from './find.ts';
+import type { Terms, TermPart } from './terms.ts';
 
 export { WINDOW } from './transcripts.ts';
 export const RECHECK_MS = 60_000;
@@ -70,6 +71,8 @@ export type PublisherOptions = {
   onWorkEnded?: (sid: string) => void;
   // The sidebar's layout (layout.ts), for the `session` frame of an id that changed.
   layout?: () => unknown;
+  // The terminals of the runs Synopia holds a pty for (terms.ts): a page that shows one gets `term` frames.
+  terms?: Terms;
 };
 
 // What `hello` carries besides the sessions and their cards (main.ts gathers it).
@@ -81,6 +84,7 @@ type Sub = {
   sid: string; agent: string | null; from: number;
   bg?: string | null; out?: { file: string | null; from: number; to: number } | null;
   own?: string; // a `!` run of the session (session.ts bangOutput): the signature of the output last sent
+  term?: boolean; // a run with a terminal (terms.ts): its raw stream goes as `term` frames
   chain?: Promise<void>; more?: boolean; // its output reads, one after the other; a look for more queued
 };
 type Pub = {
@@ -118,6 +122,7 @@ export class Publisher {
       closed: (sid) => this.closed(sid),
       rekeyed: (from, to) => this.rekeyed(from, to),
     });
+    opts.terms?.onPart((p) => this.termPart(p));
     const every = opts.recheckMs ?? RECHECK_MS;
     if (every > 0) {
       this.recheck = setInterval(() => { for (const id of this.transcripts.ids()) this.changed(id); }, every);
@@ -335,9 +340,16 @@ export class Publisher {
   // Returns when the reset went (tests).
   // A `!` run of yours (R5.13, 2026-11-26) has its output in the session, not a file: each frame is a reset
   // with all of it, stdout as `text` and stderr as `err`, sent again when it changed.
+  // A run Synopia holds a pty for (terms.ts, 2026-11-27) is a terminal: one `term` reset with the raw stream
+  // kept, then each part as it comes (termPart).
   viewOutput(client: Client, sid: string, bg: string, from?: string | null): Promise<void> {
     const sub: Sub = { sid, agent: null, from: 0, bg, out: null };
     this.subs.set(client, sub);
+    const term = this.opts.terms?.get(bg);
+    if (term) {
+      sub.term = true;
+      return this.outRun(client, sub, async () => ({ t: 'term', sid, bg, ...termFields(term.snapshot()), reset: true }));
+    }
     if (this.pubs.get(sid)?.shown?.bangOutput(bg)) {
       sub.own = '';
       return this.outRun(client, sub, async () => this.ownFrame(sub));
@@ -361,6 +373,13 @@ export class Publisher {
     });
   }
 
+  // what a terminal's pty wrote, to each page that shows it
+  private termPart(p: TermPart): void {
+    for (const [client, sub] of this.liveSubs()) {
+      if (sub.term && sub.bg === p.id) void this.outRun(client, sub, async () => ({ t: 'term', sid: sub.sid, bg: p.id, ...termFields(p) }));
+    }
+  }
+
   private ownFrame(sub: Sub): object | null {
     const o = this.pubs.get(sub.sid)?.shown?.bangOutput(sub.bg as string);
     if (!o) return null;
@@ -373,6 +392,7 @@ export class Publisher {
   // A look for more output of each shown shell or monitor of the session (all sessions: the timer's).
   private outMore(sid: string | null): void {
     for (const [client, sub] of this.liveSubs()) {
+      if (sub.term) continue;
       if (sub.bg && sub.own !== undefined) {
         if (sid === null || sub.sid === sid) void this.outRun(client, sub, async () => this.ownFrame(sub));
         continue;
@@ -780,3 +800,5 @@ function interruptedLast(items: Item[]): boolean {
   return false;
 }
 
+
+const termFields = (p: TermPart) => ({ data: p.data, from: p.from, to: p.to, live: p.live });

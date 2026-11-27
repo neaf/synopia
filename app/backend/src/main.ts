@@ -18,6 +18,7 @@ import { Sessions } from './sessions.ts';
 import { CliTerminals, realEnd } from './cli-terminals.ts';
 import { realSdk, mcpProbe, awsAuthRefreshOf } from './sdk.ts';
 import { Creds, gitRoot, guessCommand } from './creds.ts';
+import { Terms } from './terms.ts';
 import { shellPty } from './pty.ts';
 import { Mcp, cliRunner } from './mcp.ts';
 import { loadBat } from './preview.ts';
@@ -163,8 +164,10 @@ const keeper = new Keeper({
     apply: (sid, ex, ops, began) => openItems.applyOps(sid, ex, ops, began),
   },
 });
+// The terminals of the runs Synopia holds a pty for (terms.ts): your `!` commands and the credential refresh.
+const terms = new Terms();
 const publisher = new Publisher({
-  transcripts, clients: pages, home,
+  transcripts, clients: pages, home, terms,
   written: (sid) => store.state.written[sid],
   defaultModel: () => store.state.settings.model,
   openItems,
@@ -196,7 +199,7 @@ const terminals = new CliTerminals({
 });
 const sessions = new Sessions({
   store, transcripts, publisher, log, sdk, home, now: scripted?.clock.now, timer: scripted?.clock.timer, pretendFolder: scripted?.pretendFolder,
-  idleMs: ms('idle-ms'), terminals,
+  idleMs: ms('idle-ms'), terminals, terms,
   onTurnEnded: (sid) => writer.turnEnded(sid),
   onOpened: (sid) => writer.opened(sid),
   onWaiting: (sid) => writer.waitingChanged(sid),
@@ -218,7 +221,7 @@ const creds = new Creds({
   prefill: (cwd, root) => guessCommand(cwd, root, scripted ? async () => '' : awsAuthRefreshOf),
   rootOf: gitRoot, send: (msg) => publisher.broadcast(msg),
   refreshing: (sids, on) => sessions.refreshing(sids, on), refreshed: (sids) => sessions.refreshed(sids),
-  log, shell: scripted ? '/bin/sh' : undefined, againMs: scripted ? 1500 : undefined,
+  log, shell: scripted ? '/bin/sh' : undefined, againMs: scripted ? 1500 : undefined, terms,
 });
 
 // Something runs that the idle exit must not end: a turn, a subagent, a background shell or
@@ -233,7 +236,7 @@ const mcp = new Mcp({ runner: scripted?.mcpRunner ?? cliRunner, probe: (cwd) => 
 
 // Page frames (router.ts): checked, one module acts, actions acked.
 const fileRefs = new FileRefs({ home });
-const router = new Router({ sessions, transcripts, publisher, menus, mcp, creds, store, openItems, bat, home, log, dryRun, fileRefs });
+const router = new Router({ sessions, transcripts, publisher, menus, mcp, creds, terms, store, openItems, bat, home, log, dryRun, fileRefs });
 
 try {
   server = await startServer({

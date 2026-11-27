@@ -5,7 +5,8 @@
 // runs it once for that expiry, shared by every session of the folder: `zsh -lc <command>` in the folder,
 // in one pseudo-terminal for the whole run (pty.ts), so a sign-in that prints a code, opens the browser or
 // asks for Enter works. It is a run like any other (2026-11-26): its preview in the dock line, its card (runs.ts
-// cardAt) with the lock, its output, input and stop in its shell view. While it waits for input (pty.ts
+// cardAt) with the lock, and its shell view, a terminal (terms.ts, 2026-11-27, id `creds:<folder>`) that
+// takes your keys, Ctrl-C too; Cancel on the dock line stops it. While it waits for input (pty.ts
 // InputWatch) its sessions read "Needs you, sign-in expired" again, not refreshing. Exit 0: the sessions'
 // sign-in clears and the CLI's next retry takes the new credentials (it reloads them after a credential
 // error); a session whose turn already failed on them resumes it once (session.ts credentialsRefreshed). A failure, or no command yet: the session needs you, and the dock
@@ -19,6 +20,7 @@ import { dirname, join } from 'node:path';
 import type { PtyRun, PtyStart } from './pty.ts';
 import { InputWatch, plainText } from './pty.ts';
 import { cardAt } from './runs.ts';
+import type { Terms } from './terms.ts';
 import type { Log } from './log.ts';
 import { nullLog } from './log.ts';
 import { sentence } from './mcp.ts';
@@ -49,6 +51,7 @@ export type CredsDeps = {
   againMs?: number; // AGAIN_MS (checks: shorter)
   promptMs?: number; // pty.ts PROMPT_QUIET_MS
   hintMs?: number; // pty.ts QUIET_HINT_MS
+  terms?: Terms; // its terminal for the page (terms.ts)
 };
 
 type Folder = { root: string; sids: Set<string>; phase: Phase; prefill: string; output: string; error: string; okAt: number; run: PtyRun | null; at: number; watch: InputWatch | null };
@@ -137,13 +140,7 @@ export class Creds {
     return { ok: true };
   }
 
-  // A line typed into the running command (Enter sends it with a newline).
-  input(sid: string, text: string): { ok: true } | { ok: false; error: string } {
-    const f = this.runningFor(sid);
-    if (!f?.run) return { ok: false, error: 'No refresh command is running.' };
-    f.run.write(text.replace(/[\r\n]+/g, ' ') + '\n');
-    return { ok: true };
-  }
+>>>>
 
   cancel(sid: string): { ok: true } | { ok: false; error: string } {
     const f = this.runningFor(sid);
@@ -220,10 +217,15 @@ export class Creds {
       this.publish(f);
     } });
     f.watch = watch;
-    const run = this.d.start(command, {
-      cwd: f.root, shell: this.d.shell, timeoutMs: this.d.timeoutMs ?? RUN_TIMEOUT_MS,
+    let run: PtyRun | null = null;
+    const term = this.d.terms?.open(`creds:${f.root}`, { write: (d) => run?.write(d), resize: (c, r) => run?.resize(c, r) }) ?? null;
+    const size = this.d.terms?.size;
+    run = this.d.start(command, {
+      cwd: f.root, shell: this.d.shell, timeoutMs: this.d.timeoutMs ?? RUN_TIMEOUT_MS, cols: size?.cols, rows: size?.rows,
+      env: { ...process.env, TERM: 'xterm-256color' },
       onData: (text) => {
         watch.take('out', text); // output again: no longer waiting
+        term?.push(text);
         raw = (raw + text).slice(-4 * OUT_CAP);
         f.output = screenText(raw);
         this.publish(f);
@@ -233,6 +235,8 @@ export class Creds {
     this.d.refreshing([...f.sids], true);
     this.publish(f);
     void run.done.then(({ code, timedOut, killed }) => {
+      const ctrlC = Boolean(term?.ctrlC()) && code === 130;
+      term?.end();
       f.run = null;
       watch.stop();
       f.watch = null;
@@ -251,7 +255,7 @@ export class Creds {
       this.log('creds.done', { ok: false, code: code ?? 'none', timedOut });
       const last = sentence(f.output).replace(/\.$/, '');
       f.error = timedOut ? `The refresh command didn't finish within ${Math.round((this.d.timeoutMs ?? RUN_TIMEOUT_MS) / 60_000)} minutes.`
-        : code === null || killed ? 'The refresh command was stopped.'
+        : code === null || killed || ctrlC ? 'The refresh command was stopped.'
           : `The refresh command ended with exit code ${code}${last ? `: ${last}` : ''}.`;
       f.phase = f.sids.size ? 'failed' : 'idle';
       f.output = '';
