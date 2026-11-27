@@ -15,7 +15,8 @@ import type { ItemsState } from './open-items.ts';
 export type OpenEntry = { id: string; cwd: string; openedAt: number; closedAt: number | null };
 // `model`: the model of new sessions when set (else the CLI's default).
 // A `newSessionCwd` an older state.json has is dropped: New session asks for the folder (R3.3).
-export type Settings = { writerModel: string; model?: string };
+// `keeperModel`: the open-items keeper's model when set (else keeper.ts DEFAULT_MODEL, sonnet).
+export type Settings = { writerModel: string; keeperModel?: string; model?: string };
 
 // The answer labels and answered plans kept, newest last: the oldest go past these.
 // They label tool items of open or reopened sessions; a plan can be long.
@@ -135,6 +136,7 @@ export function normalize(raw: unknown): State {
   if (isObj(raw.settings)) {
     const st = raw.settings;
     if (typeof st.writerModel === 'string') s.settings.writerModel = st.writerModel;
+    if (typeof st.keeperModel === 'string' && st.keeperModel) s.settings.keeperModel = st.keeperModel; // the keeper's (keeper.ts, default sonnet)
     if (typeof st.model === 'string' && st.model) s.settings.model = st.model;
   }
   return s;

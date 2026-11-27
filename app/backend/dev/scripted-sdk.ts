@@ -68,6 +68,7 @@ export type Script = {
   home?: string; // `~` for paths
   menu?: { commands: SlashCommand[]; models: ModelInfo[] };
   writer?: { title: string; now: string }; // the writer's reply; without it every call fails
+  keeper?: { ops: unknown[] }[]; // the keeper's replies, in call order, then no ops; without it every call fails
   onSend?: Step[]; // for sessions with no onSend of their own
   sessions: Record<string, SessionScript>;
   // MCP servers every query reports (status: connected, needs-auth, failed, pending, disabled; kind:
@@ -499,6 +500,20 @@ function writer(env: Scripted): QueryLike {
   };
 }
 
+// The keeper's one-shot call (keeper.ts; told apart by its scratch folder, `<state>/keeper`): the script's
+// replies in order, each `{ops}`, then `{"ops": []}`; with no `keeper` in the script, a failed result.
+function keeper(env: Scripted): QueryLike {
+  const list = env.script.keeper;
+  const reply = list ? list[env.keeperCalls++] ?? { ops: [] } : null;
+  return {
+    async *[Symbol.asyncIterator]() {
+      yield (reply
+        ? { type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(reply), session_id: '', uuid: randomUUID() }
+        : { type: 'result', subtype: 'error_during_execution', is_error: true, session_id: '', uuid: randomUUID() }) as unknown as SDKMessage;
+    },
+  };
+}
+
 // ---------- the whole ----------
 
 // What the scripted sessions need from Sessions (main.ts passes it once Sessions has started): an
@@ -513,6 +528,7 @@ export class Scripted {
   readonly end: EndDeps;
   readonly played = new Set<string>(); // sessions whose steps have started
   busy = 0; // load-time sequences still playing (not waiting on an answer)
+  keeperCalls = 0; // the keeper's calls so far (its replies play in order)
   private claudeDir: string;
   private log: Log;
   private target: ScriptTarget | null = null;
@@ -530,7 +546,7 @@ export class Scripted {
     this.log = opts.log ?? nullLog;
     const query: QueryFn = (params) => {
       const o = params.options ?? {};
-      if (o.persistSession === false) return writer(this);
+      if (o.persistSession === false) return path.basename(o.cwd ?? '') === 'keeper' ? keeper(this) : writer(this);
       if (!o.canUseTool) return probe(this, params.prompt);
       return new ScriptedSession(this, o, params.prompt);
     };
