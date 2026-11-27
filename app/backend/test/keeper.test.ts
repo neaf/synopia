@@ -101,6 +101,26 @@ test('checkOps: only your words answer; a tool result only closes your task as d
   assert.deepEqual(dropped.map((d) => d.why), ['answered from a claude', 'answered from a tool', 'a tool result opens nothing', 'went ahead from a report (not an id its brief owned)']);
 });
 
+test('checkOps: a review item is done only when you say so; Claude may drop it, with why', () => {
+  const list = [...open, { id: 'Y6', kind: 'review', text: 'Review: Onboarding email copy' }];
+  const segs: Segment[] = [
+    { src: 'you', text: 'The onboarding copy is fine.' },
+    { src: 'claude', text: 'The onboarding email subagent was stopped before it delivered. Its review is done.' },
+  ];
+  const done = checkOps([{ op: 'close', id: 'Y6', as: 'done', quote: 'Its review is done' }], { segments: segs, open: list, closed });
+  assert.deepEqual([done.ops.length, done.dropped.map((d) => d.why)], [0, ['done from a claude']]);
+  const dropped = checkOps([{ op: 'close', id: 'Y6', as: 'dropped', why: 'stopped before it delivered', quote: 'was stopped before it delivered' }], { segments: segs, open: list, closed });
+  assert.deepEqual(dropped.ops.map((o) => `${o.op}:${(o as { as?: string }).as}`), ['close:dropped']);
+  const yours = checkOps([{ op: 'close', id: 'Y6', as: 'done', quote: 'The onboarding copy is fine' }], { segments: segs, open: list, closed });
+  assert.equal(yours.ops.length, 1);
+});
+
+test('the system prompt: no item for work in motion, one when it died, a follow-up only when nothing brings it back', () => {
+  assert.match(SYSTEM_PROMPT, /Never open an item for the next step of work in motion/);
+  assert.match(SYSTEM_PROMPT, /When work in motion died/);
+  assert.match(SYSTEM_PROMPT, /A follow-up only when no mechanism brings it back/);
+});
+
 test('checkOps: update, reopen, superseded and the option fields', () => {
   const segs: Segment[] = [{ src: 'you', text: 'Y2 later. Y3 isn’t done. Y4 replaces Y1.' }, { src: 'claude', text: 'CI is green, A1 is due.' }];
   const { ops, dropped } = checkOps([

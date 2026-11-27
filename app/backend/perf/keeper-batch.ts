@@ -13,7 +13,7 @@ import { oneShot, realSdk, writerOptions } from '../src/sdk.ts';
 type Want = { op: string; id?: string; kind?: string; as?: string; state?: string };
 type Case = {
   id: string; kind: 'you' | 'turn'; list: (ListItem & { closed?: boolean | string })[];
-  segments: Segment[]; owned?: Record<string, string[]>; expect: Want[];
+  segments: Segment[]; owned?: Record<string, string[]>; work?: string[]; expect: Want[];
 };
 
 const args = process.argv.slice(2);
@@ -36,7 +36,7 @@ async function run(model: string, c: Case) {
   const closed = c.list.filter((i) => i.closed).map((i) => ({ ...i, closed: typeof i.closed === 'string' ? i.closed : 'closed' }));
   const ex: Exchange = { kind: c.kind, key: c.id, segments };
   const started = Date.now();
-  const r = await oneShot(realSdk.query, buildPrompt({ open, closed }, ex), writerOptions(model, cwd, SYSTEM_PROMPT));
+  const r = await oneShot(realSdk.query, buildPrompt({ open, closed }, ex, c.work ?? []), writerOptions(model, cwd, SYSTEM_PROMPT));
   const ms = Date.now() - started;
   if (r.failure) return { c, ms, failed: true, ops: [] as Op[], dropped: 0, parsed: false };
   const raw = parseOps(r.reply);

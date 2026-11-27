@@ -816,7 +816,8 @@ export class OpenItems {
   private attachAgent(key: string, h: Held): void {
     if (h.kind !== 'review' || h.agent || !h.fields.subagent) return;
     for (const sid of this.sessionsOf(key)) {
-      const a = this.facts.agents(sid).find((x) => x.review && nameOf(x) === h.fields.subagent && !this.hasAgent(x.id));
+      const named = this.facts.agents(sid).filter((x) => x.review && nameOf(x) === h.fields.subagent && !this.hasAgent(x.id));
+      const a = named.find((x) => !x.stopped) ?? named[0]; // a stopped one only when no other has the name
       if (!a) continue;
       h.agent = a.id;
       if (this.uncarry(a.id) && !h.closed) h.closed = { how: 'done', at: this.now(), note: 'marked reviewed', by: 'synopia' };
@@ -827,11 +828,19 @@ export class OpenItems {
   // ---------- review items ----------
 
   // Opens `Review: <name>` for each finished `For review: ` subagent that no item carries (FR-ITEM-03): closed
-  // at once when its mark was carried over.
+  // at once when its mark was carried over. A stopped one delivered nothing to review (stoppedReview).
   private openReviews(sid: string, key: string): boolean {
-    let dirty = false;
-    for (const a of this.facts.agents(sid)) {
-      if (!a.review || a.running || this.hasAgent(a.id)) continue;
+    let dirty = false, wrote = false;
+    const agents = this.facts.agents(sid);
+    for (const a of agents) {
+      if (!a.review || a.running) continue;
+      if (a.stopped) { if (this.stoppedReview(key, a, agents)) dirty = wrote = true; continue; }
+      if (this.hasAgent(a.id)) {
+        // a stopped run resumed and finished: the drop Synopia made at its stop is undone
+        const h = this.list(key).items.find((x) => x.agent === a.id && x.kind === 'review');
+        if (h?.closed?.by === 'synopia' && h.closed.note === stoppedNote(a)) { delete h.closed; h.mine = true; dirty = wrote = true; }
+        continue;
+      }
       const l = this.list(key);
       const name = nameOf(a);
       // the agent's own review item, not tied yet
@@ -850,7 +859,28 @@ export class OpenItems {
       dirty = true;
     }
     if (dirty) { this.prune(); this.store.changed(); }
+    if (wrote) this.written(key);
     return dirty;
+  }
+
+  // A stopped `For review: ` subagent (killed, or its session ended first) delivered nothing to review: it opens no
+  // review item, and an open one for it (the agent's own, by its `subagent` field) never reads as done. When a newer
+  // subagent of the same name took over, the item goes with it (Synopia's own is removed: the new one opens its
+  // own when it finishes); else it closes as dropped, with why. True when the list changed.
+  private stoppedReview(key: string, a: Agent, agents: Agent[]): boolean {
+    const l = this.list(key), name = nameOf(a);
+    const h = l.items.find((x) => x.kind === 'review' && !x.closed && (x.agent === a.id || (!x.agent && x.fields.subagent === name)));
+    if (!h) return false;
+    const after = (x: Agent) => (Date.parse(x.start ?? '') || 0) > (Date.parse(a.start ?? '') || 0);
+    const newer = agents.filter((x) => x.id !== a.id && x.review && nameOf(x) === name && after(x));
+    if (newer.length && h.block === undefined) { l.items.splice(l.items.indexOf(h), 1); return true; }
+    const next = newer.find((x) => !this.hasAgent(x.id));
+    if (next) { h.agent = next.id; return true; }
+    h.agent = a.id;
+    // a transcript fact, like "removed from the ledger": no Undo (the next sync would close it again)
+    h.closed = { how: 'dropped', at: this.now(), note: stoppedNote(a), by: 'synopia' };
+    h.mine = true;
+    return true;
   }
 
   // The session named its first ledger: its `session:` list's items join the ledger's, renumbered past it.
@@ -1019,6 +1049,8 @@ const squash = (t: string): string => t.replace(/\s+/g, ' ').trim();
 
 // A subagent's name as the ledger's `subagent` field holds it: its description without `For review: `.
 export const nameOf = (a: Pick<Agent, 'description'>): string => a.description.replace(REVIEW_PREFIX, '').trim();
+// Why a stopped subagent's review item closed as dropped (and the mark of that drop, undone when its run resumes).
+export const stoppedNote = (a: Pick<Agent, 'description'>): string => `${nameOf(a)} was stopped before it delivered`;
 
 // The note a view carries when nothing could be read (the page words it).
 export const NOTES = {

@@ -80,7 +80,7 @@ Test: `ledger.test.ts` "serialize: …": a fixture read and written unchanged ke
 
 ## The keeper's batch
 
-`app/backend/perf/keeper-batch.ts` (opt-in, outside `check.sh`; one model call per case and model): the real `keeper.ts` prompt and `checkOps` on the 50 invented exchanges of `perf/keeper-cases.json` (12 of your messages, 25 turns, 8 with subagent reports, 5 reopen or supersede cases; 17 expect no op), scored against the expected ops. An op matches by `op` plus the kind (open) or the id with its `as` or `state`. It prints numbers only: cases exact (every expected op and nothing more), recall, precision, extra ops, no-op cases left alone, ops the checks dropped, failures, median time. `-v` adds the missed cases as op shapes and ids.
+`app/backend/perf/keeper-batch.ts` (opt-in, outside `check.sh`; one model call per case and model): the real `keeper.ts` prompt and `checkOps` on the 59 invented exchanges of `perf/keeper-cases.json` (12 of your messages, 34 turns, 8 with subagent reports, 5 reopen or supersede cases; 21 expect no op; a case's `work` lines go in the prompt's `<work>`, in `transcripts.ts` `work`'s shape), scored against the expected ops. An op matches by `op` plus the kind (open) or the id with its `as` or `state`. It prints numbers only: cases exact (every expected op and nothing more), recall, precision, extra ops, no-op cases left alone, ops the checks dropped, failures, median time. `-v` adds the missed cases as op shapes and ids.
 
 Run 2026-11-27 (SDK 0.3.330, its bundled CLI), twice: before and after one prompt change.
 
@@ -94,6 +94,8 @@ Run 2026-11-27 (SDK 0.3.330, its bundled CLI), twice: before and after one promp
 - The change, from the misses of the first run: "go" or "do it" after proposals closes those defaults as went ahead; "remind me to" is a follow-up; an answered item closes as done once the reply shows Claude acted; a report may close its own default as went ahead (also allowed by `checkOps` from then on). No case was changed to fit a model.
 - Misses both models share after the change: an answer that fits two decisions read as one (the rule says ask, not guess); an answered item the reply acted on left open; superseded read as dropped. Each costs a stale item or a wrong close you can Undo.
 - The gap between the two models is within the run-to-run change (a model's score moved by up to 2 cases between runs). The keeper stays on `sonnet` as decided (design question 3); `settings.keeperModel` takes `haiku`.
+
+The table above is the 50-case batch with the first rules. 2026-11-27, the noise rule (R3.16 "What the list holds"): the prompt now opens a follow-up only when nothing else brings it back, never for the next step of work in motion, one for work in motion that died (stuck), and never closes a review item as done from Claude's reply (also refused by `checkOps`). Nine cases pin it (c51 to c59: a subagent launched with "I'll merge it when green", a CI watcher, a scheduled wakeup and reports still to come open nothing; a follow-up that only tracked a running subagent drops; a review subagent killed before it delivered opens one stuck follow-up; a stopped subagent's review item drops; an outside event no watcher covers and a step left at a handoff open a follow-up). Their first run, with the rules before and after the change, is still to do: on 2026-11-27 every call failed on expired model credentials, so no scores are recorded for the 59 cases yet.
 
 ## Quirks
 
