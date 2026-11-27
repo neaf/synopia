@@ -448,6 +448,11 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-ITEM-06 | open-items.ts (`counts`), status.ts (`waiting`, `due`), publisher.ts, sidebar.js (`waitingLine`), tween.js, marks.js (`open`) |
 | FR-ITEM-13 | waiting-list.js, keys.js (w, the layer, Enter to `writeLine`), sidebar.js (the head button, `rowWord`), open-items.js (`itemsOf`, `ageOf`, `focusItem`), fuzzy.js, ui-state.js and ui-state.ts (`waitingList`), main.js (redraws), app.css |
 | FR-ITEM-07 | open-items.ts (`reply`: the quote, the minute, a raised item's report), transcripts.ts (`replies`), open-items.js (the focus), keys.js (J/K, Enter), transcript.js (`openItem`, through ui-state.js `jumpTo`), sidebar.js (the line's click), rail.js (`waitingIds`) |
+| FR-ITEM-08 | keeper.ts (planned: the call, the prompt, the op checks), transcripts.ts (`exchange`), open-items.ts (when to ask), sdk.ts (`writerOptions`, `oneShot`), store.ts (`keeperModel`) |
+| FR-ITEM-09 | open-items.ts (planned: `applyOps`, the marks, the flip guard, dismissed texts) |
+| FR-ITEM-10 | open-items.ts (planned: `notItem`, `undo`), router.ts (`item`), protocol.js, keys.js (`d`), open-items.js and transcript.js (Undo) |
+| FR-ITEM-11 | ledger.ts (planned: `serialize`), open-items.ts (the write-back) |
+| FR-ITEM-12 | agent-tools.ts (planned: `open_items`), cards.ts (answered with no card), transcript.ts (a subagent's call ignored), open-items.ts (`toolOp`) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |
 | FR-LOOK-03 | all page modules, prototype/app.html |
