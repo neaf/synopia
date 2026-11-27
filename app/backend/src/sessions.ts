@@ -29,6 +29,7 @@ import { toolServer } from './agent-tools.ts';
 import { seedTitle } from './writer.ts';
 import type { Host as ToolHost } from './agent-tools.ts';
 import type { Log } from './log.ts';
+import type { Terms } from './terms.ts';
 import { nullLog } from './log.ts';
 import { displayPath, isDir } from './paths.ts';
 import { pruneUi, pruneUiTo, rekeyUi } from './ui-state.ts';
@@ -61,6 +62,7 @@ export type SessionsOptions = {
   onGone?: (sid: string) => void;
   // The terminals that hold sessions (cli-terminals.ts); none without it.
   terminals?: TerminalSource;
+  terms?: Terms; // the terminals of the `!` runs (terms.ts)
   folders?: Folders; // the disk side of the folder list (tests count its reads); else the real one
   // Folders taken as there without a stat: the scripted SDK's made-up home (dev and checks only).
   pretendFolder?: (abs: string) => boolean;
@@ -348,6 +350,7 @@ export class Sessions {
       onSignedOut: (x, on) => this.opts.onSignedOut?.(x.id, x.cwd, on),
       rekey: (x, newId, why) => this.rekey(x, newId, why),
       tools: (caller) => toolServer(this.toolHost, caller),
+      terms: this.opts.terms,
     });
     this.live.set(id, s);
     s.open();

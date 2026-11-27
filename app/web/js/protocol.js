@@ -5,7 +5,7 @@
    `ack {id, ok, error}` back, to the page that sent it.
 
    Field types: "str", "num", "bool", "obj", "arr", "any"; a trailing "?" also takes a missing field or null. */
-export const VERSION = 5; // 4 had the openItems frame (tried and reverted, 2026-11-27)
+export const VERSION = 6; // 4 had the openItems frame (tried and reverted, 2026-11-27); 6: terminals (`term`, `termInput`, `termSize`)
 
 /* page to backend */
 export const PAGE = {
@@ -59,11 +59,14 @@ export const PAGE = {
   /* /mcp (R5.15): one server's action: login, logout, reconnect, enable, disable, or cancel (kills a running sign-in) (mcp.ts); its outcome comes as `mcp` */
   mcpAction: { id: "str?", sid: "str", name: "str", action: "str" },
   /* the credential refresh of the session's folder (creds.ts, 2026-11-26): save its command and run it now (empty
-     clears it), a line typed into the running command, or stop it; what follows comes as `creds` */
+     clears it), or stop it; what follows comes as `creds` */
   credsSave: { id: "str?", sid: "str", command: "str" },
-  credsInput: { id: "str?", sid: "str", text: "str" },
-  bangInput: { id: "str?", sid: "str", text: "str" },
-  /* Esc, Esc in a run's shell view (R9.4, 2026-11-26): stop your `!` command, or Claude's background shell or monitor (stopTask), by its id */
+  /* the terminal of a run Synopia holds a pty for (terms.ts, 2026-11-27; bg: the run's id, a `!` run's or
+     `creds:<folder>`): keys as typed in insert mode, raw ("\x03" is Ctrl-C), and the size the view gives it.
+     Not actions: no ack, as a terminal's keys have none */
+  termInput: { sid: "str", bg: "str", data: "str" },
+  termSize: { sid: "str", bg: "str", cols: "num", rows: "num" },
+  /* stop your `!` command, or Claude's background shell or monitor (stopTask, Esc, Esc in its shell view, R9.4), by its id */
   bangStop: { id: "str?", sid: "str", bg: "str" },
   stopTask: { id: "str?", sid: "str", bg: "str" },
   credsCancel: { id: "str?", sid: "str" },
@@ -77,7 +80,7 @@ export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 export const MAX_TOTAL_IMAGE_BYTES = 20 * 1024 * 1024;
 
 /* the page's frames that are actions: the router acks each one that has an id */
-export const ACTIONS = new Set(["send", "bang", "bangInput", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsInput", "credsCancel", "bangStop", "stopTask"]);
+export const ACTIONS = new Set(["send", "bang", "answer", "interrupt", "background", "sendNow", "close", "newSession", "continueSession", "openSession", "cancelTakeover", "setModel", "reviewed", "moveSession", "newGroup", "renameGroup", "mcpAction", "credsSave", "credsCancel", "bangStop", "stopTask"]);
 
 /* backend to page */
 export const SERVER = {
@@ -109,6 +112,9 @@ export const SERVER = {
      monitor; a reset, the part before what the page has (prepend), else what came after it. lost: "unnamed" (no
      output file named) or "gone" (it can't be read) */
   output: { sid: "str", bg: "str", text: "str", err: "str?", from: "num", to: "num", total: "num", reset: "bool?", prepend: "bool?", lost: "str?" },
+  /* a run's terminal (terms.ts, 2026-11-27): the raw stream its pty wrote, [from, to) of it in characters; `reset`
+     with all that is kept, then each part as it comes; `live` false once the run ended */
+  term: { sid: "str", bg: "str", data: "str", from: "num", to: "num", live: "bool", reset: "bool?" },
   /* the Open list: at most 50 rows, and the totals: past sessions, their folders, how many match the filter */
   recent: { filter: "str", sessions: "arr", total: "num?", folders: "num?", matched: "num?", error: "bool?" },
   /* the known folders ({path, sessions, lastUsed}), newest first */

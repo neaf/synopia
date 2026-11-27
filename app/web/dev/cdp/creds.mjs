@@ -109,14 +109,14 @@ await shot('expired');
 const preview = () => ev(`(() => { const r = document.querySelector('.dock .status.creds .runrow'); return r ? { cmd: r.querySelector('.cmd')?.textContent, out: r.querySelector('.out')?.textContent || '', st: r.querySelector('.res.rst')?.textContent || '', waits: !!r.querySelector('.res.rst.waits'), link: r.dataset.bg || '' } : null; })()`);
 const typeRun = async (text) => {
   await ev(`document.querySelector('.dock .status.creds .runrow').click()`);
-  check('refresh: the preview opens its shell view, the lock in the gutter and the ! band in the box\'s place', await until(`(__synopia.view() || '').startsWith('creds:') && !!document.querySelector('#log .bg-run > .g .lock') && !!document.getElementById('run-in')`, 4000), await ev(`document.getElementById('conv').textContent.slice(0, 300)`));
+  check('refresh: the preview opens its shell view, the lock in the gutter, its terminal, the mode line in the box\'s place', await until(`(__synopia.view() || '').startsWith('creds:') && !!document.querySelector('#log .bg-run > .g .lock') && __synopia.term()?.writable === true && /Press Enter when you are done/.test(__synopia.term().lines.join('\\n')) && !!document.querySelector('.dock [data-term-mode]')`, 4000), await ev(`document.getElementById('conv').textContent.slice(0, 300)`));
   check('refresh: its header says Synopia started it', /Refresh credentials/.test(await ev(`document.querySelector('.c-head').textContent`)) && /started by Synopia/.test(await ev(`document.querySelector('.c-head').textContent`)), await ev(`document.querySelector('.c-head').textContent`));
   await key('i', { code: 'KeyI', vk: 73 });
-  await until(`document.activeElement?.id === 'run-in'`, 2000);
-  await c.cdp('Input.insertText', { text });
+  await until(`__synopia.term()?.focused === true`, 2000);
   await ev('__synopia.spy()');
+  await c.cdp('Input.insertText', { text });
   await K.enter();
-  check('refresh: the typed line goes as credsInput', await until(`__synopia.sent('credsInput').length === 1 && __synopia.sent('credsInput')[0].text === ${JSON.stringify(text)}`, 3000));
+  check('refresh: what you type goes to its terminal as typed', await until(`__synopia.sent('termInput').map(m => m.data).join('') === ${JSON.stringify(text + '\r')}`, 3000), JSON.stringify(await ev(`__synopia.sent('termInput')`)));
 };
 await ev(`document.querySelector('[data-creds="save"]').click()`);
 check('refresh: it runs, one run for the folder', await until(`__synopia.creds().filter(f => f.phase === 'running').length === 1`, 6000));

@@ -18,6 +18,7 @@ import { fl, folderListShown } from "./folder-list.js";
 import { mp, mcpShown } from "./mcp-panel.js";
 import { credsAll } from "./creds-line.js";
 import { findState } from "./find.js";
+import { termState } from "./term.js";
 
 const copy = x => x === undefined || x === null ? null : structuredClone(x);
 const of = (list, types) => copy(types.length ? list.filter(m => types.includes(m.t)) : list);
@@ -61,6 +62,7 @@ export function installTestApi({ inject, render }) {
     cards: () => copy(qstate), // every card's state, by "<sid>:<request id>"
     preview: () => ({ shown: previewShown(), path: pv.path }),
     find: () => findState(),
+    term: () => termState(), // a shell view's terminal (term.js): {id, writable, cols, rows, focused, lines}, or null
     openList: () => ({ shown: openListShown(), filter: openList.filter, totals: openList.totals }),
     mcp: () => ({ shown: mcpShown(), sid: mp.sid, servers: copy(mp.servers), error: mp.error, note: mp.note, sel: mp.sel, action: mp.act }), // the MCP panel (R5.15)
     creds: () => credsAll(), // the credential refresh frames, one per folder (creds-line.js)

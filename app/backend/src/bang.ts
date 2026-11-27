@@ -2,12 +2,14 @@
 // after `!` runs in the session's folder through the user's shell (`$SHELL -c <command>`, the daemon's env,
 // which login-env.ts merged at start), never interpolated into another shell string. It runs in one
 // pseudo-terminal for its whole run (pty.ts), so it sees a terminal (isatty) and can read a line typed into
-// it (input(): "Press Enter" works), with stderr on its own pipe as before. TERM=dumb and PAGER=cat, so
-// `git log` and the like print and end instead of waiting in a pager. Its output streams to the page as
-// plain text (pty.ts plainText: no escape sequences, the pty's CRLF as LF), capped at 30,000 characters
-// (the Bash tool's default). Its shell view stops it (Esc, Esc there, 2026-11-26): SIGTERM to its own process
-// group, SIGKILL 3 s later. It waits for input by pty.ts InputWatch's rule (live run IN-1), and gets its panel
-// card by runs.ts cardAt. The
+// it, with stderr on its own pipe as before. Its shell view is that terminal (2026-11-27): terms.ts keeps the
+// raw stream for the page's terminal emulator (stderr in red), and takes your keys and the view's size.
+// TERM=xterm-256color, and PAGER=cat, so `git log` and the like print and end instead of waiting in a
+// pager. Its output as plain text (pty.ts plainText: no escape sequences, the pty's CRLF as LF), capped at
+// 30,000 characters (the Bash tool's default), is what the row, the preview and Claude get. Ctrl-C typed in
+// its terminal interrupts it (the pty's SIGINT to its group; an exit of 130 after it reads as stopped by
+// you); kill() (its stop) sends SIGTERM to its process group, SIGKILL 3 s later. It waits for input by
+// pty.ts InputWatch's rule (live run IN-1), and gets its panel card by runs.ts cardAt. The
 // command and its output then go to the session in the CLI's format (`<bash-input>`, `<bash-stdout>`,
 // `<bash-stderr>`), joined with "\n" into one user message that starts a turn (R5.13, 2026-11-27:
 // session.ts shareBang, sdk.ts pushBang), so Claude reacts to it without a follow-up of yours.
@@ -15,6 +17,7 @@ import { groupAlive } from './macos.ts';
 import { InputWatch, plainText, shellPty } from './pty.ts';
 import type { PtyRun, PtyStart } from './pty.ts';
 import { cardAt } from './runs.ts';
+import type { Term, Terms } from './terms.ts';
 
 export const BANG_CAP = 30_000;
 export const KILL_AFTER_MS = 3000;
@@ -45,6 +48,7 @@ export type BangOptions = {
   hintMs?: number; // pty.ts QUIET_HINT_MS
   now?: () => number;
   start?: PtyStart; // default: pty.ts shellPty
+  terms?: Terms; // its terminal for the page (terms.ts); none in some tests
   onUpdate: (run: BangRun) => void; // throttled while it runs
   onDone: (run: BangRun) => void;
 };
@@ -52,6 +56,7 @@ export type BangOptions = {
 export class Bang {
   readonly run: BangRun;
   private pty: PtyRun | null = null;
+  private term: Term | null = null;
   private opts: BangOptions;
   private tick: NodeJS.Timeout | null = null;
   private killTimer: NodeJS.Timeout | null = null;
@@ -64,10 +69,12 @@ export class Bang {
     this.opts = opts;
     const at = this.now();
     this.run = { id: opts.id, cmd: opts.cmd, out: '', err: '', cut: false, running: true, exit: null, interrupted: false, at, end: null, waiting: false, quiet: false, waitedAt: null, cardAt: cardAt(at, null) };
-    const env = { ...(opts.env ?? process.env), TERM: 'dumb', PAGER: 'cat', GIT_PAGER: 'cat' };
+    const env = { ...(opts.env ?? process.env), TERM: 'xterm-256color', PAGER: 'cat', GIT_PAGER: 'cat' };
     const shell = opts.shell || env.SHELL || '/bin/zsh';
+    this.term = opts.terms?.open(opts.id, { write: (d) => this.pty?.write(d), resize: (c, r) => this.pty?.resize(c, r) }) ?? null;
+    const size = opts.terms?.size;
     try {
-      this.pty = (opts.start ?? shellPty)(opts.cmd, { cwd: opts.cwd, env, shell, login: false, onData: (d) => this.take('out', d), onErr: (d) => this.take('err', d) });
+      this.pty = (opts.start ?? shellPty)(opts.cmd, { cwd: opts.cwd, env, shell, login: false, cols: size?.cols, rows: size?.rows, onData: (d) => this.take('out', d), onErr: (d) => this.take('err', d) });
     } catch (e) {
       // spawn throws for some arguments (a NUL byte in the command): the caller hears it after this
       // constructor returns, as for any other end, never from inside it
@@ -87,14 +94,7 @@ export class Bang {
     });
   }
 
-  // A line typed into it (Enter sends it with a newline; an empty one is just the newline).
-  input(text: string): boolean {
-    if (this.finished || !this.pty) return false;
-    this.pty.write(text.replace(/[\r\n]+/g, ' ') + '\n');
-    return true;
-  }
-
-  // Esc, Esc in its shell view: SIGTERM to its process group, SIGKILL if it is still there after 3 s.
+  // Its stop: SIGTERM to its process group, SIGKILL if it is still there after 3 s.
   kill(): void {
     if (this.finished || !this.pty) return;
     this.run.interrupted = true;
@@ -119,6 +119,8 @@ export class Bang {
   private take(which: 'out' | 'err', d: string): void {
     if (this.finished) return;
     this.watch?.take(which, d);
+    if (which === 'out') this.term?.push(d);
+    else this.term?.pushLines(`\x1b[31m${d}\x1b[39m`);
     if (this.full) { this.run.cut = true; return; }
     this.raw[which] += d;
     const out = [...plainText(this.raw.out)], err = [...plainText(this.raw.err)];
@@ -153,6 +155,8 @@ export class Bang {
       clearTimeout(this.killTimer);
       this.killTimer = null;
     }
+    if (this.term?.ctrlC() && this.run.exit === 130) this.run.interrupted = true; // Ctrl-C typed in its terminal ended it
+    this.term?.end();
     this.run.running = false;
     this.run.waiting = false;
     this.run.quiet = false;

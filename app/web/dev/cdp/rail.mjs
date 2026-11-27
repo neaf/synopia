@@ -166,34 +166,36 @@ check("the main transcript doesn't show them", await ev(`!/Resize the images|Wat
 const tasks = path.join(state, 'tasks');
 const open = async (q) => { await ev(`document.querySelector(${JSON.stringify(q)}).click()`); await sleep(400); };
 const logText = () => ev(`document.querySelector('#log .bg-run')?.textContent || ''`);
+const TERM = `(__synopia.term()?.lines || []).join('\\n')`; // the output as its terminal draws it (term.js, 2026-11-27)
 const view = () => ev(`(() => { const h = document.querySelector('.c-head'), t = (q) => h.querySelector(q)?.textContent || '';
   return { view: __synopia.view(), title: t('.c-title .c-name') || t('.c-title'), crumb: t('.c-title > .c-crumb[data-back]'), metaBack: !!h.querySelector('.c-meta [data-back]'), now: t('.c-now'), meta: t('.c-meta'), cur: [...document.querySelectorAll('.rail [aria-current="true"]')].map((e) => e.dataset.bg || e.dataset.agent || 'main'),
-    expanded: !!document.querySelector('.rail .bw-detail, .rail [aria-expanded]'), cmd: document.querySelector('#log .bg-run .cmd')?.textContent || '', out: document.querySelector('#log .bg-run .out')?.textContent || '',
+    expanded: !!document.querySelector('.rail .bw-detail, .rail [aria-expanded]'), cmd: document.querySelector('#log .bg-run .cmd')?.textContent || '', out: ${TERM},
     live: !!document.querySelector('#log .liveln'), moving: (document.querySelector('#log .liveln .g')?.getAnimations({ subtree: true }) || []).filter((a) => a.playState === 'running').length,
     end: document.querySelector('#log .bg-end')?.textContent || '', earlier: document.querySelector('#log [data-earlier]')?.textContent || '' }; })()`);
 await open('.rail .card[data-bg="toolu_rsh"]');
-await c.until(`(document.querySelector('#log .bg-run .out')?.textContent || '').includes('Serving!')`, 5000);
+await c.until(`${TERM}.includes('Serving!')`, 5000);
 let v = await view();
 check('a shell row opens its view in the pane, not in the panel: it alone is selected, nothing expands', v.view === 'toolu_rsh' && JSON.stringify(v.cur) === '["toolu_rsh"]' && !v.expanded, JSON.stringify(v));
 check('its header names it, says it runs and whose it is', v.title === 'Serve the demo' && /^Running, \d+.*\. Background shell, started /.test(v.now) && /^Claude hears when it ends\. Shell in “/.test(v.meta), JSON.stringify(v));
 check('its way back is the crumb at the start of the title line, as in a subagent view: "‹ <session title>"', /^‹ ./.test(v.crumb) && !v.metaBack, JSON.stringify(v));
 { const hShell = await head(); check('the shell view keeps the header shape of the main conversation (R5.1)', Math.abs(hMain.h - hShell.h) <= 0.5 && near(hMain.tops, hShell.tops) && near(hMain.hs, hShell.hs) && near(hMain.bases, hShell.bases), JSON.stringify({ hMain, hShell })); }
-check('its log is the command, then the whole output as plain text (no escape sequences), then the moving running mark',
+check('its log is the command, then the whole output in its terminal (escape sequences drawn, not shown), then the moving running mark',
   v.cmd === 'npx serve demo' && v.out.startsWith('   ┌') && v.out.includes('- Local:    http://localhost:3000') && v.out.includes('HTTP  13:00:12') && !/\x1b|\[0m|\[32m/.test(v.out) && v.live && v.moving > 0 && !v.end, JSON.stringify(v));
-check('its log is monospace', await ev(`getComputedStyle(document.querySelector('#log .bg-run .out')).fontFamily.includes('JetBrains Mono')`));
-{ const p = await outPanel(c, "#log .bg-run .step-out .out"); check("a shell view: the command, then its output in the output panel", !!p && p.ok, JSON.stringify(p)); }
+check('its log is monospace', await ev(`getComputedStyle(document.querySelector('#log .term-box .xterm-rows')).fontFamily.includes('JetBrains Mono')`));
+check('the terminal draws its colours: the bold HTTP is bold, read-only (no keys, no cursor)', await ev(`(() => { const s = [...document.querySelectorAll('#log .term-box .xterm-rows span')].find(x => x.textContent === 'HTTP'); return !!s && getComputedStyle(s).fontWeight >= 600 && __synopia.term().writable === false; })()`));
+{ const p = await outPanel(c, "#log .term-box"); check("a shell view: the command, then its output in the output panel", !!p && p.ok, JSON.stringify(p)); }
 const hShell = await head();
 check('the header has the same height and line tops as the main and the subagent view (within 0.5 px)',
   Math.abs(hShell.h - hSub.h) <= 0.5 && near(hShell.tops, hSub.tops) && near(hShell.hs, hSub.hs) && near(hShell.bases, hSub.bases) && near(hShell.acts, hSub.acts), JSON.stringify({ hShell, hSub }));
 fs.appendFileSync(path.join(tasks, 'bmain1.output'), ' \x1b[1mHTTP\x1b[0m  13:05:00 ::1 GET /thumbs 200\n');
-check('while it runs, what it prints appends live', await c.until(`(document.querySelector('#log .bg-run .out')?.textContent || '').includes('GET /thumbs 200')`, 5000));
+check('while it runs, what it prints appends live', await c.until(`${TERM}.includes('GET /thumbs 200')`, 5000));
 await shot('rail-shell-running');
 // a monitor of a subagent: its events
 await open('.rail .card[data-bg="toolu_bmon1"]');
 v = await view();
 check("a subagent's monitor opens with its events and names the subagent", v.view === 'toolu_bmon1' && v.title === 'Watch the resize log' && /^Claude hears each event\. Monitor of the subagent Build image thumbnails in “/.test(v.meta)
   && v.out === 'resized 12 of 48: hero.png, team.jpg\nresized 30 of 48\nskipped logo.svg (vector)' && v.live, JSON.stringify(v));
-{ const p = await outPanel(c, "#log .bg-run .step-out .out"); check("a monitor's events go in the same output panel", !!p && p.ok, JSON.stringify(p)); }
+{ const p = await outPanel(c, "#log .term-box"); check("a monitor's events go in the same output panel", !!p && p.ok, JSON.stringify(p)); }
 // a finished shell from Past: its output, a carriage-returned line as it ended, how it ended
 await open('.rail .pr[data-bg="toolu_bsh2"]');
 v = await view();
@@ -206,18 +208,20 @@ v = await view();
 const lines0 = v.out.split('\n').filter(Boolean);
 check('a long output shows its last part with a link to earlier output', /^Show earlier output$/.test(v.earlier) && lines0.length < 6000 && lines0.at(-1) === 'copied icons/icon-6000.svg -> out/icon-6000.svg' && /^copied /.test(lines0[0]), JSON.stringify({ earlier: v.earlier, n: lines0.length, first: lines0[0] }));
 const markLine = lines0[0];
-const placeOf = (t) => ev(`(() => { const log = document.getElementById('log'), out = document.querySelector('#log .bg-run .out'), r = document.createRange(), i = out.textContent.indexOf(${JSON.stringify(t)});
-  const node = out.firstChild; r.setStart(node, i); r.setEnd(node, i + 1); return r.getBoundingClientRect().top - log.getBoundingClientRect().top; })()`);
-await ev(`document.getElementById('log').scrollTop = 0`); await sleep(100);
-const placeBefore = await placeOf(markLine);
-await ev(`document.querySelector('#log [data-earlier]').click()`);
-await c.until(`!(document.querySelector('#log .bg-run .out')?.textContent || '').startsWith(${JSON.stringify(markLine)})`, 5000);
-check('loading earlier output keeps what you read in place (within 1 px)', Math.abs((await placeOf(markLine)) - placeBefore) < 1, JSON.stringify([placeBefore, await placeOf(markLine)]));
+// g scrolls the terminal to its top; g there loads the earlier output, and the line you read stays at the top
+await c.key('g', { code: 'KeyG', vk: 71 });
+check('g goes to the top of the terminal', await c.until(`__synopia.term()?.atTop === true && __synopia.term().top === ${JSON.stringify(markLine)}`, 2000), JSON.stringify(await ev(`__synopia.term()?.top`)));
+await c.key('g', { code: 'KeyG', vk: 71 });
+await c.until(`!${TERM}.startsWith(${JSON.stringify(markLine)})`, 5000);
+await sleep(200);
+check('g at the top loads earlier output and keeps what you read in place', JSON.stringify(await ev(`[__synopia.term().top, __synopia.term().atTop]`)) === JSON.stringify([markLine, false]), JSON.stringify(await ev(`[__synopia.term().top, __synopia.term().atTop]`)));
+await c.key('G', { shift: true, code: 'KeyG', vk: 71 });
+check('G goes to its end', await c.until(`__synopia.term()?.atEnd === true`, 2000));
 for (let i = 0; i < 4 && (await view()).earlier; i++) { await ev(`document.querySelector('#log [data-earlier]').click()`); await sleep(400); }
 v = await view();
 const all = v.out.split('\n').filter(Boolean);
 check('earlier output loads down to the first line, each line once', !v.earlier && all.length === 6000 && all[0] === 'copied icons/icon-0001.svg -> out/icon-0001.svg' && new Set(all).size === 6000, JSON.stringify({ n: all.length, first: all[0], earlier: v.earlier }));
-{ const p = await outPanel(c, '#log .bg-run .step-out .out'); check('a long output, loaded whole, is in the one output panel', !!p && p.ok && (await ev(`document.querySelectorAll('#log .bg-run .step-out .out:not(.err)').length`)) === 1, JSON.stringify(p)); }
+{ const p = await outPanel(c, '#log .term-box'); check('a long output, loaded whole, is in the one output panel', !!p && p.ok && (await ev(`document.querySelectorAll('#log .term-box').length`)) === 1, JSON.stringify(p)); }
 // ---------- R5.12: only Main conversation has the message box ----------
 await ev(`document.querySelector('[data-back-main]').click()`); await sleep(300);
 await ev(`(() => { const t = document.getElementById('msg'); t.value = 'a main draft'; t.dispatchEvent(new Event('input')); })()`);
@@ -253,7 +257,7 @@ check("the header's back link shows the main conversation again", v.view === nul
 await open('.rail .card[data-bg="toolu_rsh"]');
 await sleep(800); // the UI state's patch goes
 check('the page reloads', await c.load(url));
-await c.until(`(document.querySelector('#log .bg-run .out')?.textContent || '').includes('GET /thumbs 200')`, 5000);
+await c.until(`${TERM}.includes('GET /thumbs 200')`, 5000);
 v = await view();
 check('after a reload the shell view is back, with its output and no box', v.view === 'toolu_rsh' && v.title === 'Serve the demo' && JSON.stringify(v.cur) === '["toolu_rsh"]' && await noBox(), JSON.stringify(v));
 await ev(`document.querySelector('[data-back-main]').click()`); await sleep(300);

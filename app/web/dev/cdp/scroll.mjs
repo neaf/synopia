@@ -10,12 +10,12 @@
 //       on screen (mid-way: the same anchor), and the line is in the gap under the last block you saw, above the
 //       first you didn't, with that item's time; nothing moves when it comes or goes; it stays while you scroll
 //       and after G; back from Y with nothing new it is gone; a quick flick through Y and back sees nothing;
-//   (b) the same in X's subagent and shell views (in the output, between the last line you saw and the first you
-//       didn't, with the time you saw it);
+//   (b) the same in X's subagent view (a shell view is a terminal since 2026-11-27, term.js, with its own scrollback:
+//       no line inside its output, and it opens at its end);
 //   (c) the window hidden while the shown view grows: nothing moves, no line, and when it is visible again you are
 //       where you were, with the line;
 //   (d) a reload while away: the same; then a reload on it keeps the line where it was.
-// Writes scroll-divider.png and scroll-divider-shell.png.
+// Writes scroll-divider.png.
 // The page's state for a view it isn't on can't show the backend has read the new records, so the check asks the
 // backend itself: its own socket views the same conversation and waits for the new text (backendHas).
 import fs from 'node:fs';
@@ -236,14 +236,10 @@ const d2 = await divider();
 check('a, mid-way: a flick through sees nothing, so the line is back in the same place', d2?.key === d?.key, d2);
 await K.G(); await sleep(SEE);
 
-// (b) the subagent view and the shell view
+// (b) the subagent view
 r = await away('b, subagent', 'agent', 5, `.rail .card[data-agent="${AGENT}"]`, `${X}|${AGENT}`, toBottom);
 d = await back('b, subagent', r, `${X}|${AGENT}`, `.rail .card[data-agent="${AGENT}"]`);
 if (d) await stays('b, subagent', d);
-r = await away('b, shell', 'shell', 5, `.rail .card[data-bg="${SHELL}"]`, `${X}|${SHELL}`, toBottom);
-d = await back('b, shell', r, `${X}|${SHELL}`, `.rail .card[data-bg="${SHELL}"]`);
-await shot(c, path.join(stateDir, 'scroll-divider-shell.png'));
-if (d) await stays('b, shell', d);
 await ev(`document.querySelector('#conv [data-back]').click()`);
 check('back in the main conversation', await wait(restored(`${X}|`)));
 
@@ -307,7 +303,7 @@ async function reloadCase(name, whereTo, count, viewSel, viewKey) {
   await K.G(); await sleep(SEE);
 }
 await reloadCase('d, main', 'main', 6, null, `${X}|`);
-await reloadCase('d, shell', 'shell', 4, `.rail .card[data-bg="${SHELL}"]`, `${X}|${SHELL}`);
+
 
 console.log(report.join('\n'));
 await c.cdp('Emulation.clearDeviceMetricsOverride');

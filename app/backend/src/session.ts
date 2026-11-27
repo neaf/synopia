@@ -30,6 +30,7 @@ import type { Log } from './log.ts';
 import { Bang, bashInput, bashOutput } from './bang.ts';
 import { movedContext, RESUME_TEXT } from './claude-jsonl.ts';
 import type { BangRun } from './bang.ts';
+import type { Terms } from './terms.ts';
 
 export const IDLE_MS = 30 * 60 * 1000;
 const STREAM_MS = 50; // at most one stream preview per this many ms and session
@@ -144,6 +145,7 @@ export type SessionDeps = {
   // Synopia's tools for agents (agent-tools.ts): a fresh server for each process, given the
   // session's id as it is when a tool is called.
   tools?: (caller: () => string) => Record<string, McpSdkServerConfigWithInstance>;
+  terms?: Terms; // the terminals of the `!` runs (terms.ts)
 };
 
 export class Session {
@@ -401,11 +403,11 @@ export class Session {
     if (this.terminalHolds) return { ok: false, error: `A terminal holds this session (pid ${this.terminal?.pid ?? '?'}). Run the command there.` };
     // one writer: a turn another process runs would get the command's context in the middle of it
     if (!this.proc && this.status.externalTurn) return { ok: false, error: 'Another Claude Code process is running this session\'s turn. Run the command once it ends.' };
-    if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or stop it in its shell view.' };
+    if (this.bang?.run.running) return { ok: false, error: 'A shell command is still running in this session. Wait for it, or press Ctrl-C in its shell view.' };
     if (this.checkFolder() || !this.cwd) return { ok: false, error: `Folder ${this.d.tilde(this.cwd)} no longer exists` };
     const id = uuid && UUID.test(uuid) ? uuid : randomUUID();
     const bang = new Bang({
-      id, cmd, cwd: this.cwd, now: this.d.now,
+      id, cmd, cwd: this.cwd, now: this.d.now, terms: this.d.terms,
       onUpdate: (run) => { if (this.bang === bang) this.setBang(run); },
       onDone: (run) => {
         if (this.bang !== bang) return; // closed meanwhile
@@ -423,13 +425,8 @@ export class Session {
     return { ok: true, sid: this.id };
   }
 
-  // A line typed into the running `!` command (its shell view's box, R5.13): Enter sends it with a newline.
-  bangInput(text: string): SendResult {
-    if (!this.bang?.run.running || !this.bang.input(String(text ?? ''))) return { ok: false, error: 'No shell command is running in this session.' };
-    return { ok: true, sid: this.id };
-  }
-
-  // Esc, Esc in the shell view of your running `!` command (R5.13, 2026-11-26): only there, so stopping has one place.
+  // Stop your running `!` command (R5.13): SIGTERM to its group, SIGKILL 3 s later. What you type goes to its
+  // terminal instead (terms.ts), Ctrl-C too.
   stopBang(id: string): SendResult {
     if (!this.bang?.run.running || this.bang.run.id !== id) return { ok: false, error: 'That shell command isn\'t running.' };
     this.d.log('bang.stop', { sid: this.id });

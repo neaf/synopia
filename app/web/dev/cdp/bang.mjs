@@ -132,8 +132,9 @@ check('the row: the last 3 lines, then "Finished, …, 45 lines", no Show all', 
 check('no input field in any transcript row', await ev(`!document.querySelector('#log input, #log textarea, #log .bang-in')`));
 const longId = await ev(`(__synopia.cur().bangs || []).find(r => r.cmd === 'seq 1 45')?.id || ''`);
 await ev(`[...document.querySelectorAll('#log .bang')].pop().querySelector('.bang-res').click()`);
-check('a click on the row opens its shell view, with all 45 lines', await c.until(`__synopia.view() === '${longId}' && (document.querySelector('#log .bang .step-out .out')?.textContent || '').split('\\n').length === 45`, 5000), await ev(`document.getElementById('log').textContent.slice(0, 200)`));
-check('an ended run\'s view has no box to type in', await ev(`!document.getElementById('run-in')`));
+const lines = () => ev(`(__synopia.term()?.lines || []).join('\\n')`);
+check('a click on the row opens its shell view: its terminal, with all 45 lines', await c.until(`__synopia.view() === '${longId}' && (__synopia.term()?.lines || []).join('\\n') === ${JSON.stringify(Array.from({ length: 45 }, (_, i) => i + 1).join('\n'))}`, 5000), await lines());
+check('an ended run\'s terminal takes no keys, and the box\'s place has no mode line', await ev(`__synopia.term()?.writable === false && !document.querySelector('[data-term-mode]')`));
 await ev(`document.querySelector('[data-back]').click()`);
 await c.until(`__synopia.view() === null && !!document.getElementById('msg')`, 3000);
 
@@ -173,15 +174,21 @@ await esc();
 await sleep(400);
 check('Esc, Esc in the main view leaves your command running', await ev(`!!__synopia.cur().bang?.running && __synopia.cur().bang.id === '${sleepId}'`));
 await ev(`document.querySelector('#log .bang.running .bang-res').click()`);
-check('the row opens its shell view, with the ! band in the box\'s place', await c.until(`__synopia.view() === '${sleepId}' && !!document.getElementById('run-in')`, 3000));
-await esc();
-check('Esc in its shell view asks "Stop this shell?"', await c.until(`!!document.querySelector('.composer.asking') && /Stop this shell\\?/.test(document.querySelector('.int-ask').textContent)`, 2000), await ev(`document.querySelector('.dock')?.textContent`));
-const t0 = Date.now();
+check('the row opens its shell view: a terminal that takes keys, the mode line in the box\'s place', await c.until(`__synopia.view() === '${sleepId}' && __synopia.term()?.writable === true && !!document.querySelector('.dock [data-term-mode]')`, 3000));
 await ev('__synopia.spy()');
 await esc();
-check('the second Esc sends bangStop for it', await c.until(`__synopia.sent('bangStop').length === 1 && __synopia.sent('bangStop')[0].bg === '${sleepId}'`, 2000));
-check('it ends: Stopped, and the box goes with the run', await c.until(`/Stopped after/.test(document.getElementById('log').textContent) && !document.getElementById('run-in')`, 6000), await ev(`document.getElementById('log').textContent`));
-check('it ended at once (SIGTERM), not after 30 s', Date.now() - t0 < 4000);
+await esc();
+await sleep(300);
+check('Esc, Esc in its shell view (normal mode) asks nothing and stops nothing: each Esc goes to the command', JSON.stringify(await ev(`[!!document.querySelector('.composer.asking'), __synopia.sent('termInput').map(m => m.data), __synopia.sent('bangStop').length, __synopia.mode(), !!__synopia.cur().bang?.running]`)) === JSON.stringify([false, ['\x1b', '\x1b'], 0, 'normal', true]),
+  JSON.stringify(await ev(`__synopia.sent('termInput')`)));
+await key('i', { code: 'KeyI', vk: 73 });
+check('i: insert mode, the terminal has the keys, the box\'s place says so', await c.until(`__synopia.mode() === 'insert' && __synopia.term()?.focused === true && getComputedStyle(document.querySelector('.tm-i')).display !== 'none'`, 2000));
+const t0 = Date.now();
+await ev('__synopia.spy()');
+await key('c', { code: 'KeyC', vk: 67, ctrl: true });
+check('Ctrl-C goes to it as typed', await c.until(`__synopia.sent('termInput').map(m => m.data).join('') === '\\x03'`, 2000), JSON.stringify(await ev(`__synopia.sent('termInput')`)));
+check('it ends: Stopped, and the mode line goes with the run', await c.until(`/Stopped after/.test(document.getElementById('log').textContent) && !document.querySelector('[data-term-mode]')`, 6000), await ev(`document.getElementById('log').textContent`));
+check('it ended at once (Ctrl-C interrupts it), not after 30 s', Date.now() - t0 < 4000);
 await ev(`document.querySelector('[data-back]').click()`);
 check('its row reads "Stopped by you after Ns" with the grey square', await c.until(`__synopia.view() === null && __synopia.cur().items.some(i => i.k === 'bang' && i.cmd === 'sleep 30' && i.sh) && /^Stopped by you after \\d+s$/.test([...document.querySelectorAll('#log .bang')].find(x => x.querySelector('.bang-cmd .cmd').textContent === 'sleep 30')?.querySelector('.res.rst')?.textContent || '')`, 6000), await ev(`[...document.querySelectorAll('#log .bang')].pop().textContent`));
 await shot('bang-stopped.png');
@@ -280,22 +287,22 @@ check('the mid-turn ! stays in place, once, nothing left at the end', o.before &
   o = await order(cmd, 'Sent while the helper waits.');
   check('the running row stays where it ran: the later message is below it, the log does not end with it', o.before && !o.lastBang, JSON.stringify(o));
   await ev(`document.querySelector('#log .bang[data-bang="${id}"] .bang-res').click()`);
-  const opened = await c.until(`__synopia.view() === '${id}' && /Press Enter/.test(document.querySelector('#log .bang .step-out')?.textContent || '') && !!document.getElementById('run-in')`, 5000);
-  check('the row opens its shell view: its whole output, and the ! band in the box\'s place', opened, await ev(`document.getElementById('log').textContent.slice(0, 400)`));
-  check('the view shows all of it, not the row\'s tail', await ev(`/Open the demo page/.test(document.querySelector('#log .bang .step-out').textContent) && /step 6 of 6/.test(document.querySelector('#log .bang .step-out').textContent)`));
+  const opened = await c.until(`__synopia.view() === '${id}' && /Press Enter/.test((__synopia.term()?.lines || []).join('\\n')) && !!document.querySelector('[data-term-mode]')`, 5000);
+  check('the row opens its shell view: its terminal, and the mode line in the box\'s place', opened, await ev(`document.getElementById('log').textContent.slice(0, 400)`));
+  check('the view shows all of it, not the row\'s tail', /Open the demo page/.test(await lines()) && /step 6 of 6/.test(await lines()), await lines());
   check('its header says it waits and is yours', await ev(`/Waits for input, \\d+s\\. Your shell command/.test(document.querySelector('.c-head').textContent)`), await ev(`document.querySelector('.c-head').textContent`));
   check('its live line: Waits for input in red with the pause mark', await ev(`(() => { const l = document.querySelector('#log .liveln'); return !!l && l.dataset.state === 'red' && /^Waits for input/.test(l.textContent.trim()) && !!l.querySelector('.bars'); })()`));
-  const band = await ev(`(() => { const t = document.getElementById('run-in'), b = t.closest('.composer'); return { mark: b.querySelector(':scope > .g').textContent, bash: b.classList.contains('bash'), ph: t.placeholder }; })()`);
-  check('the box\'s place is a ! band that types to the command', band.mark === '!' && band.bash && /^Type to node wait-enter\.mjs\. Enter sends the line; an empty Enter sends Enter$/.test(band.ph), JSON.stringify(band));
+  const band = await ev(`(() => { const b = document.querySelector('.dock [data-term-mode]'); return { mark: b.querySelector(':scope > .g').textContent, bash: b.classList.contains('bash'), say: [...b.querySelectorAll('.tm-say > span')].filter(s => getComputedStyle(s).display !== 'none').map(s => s.textContent).join('|') }; })()`);
+  check('the box\'s place is the ! band in normal mode: how to type to the command', band.mark === '!' && band.bash && band.say === 'i or a click types to the command. Esc sends it Esc.', JSON.stringify(band));
   await key('i', { code: 'KeyI', vk: 73 });
-  check('i takes the band: insert mode, the field focused', await c.until(`document.activeElement?.id === 'run-in' && __synopia.mode() === 'insert'`, 2000));
+  check('i: insert mode, the terminal focused', await c.until(`__synopia.term()?.focused === true && __synopia.mode() === 'insert'`, 2000));
   await keep('view-input', null);
-  // Enter (empty) in the band: the helper reads it and ends
+  // Enter in the terminal: the helper reads it and ends
   await ev('__synopia.spy()');
   await enter();
-  check('Enter sends one bangInput with an empty line', await c.until(`__synopia.sent('bangInput').length === 1 && __synopia.sent('bangInput')[0].text === ''`, 3000));
+  check('Enter goes to it as a terminal sends it (CR)', await c.until(`__synopia.sent('termInput').map(m => m.data).join('') === '\\r'`, 3000), JSON.stringify(await ev(`__synopia.sent('termInput')`)));
   check('the helper got its Enter and finished', await c.until(`(__synopia.cur().bangs || []).some(r => r.id === '${id}' && !r.running && r.exit === 0) && /Finished after/.test(document.getElementById('log').textContent) && /Thanks, carrying on/.test(document.getElementById('log').textContent)`, 6000), await ev(`JSON.stringify(__synopia.cur().bangs)`));
-  check('the band goes with the run; the session no longer needs you', await c.until(`!document.getElementById('run-in') && __synopia.cur().state.needsYou === null`, 3000), await ev(`JSON.stringify(__synopia.cur().state)`));
+  check('the mode line goes with the run; the session no longer needs you', await c.until(`!document.querySelector('[data-term-mode]') && __synopia.cur().state.needsYou === null`, 3000), await ev(`JSON.stringify(__synopia.cur().state)`));
   check('it moves to Past, with its !', await c.until(`!!document.querySelector('.rail .past [data-bg="${id}"] .who') && !document.querySelector('.rail .now [data-bg="${id}"]')`, 9000));
   await keep('panel', `.rail`);
   await ev(`document.querySelector('[data-back]').click()`);
@@ -309,6 +316,78 @@ check('the mid-turn ! stays in place, once, nothing left at the end', o.before &
   await ev(`document.querySelector('[data-back]').click()`);
   await c.until(`__synopia.view() === null`, 3000);
   void top0;
+}
+
+// a real terminal (R7.2, 2026-11-27, the user: "It should behave more like normal terminal when waiting for stdread"):
+// typing in insert mode reaches a `read` prompt; Esc goes to normal mode, and an Esc there reaches the program as ESC;
+// the pty takes the view's size and a resize reaches the program (SIGWINCH, `stty size`); colours are drawn in the
+// palette of the theme shown
+{
+  await idle();
+  const termRun = async (cmd, want) => {
+    await ev(`(() => { const ta = document.getElementById('msg'); ta.value = ''; ta.dispatchEvent(new Event('input')); ta.focus(); })()`);
+    if ((await box()).bash) await key('Backspace', { code: 'Backspace', vk: 8 });
+    await key('!', { code: 'Digit1', shift: true, vk: 49 });
+    await type(cmd);
+    await enter();
+    await c.until(`!!__synopia.cur().bang?.running && __synopia.cur().bang.cmd === ${JSON.stringify(cmd)}`, 5000);
+    const rid = await ev(`__synopia.cur().bang.id`);
+    await ev(`document.querySelector('#log .bang[data-bang="${rid}"] .bang-res, #log .bang[data-bang="${rid}"] .bang-cmd')?.click()`);
+    await c.until(`__synopia.view() === '${rid}' && __synopia.term()?.writable === true && new RegExp(${JSON.stringify(want)}).test((__synopia.term()?.lines || []).join('\\n'))`, 6000);
+    return rid;
+  };
+  const back = async () => { await ev(`document.querySelector('[data-back]').click()`); await c.until(`__synopia.view() === null && !!document.getElementById('msg')`, 3000); await idle(); };
+  const ended = (rid) => c.until(`(__synopia.cur().bangs || []).some(r => r.id === '${rid}' && !r.running)`, 6000);
+  // a `read` prompt: what you type in insert mode reaches it, as typed
+  let rid = await termRun(`printf '\\033[1;31mName:\\033[0m '; read n; echo "hello [$n]"`, 'Name:');
+  await key('i', { code: 'KeyI', vk: 73 });
+  await c.until(`__synopia.term()?.focused === true`, 2000);
+  await type('demo');
+  await key('Backspace', { code: 'Backspace', vk: 8 });
+  await type('o');
+  await enter();
+  check('a read prompt gets what you type in insert mode, Backspace too', await c.until(`/hello \\[demo\\]/.test((__synopia.term()?.lines || []).join('\\n'))`, 5000), await lines());
+  check('colours are drawn, not shown as escapes: "Name:" in red, no [1;31m', await ev(`(() => { const l = __synopia.term().lines.join('\\n'), s = [...document.querySelectorAll('#log .term-box .xterm-rows span')].find(x => x.textContent.includes('Name:')); return !/\\[1;31m/.test(l) && !!s && getComputedStyle(s).color; })()`) === (process.env.SYNOPIA_CDP_THEME === 'dark' ? 'rgb(255, 123, 114)' : 'rgb(207, 34, 46)'),
+    await ev(`(() => { const s = [...document.querySelectorAll('#log .term-box .xterm-rows span')].find(x => x.textContent.includes('Name:')); return s ? getComputedStyle(s).color + ' ' + s.className : 'no span'; })()`));
+  check('the plain text for the row and Claude has no escapes', await ended(rid) && await ev(`!/\\x1b/.test(JSON.stringify(__synopia.cur().items.filter(i => i.k === 'bang').map(i => i.sh)))`));
+  // the terminal's colours follow the theme: the panel's --sub behind it, red from the dark set in dark mode
+  const tb = () => ev(`(() => { const s = [...document.querySelectorAll('#log .term-box .xterm-rows span')].find(x => x.textContent.includes('Name:')); const v = document.querySelector('#log .term-box .xterm-viewport') || document.querySelector('#log .term-box .xterm-screen'); return [s ? getComputedStyle(s).color : '', getComputedStyle(document.querySelector('#log .term-box')).backgroundColor, document.documentElement.dataset.theme]; })()`);
+  const was = await ev(`document.documentElement.dataset.theme`);
+  await ev(`document.getElementById('theme').click()`); await sleep(300);
+  const flip = await tb();
+  await ev(`document.getElementById('theme').click()`); await sleep(300);
+  const ANS = { dark: ['rgb(255, 123, 114)', 'rgb(46, 53, 62)'], light: ['rgb(207, 34, 46)', 'rgb(246, 248, 250)'] };
+  check('the theme switch recolours the terminal: dark mode\'s red and panel', JSON.stringify(flip.slice(0, 2)) === JSON.stringify(ANS[flip[2]]) && flip[2] !== was, JSON.stringify(flip));
+  check('and back', JSON.stringify((await tb()).slice(0, 2)) === JSON.stringify(ANS[was]), JSON.stringify(await tb()));
+  await shot('bang-terminal.png');
+  await back();
+  // Esc: one goes to normal mode; one in normal mode reaches the program as ESC (it reads one byte, raw)
+  rid = await termRun(`stty -icanon -echo; echo ready; b=$(dd bs=1 count=1 2>/dev/null | od -An -tx1); echo "byte [$b]"`, 'ready');
+  await key('i', { code: 'KeyI', vk: 73 });
+  await c.until(`__synopia.term()?.focused === true && __synopia.mode() === 'insert'`, 2000);
+  await ev('__synopia.spy()');
+  await esc();
+  check('one Esc in insert mode goes to normal mode and sends nothing', await c.until(`__synopia.mode() === 'normal' && __synopia.term()?.focused === false`, 2000) && (await ev(`__synopia.sent('termInput').length`)) === 0);
+  await esc();
+  check('an Esc in normal mode reaches the program as ESC, and the view stays in normal mode', await c.until(`/byte \\[ ?1b\\]/.test((__synopia.term()?.lines || []).join('\\n'))`, 4000) && (await ev(`__synopia.mode()`)) === 'normal' && !(await ev(`!!document.querySelector('.composer.asking')`)), await lines());
+  await ended(rid);
+  await back();
+  // the size: the pty starts at the terminal's, and a resize of the view reaches it
+  rid = await termRun(`trap 'echo "size $(stty size)"' WINCH; echo "size $(stty size)"; while :; do sleep 0.05; done`, 'size \\d');
+  const size = () => ev(`(() => { const t = __synopia.term(); const m = [...t.lines.join('\\n').matchAll(/size (\\d+) (\\d+)/g)].pop(); return { term: [t.rows, t.cols], pty: m ? [+m[1], +m[2]] : null }; })()`);
+  await c.until(`(() => { const t = __synopia.term(); const m = [...t.lines.join('\\n').matchAll(/size (\\d+) (\\d+)/g)].pop(); return !!m && +m[1] === t.rows && +m[2] === t.cols; })()`, 4000);
+  const s0 = await size();
+  check('the pty has the terminal\'s size (stty size)', !!s0.pty && JSON.stringify(s0.pty) === JSON.stringify(s0.term), JSON.stringify(s0));
+  const vp = await ev(`({ w: innerWidth, h: innerHeight })`);
+  await c.cdp('Emulation.setDeviceMetricsOverride', { width: vp.w - 200, height: vp.h - 120, deviceScaleFactor: 1, mobile: false });
+  const resized = await c.until(`(() => { const t = __synopia.term(); const m = [...t.lines.join('\\n').matchAll(/size (\\d+) (\\d+)/g)].pop(); return !!m && +m[1] === t.rows && +m[2] === t.cols && t.cols !== ${s0.term[1]}; })()`, 5000);
+  check('a smaller view resizes the pty: the program gets SIGWINCH and stty size says the new size', resized, JSON.stringify(await size()));
+  await c.cdp('Emulation.clearDeviceMetricsOverride');
+  await key('i', { code: 'KeyI', vk: 73 });
+  await c.until(`__synopia.term()?.focused === true`, 2000);
+  await key('c', { code: 'KeyC', vk: 67, ctrl: true });
+  check('Ctrl-C ends it', await ended(rid));
+  await back();
 }
 
 // a session Synopia doesn't drive: no bash mode

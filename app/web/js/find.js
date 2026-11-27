@@ -11,6 +11,7 @@ import { send } from "./connection.js";
 import { findIn } from "./preview.js";
 import { jumpTo } from "./ui-state.js";
 import { shownBg, loadEarlierOutput } from "./bg-view.js";
+import { termOn, termFind, termFindClear } from "./term.js";
 import { mode, setMode } from "./mode.js";
 
 const DEBOUNCE = 150, GAP = 48; // ms after the last key; a match scrolled to sits this far under the log's top
@@ -88,6 +89,7 @@ function go(i) {
 }
 /* the match on screen: its step or group opened, scrolled near the top when it is off screen, marked current */
 function land(i) {
+  if (termOn()) return i === f.at && termFind(f.q, i, f.hits.length); // a shell view's terminal selects it (term.js)
   if (!paint() || i !== f.at) return false;
   const r = f.ranges[i]; if (!r) return false;
   const log = document.getElementById("log");
@@ -120,6 +122,7 @@ function paint() {
   const log = document.getElementById("log");
   f.ranges = f.hits.map(() => null);
   if (!shown() || f.key !== mounted || !log) return false;
+  if (termOn()) { if (f.at < 0) termFindClear(); return true; } // its matches are selected one at a time (land)
   const all = [];
   if (f.hits.length) {
     if (shownBg()) {
