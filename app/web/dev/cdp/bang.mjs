@@ -181,6 +181,11 @@ await esc();
 await sleep(300);
 check('Esc, Esc in its shell view (normal mode) asks nothing and stops nothing: each Esc goes to the command', JSON.stringify(await ev(`[!!document.querySelector('.composer.asking'), __synopia.sent('termInput').map(m => m.data), __synopia.sent('bangStop').length, __synopia.mode(), !!__synopia.cur().bang?.running]`)) === JSON.stringify([false, ['\x1b', '\x1b'], 0, 'normal', true]),
   JSON.stringify(await ev(`__synopia.sent('termInput')`)));
+// x in its shell view asks to stop the command, not to close the session (R9.6, 2026-11-27); Esc cancels it
+await key('x', { code: 'KeyX', vk: 88 });
+check('x in its shell view asks "Stop this command?"', await c.until(`/^Stop this command\\?/.test(document.querySelector('.composer.asking .int-ask')?.textContent || '')`, 2000), await ev(`document.querySelector('.int-ask')?.textContent || ''`));
+await esc();
+check('Esc cancels it: nothing stopped, nothing sent to the command', await c.until(`!document.querySelector('.composer.asking')`, 2000) && (await ev(`__synopia.sent('bangStop').length`)) === 0 && !!(await ev(`__synopia.cur().bang?.running`)));
 await key('i', { code: 'KeyI', vk: 73 });
 check('i: insert mode, the terminal has the keys, the box\'s place says so', await c.until(`__synopia.mode() === 'insert' && __synopia.term()?.focused === true && getComputedStyle(document.querySelector('.tm-i')).display !== 'none'`, 2000));
 const t0 = Date.now();

@@ -197,15 +197,15 @@ export function openModelPicker() {
    another prompt's first key replaces it. A view switch, the turn's end or the steps' end take it away too. */
 let ask = null; // { kind: "interrupt" | "stop" | "background" | "close" | "now", sid, bg }
 export const prompt = () => ask?.kind || null;
-const AGAIN = { interrupt: "Escape", stop: "Escape", background: "b", close: "x", now: "f" };
+const AGAIN = { interrupt: "Escape", stop: "x", background: "b", close: "x", now: "f" };
 /* a running turn, or one waiting on a card; never for a session another process runs. Your `!` command keeps
    running: it stops in its shell view (2026-11-26) */
 const canInterrupt = s => Boolean(s) && s.state.driven && !termPid(s) && (s.state.light === "green" || s.state.light === "red" && s.state.status === "waiting");
-/* the run whose shell view is shown and that Esc, Esc stops there (R9.4, 2026-11-26): Claude's background shell or
-   monitor in a session Synopia drives. Your `!` command and the refresh are terminals (2026-11-27): an Esc goes
-   to the program, and Ctrl-C in insert mode interrupts it (bg-view.js). Claude's foreground step is the turn:
-   its view asks "Interrupt?" */
-const stoppable = s => { const b = shownBg(); return b && !b.step && !b.own && !b.creds && bgState(b) === "running" && s.state.driven && !termPid(s) ? b : null; };
+/* the run whose shell view is shown and that x, x stops there (R9.6, 2026-11-27: x closes what you look at; in
+   the main view the session): your `!` command, the refresh, or Claude's background shell or monitor in a session
+   Synopia drives. Esc in a terminal goes to the program, and Ctrl-C in insert mode interrupts it (bg-view.js).
+   Claude's foreground step is the turn: its view asks "Interrupt?" on Esc */
+const stoppable = s => { const b = shownBg(); return b && !b.step && bgState(b) === "running" && (b.own || b.creds || (s.state.driven && !termPid(s))) ? b : null; };
 /* the main conversation's steps that can go: a running foreground Bash or Agent (the backend's `fg`), in a
    running turn of a session Synopia drives */
 const bgSteps = s => !s || !s.state.driven || termPid(s) || view || s.state.light !== "green" ? [] : s.items.filter(it => it.k === "tool" && it.fg && it.state === "running");
@@ -231,8 +231,7 @@ function dismiss() {
 }
 /* the first Esc */
 export function askInterrupt() {
-  const s = cur(), b = s && stoppable(s);
-  if (b) { const what = b.kind === "monitor" ? "monitor" : "shell"; if (!askInBox("stop", `<b>Stop this ${what}?</b> <kbd>Esc</kbd> again to stop it. Any other key to keep it running.`)) return false; ask.bg = b.toolUseId; return true; }
+  const s = cur();
   if (view && !shownBg()?.step) return false; // a subagent's or an ended run's view: nothing of its own to stop
   return canInterrupt(s) && askInBox("interrupt", `<b>Interrupt?</b> <kbd>Esc</kbd> again to stop. Any other key to keep working.`);
 }
@@ -253,6 +252,9 @@ export function askNow() {
 /* the first x: with what will stop; a session another process drives is only removed from Synopia */
 export function askClose() {
   const s = cur(); if (!s) return false;
+  const b = stoppable(s);
+  if (b) { const what = b.own || b.creds ? "command" : b.kind === "monitor" ? "monitor" : "shell"; if (!askInBox("stop", `<b>Stop this ${what}?</b> <kbd>x</kbd> again to stop it. Any other key to keep it running.`)) return false; ask.bg = b.toolUseId; return true; }
+  if (view && shownBg()) return false; // an ended run's view: nothing to stop, and x doesn't close the session from here
   const other = !s.state.driven || Boolean(termPid(s)), stops = other ? "" : closeStops(s);
   return askInBox("close", other
     ? `<b>Remove it from Synopia?</b> <kbd>x</kbd> again. Its other process keeps running.`
@@ -265,7 +267,7 @@ function confirm() {
   const a = ask; dismiss();
   const s = cur(); if (!a || a.sid !== current || !s) return;
   if (a.kind === "interrupt" && canInterrupt(s)) act({ t: "interrupt", sid: s.id });
-  else if (a.kind === "stop") { const b = stoppable(s); if (b && b.toolUseId === a.bg) act({ t: "stopTask", sid: s.id, bg: b.toolUseId }, { done: (ok, error) => { if (!ok && error) toast(error); } }); }
+  else if (a.kind === "stop") { const b = stoppable(s); if (b && b.toolUseId === a.bg) act(b.own ? { t: "bangStop", sid: s.id, bg: b.toolUseId } : b.creds ? { t: "credsCancel", sid: s.id } : { t: "stopTask", sid: s.id, bg: b.toolUseId }, { done: (ok, error) => { if (!ok && error) toast(error); } }); }
   else if (a.kind === "background" && bgSteps(s).length) act({ t: "background", sid: s.id });
   else if (a.kind === "close") closeSession(s);
   else if (a.kind === "now" && canSendNow(s)) sendNow(s);
