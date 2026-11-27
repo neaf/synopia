@@ -78,6 +78,23 @@ Test: `ledger.test.ts` "serialize: …": a fixture read and written unchanged ke
 
 `open-items.ts` `writeBack` (FR-ITEM-11): only a ledger whose list Synopia changed (a keeper op, `d`, Undo, Mark reviewed, a review item it opened); only when no session using it has a turn running (Synopia's process working, or the transcript's open turn for a terminal's session); after reading and merging the file again, so the agent's changes come first; only a file whose version 1 comment is there (plan question 5: only the skill and `ledger.py init` write it; a file without it, or another version, is never written) and that has no line Synopia can't read (a rewrite would lose it); and not when the file's size or mtime changed since that read (a terminal's turn wrote it: the next look reads it and tries again). The write is a temporary file beside it renamed over it, with the file's mode. Test: `open-items.test.ts` "the write-back: …", "the write-back leaves alone …".
 
+## The keeper's batch
+
+`app/backend/perf/keeper-batch.ts` (opt-in, outside `check.sh`; one model call per case and model): the real `keeper.ts` prompt and `checkOps` on the 50 invented exchanges of `perf/keeper-cases.json` (12 of your messages, 25 turns, 8 with subagent reports, 5 reopen or supersede cases; 17 expect no op), scored against the expected ops. An op matches by `op` plus the kind (open) or the id with its `as` or `state`. It prints numbers only: cases exact (every expected op and nothing more), recall, precision, extra ops, no-op cases left alone, ops the checks dropped, failures, median time. `-v` adds the missed cases as op shapes and ids.
+
+Run 2026-11-27 (SDK 0.3.330, its bundled CLI), twice: before and after one prompt change.
+
+| Run | Model | Exact | Recall | Precision | No-op cases | Dropped by the checks | Median |
+|---|---|---|---|---|---|---|---|
+| first prompt | sonnet | 43/50 | 35/42 (83%) | 35/39 (90%) | 16/17 | 2 | 2.6 s |
+| first prompt | haiku | 43/50 | 35/42 (83%) | 35/38 (92%) | 16/17 | 4 | 2.9 s |
+| after the change | sonnet | 43/50 | 37/42 (88%) | 37/40 (93%) | 16/17 | 4 | 2.8 s |
+| after the change | haiku | 45/50 | 39/42 (93%) | 39/42 (93%) | 15/17 | 2 | 2.9 s |
+
+- The change, from the misses of the first run: "go" or "do it" after proposals closes those defaults as went ahead; "remind me to" is a follow-up; an answered item closes as done once the reply shows Claude acted; a report may close its own default as went ahead (also allowed by `checkOps` from then on). No case was changed to fit a model.
+- Misses both models share after the change: an answer that fits two decisions read as one (the rule says ask, not guess); an answered item the reply acted on left open; superseded read as dropped. Each costs a stale item or a wrong close you can Undo.
+- The gap between the two models is within the run-to-run change (a model's score moved by up to 2 cases between runs). The keeper stays on `sonnet` as decided (design question 3); `settings.keeperModel` takes `haiku`.
+
 ## Quirks
 
 ### Quirk: stamps have no zone, and some have no time

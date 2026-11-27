@@ -57,11 +57,11 @@ export const SYSTEM_PROMPT = [
   '- {"op": "reopen", "id": "Y2", "quote": "..."}',
   'Rules:',
   '- quote: a short phrase copied exactly from the exchange, the words that show the change. No quote, no op.',
-  '- Open only what the exchange leaves open at its end: a question Claude asks the user and does not answer itself, a proposal Claude will carry out unless told otherwise ("I\'ll do X unless you object": a default, with its trigger), "I\'ll check again after ..." (a follow-up, with its trigger), a task the user says they will do, "remind me to ...". Not a rhetorical question, not a question the same reply answers, not work already done, not an item already in the list.',
+  '- Open only what the exchange leaves open at its end: a question Claude asks the user and does not answer itself, a proposal Claude will carry out unless told otherwise ("I\'ll do X unless you object": a default, with its trigger), "I\'ll check again after ..." (a follow-up, with its trigger), a task the user says they will do (your task), "remind me to ..." (a follow-up: Claude brings it back). Not a rhetorical question, not a question the same reply answers, not work already done, not an item already in the list.',
   '- text: one sentence, the thing itself, as the user would say it. options: a decision\'s set answers, a few words each. recommended: the option Claude says it would pick.',
-  '- On the user\'s message: close what it answers as "answered", with the answer: by id ("Y1 run it"), by quoting the item, or by plain reference when exactly one open item fits. When an answer could fit two items, change nothing. "later" or "not now" sets the state later. "skip it" or "drop it" closes as dropped. "Y2 isn\'t done" reopens a closed item.',
-  '- On Claude\'s reply: close what the reply did: an answered decision Claude acted on, or a follow-up it checked ("done"); a default it carried out ("went ahead"); an item it says is no longer needed ("dropped", with why); an item replaced by a better one ("superseded", by its id).',
-  '- A tool result can only show that a task of the user\'s is done. A subagent\'s report may raise a question for the user, or say that an item its brief owned is done; it never answers a decision.',
+  '- On the user\'s message: close what it answers as "answered", with the answer: by id ("Y1 run it"), by quoting the item, or by plain reference when exactly one open item fits. When an answer could fit two items, change nothing. "later" or "not now" sets the state later. "skip it" or "drop it" closes as dropped. "go" or "do it" after proposals closes those defaults as "went ahead". "Y2 isn\'t done" reopens a closed item.',
+  '- On Claude\'s reply: close what the reply did: an item whose state is answered once the reply shows Claude acted on the answer, or a follow-up it checked ("done"); a default it carried out ("went ahead"); an item it says is no longer needed ("dropped", with why); an item replaced by a better one ("superseded", by its id).',
+  '- A tool result can only show that a task of the user\'s is done. A subagent\'s report may raise a question for the user, or say that an item its brief owned is done (a default it carried out: "went ahead"); it never answers a decision.',
   '- Use the ids in the list; never make one up.',
 ].join('\n');
 
@@ -204,7 +204,7 @@ export function checkOps(raw: unknown[], ctx: CheckContext): { ops: Op[]; droppe
     const fromYouOrClaude = src === 'you' || src === 'claude';
     const ok = as === 'answered' ? src === 'you'
       : as === 'done' ? fromYouOrClaude || owned || (src === 'tool' && item.kind === 'your task')
-        : as === 'went ahead' ? fromYouOrClaude && item.kind === 'default'
+        : as === 'went ahead' ? (fromYouOrClaude || owned) && item.kind === 'default'
           : as === 'dropped' ? fromYouOrClaude || owned
             : fromYouOrClaude;
     if (!ok) return drop(`${as} from a ${src}${src === 'report' ? ' (not an id its brief owned)' : ''}`);
