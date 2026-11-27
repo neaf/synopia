@@ -127,6 +127,7 @@ export const SUBAGENT_REFUSED = 'Only the main conversation keeps the open items
 const openItems: Tool = {
   name: 'open_items',
   description: 'The session\'s open items, kept by Synopia: loose ends waiting on the user (Y ids) or on you (A ids, follow-ups). '
+    + 'The list holds what waits on the user and what is stuck or would be forgotten, not a plan of what will happen: open a follow-up only when nothing else brings it back (a promise with nothing behind it, an outside event no watcher covers, a step left at a handoff, work in motion that died: open it as stuck). Never for the next step of work in motion: a running subagent\'s branch or report, a watcher or CI notification, a scheduled wakeup each bring it back. '
     + 'Record them here instead of editing the open-items ledger file; Synopia gives the ids and writes the file between turns. '
     + 'op "open": kind, text (one sentence), and for a decision its options and recommended one, for a follow-up or a default its trigger, and the quote it came from; returns the new id. '
     + 'op "update": id, and state (answered, due or later), answer, or a better text. '

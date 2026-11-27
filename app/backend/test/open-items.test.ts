@@ -139,6 +139,50 @@ test('a review item merges with the agent\'s: the agent\'s id wins and Mark revi
   assert.deepEqual(items.view('s1').items.map((i) => [i.id, i.agent]), [['Y7', undefined], ['Y9', 'ag-b']]);
 });
 
+test('a stopped review subagent: no review item, the agent\'s own drops with why, a resumed run brings it back', async () => {
+  const { dir, f, items } = setup();
+  const stopped = (a: Agent): Agent => ({ ...a, stopped: true });
+  f.agents.set('s1', [stopped(agent('ag-p', 'For review: Pricing page copy'))]);
+  await items.sync('s1');
+  assert.deepEqual(items.view('s1').items, [], 'nothing delivered: nothing to review');
+  // the agent's own review item, for a subagent stopped before it delivered: dropped, never done
+  const p = ledgerIn(dir, 'checkout-m2', fixture('subagent.md'));
+  f.ledger.set('s1', fact(p));
+  f.you.set('s1', Date.parse('2026-11-26T16:59:00.000Z'));
+  f.agents.set('s1', [stopped(agent('ag-r', 'For review: Receipt email copy'))]);
+  await items.sync('s1');
+  let v = items.view('s1');
+  assert.deepEqual(ids(v.items), ['Y7']);
+  assert.deepEqual(v.closed.map((c) => [c.id, c.how, c.note]), [['Y8', 'dropped', 'Receipt email copy was stopped before it delivered']]);
+  assert.equal(items.counts('s1').review, 0);
+  // resumed, and finished this time: the review item is open again
+  f.agents.set('s1', [agent('ag-r', 'For review: Receipt email copy')]);
+  await items.sync('s1');
+  v = items.view('s1');
+  assert.deepEqual(ids(v.items), ['Y7', 'Y8']);
+  assert.equal(items.reviewOpen('s1', 'ag-r'), true);
+});
+
+test('a stopped review subagent another took over: its item goes with the new one', async () => {
+  const { dir, f, items } = setup();
+  const p = ledgerIn(dir, 'checkout-m2', fixture('subagent.md'));
+  f.ledger.set('s1', fact(p));
+  const old = { ...agent('ag-r', 'For review: Receipt email copy'), stopped: true };
+  const next = { ...agent('ag-r2', 'For review: Receipt email copy', true), start: '2026-11-26T15:40:00.000Z' };
+  f.agents.set('s1', [old, next]);
+  await items.sync('s1');
+  assert.deepEqual(items.view('s1').items.map((i) => [i.id, i.agent]), [['Y7', undefined], ['Y8', 'ag-r2']], 'the agent\'s Y8 ties to the running one');
+  // Synopia's own review item of a stopped subagent (kept from before) is removed once a newer one has the name
+  const { f: f2, items: items2, store } = setup();
+  f2.agents.set('s2', [agent('ag-b', 'For review: Banner copy')]);
+  await items2.sync('s2');
+  assert.deepEqual(ids(items2.view('s2').items), ['Y1']);
+  f2.agents.set('s2', [{ ...agent('ag-b', 'For review: Banner copy'), stopped: true }, { ...agent('ag-b2', 'For review: Banner copy', true), start: '2026-11-26T15:40:00.000Z' }]);
+  await items2.sync('s2');
+  assert.deepEqual(items2.view('s2').items, []);
+  assert.equal(store.state.items.lists['session:s2'].items.length, 0);
+});
+
 test('an item gone from the file is closed as dropped; one moved to Closed closes as the file says', async () => {
   const { dir, f, items } = setup();
   const p = ledgerIn(dir);
