@@ -1,0 +1,12 @@
+{
+  "name": "harness",
+  "description": "The agent-harness skills and subagents as one Claude Code plugin. Run install.py --plugin first: it renders the agents into build/agents/.",
+  "agents": [
+    "./build/agents/attack-plan-critic.md",
+    "./build/agents/attack-plan-designer.md",
+    "./build/agents/attack-plan-reader.md",
+    "./build/agents/rearch-architect.md",
+    "./build/agents/rearch-auditor.md",
+    "./build/agents/rearch-phase.md"
+  ]
+}

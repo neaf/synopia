@@ -11,6 +11,11 @@ node_modules/
 # Built app bundles
 *.app/
 build/
+# ...but a harness plugin's rendered agents are its build/agents/ (app/harness/pin.sh)
+!app/harness/bundle/build/
+!app/backend/test/fixtures/harness/build/
+# your agent-harness checkout for app/build.sh, one line holding its path
+app/.harness-live
 
 # Synopia app: dev state and local-only fixtures
 app/.dev-state/

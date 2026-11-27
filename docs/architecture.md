@@ -60,6 +60,7 @@ Rules the design keeps:
 | `pty.ts` | A command in one pseudo-terminal for its whole run (`script(1)` behind a `cat` pipe), its output to a callback only (stderr apart on request), a line typed into it, its exit code; killed as the command's group, whose id the pty reports. `plainText`: the one place the pty's CRLF and escape sequences go. `InputWatch` and `looksLikePrompt` (2026-11-26, live run IN-1 in docs/Claude Code terminals.md): the one rule for "waits for input" (a prompt-shaped last line, 1 s quiet) and the 10 s "may wait" hint. Used by `creds.ts` and `bang.ts`. |
 | `runs.ts` | When your `!` run or the credential refresh gets its panel card (R7.1, 2026-11-26): `cardAt` (3 s after the start, or when it first waited; none for a run over sooner). `bang.ts` and `creds.ts` send it; the page shows a card once its clock passes it. Claude's background shells and monitors carry none: their card shows from their start (`rail.js`). |
 | `writer.ts` | Claude-written title and Now line: 20 s debounce, one call at a time, distinct log for error results. |
+| `bundle.ts` | The bundled agent-harness plugin (R3.17, FR-HAR-01), the one reader of the folder `--harness` names: `load(dir)` gives `{dir, skills, agents, rules, rulesHash}` (the `skills/*/SKILL.md` folders, the plugin.json `agents` names, `instructions/global.md` and its sha256); a missing or unreadable bundle is `null` and one `harness.missing` line. Sessions don't load it yet (milestone 3). |
 | `keeper.ts` | The open-items keeper (R3.16, FR-ITEM-08): a one-shot call per exchange `open-items.ts` asks for (`ask`), with the writer's isolated options (`sdk.ts` `writerOptions`, cwd `<state>/keeper`) and `settings.keeperModel` (default `sonnet`); its own queue, one call at a time, no debounce. Holds the fixed system prompt, `buildPrompt` (the list, the exchange by source, `<work>`, as data, cut to 12,000 characters) and the op checks (`checkOps`: the quote word for word in a segment, the most trusted one wins; known ids and values; who may close how; at most 8). Checked ops go back to `open-items.ts`; dropped ones are logged. |
 | `claude-jsonl.ts` | Adapter for Claude Code transcript records: turns raw JSON lines into one typed, classified record union (prompt, interrupt marker with `forToolUse`, queued command, task notification, turn end, tool use/result, bash edit diff, title, PR link, mode, meta). Every CLI text prefix and record-shape quirk lives here. Pure. |
 | `ledger.ts` | Adapter for the open-items ledger, `.ai-notes/<area>/open-items.md` (FR-ITEM-01, FR-ITEM-04): `parse` of the version 1 line shapes into open items, closed lines and the lines it can't read (one bad line never fails the file), `blockOf` (an item's own lines), `nextId`, `fromOf`, `optionsOf`, `stampTime` (local time, date-only stamps), the path rule `isLedgerPath` (with `ledgerPathOf` for a tool's path and `ledgerPathIn` for a Bash command), a brief's `Open items:` line (`ownedIds`) and `ownerOf` (the brief first, the `subagent` field by name second). Pure. |
@@ -139,13 +140,13 @@ Page unit tests: `app/web/test/*.test.js` (`node --test`; `stub-dom.js` gives in
 | `TitleBar.swift` | Integrated title bar, drag strip, double-click action. |
 | `WebView.swift` | WKWebView, chrome injection (`in-app`, `fullscreen`, `--titlebar`, `SYNOPIA_CLOCK24`), navigation policy, snapshot hook. No `confirm()` bridge. |
 | `DaemonFiles.swift` | The Swift reader of `daemon.json` (incl. `handover`), the HTTP reply types (ping, badge, quit-check) and the `daemon.log` tail for the error view. |
-| `Backend.swift` | Find or start the daemon (posix_spawn), async HTTP with timeouts (ping, badge, quit-check, stop, restart), slow vs gone, loss handling with the handover field. |
+| `Backend.swift` | Find or start the daemon (posix_spawn, with `--harness` when `config.json` names one), async HTTP with timeouts (ping, badge, quit-check, stop, restart), slow vs gone, loss handling with the handover field. |
 
 Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/shell/test/golden` through `DaemonFiles.swift`; `shell-contract.test.ts` checks a real daemon's files and replies against the same goldens.
 
 ### Tooling
 
-`app/build.sh` (builds `build/Synopia.app` in a temp bundle, checks it, swaps it in), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 32 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
+`app/build.sh` (builds `build/Synopia.app` in a temp bundle, copies the harness bundle into it unless `app/.harness-live` names a checkout, checks it, swaps it in), `app/harness/pin.sh` (pins agent-harness into `app/harness/bundle/`), `app/check.sh [--page]`, `app/dev.sh [--script]`, `app/web/dev/cdp/` (run.sh, cdp.mjs, helpers.mjs, chrome.sh, backend.sh, 32 suites), `app/web/dev/chrome-bin.sh` (fails without chrome-headless-shell), `app/web/dev/compare.sh` with `build-proto-fixture.ts`. See [Page checks](Page%20checks.md).
 
 ## Data flow
 
@@ -202,6 +203,9 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 | `~/.claude/projects/**` | Claude Code | `tail.ts` / `claude-jsonl.ts` |
 | `~/.claude/sessions/<pid>.json` | Claude Code | `cli-terminals.ts` (never `*.key`) |
 | `<folder>/.ai-notes/<area>/open-items.md` | the agent and the open-items skill | `open-items.ts` through `ledger.ts` (the format) |
+| `app/harness/bundle/` (`.claude-plugin/plugin.json`, `skills/`, `build/agents/`, `instructions/global.md`) and `app/harness/PIN`, committed | `app/harness/pin.sh` | `build.sh` (copies it), `bundle.ts` |
+| `Contents/Resources/harness/` in the app, or the checkout `app/.harness-live` names (gitignored, one path) | `build.sh` | `bundle.ts` through `--harness` |
+| `Contents/Resources/config.json` `{node, backend, harness}` | `build.sh` | `Backend.swift` (`BackendConfig`; `harness` optional) |
 | Your folders | you | `folders.ts`: one `readdir` on Tab, stats of named paths, `mkdir -p` of a typed path on its create row; `session.ts` stats its own folder |
 
 `<state>` is `~/Library/Application Support/Synopia/` for the app, `app/.dev-state/` for `dev.sh`, a temp folder per page-check run. The daemon's files are in [Daemon files](Daemon%20files.md).
@@ -252,7 +256,7 @@ Written atomically (temp file, then rename), 0600, at most once per second, only
 
 ### CLI flags and env
 
-`--claude-dir`, `--state-dir`, `--port`, `--no-parent`, `--sdk-script <file>` (dev and checks: the scripted SDK over `--claude-dir`), `--dry-run` (`open` and a take-over's signal log and act on nothing), `--after <pid>` (set by the daemon this one replaces). Test-only: `--idle-ms`, `--exit-idle-ms`, `--update-read-ms`, `--successor-ms`. Accepted for the one update from a `rearch-base` daemon: `--fake` (the scripted SDK with no script) and `--dry-open` (as `--dry-run`). An unknown flag exits 2.
+`--claude-dir`, `--state-dir`, `--port`, `--no-parent`, `--sdk-script <file>` (dev and checks: the scripted SDK over `--claude-dir`), `--dry-run` (`open` and a take-over's signal log and act on nothing), `--after <pid>` (set by the daemon this one replaces), `--harness <dir>` (the agent-harness plugin folder, from `config.json`; a successor inherits it; `dev.sh` and the page checks pass none). Test-only: `--idle-ms`, `--exit-idle-ms`, `--update-read-ms`, `--successor-ms`. Accepted for the one update from a `rearch-base` daemon: `--fake` (the scripted SDK with no script) and `--dry-open` (as `--dry-run`). An unknown flag exits 2.
 
 Env read by the shell: `SYNOPIA_STATE_DIR`, `SYNOPIA_SDK_SCRIPT` (a fixture tree: `--claude-dir <tree> --sdk-script <tree>/sdk-script.json`), `SYNOPIA_EXIT_IDLE_MS`, `SYNOPIA_SNAPSHOT`, `SYNOPIA_DEBUG_DRAG`.
 
@@ -297,7 +301,7 @@ Suites use `window.__synopia` (state getters, `ready()`, `spy()`/`sent()`, `inje
 | `claude-jsonl.ts`, `tail.ts` | [Claude Code transcripts](Claude%20Code%20transcripts.md) |
 | `cli-terminals.ts` | [Claude Code terminals](Claude%20Code%20terminals.md) |
 | `ledger.ts` | [Open items](Open%20items.md) |
-| `sdk.ts`, `dev/scripted-sdk.ts`, `mcp.ts` (control calls) | [Agent SDK](Agent%20SDK.md) |
+| `sdk.ts`, `dev/scripted-sdk.ts`, `mcp.ts` (control calls), `bundle.ts` (the plugin format) | [Agent SDK](Agent%20SDK.md) |
 | `mcp.ts` (`claude mcp login`, `logout`) | [Claude Code terminals](Claude%20Code%20terminals.md) |
 | `daemon-files.ts`, `DaemonFiles.swift` | [Daemon files](Daemon%20files.md) |
 | `macos.ts`, `open.ts`, `login-env.ts`, `preview.ts` (bat) | [macOS](macOS.md) |
@@ -454,6 +458,8 @@ Facts the documented surface leaves open are settled by one scripted check and r
 | FR-ITEM-10 | open-items.ts (`notItem`, `undo`), router.ts (`item`), protocol.js, keys.js (`d`), open-items.js and transcript.js (Undo) |
 | FR-ITEM-11 | ledger.ts (`serialize`), open-items.ts (`writeBack`, `docOf`; `look` tries the pending ones) |
 | FR-ITEM-12 | agent-tools.ts (`open_items`, `answerOf`), cards.ts (answered with no card), transcript.ts (a subagent's call ignored), open-items.ts (`toolOp`) |
+| FR-HAR-01 | pin.sh, build.sh, Backend.swift, main.ts, bundle.ts |
+| FR-HAR-02 to -06 | planned (harness plan milestones 3 to 5) |
 | FR-LOOK-01 | app.css, fonts |
 | FR-LOOK-02 | theme.js, theme-switch.js, dark.css, ui-state.ts |
 | FR-LOOK-03 | all page modules, prototype/app.html |

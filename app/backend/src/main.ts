@@ -31,6 +31,7 @@ import { startDaemon } from './daemon.ts';
 import { EXIT } from './daemon-files.ts';
 import { draftImage } from './ui-state.ts';
 import { FileRefs } from './file-refs.ts';
+import { load as loadBundle } from './bundle.ts';
 import { VERSION as PROTOCOL } from '../../web/js/protocol.js';
 import type { Client, Server } from './server.ts';
 
@@ -48,6 +49,7 @@ const OPTIONS = {
   'successor-ms': { type: 'string' }, // test-only: a shorter wait for a new daemon than 20 s
   'dry-run': { type: 'boolean', default: false }, // `open` and a take-over's signal log and act on nothing (checks)
   after: { type: 'string' }, // set by the daemon this one replaces: wait for its pid to go first
+  harness: { type: 'string' }, // the agent-harness plugin folder (bundle.ts), from the app's config.json; dev and checks pass none
   // The flags of the daemons before the scripted SDK. A successor gets its old daemon's command
   // line, so the one update from such a daemon (a check's, never the app's) must start:
   // --fake is the scripted SDK with no script, --dry-open is --dry-run.
@@ -109,6 +111,9 @@ const home = scripted?.home ?? homedir();
 // Not under the script (no CLI runs), nor in a successor (it inherits the merged environment).
 if (!scripted) await loadLoginEnv({ log });
 const store = openStore(stateDir, { log });
+// The bundled agent-harness (R3.17): read once, its counts logged. Sessions don't load it yet.
+const bundle = flags.harness === undefined ? null : await loadBundle(expand(flags.harness), log);
+void bundle;
 const token = randomBytes(32).toString('hex');
 
 const VERSION = String(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);

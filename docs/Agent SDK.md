@@ -410,6 +410,16 @@ Not used by Synopia yet: the facts the bundled agent-harness plugin will rest on
 - `Options.skills`: `'all'` or a list of names (`plugin:skill` for plugin skills) that the model may see and the Skill tool may run; omitted leaves the CLI's defaults.
 - `Options.systemPrompt: {type: 'preset', preset: 'claude_code', append?, excludeDynamicSections?, snapshot?}` keeps Claude Code's prompt and adds `append` to it.
 
+### The bundle's format
+
+What `bundle.ts` reads from the folder `--harness` names (the pinned `app/harness/bundle/` or a live agent-harness checkout), and the quirks of that plugin layout:
+- The plugin root holds `.claude-plugin/plugin.json` (`name: "harness"`), `skills/<name>/SKILL.md`, `build/agents/*.md` and `instructions/global.md`. `global.md` is agent-harness's, not a plugin component: the CLI never loads it from a plugin; Synopia appends it itself (milestone 4).
+- The agents are not in the default `agents/` folder: `plugin.json` `agents` lists each file by a path relative to the root (`./build/agents/<name>.md`), because agent-harness renders them with `install.py --plugin` and keeps `build/` out of git. A plain `git archive` of agent-harness therefore has no agents; `app/harness/pin.sh` runs the render inside the export. A listed file that is missing means the render did not run: `bundle.ts` gives `null` (`harness.missing reason="an agent plugin.json names is missing"`), and `build.sh` fails on a folder without `build/agents/`.
+- Skill names are the `skills/*` folders that hold a `SKILL.md`; agent names are the listed files' names without `.md`. In agent-harness both equal the frontmatter `name`. A `user-invocable: false` skill (`harness-common`) counts as a skill: the model may still load it, the menu never lists it.
+- Synopia's `.gitignore` ignores every `build/` folder, so the bundle's and the test fixture's `build/` are re-included by name.
+
+Code: `bundle.ts` `load`; `app/harness/pin.sh`; `app/build.sh`. Test: `bundle.test.ts` on the invented `test/fixtures/harness/`.
+
 ### Live run PL-1
 
 One scripted check, 2026-11-26 (SDK 0.3.330 with its bundled CLI 2.1.330; haiku; scratch folder `/tmp/synopia-pl1/`, scripts `check.mjs` and `step4.mjs` outside the repo; a throwaway `CLAUDE_CONFIG_DIR`; shapes only). An invented plugin `pl1kit` with skill `greet`, a skill with `user-invocable: false` and agent `helper`; a personal skill `greet` in the throwaway config's `skills/`; each skill only replies with its own marker word. The `append` asked for a random code word.

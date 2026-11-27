@@ -20,6 +20,8 @@ import Foundation
 struct BackendConfig: Decodable {
   let node: String
   let backend: String
+  /// The agent-harness plugin folder (app/build.sh): the bundled copy or the live checkout. Absent in older builds.
+  let harness: String?
 
   static func load() throws -> BackendConfig {
     guard let url = Bundle.main.url(forResource: "config", withExtension: "json") else {
@@ -237,6 +239,7 @@ final class Backend {
     try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true,
                                             attributes: [.posixPermissions: 0o700])
     var args = [c.node, "--disable-warning=ExperimentalWarning", "--experimental-strip-types", c.backend]
+    if let dir = c.harness, !dir.isEmpty { args += ["--harness", dir] }
     let env = ProcessInfo.processInfo.environment
     if let dir = env["SYNOPIA_STATE_DIR"], !dir.isEmpty { args += ["--state-dir", stateDir.path] }
     // SYNOPIA_SDK_SCRIPT=<fixture claude dir> runs the scripted SDK over that tree and its
