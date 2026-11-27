@@ -23,7 +23,7 @@ const frames = [...css.matchAll(/@keyframes\s+([\w-]+)\s*\{((?:[^{}]*\{[^{}]*\})
 check('app.css keyframes found, every one parsed', frames.length > 0 && frames.length === (css.match(/@keyframes\b/g) || []).length, String(frames.length));
 check('no keyframe animates opacity, visibility or a colour', frames.every((f) => !/opacity|visibility|color|background-color|fill:|stroke:/.test(f[2])), frames.filter((f) => /opacity|visibility|color|fill:|stroke:/.test(f[2])).map((f) => f[1]).join(' '));
 // a running shell comes to a row that has no background line, then goes (as a server message would put it)
-const tweenOf = () => `(async () => { const row = [...document.querySelectorAll('#groups .row')].find(r => !r.querySelector('[data-line="bg"]')), s = __synopia.data().find(s => s.id === row.dataset.id);
+const tweenOf = () => `(async () => { const row = [...document.querySelectorAll('#groups .row')].find(r => !r.querySelector('[data-line^="b:"]')), s = __synopia.data().find(s => s.id === row.dataset.id);
   __synopia.inject({ t: 'background', sid: s.id, upsert: [{ toolUseId: 'mt-bg', kind: 'shell', status: 'running', start: new Date().toISOString() }] });
   const a = document.getAnimations().find(a => a.id === 'side-line'); const r = a && { duration: a.effect.getComputedTiming().duration, iterations: a.effect.getComputedTiming().iterations, kf: a.effect.getKeyframes().map(k => ({ o: k.computedOffset, e: k.easing, op: +k.opacity, h: k.height })) };
   __synopia.inject({ t: 'session', id: s.id, background: s.background || [] }); await new Promise(r => setTimeout(r, 400)); return r || null; })()`;

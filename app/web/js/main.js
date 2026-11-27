@@ -191,7 +191,10 @@ installTestApi({ inject: onMessage, render });
 /* live durations and ages tick once a second, in place */
 setInterval(() => {
   const now = Date.now(), was = state.nowish; state.tick(now);
-  const s = state.cur(); if (s && rail.cardsDue(s, was, now)) render("rail"); // a run's card came due (R7.1: 3 s after its start)
+  /* a run's card came due (R7.1: 3 s after its start): its panel item, and its sidebar line (R4.2: the same tree) */
+  const due = state.data.filter(s => rail.cardsDue(s, was, now)), s = state.cur();
+  if (due.length) render("side");
+  if (s && due.some(x => x.id === s.id)) render("rail");
   document.querySelectorAll("[data-live]").forEach(el => { el.textContent = format.tookLive(now - new Date(el.dataset.live)); });
   document.querySelectorAll("[data-age]").forEach(el => { el.textContent = format.dur(+el.dataset.age); });
   document.querySelectorAll("[data-until]").forEach(el => { el.textContent = format.left(+el.dataset.until); });

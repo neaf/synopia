@@ -917,6 +917,16 @@ function parseAnswers(a) {
 
 /* ---------- sidebar ---------- */
 let KEYS = [];
+/* the sub-lines: every running item of the panel's tree, each on its own line with its name, moving kind mark and
+   timer, in the panel's order; no count line, no cap (R4.2, 2026-11-27, the user: "Render exactly what we have inside
+   the right panel. Even if there's 10 items, 3 levels deep, it's fine.") */
+function sideLines(s) {
+  const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
+  const items = [...agentsOf(s).filter(a => !a.finished).map(a => ({ agent: a, name: a.description, start: a.start, ms: agentMs(a) })),
+    ...bgOf(s).filter(b => bgState(b) === "running").map(b => ({ bg: b, name: b.description || b.command, start: b.start, ms: bgMs(b) }))]
+    .sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
+  return items.map(x => `<span class="r-agent kc-${kindKey(x)}"><i class="el"></i>${ind("k_" + kindKey(x))} <b class="kw">${esc(x.name)}</b> ${live(x.start, x.ms)}</span>`).join("");
+}
 function rowHTML(s) {
   const st = stateOf(s);
   return `<button class="row" data-id="${s.id}" data-state="${st}" aria-current="${s.id === current}">
@@ -925,8 +935,7 @@ function rowHTML(s) {
       <span class="r-state">${st === "green" ? WORD.green : `${WORD[st]}, ${dur(s.statusAt)}`}</span>
       <span class="r-now">${esc(s.now)}</span>
       ${s.drift ? `<span class="r-drift">${esc(s.drift)}</span>` : ""}
-      ${agentsOf(s).filter(a => !a.finished).slice(0, 3).map(a => `<span class="r-agent kc-${a.fork ? "fork" : "sub"}"><i class="el"></i>${ind(a.fork ? "k_fork" : "k_sub")} <b class="kw">${esc(a.description)}</b> ${live(a.start, agentMs(a))}</span>`).join("")}
-      ${(n => n ? `<span class="r-agent"><i class="el"></i>${ind("k_shell")} ${n} shell${n > 1 ? "s" : ""} or monitor${n > 1 ? "s" : ""} running</span>` : "")(bgOf(s).filter(b => bgState(b) === "running").length)}
+      ${sideLines(s)}
       ${(n => n ? `<span class="r-agent r-review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(toReview(s).length)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>

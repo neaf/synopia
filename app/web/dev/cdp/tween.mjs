@@ -94,7 +94,7 @@ async function aligned(name) {
   check(name + ': geometry afterwards equals a fresh render (lines, L corners, the guide and its tick, the mark box)', a === b, a + '\n  vs ' + b);
 }
 
-for (const [name, on, off, key] of [['background line', 'bgOn', 'bgOff', 'bg'], ['review line', 'revOn', 'revOff', 'review']]) {
+for (const [name, on, off, key] of [['background line', 'bgOn', 'bgOff', 'b:tw-bg'], ['review line', 'revOn', 'revOff', 'review']]) {
   judge(name + ' coming', await sample(on, key, 480), true); await aligned(name + ' coming');
   judge(name + ' going', await sample(off, key, 480), false); await aligned(name + ' going');
 }
@@ -104,11 +104,11 @@ const turn = await ev(`(async () => { const h0 = TW_GEO().h; TW_CHANGE.bgOn(); a
   TW_CHANGE.bgOff(); const h2 = TW_GEO().h; await new Promise(r => setTimeout(r, 450)); return { h0, h1, h2, h3: TW_GEO().h }; })()`);
 check('turning round mid-way keeps the height (no jump), then closes', turn.h1 > turn.h0 + 0.5 && eq(turn.h2, turn.h1, 0.3) && eq(turn.h3, turn.h0, 0.05), JSON.stringify(turn));
 
-// a text-only change doesn't animate
+// a text-only change doesn't animate (the line's name changing)
 await ev(`TW_CHANGE.bgOn()`); await sleep(450);
-const textOnly = await ev(`(() => { TW_PUT({ t: 'background', sid: TWID, upsert: [{ toolUseId: 'tw-bg2', kind: 'monitor', status: 'running', start: new Date().toISOString(), description: 'two' }] });
+const textOnly = await ev(`(() => { TW_PUT({ t: 'background', sid: TWID, upsert: [{ ...TW_S().background.find(b => b.toolUseId === 'tw-bg'), description: 'tween check two' }] });
   return document.getAnimations().filter(a => a.id === 'side-line').length; })()`);
-check('a count changing on a line does not animate', textOnly === 0, String(textOnly));
+check('a line whose text alone changes does not animate', textOnly === 0, String(textOnly));
 await ev(`TW_PUT({ t: 'session', id: TWID, background: TW_S().background.filter(b => !b.toolUseId.startsWith('tw-')) })`); await sleep(450);
 
 // a row being dragged: a line comes mid-drag, the row stays dimmed and its guide aligned
@@ -122,7 +122,7 @@ await ev(`TW_CHANGE.revOff()`); await sleep(450);
 
 // reduced motion: both steps instant
 await reduce(true); await sleep(100);
-for (const [ch, key, coming] of [['bgOn', 'bg', true], ['bgOff', 'bg', false]]) {
+for (const [ch, key, coming] of [['bgOn', 'b:tw-bg', true], ['bgOff', 'b:tw-bg', false]]) {
   const res = await sample(ch, key, 120), fr = res.frames, end = fr.at(-1);
   check('reduced motion ' + (coming ? 'coming' : 'going') + ': instant (first frame final, nothing animates)', fr.every((f) => eq(f.h, end.h, 0.05) && (coming ? f.op === 1 : !f.line)) && !eq(end.h, res.before.h, 4) && res.anims === 0, JSON.stringify(fr[0]) + ' ' + res.anims);
 }
@@ -176,12 +176,12 @@ for (const [name, rm] of [['', false], ['reduced motion: ', true]]) {
   await ev(`[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id !== TWID).click()`); await sleep(500);
   await ev(`[...document.querySelectorAll('#groups .row')].find(r => r.dataset.id === TWID).click()`);
   await sleep(4000 - (Date.now() - t0));
-  const g = await graceState('tw-ag', 'a:tw-ag'), gs = await graceState('tw-rb', 'bg');
+  const g = await graceState('tw-ag', 'a:tw-ag'), gs = await graceState('tw-rb', 'b:tw-rb');
   check(name + 'grace at 4 s: the panel keeps the subagent and the shell where they were, with their final status', g.kid && g.ended && g.marks === 2 && !g.kidLive && gs.kid && gs.ended && gs.marks === 2 && !gs.kidLive && !g.past, JSON.stringify([g, gs]));
   check(name + 'grace at 4 s: the panel keeps the running order (subagent before shell), the tree first', g.order.indexOf('tw-ag') >= 0 && g.order.indexOf('tw-ag') < g.order.indexOf('tw-rb') && g.before, JSON.stringify(g.order));
-  check(name + 'grace at 4 s: the sidebar keeps the sub-lines, still marks and a frozen duration', g.side && g.sideMarks === 2 && !g.sideLive && gs.side && gs.sideMarks === 2 && /finished/.test(gs.sideText), JSON.stringify([g.sideText, gs.sideText]));
+  check(name + 'grace at 4 s: the sidebar keeps the sub-lines, still marks and a frozen duration', g.side && g.sideMarks === 2 && !g.sideLive && gs.side && gs.sideMarks === 2 && /^rail tween check \d/.test(gs.sideText), JSON.stringify([g.sideText, gs.sideText]));
   await sleep(5600 - (Date.now() - t0));
-  const e = await graceState('tw-ag', 'a:tw-ag'), es = await graceState('tw-rb', 'bg');
+  const e = await graceState('tw-ag', 'a:tw-ag'), es = await graceState('tw-rb', 'b:tw-rb');
   check(name + 'after about 5.3 s: gone from the tree and the sidebar, the shell in Past', !e.kid && !es.kid && !e.side && !es.side && es.past, JSON.stringify([e, es]));
   await ev(`(() => { const s = TW_S(); TW_PUT({ t: 'session', id: TWID, background: s.background.filter(b => b.toolUseId !== 'tw-rb'), agents: s.agents.filter(a => a.id !== 'tw-ag') }); })()`); await sleep(400);
 }

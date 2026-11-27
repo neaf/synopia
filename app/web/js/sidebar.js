@@ -2,12 +2,13 @@
    (backend layout.ts): the page draws the one it got (state.js store.layout) and sends intents, as acked
    actions: `moveSession` and `newGroup` from a drop (dnd.js), `renameGroup` from the name field. Nothing
    here changes the layout itself, so a refused or unsent intent leaves the sidebar as the backend has it. */
-import { store, data, current, select, agentsOf, agentMs, isClaudeBg, nowish } from "./state.js";
+import { store, data, current, select, agentsOf, nowish } from "./state.js";
 import { esc, took, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
-import { lineTweens, inGrace } from "./tween.js";
-import { bgOf, bgState, scanGrace } from "./rail.js";
+import { lineTweens } from "./tween.js";
+import { bgOf, bgState, scanGrace, mainTree } from "./rail.js";
+import { whoHTML } from "./runs.js";
 
 /* the sessions in sidebar order (Ctrl+J/K, keys.js) */
 export let KEYS = [];
@@ -20,8 +21,6 @@ export function rowHTML(s) {
       <span class="r-state">${rowWord(s)}</span>
       ${s.now ? `<span class="r-now" data-line="now">${esc(s.now)}</span>` : ""}
       ${subLines(s)}
-      ${waitLine(s)}
-      ${bgLine(s)}
       ${(n => n ? `<span class="r-agent r-review" data-line="review"><i class="el"></i>${ind("review")} ${n} to review</span>` : "")(s.state.review)}
     </span>
     <span class="tg" aria-hidden="true"></span><span class="cap ct" aria-hidden="true"></span><span class="cap cb" aria-hidden="true"></span>
@@ -29,46 +28,20 @@ export function rowHTML(s) {
     <span class="r-side" title="${esc(s.state.word)}">${sessionMark(s)}</span>
   </button>`;
 }
-/* The sub-lines of the subagents and forks, nested as the panel's Main conversation tree (R4.2, R7.1, 2026-11-27): each
-   sits under what started it (main, then a subagent, then its own shells, monitors and subagents), one level deeper each,
-   in the panel's order (forks, subagents, shells, monitors, then oldest first), with the panel's marks. The main thread's
-   own shells and monitors stay one count line (bgLine); at most 3 lines at the top level. */
-const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
+/* The sub-lines: the panel's Main conversation tree, item for item (R4.2, R7.1, 2026-11-27, the user: "Render exactly
+   what we have inside the right panel. Even if there's 10 items, 3 levels deep, it's fine."). Each subagent, fork,
+   shell and monitor, yours and the refresh too, has its own line under what started it, one level deeper each, in the
+   panel's order, with its name, kind mark and timer. No count lines, no cap. The tree is rail.js's (mainTree). */
 function subLines(s) {
-  const agents = agentsOf(s).filter(a => !a.finished || inGrace(s.id, a.id)), shown = new Set(agents.map(a => a.id));
-  const own = id => bgOf(s).filter(b => b.agentId === id && isClaudeBg(b) && (bgState(b) === "running" || inGrace(s.id, b.toolUseId)));
-  const order = xs => xs.sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date((p.agent || p.bg).start) - new Date((q.agent || q.bg).start)));
-  const kids = id => order([...agents.filter(a => a.parent === id).map(agent => ({ agent })), ...own(id).map(bg => ({ bg }))]);
-  const lines = (x, d) => [subLine(s, x, d), ...(x.agent ? kids(x.agent.id).flatMap(y => lines(y, d + 1)) : [])];
-  return order(agents.filter(a => !a.parent || !shown.has(a.parent)).map(agent => ({ agent }))).slice(0, 3).flatMap(x => lines(x, 0)).join("");
+  const lines = (x, d) => [subLine(x, d), ...x.kids.flatMap(y => lines(y, d + 1))];
+  return mainTree(s).flatMap(x => lines(x, 0)).join("");
 }
-/* one sub-line: a subagent or fork, or a subagent's own shell or monitor, at its depth under the session */
-function subLine(s, { agent: a, bg: b }, depth) {
-  const at = depth ? ` style="--depth:${depth}"` : "";
-  if (a) {
-    const k = a.fork ? "fork" : "sub", x = { agent: a, running: !a.finished, failed: false, st: a.stopped ? "stopped" : "done" };
-    return `<span class="r-agent kc-${k}" data-line="a:${esc(a.id)}"${at}><i class="el"></i>${a.finished ? `${ind(bgMarkKey(x))}${ind("s_" + k)}` : ind((a.waiting ? "s_" : "k_") + k)} <b class="kw">${esc(a.description)}</b> ${a.finished ? took(agentMs(a)) : `${a.waiting ? "waiting, " : ""}${live(a.start, agentMs(a))}`}</span>`;
-  }
-  const st = bgState(b), running = st === "running", x = { bg: b, running, failed: st === "failed", st }, k = kindKey(x);
-  const ms = (running || !b.end ? nowish : new Date(b.end)) - new Date(b.start);
-  return `<span class="r-agent kc-${k}" data-line="b:${esc(b.toolUseId)}"${at}><i class="el"></i>${running ? ind("k_" + k) : `${ind(bgMarkKey(x))}${ind("s_" + k)}`} <b class="kw">${esc(b.description || b.command)}</b> ${running ? live(b.start, ms) : took(ms)}</span>`;
-}
-/* the main thread's shells and monitors as one line: a count while any runs; once the last finishes, its final
-   status for the grace (tween.js), then the line leaves. A subagent's own, and your `!` runs, stay in the panel. */
-function bgLine(s) {
-  const own = bgOf(s).filter(b => !b.agentId && isClaudeBg(b)), n = own.filter(b => bgState(b) === "running").length;
-  const many = c => `${c} shell${c > 1 ? "s" : ""} or monitor${c > 1 ? "s" : ""}`;
-  if (n) return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind("k_shell")} ${many(n)} running</span>`;
-  const gr = own.filter(b => inGrace(s.id, b.toolUseId)).sort((p, q) => new Date(p.end || 0) - new Date(q.end || 0)), b = gr.at(-1);
-  if (!b) return "";
-  const st = bgState(b), x = { bg: b, running: false, failed: st === "failed", st };
-  const word = st === "failed" ? "failed" : st === "timed out" ? "timed out" : st === "stopped" || st === "killed" ? "stopped" : "finished";
-  return `<span class="r-agent" data-line="bg"><i class="el"></i>${ind(bgMarkKey(x))}${ind("s_" + kindKey(x))} ${many(gr.length)} ${word}</span>`;
-}
-/* a run of yours that waits for input (R4.2, 2026-11-26): the only run of yours that reaches the sidebar, as needs you */
-function waitLine(s) {
-  const b = bgOf(s).find(x => x.own && x.waiting && bgState(x) === "running"); if (!b) return "";
-  return `<span class="r-agent kc-shell" data-line="wait"><i class="el"></i>${ind("pause")} <b class="kw"><span class="who">!</span> ${esc(b.command)}</b> waits</span>`;
+/* one sub-line: an item of the tree at its depth; a run that waits for input reads "waits" with the pause mark (2026-11-26) */
+function subLine(x, depth) {
+  const k = kindKey(x), at = depth ? ` style="--depth:${depth}"` : "";
+  const mark = x.waits ? ind("pause") : x.waiting ? ind("s_" + k) : x.running ? ind("k_" + k) : `${ind(bgMarkKey(x))}${ind("s_" + k)}`;
+  const time = x.waits ? "waits" : x.running ? `${x.waiting ? "waiting, " : ""}${live(x.start, x.ms)}` : took(x.ms);
+  return `<span class="r-agent kc-${k}${x.waits ? " waits" : ""}" data-line="${x.agent ? "a:" : "b:"}${esc(x.key)}"${at}><i class="el"></i>${mark} <b class="kw">${whoHTML(x.who)}${esc(x.name)}</b> ${time}</span>`;
 }
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one. A command that
    runs has its timer, from its start (status.ts commandOf); idle with background work has no age (R8.2, 2026-11-27) */

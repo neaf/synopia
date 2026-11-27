@@ -160,7 +160,21 @@ const near = (a, b) => a.length === b.length && a.every((v, i) => Math.abs(v - b
 check('the header has the same height and line tops in the main and the subagent view (within 0.5 px)',
   Math.abs(hMain.h - hSub.h) <= 0.5 && near(hMain.tops, hSub.tops) && near(hMain.hs, hSub.hs) && near(hMain.bases, hSub.bases) && near(hMain.acts, hSub.acts), JSON.stringify({ hMain, hSub }));
 check("the main conversation's header has the model button only", (await ev(`[...document.querySelectorAll('.c-head .c-acts button')].map((b) => b.id).join()`)) === 'model-label');
-check("the sidebar counts only the main thread's shells", (await ev(`document.querySelector('#groups .row[data-id^="66666666"] [data-line="bg"]')?.textContent.trim()`)) === '1 shell or monitor running');
+// the sidebar's sub-lines are the panel's Main conversation tree, item for item (R4.2, 2026-11-27, the user: "Render
+// exactly what we have inside the right panel"): the same keys, names and depths in the same order, no count line
+const sideTree = () => ev(`(() => { const r = document.querySelector('#groups .row[aria-current="true"]');
+  const side = [...r.querySelectorAll('.r-main > .r-agent[data-line^="a:"], .r-main > .r-agent[data-line^="b:"]')].filter(l => !l.classList.contains('r-gone')).map(l => ({ key: l.dataset.line.slice(2),
+    depth: +(l.style.getPropertyValue('--depth') || 0), name: l.querySelector('b.kw').textContent, moving: l.getAnimations({ subtree: true }).some(a => a.playState === 'running'), text: l.textContent.replace(/\\s+/g, ' ').trim() }));
+  const panel = [...document.querySelectorAll('.rail .now .kid')].filter(k => !k.classList.contains('gone')).map(k => { let d = 0; for (let x = k.parentElement; x; x = x.parentElement) if (x.classList?.contains('kid')) d++;
+    return { key: k.dataset.line, depth: d, name: k.querySelector(':scope > .card .n').textContent }; });
+  const grouped = [...r.querySelectorAll('.r-main > *')].map(l => l.textContent.replace(/\\s+/g, ' ').trim()).filter(t => /\\d+ (shells?|monitors?|subagents?|forks?)\\b|\\bor monitors?\\b|\\d+ more\\b/.test(t));
+  return { side, panel, grouped }; })()`);
+const same = (st) => st.side.length === st.panel.length && st.side.every((l, i) => l.key === st.panel[i].key && l.depth === st.panel[i].depth && l.name === st.panel[i].name);
+{
+  const st = await sideTree();
+  check("the sidebar's sub-lines are the panel's tree: each item on its own line, named, at its depth, in its order; no count line", same(st) && st.side.length === 4 && !st.grouped.length
+    && st.side.some((l) => l.name === 'Serve the demo' && l.depth === 0), JSON.stringify(st));
+}
 check("the main transcript doesn't show them", await ev(`!/Resize the images|Watch the resize log|Optimise the images/.test(document.getElementById('log').textContent)`));
 // ---------- R7.2: a shell or monitor opens in the pane, as a subagent does ----------
 const tasks = path.join(state, 'tasks');
@@ -379,8 +393,36 @@ check("its shell is in Past as done, not stopped, and Main conversation runs not
   check('Claude\'s runs have no sign, on their cards and Past lines', cards.pastClaude.every(x => x === false) && (cards.claude === 'none' || cards.claude.who === false), JSON.stringify(cards));
   check('Main conversation counts only Claude\'s background work, not yours nor Synopia\'s', /^(Nothing|\d) /.test(await ev(`document.querySelector('.rail .main-row .m').textContent`)) && !/[2-9] running/.test(await ev(`document.querySelector('.rail .main-row .m').textContent`)), await ev(`document.querySelector('.rail .main-row .m').textContent`));
   check('the run under 3 s gets its card once due', await c.until(`!!document.querySelector('.rail .now [data-bg="who-soon"] .who')`, 5000));
+  await ev(`__synopia.render('side')`);
+  const ws = await sideTree(), wl = (k) => ws.side.find((l) => l.key === k);
+  check('the sidebar shows your runs and the refresh as the panel does: "!" and the command, the refresh waiting', same(ws) && !!wl('who-run') && wl('who-run').name === '!bin/rspec'
+    && !!wl('creds:/tmp/fixture') && /waits$/.test(wl('creds:/tmp/fixture').text) && !wl('who-instant'), JSON.stringify(ws));
   await shot('rail-who');
   if (process.env.SYNOPIA_SHOTS) await shotTo(c, path.join(process.env.SYNOPIA_SHOTS, `rail-who-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`), await ev(`(() => { const r = document.querySelector('.rail').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, 520), scale: 1 }; })()`));
+}
+// 11 items, 3 levels deep, on the sidebar exactly as in the panel (R4.2, 2026-11-27, the user: "Even if there's 10
+// items, 3 levels deep, it's fine."): each subagent, fork, shell and monitor on its own line, named by its description
+// (else its command), its kind mark moving, nothing grouped, no cap. Made-up work on the current session.
+{
+  const sid = await ev(`__synopia.current()`), t0 = Date.now() - 600_000, at = (m) => new Date(t0 + m * 1000).toISOString();
+  const ag = (id, description, m, more = {}) => ({ id, toolUseId: 'toolu_' + id, description, type: 'general-purpose', start: at(m), finished: false, ...more });
+  const bg = (toolUseId, kind, m, more) => ({ toolUseId, kind, status: 'running', start: at(m), ...more });
+  const agents = [ag('tr-f1', 'Draft the changelog', 1, { fork: true }), ag('tr-a1', 'Audit the export columns', 2), ag('tr-a2', 'Check the date formats', 3, { parent: 'tr-a1' }),
+    ag('tr-a3', 'Read the locale tables', 4, { parent: 'tr-a2' }), ag('tr-a4', 'Record export columns docs', 5)];
+  const background = [bg('tr-b1', 'shell', 6, { description: 'Serve the export preview', command: 'npm run preview' }), bg('tr-b2', 'shell', 7, { command: 'npm run watch:css' }),
+    bg('tr-b3', 'monitor', 8, { description: 'Tail the server log', command: 'tail -f log/server.log' }), bg('tr-b4', 'shell', 9, { description: 'Export a sample file', command: 'node export.mjs', agentId: 'tr-a1' }),
+    bg('tr-b5', 'shell', 10, { description: 'Run the date tests', command: 'npm test -- dates', agentId: 'tr-a2' }), bg('tr-b6', 'monitor', 11, { description: 'Watch the test log', command: 'tail -f test.log', agentId: 'tr-a2' })];
+  await ev(`__synopia.inject({ t: 'session', id: '${sid}', agents: ${JSON.stringify(agents)}, background: ${JSON.stringify(background)}, bangs: [] })`);
+  await sleep(700);
+  const st = await sideTree(), mine = st.side.filter((l) => l.key.startsWith('tr-'));
+  const want = [['tr-f1', 0, 'Draft the changelog'], ['tr-a1', 0, 'Audit the export columns'], ['tr-a2', 1, 'Check the date formats'], ['tr-a3', 2, 'Read the locale tables'], ['tr-b5', 2, 'Run the date tests'],
+    ['tr-b6', 2, 'Watch the test log'], ['tr-b4', 1, 'Export a sample file'], ['tr-a4', 0, 'Record export columns docs'], ['tr-b1', 0, 'Serve the export preview'], ['tr-b2', 0, 'npm run watch:css'], ['tr-b3', 0, 'Tail the server log']];
+  check('3 levels: a subagent under a subagent under a subagent, its own shell and monitor beside it', JSON.stringify(mine.map((l) => [l.key, l.depth, l.name])) === JSON.stringify(want), JSON.stringify(mine));
+  check('11 items: every one on its own line, no cap, the same as the panel', mine.length === 11 && same(st), JSON.stringify(st));
+  check('each shell and monitor named, by its description, else its command', ['tr-b1', 'tr-b2', 'tr-b3', 'tr-b4', 'tr-b5', 'tr-b6'].every((k) => st.side.find((l) => l.key === k)?.name === want.find((w) => w[0] === k)[2]), JSON.stringify(mine));
+  check('nothing grouped: no count line, no "N more"', !st.grouped.length && !(await ev(`!!document.querySelector('#groups .row[aria-current="true"] [data-line="bg"]')`)), JSON.stringify(st.grouped));
+  check('each line has its kind mark, moving while it runs', mine.every((l) => l.moving), JSON.stringify(mine.filter((l) => !l.moving)));
+  await shot('rail-side-tree');
 }
 c.print();
 c.close();
