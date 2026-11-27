@@ -19,7 +19,8 @@
 // command, "Running, 42s" ticking and "Output shows when it finishes"; no card in the panel; the live line names it and
 // opens its shell view ("Shell in Claude's turn", how to see more), from which K and J go back (it has no card); its
 // result lands in the open shell view, and the open step turns into the finished view. A session Synopia doesn't drive:
-// the command and "Running", no note. Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS,
+// the command and "Running", no note. A folded step line has the same height, pitch and colour for "1 Bash command",
+// "2 Bash commands" and "57 Bash commands, …, 2 failed 1 running", in light and dark (2026-11-27). Writes steps.png and steps-running.png (and, with SYNOPIA_SHOTS,
 // fold-bash-<theme>.png, bg-card-<theme>.png, crumb-<theme>.png, step-<theme>.png, one-line-<width>-<theme>.png and mark-time-<theme>.png there).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -288,5 +289,34 @@ for (const width of [2000, 640]) {
   check(`${width}px: the live line naming it is one line, its closing bracket in view`, !!l && Math.abs(l.h - l.lh) < 0.5 && l.cut && l.endShown && /^\)/.test(l.end), JSON.stringify(l));
 }
 await c.cdp('Emulation.clearDeviceMetricsOverride', {});
+
+// ---------- a step line keeps its height whatever its text and counts (2026-11-27, the user: "Changing from 1 Bash
+// command to 2 Bash commands changes the row height by a pixel or two, jump is visible."), in light and dark ----------
+{
+  // one new group per theme, grown in place: 1 Bash, 2, then 57 Bash (2 failed, 1 running) and 5 file steps
+  for (const [hour, scheme] of [['09', 'light'], ['10', 'dark']]) {
+    const H = (n) => `2026-11-27T${hour}:${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}.000Z`;
+    const st = (verb, name, n, state = 'done') => ({ id: `toolu_${scheme}${n}`, k: 'tool', ts: H(n + 1), name, verb, obj: `${name} step ${n}`, state, input: `echo ${n}` });
+    // your message first, so this group doesn't join the one before it
+    await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + 1, upsert: [{ id: 'h-you-${scheme}', k: 'you', ts: '${H(0)}', text: 'Run the checks.' }] }); })()`);
+    const bash = Array.from({ length: 57 }, (_, i) => st('Ran', 'Bash', i, i === 3 || i === 9 ? 'failed' : i === 56 ? 'running' : 'done'));
+    const more = [st('Wrote', 'Write', 57), st('Wrote', 'Write', 58), st('Read', 'Read', 59), st('Edited', 'Edit', 60), st('Edited', 'Edit', 61)];
+    const stages = [['1 Bash command', bash.slice(0, 1)], ['2 Bash commands', bash.slice(1, 2)], ['57 Bash commands, wrote 2 files, read 1 file, edited 2 files 2 failed 1 running', [...bash.slice(2), ...more]]];
+    const FOLDH = `[...document.querySelectorAll('#log .ln.tool > details.fold > summary')].find(s => s.closest('.ln').querySelector('[data-item="toolu_${scheme}0"], [data-step="toolu_${scheme}0"]'))`;
+    await c.cdp('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] });
+    await until(`document.documentElement.dataset.theme === '${scheme}'`, 2000);
+    const got = [];
+    for (const [text, items] of stages) {
+      await ev(`(() => { const s = __synopia.cur(); __synopia.inject({ t: 'items', sid: s.id, agent: null, total: s.total + ${items.length}, upsert: ${JSON.stringify(items)} }); })()`);
+      const ok = await until(`(${FOLDH})?.textContent.replace(/\\s+/g, ' ').trim().startsWith(${JSON.stringify(text)})`, 3000);
+      // the summary's height, and the line's pitch (its box and margins) and colour: what moves the rows under it
+      got.push(await ev(`(() => { const s = ${FOLDH}; if (!s) return null; const l = s.closest('.ln'), cs = getComputedStyle(l);
+        return { text: s.textContent.replace(/\\s+/g, ' ').trim(), h: s.getBoundingClientRect().height, pitch: l.getBoundingClientRect().height + parseFloat(cs.marginTop) + parseFloat(cs.marginBottom), color: getComputedStyle(s).color }; })()`).then(g => ({ ...g, ok })));
+    }
+    check(`${scheme}: a folded step line is exactly as high, its pitch and colour the same, for "1 Bash command", "2 Bash commands" and "57 Bash commands, …, 2 failed 1 running"`,
+      got.every(g => g.ok && g.h === got[0].h && g.pitch === got[0].pitch && g.color === got[0].color) && got[0].h > 0, JSON.stringify(got));
+  }
+  await c.cdp('Emulation.setEmulatedMedia', { features: [] });
+}
 c.print();
 c.close();
