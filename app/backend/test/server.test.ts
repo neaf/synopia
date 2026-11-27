@@ -115,6 +115,7 @@ test('every response carries the strict CSP, naming its own origin', async () =>
   assert.equal(dir('connect-src'), `connect-src 'self' ${server.origin} ws://127.0.0.1:${server.port}`);
   assert.equal(dir('img-src'), "img-src 'self' data: blob:");
   assert.equal(dir('style-src'), "style-src 'self'");
+  assert.equal(dir('style-src-elem'), "style-src-elem 'self' 'unsafe-inline'", "the terminal emulator's <style> elements (vendor/xterm)");
   assert.equal(dir('font-src'), "font-src 'self'");
 });
 

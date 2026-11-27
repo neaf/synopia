@@ -202,6 +202,21 @@ details.step > summary::-webkit-details-marker { display: none; }
 .prompt.bang-cmd .cmd { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); }
 .bang-res { padding-left: 2ch; color: var(--ink-3); }
 .bang-res > .step-out { margin: 0; }
+/* ---------- a shell view's terminal (term.js, R7.2, 2026-11-27): the output panel of R5.6 (the --sub fill, a 1px
+   --line-2 line, rounded), filling the pane under the command, with its own scrollback; the log around it stays
+   put. In insert mode, while it has the keys, its left edge is bash mode's pink, as the band's is. */
+.log:has(> .log-inner > .term-box) { overflow: hidden; display: flex; flex-direction: column; }
+.log:has(> .log-inner > .term-box) > .log-inner { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+.log-inner > .term-box { flex: 1 1 0; min-height: calc(8 * 12px * 1.2); max-width: none; position: relative; margin: 2px 0 5.5px 2ch; padding: 3.5px 9px;
+  background: var(--sub); border: 1px solid var(--line-2); border-radius: 5.5px; overflow: hidden; }
+.log-inner > .term-box:focus-within { box-shadow: inset 2.5px 0 0 var(--bash); }
+.term-box .xterm { height: 100%; }
+.term-box .xterm:focus, .term-box .xterm .xterm-helper-textarea:focus { outline: none; }
+.term-box:not(.pty) .xterm-cursor-layer { display: none; }
+/* the box's place while a run takes keys: the terminal's mode, in the message box's style (R9.2) */
+.composer.term-mode { cursor: pointer; }
+.tm-say { grid-column: 2; grid-row: 1; margin: 0; min-height: 3lh; font-family: var(--mono); font-size: 12px; line-height: 1.45; color: var(--ink-2); }
+body[data-mode="normal"] .tm-i, body[data-mode="insert"] .tm-n, .composer.asking .tm-say { display: none; }
 /* ---------- a run (runs.js, R5.13, R7.1, 2026-11-26; prototype/shell-storyboard.html): one row for a shell command you
    or Synopia started (Claude's are steps, R5.6). The whole row is the link to its shell view; hover shades it as a
    Past line shades. */

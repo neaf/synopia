@@ -67,7 +67,10 @@ const TYPES: Record<string, string> = {
 // own files only (no inline script, no eval; the fonts are bundled in app/web/fonts); the socket and http
 // to this backend's own origin; images from /api/image, and pasted ones as data: or object (blob:) URLs.
 // Style attributes stay allowed (style-src-attr): the markup sets positions and marks with them, and they
-// can't run script. The page is only ever served from here, so index.html has no meta copy.
+// can't run script. So are <style> elements a script of the page adds (style-src-elem, 2026-11-27): the
+// shell view's terminal emulator (vendor/xterm) sizes and colours its rows with them. The page's own
+// markup never holds one (md.js escapes what it renders). The page is only ever served from here, so
+// index.html has no meta copy.
 export function contentSecurityPolicy(origin: string): string {
   const ws = origin.replace(/^http/, 'ws');
   return [
@@ -75,6 +78,7 @@ export function contentSecurityPolicy(origin: string): string {
     "script-src 'self'",
     "style-src 'self'",
     "style-src-attr 'unsafe-inline'",
+    "style-src-elem 'self' 'unsafe-inline'",
     "font-src 'self'",
     "img-src 'self' data: blob:",
     `connect-src 'self' ${origin} ${ws}`,

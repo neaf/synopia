@@ -12,7 +12,7 @@ import * as sidebar from "./sidebar.js";
 import * as preview from "./preview.js";
 import { applyPathState } from "./path-links.js";
 import * as transcript from "./transcript.js";
-import { applyOutput } from "./bg-view.js";
+import { applyOutput, applyTerm } from "./bg-view.js";
 import { renderCard, qstate } from "./card.js";
 import { syncPrompt, syncTakeover, syncGone, restoreTexts } from "./composer.js";
 import { want, applyRecent, recentAgain, applyOpenFolderState } from "./open-list.js";
@@ -94,6 +94,13 @@ function onMessage(m) {
       render("log");
       if (m.prepend && log) log.scrollTop = top + log.scrollHeight - h; // earlier output: what you read stays in place
       ui.output(m);
+      break;
+    }
+    case "term": { // a run's terminal: the raw stream of its pty (bg-view.js, term.js, 2026-11-27)
+      if (!applyTerm(m)) break;
+      ui.resetIn(m);
+      render("log", "header");
+      if (m.reset) ui.output(m);
       break;
     }
     case "agents": {

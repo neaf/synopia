@@ -1,18 +1,21 @@
 /* The view of a background shell or monitor (requirements R7.2): it opens from the background panel as a
-   subagent does, in the same pane. The header says what it is and how it runs; the log is its output as a
-   terminal run, the whole of it from the start (earlier output loads on asking, as earlier items do),
-   growing while it runs, then how it ended. The backend sends the output (`output` frames, publisher.ts);
-   this module holds what the page has of it, per shell or monitor. Every run opens here (2026-11-26, runs.js): a
-   `!` command of yours (state.js ownBg, R5.13) with its whole output (stdout, then stderr apart), Claude's
-   foreground Bash step (state.js stepBg) with its result, and the credential refresh (state.js credsBg). While
-   yours or the refresh runs, the box's place is a `!` band that types into its terminal (runDockHTML); Esc, Esc
-   here stops the run (composer.js). Claude's command line has the grey `$` in the gutter. */
+   subagent does, in the same pane. The header says what it is and how it runs; the log is its command, then its
+   output in a terminal (term.js, 2026-11-27: colours, cursor moves and progress bars drawn, its own scrollback;
+   earlier output loads on asking, as earlier items do), growing while it runs, then how it ended. The backend
+   sends the output (`output` frames for Claude's shells and monitors, `term` frames for a run Synopia holds a
+   pty for, publisher.ts); this module holds what the page has of it, per shell or monitor. Every run opens here
+   (2026-11-26, runs.js): a `!` command of yours (state.js ownBg, R5.13), Claude's foreground Bash step
+   (state.js stepBg) with its result, and the credential refresh (state.js credsBg). Yours and the refresh are
+   a real terminal while they run (2026-11-27, the user: "It should behave more like normal terminal"): in
+   insert mode (i, a, a click in it) every key goes to the program as typed, Ctrl-C too; one Esc goes to normal
+   mode, where an Esc goes to the program as ESC. The box's place says which mode it is (runDockHTML). Claude's
+   shells and monitors are read-only. Claude's command line has the grey `$` in the gutter. */
 import { store, cur, view, bgById, agentById, nowish, credsOf } from "./state.js";
-import { request, act } from "./connection.js";
-import { toast } from "./toast.js";
+import { request, send } from "./connection.js";
 import { esc, lineHTML, markAt, live, took, hhmm } from "./format.js";
 import { ind } from "./marks.js";
 import { bgState } from "./runs.js";
+import { feed, mountTerm, unmountTerm, termOn, focusTerm, sendKeys, scrollTerm, termTop, termEnd } from "./term.js";
 
 /* "<sid>|<tool use id>" -> { text, from, to, total, lost }: the part of the output the page has, [from, to)
    of total (bytes for a shell, events for a monitor) */
@@ -53,17 +56,30 @@ export function applyOutput(m) {
   const key = `${m.sid}|${m.bg}`, o = outs.get(key);
   const mon = bgById(store.sessions.get(m.sid), m.bg)?.kind === "monitor";
   const join = (a, b) => mon && a && b ? `${a}\n${b}` : a + b; // a monitor's events are lines
-  if (m.reset || !o) outs.set(key, { text: m.text, err: m.err || "", from: m.from, to: m.to, total: m.total, lost: m.lost || null });
+  if (m.reset || !o) { outs.set(key, { text: m.text, err: m.err || "", from: m.from, to: m.to, total: m.total, lost: m.lost || null }); feed(m.bg, m.text, { reset: true, eol: true }); }
   else if (m.prepend) {
     earlierAsked = null;
     if (m.to !== o.from) return false;
     o.text = join(m.text, o.text); o.from = m.from; o.total = Math.max(o.total, m.total);
+    feed(m.bg, o.text, { reset: true, eol: true, keep: true }); // a terminal draws from the start: all of it again, the place kept
   } else {
     if (m.from !== o.to) return false; // a part after one this page missed: the next reset has it
+    feed(m.bg, mon && o.text && m.text ? `\n${m.text}` : m.text, { eol: true });
     o.text = join(o.text, m.text); o.to = m.to; o.total = Math.max(o.total, m.total);
   }
   const s = cur();
   return !!s && s.id === m.sid && view === m.bg;
+}
+
+/* A `term` frame: the raw stream of a run Synopia holds a pty for (terms.ts), for its terminal. Returns whether
+   its view is on screen and the log should be drawn again (its first frame, its end). */
+const termLive = new Map(); // run id -> its pty still runs
+export function applyTerm(m) {
+  const was = termLive.get(m.bg);
+  feed(m.bg, m.data, { reset: !!m.reset });
+  termLive.set(m.bg, !!m.live);
+  const s = cur();
+  return !!s && s.id === m.sid && view === m.bg && (!!m.reset || was !== !!m.live);
 }
 
 /* Asks for the output before what the page has (the link, or g at the top); false when it has it all. */
@@ -73,16 +89,6 @@ export function loadEarlierOutput() {
   const key = `${s.id}|${b.toolUseId}|${o.from}`;
   if (earlierAsked !== key && request({ t: "earlierOutput", sid: s.id, bg: b.toolUseId, before: o.from })) earlierAsked = key;
   return true;
-}
-
-/* The command's output as a terminal shows it, in plain text: escape sequences (colours, cursor moves,
-   titles) taken out, and a line a carriage return rewrote (a progress bar) shown as it ended. */
-export function plain(text) {
-  return text
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, "") // OSC: a title, a link
-    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "") // CSI: colours, cursor moves
-    .replace(/\x1b[@-Z\\-_]/g, "")
-    .split("\n").map(l => { const t = l.endsWith("\r") ? l.slice(0, -1) : l, i = t.lastIndexOf("\r"); return i < 0 ? t : t.slice(i + 1); }).join("\n");
 }
 
 const kb = n => n < 1024 ? `${n} bytes` : n < 1024 * 1024 ? `${Math.round(n / 1024)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
@@ -122,14 +128,20 @@ export function bgLogEntries(s, b, runView) {
   const o = outs.get(`${s.id}|${b.toolUseId}`), st = bgState(b), running = st === "running", out = [];
   if (o && o.from > 0) out.push(["earlier", `<p class="earlier"><button data-earlier>Show earlier output</button> (${b.kind === "monitor" ? `${+o.from} more events` : `${kb(o.from)} more`})</p>`]);
   const lost = o && o.lost ? (o.lost === "gone" ? "Its output file is gone: macOS clears temporary files." : "The transcript names no output file for it.") : "";
-  const text = o && !lost ? plain(o.text) : "";
   const tool = b.kind === "monitor" ? "Monitor" : "Bash";
-  const run = runView({ input: b.command, out: !o || lost || (running && !text) ? null : text, stopped: false });
+  const run = runView({ input: b.command, out: null, stopped: false });
   const lostRow = lost ? `<div class="res"><span class="lcorner" aria-hidden="true"></span><span>${esc(lost)}</span></div>` : "";
-  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}" data-end="${o ? +o.to || 0 : 0}"><span class="g"${markAt(b.start)}>●</span><div>${lineHTML(`<span class="name">${tool}</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div>`]);
+  out.push(["run", `<div class="ln tool bg-run ${running ? "running" : "done"}"><span class="g"${markAt(b.start)}>●</span><div>${lineHTML(`<span class="name">${tool}</span>(`, esc(b.description || b.command.split("\n")[0]), ")")}</div>${PS}${run.replace(/<\/div>$/, `${lostRow}</div>`)}</div>`]);
+  if (o && !lost) out.push(["term", termBox(b)]);
   out.push(running ? ["live", liveRun(b, b.kind === "monitor" && o ? `, ${+o.total} event${o.total === 1 ? "" : "s"}` : "")] : ["end", endLine(b, st)]);
   return out;
 }
+
+/* The terminal's place in the log: an empty box term.js draws into, the same html each time so a redraw of the
+   log keeps it (transcript.js patchChildren). `data-pty`: a run Synopia holds a pty for, which takes keys. */
+const termBox = b => `<div class="term-box${b.own || b.creds ? " pty" : ""}" data-term="${esc(b.toolUseId)}"></div>`;
+/* a run with a terminal that takes keys: yours or the refresh, while its pty runs */
+const ptyLive = b => !!b && !!(b.own || b.creds) && bgState(b) === "running" && termLive.get(b.toolUseId) !== false;
 
 /* Claude's command line: a grey `$` in the gutter under the step's dot, as the permission card shows a command */
 const PS = `<span class="g ps" aria-hidden="true">$</span>`;
@@ -159,45 +171,58 @@ function stepLogEntries(s, b, runView) {
   return out;
 }
 
-/* the credential refresh: its lock in the gutter says Synopia started it, as `!` says you did */
+/* the credential refresh: its lock in the gutter says Synopia started it, as `!` says you did; then its terminal */
 function credsLogEntries(s, b, runView) {
-  const f = credsOf(s.id), text = f?.output || "";
-  const run = runView({ input: b.command, out: text ? text.replace(/\n$/, "") : null });
-  return [["run", `<div class="ln tool bg-run running"><span class="g"${markAt(b.start)}>${ind("creds")}</span><div><span class="name">Refresh credentials</span>${run}</div></div>`], ["live", liveRun(b)]];
+  const run = runView({ input: b.command, out: null });
+  return [["run", `<div class="ln tool bg-run running"><span class="g"${markAt(b.start)}>${ind("creds")}</span><div><span class="name">Refresh credentials</span>${run}</div></div>`],
+    ["term", termBox(b)], ["live", liveRun(b)]];
 }
 
-/* A `!` run of yours: the command on the prompt band as in the transcript, its whole output, then the live
-   line while it runs (the box's place types into it, runDockHTML), or how it ended. */
+/* A `!` run of yours: the command on the prompt band as in the transcript, its terminal, then the live line while
+   it runs (the box's place says the terminal's mode, runDockHTML), or how it ended. */
 function ownLogEntries(s, b, runView) {
-  const o = outs.get(`${s.id}|${b.toolUseId}`), st = bgState(b), running = st === "running", out = [];
-  const text = o ? plain(o.text) : "", err = o ? plain(o.err || "") : "";
-  const res = runView({ out: !o || (running && !text) ? null : text.replace(/\n$/, ""), err: err.replace(/\n$/, "") });
-  out.push(["run", `<div class="bang bg-run ${running ? "running" : "done"}" data-bang="${esc(b.toolUseId)}"><div class="prompt bang-cmd"><span class="g"${markAt(b.start)}>!</span><div class="cmd">${esc(b.command)}</div></div><div class="bang-res">${res}</div></div>`]);
+  const st = bgState(b), running = st === "running", out = [];
+  out.push(["run", `<div class="bang bg-run ${running ? "running" : "done"}" data-bang="${esc(b.toolUseId)}"><div class="prompt bang-cmd"><span class="g"${markAt(b.start)}>!</span><div class="cmd">${esc(b.command)}</div></div></div>`]);
+  out.push(["term", termBox(b)]);
   out.push(running ? ["live", liveRun(b)] : ["end", endLine(b, st)]);
+  void runView;
   return out;
 }
 
-/* The box's place in the shell view of your running `!` command or the refresh (R5.13, R7.2, 2026-11-26): a `!` band
-   that types into its terminal, as the message box types to Claude: i or a click, then Enter sends the line with a
-   newline (an empty Enter just the newline, for "Press Enter"); Esc leaves it. */
-export const typesTo = b => !!b && bgState(b) === "running" && !!(b.own || b.creds);
-export const runDockHTML = b => `<div class="composer bash run-in"><span class="g">!</span><textarea id="run-in" rows="1" spellcheck="false" aria-label="Input to the command" placeholder="${esc(`Type to ${b.command}. Enter sends the line; an empty Enter sends Enter`)}"></textarea></div>`;
-/* the dock follows the run: the band while it can type, the plain line once it ended (renderLog calls it) */
+/* The box's place in the shell view of your running `!` command or the refresh (R5.13, R7.2, 2026-11-27): the
+   terminal's mode, in the message box's mode style (R9.2): in normal mode at half strength, in insert mode the
+   band's fill with bash mode's pink edge and `!`. A click there types to the command, as one in the terminal. */
+export const typesTo = b => ptyLive(b);
+export const runDockHTML = () => `<div class="composer bash term-mode" data-term-mode><span class="g">!</span><p class="tm-say"><span class="tm-n"><kbd>i</kbd> or a click types to the command. <kbd>Esc</kbd> sends it Esc.</span><span class="tm-i">Every key goes to the command, <kbd>Ctrl</kbd>-<kbd>C</kbd> too. <kbd>Esc</kbd> for normal mode.</span></p></div>`;
+/* After each redraw of the log (renderLog calls it): the dock follows the run, its mode line while it takes keys,
+   the plain line once it ended; the terminal is drawn into its box. */
 export function syncRunDock(b) {
+  syncTerm(b);
   const dock = document.querySelector("#conv .dock.nobox, #conv .dock.runbox"), inner = dock?.querySelector(".dock-inner"); if (!inner) return;
-  const want = typesTo(b), has = !!inner.querySelector("#run-in");
+  const want = typesTo(b), has = !!inner.querySelector("[data-term-mode]");
   if (want === has) return;
   dock.classList.toggle("runbox", want); dock.classList.toggle("nobox", !want);
   inner.innerHTML = want ? runDockHTML(b) : `<div class="composer noinput"><span class="g">❯</span></div>`;
 }
-/* i or a in the shell view: the band takes the focus (keys.js); false when the view has none */
-export function focusRunInput() { const el = document.getElementById("run-in"); if (!el) return false; el.focus(); return true; }
-document.addEventListener("keydown", e => {
-  const inp = e.target; if (!inp || inp.id !== "run-in") return;
-  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();
-    const s = cur(), b = shownBg(); if (!s || !typesTo(b)) return;
-    const msg = b.creds ? { t: "credsInput", sid: s.id, text: inp.value } : { t: "bangInput", sid: s.id, text: inp.value };
-    if (act(msg, { done: (ok, error) => { if (!ok && error) toast(error); } })) inp.value = "";
-  } else if (e.key === "Escape") { e.preventDefault(); inp.blur(); }
-});
+function syncTerm(b) {
+  const box = document.querySelector("#log .term-box");
+  if (!box) { unmountTerm(); return; }
+  const s = cur(), id = b.toolUseId, writable = ptyLive(b);
+  mountTerm(box, { id, writable, eol: !(b.own || b.creds),
+    onKeys: d => { if (s) send({ t: "termInput", sid: s.id, bg: id, data: d }); },
+    onSize: (cols, rows) => { if (s && (b.own || b.creds)) send({ t: "termSize", sid: s.id, bg: id, cols, rows }); } });
+}
+document.addEventListener("click", e => { if (e.target.closest?.("[data-term-mode]")) focusTerm(); });
+/* i or a in the shell view: the terminal takes the keys (keys.js); false when the view has none that does */
+export const focusRunInput = () => focusTerm();
+/* A key in normal mode in a shell view with a terminal (keys.js, after a prompt's keys): Esc goes to the program as
+   ESC (2026-11-27, the user: "Esc in normal mode sends esc sequence to terminal"), and the view stays in normal
+   mode; j/k scroll its scrollback, g/G go to its top (then earlier output) or its end. True when taken. */
+export function termKey(e) {
+  const t = termOn(); if (!t || e.metaKey || e.ctrlKey || e.altKey) return false;
+  const b = shownBg();
+  if (e.key === "Escape") { if (!ptyLive(b)) return false; e.preventDefault(); sendKeys("\x1b"); return true; }
+  const k = { j: () => scrollTerm(3), k: () => scrollTerm(-3), G: () => termEnd(), g: () => { if (termTop()) loadEarlierOutput(); } }[e.key];
+  if (!k) return false;
+  e.preventDefault(); k(); return true;
+}
