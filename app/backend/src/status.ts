@@ -27,6 +27,14 @@
 // shows running (Transcript.turnRunning: a tool_use without a result, or a turn opened by a prompt
 // and not closed by turn_duration, stop_hook_summary or an interrupt marker, quiet for less than
 // QUIET_MS) is working too. Sessions with no status of our process use transcriptStatus().
+// A permission request nobody answered (claude-jsonl.ts `unanswered`: the process that asked went
+// away) closes the turn in the transcript, so it is your turn at once (2026-11-27).
+// No process at all (2026-11-27): once the pid files are read (cli-terminals.ts `free`: no live
+// Claude Code outside Synopia has the session open) and no process of ours runs it, session.ts marks
+// the transcript's process ended as of its last record (Transcript.processEnded). A tool cut off
+// mid-way, the open turn, an ask, subagents, shells and monitors then read ended, so the session is
+// your turn at once, not working for QUIET_MS or for ever. Before the first scan nothing is known and
+// the rules above stand.
 // A card in another process (R6.8, 2026-11-24): with no process of Synopia's, a transcript whose
 // thread (main or a running subagent's) ends on an AskUserQuestion or ExitPlanMode with no result
 // (Transcript.pendingAsk) is needs you, over working; its age counts from the tool_use. It clears

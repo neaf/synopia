@@ -31,6 +31,27 @@ test('tool results: error text an interrupt or a resume wrote is cut short; othe
   assert.deepEqual(r.body, { kind: 'results' });
 });
 
+// The shape a shape-only scan found (2026-11-27): the fields sit on the user record, beside an error
+// tool_result; `toolDenialUnanswered` is a string (`stream-closed`), toolUseResult a string.
+test('a permission request nobody answered: toolDenialUnanswered, or the error text alone', () => {
+  const aborted = {
+    type: 'tool_result', tool_use_id: 'toolu_p1', is_error: true,
+    content: 'Tool permission request failed: AbortError: Tool permission stream closed before response received',
+  };
+  const fields = {
+    toolDenialKind: 'permission-rule', toolDenialUnanswered: 'stream-closed', toolUseResult: 'Error: invented',
+    permissionDecision: { decision: 'reject', source: 'config', reasonType: 'other', ruleSource: 'mcpServerPolicy', reasonCode: 'invented' },
+  };
+  const r = user([aborted], fields);
+  assert.equal(r.unanswered, 'stream-closed');
+  assert.deepEqual(r.results.map((x) => [x.isError, x.cutShort]), [[true, false]], 'an error result, not an interrupt');
+  assert.deepEqual(r.body, { kind: 'results' });
+  assert.equal(user([aborted]).unanswered, 'unknown', 'the text alone');
+  assert.equal(user([{ ...aborted, is_error: false }], fields).unanswered, '', 'only beside an error result');
+  assert.equal(user([{ type: 'tool_result', tool_use_id: 't2', is_error: true, content: 'Permission denied' }], { toolDenialKind: 'user-rejected' }).unanswered, '', 'a denial you gave is answered');
+  assert.equal(user('Tool permission request failed: a prompt that says so').unanswered, '');
+});
+
 test('user text prefixes', () => {
   assert.deepEqual(bodyOf('<command-name>/review</command-name>\n<command-args>the changelog</command-args>'), { kind: 'command', text: '/review the changelog' });
   assert.deepEqual(bodyOf('<task-notification><tool-use-id>t1</tool-use-id></task-notification>'), { kind: 'notification' });

@@ -74,6 +74,8 @@ export function resolveModel(choice: ModelChoice | null | undefined, transcript:
 // What a session needs from cli-terminals.ts (tests pass a fake).
 export type TerminalSource = {
   holder(sid: string): Terminal | null;
+  // no Claude Code outside Synopia has it open, by a finished scan; absent or false: not known
+  free?(sid: string): boolean;
   recheck(sid: string): Terminal | null; // the files again, right before acting
   confirm?(sid: string): Promise<Terminal | null>; // the start check: every live pid verified afresh
   onChange(fn: () => void): void;
@@ -736,7 +738,7 @@ export class Session {
       this.d.log('terminal.gone', { sid: this.id });
       this.feedRunning();
       this.tryTakeover();
-    }
+    } else this.feedRunning(); // the first scan: now it is known that no terminal holds it
   }
 
   // A terminal took the session: its turn (if one runs) is interrupted, then its process ends.
@@ -783,9 +785,27 @@ export class Session {
   }
 
   // The transcript's main turn counts only with no process of ours, and only for records written
-  // after ours ended (an open turn our own process left behind is not someone else's).
+  // after ours ended (an open turn our own process left behind is not someone else's). With no
+  // process holding the session at all, what the transcript shows running ended with the process
+  // that wrote it (after a restart, a crash, a terminal that quit): as of its last record.
   private feedRunning(r: Running = this.d.transcripts.running(this.id)): void {
+    const { transcripts } = this.d;
+    if (this.unheld() && (r.turn || r.agents > 0 || r.ask || transcripts.facts(this.id)?.working)) {
+      const at = transcripts.lastAt(this.id);
+      if (at > 0) {
+        this.d.log('session.unheld', { sid: this.id });
+        transcripts.processEnded(this.id, at);
+        r = transcripts.running(this.id);
+      }
+    }
     this.status.setRunning(r, !this.proc && r.lastAt > this.ownEnd);
+  }
+
+  // No process holds the session: none of ours (nor one starting), and no other Claude Code (a
+  // terminal's or any other) by a finished scan of the pid files (cli-terminals.ts `free`). Not
+  // known counts as held.
+  private unheld(): boolean {
+    return !this.placeholder && !this.proc && this.state === 'idle' && !this.terminal && this.d.terminals?.free?.(this.id) === true;
   }
 
   // An assistant record of the main conversation landed: its preview block goes.

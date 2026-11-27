@@ -267,8 +267,8 @@ class ReadState {
   lastTs: string | null = null;
   // The main thread's turn, for a session no Synopia process drives (status.ts): opened by a prompt
   // you typed (a user record, a slash command or a queued_command attachment), closed by
-  // system/turn_duration, system/stop_hook_summary or an interrupt marker. An assistant record
-  // after a marker opens it again: Claude carried on.
+  // system/turn_duration, system/stop_hook_summary, an interrupt marker or the result of a permission
+  // request nobody answered. An assistant record after a marker or that result opens it again.
   turnOpen = false;
   afterMarker = false;
   // The tool uses of the latest assistant message: every record of its `message.id` (one block per
@@ -563,6 +563,12 @@ export class Transcript {
         this.refreshTool(tid);
       }
       r.lastErrors = errors;
+      // A permission request nobody answered (the asking process went away): the turn ends with it,
+      // as with an interrupt marker, until Claude writes again (docs/Claude Code transcripts.md).
+      if (u.unanswered) {
+        r.turnOpen = false;
+        r.afterMarker = true;
+      }
     }
     const body = u.body;
     if (body.kind === 'results' || body.kind === 'meta') return;

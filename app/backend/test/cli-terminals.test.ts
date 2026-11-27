@@ -49,6 +49,48 @@ test('terminals: a live CLI with the same start time holds its session', async (
   assert.equal(reg.holder(SID)?.status, 'idle');
 });
 
+test('terminals: free (no Claude Code outside Synopia has it open) only after a scan, not while its ps fails', async () => {
+  const s = setup();
+  let changed = 0;
+  s.reg.onChange(() => changed++);
+  assert.equal(s.reg.free(SID), false, 'no scan yet: not known');
+  await s.reg.scan();
+  assert.equal(s.reg.free(SID), true, 'no pid file');
+  assert.equal(changed, 1, 'the first scan tells, even with no terminal');
+  s.procs.set(4242, { start: START, parent: 1 });
+  s.failing.add(4242);
+  s.write(4242);
+  await s.reg.scan();
+  assert.equal(s.reg.holder(SID), null);
+  assert.equal(s.reg.free(SID), false, 'a live pid file ps could not check: not known');
+  assert.equal(changed, 2);
+  s.failing.delete(4242);
+  await s.reg.scan();
+  assert.equal(s.reg.holder(SID)?.pid, 4242);
+  assert.equal(s.reg.free(SID), false, 'a terminal holds it');
+  s.procs.delete(4242);
+  await s.reg.scan();
+  assert.equal(s.reg.free(SID), true, 'its CLI exited');
+});
+
+test("terminals: another app's SDK child is no terminal but has the session open; Synopia's own does not count", async () => {
+  const s = setup();
+  s.procs.set(4300, { start: START, parent: 1 });
+  s.write(4300, { entrypoint: 'sdk-ts' });
+  await s.reg.scan();
+  assert.equal(s.reg.holder(SID), null, 'not a terminal: nothing to take over');
+  assert.equal(s.reg.free(SID), false, 'but a live process has it open');
+  const own = setup(); // Synopia's pid is 500
+  own.procs.set(4301, { start: START, parent: 500 });
+  own.write(4301, { entrypoint: 'sdk-ts' });
+  await own.reg.scan();
+  assert.equal(own.reg.free(SID), true, "Synopia's own process is known without its pid file");
+  own.write(4302, { spare: true });
+  own.procs.set(4302, { start: START, parent: 1 });
+  await own.reg.scan();
+  assert.equal(own.reg.free(SID), true, 'a spare holds nothing');
+});
+
 test('terminals: a dead pid or another start time (a reused pid) holds nothing', async () => {
   const { reg, write, procs } = setup();
   write(4242);

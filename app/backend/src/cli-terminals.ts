@@ -39,7 +39,7 @@ export type CliTerminalsOptions = {
   end?: EndDeps; // the take-over's system calls (tests replace them)
 };
 
-const sigOf = (held: Map<string, Terminal>) => [...held.values()].map((t) => `${t.sessionId}:${t.pid}:${t.status}`).sort().join(',');
+const sigOf = (held: Map<string, Terminal>, ...sets: Set<string>[]) => [[...held.values()].map((t) => `${t.sessionId}:${t.pid}:${t.status}`), ...sets.map((x) => [...x])].map((l) => l.sort().join(',')).join('|');
 const newer = (t: Terminal, than: Terminal | null | undefined) => !than || t.statusUpdatedAt > than.statusUpdatedAt;
 
 export class CliTerminals {
@@ -55,6 +55,9 @@ export class CliTerminals {
   private watcher: fs.FSWatcher | null = null;
   private logged = new Set<string>();
   private sig = '';
+  private scanned = false; // a scan of the folder finished
+  private unsure = new Set<string>(); // sessions with a live pid file the last scan couldn't verify (ps failed)
+  private open = new Set<string>(); // sessions a live pid file not Synopia's names, of any kind
   private scanning: Promise<void> | null = null;
   private again = false;
   private stopped = false;
@@ -95,6 +98,13 @@ export class CliTerminals {
     return this.held.get(sid) ?? null;
   }
 
+  // No Claude Code process outside Synopia has the session open, by the last scan: no live pid file
+  // names it (a terminal's or any other CLI's, such as another app's SDK child), and none waits on a
+  // ps that failed. False before the first scan: not known.
+  free(sid: string): boolean {
+    return this.scanned && !this.unsure.has(sid) && !this.open.has(sid);
+  }
+
   // Right before acting (a start, a take-over): that session's files read again and each pid's
   // liveness now. A file whose process isn't verified yet counts (one writer: better refuse a start
   // than run beside a terminal) and starts a scan, which tells the listeners if it doesn't count.
@@ -110,7 +120,7 @@ export class CliTerminals {
     }
     if (best) this.held.set(sid, best);
     else this.held.delete(sid);
-    this.sig = sigOf(this.held); // the next scan reports any difference to this answer
+    this.sig = sigOf(this.held, this.unsure, this.open); // the next scan reports any difference to this answer
     if (unverified) void this.scan();
     return best;
   }
@@ -133,7 +143,7 @@ export class CliTerminals {
     }
     if (best) this.held.set(sid, best);
     else this.held.delete(sid);
-    this.sig = sigOf(this.held);
+    this.sig = sigOf(this.held, this.unsure, this.open);
     return best;
   }
 
@@ -158,16 +168,20 @@ export class CliTerminals {
   }
 
   private async scanOnce(): Promise<void> {
-    const files = this.files(() => true);
-    const counts = await Promise.all(files.map((t) => this.verify(t, false)));
+    const files = this.pidFiles(() => true);
+    const counts = await Promise.all(files.map((f) => this.verify(f.t, false)));
     if (this.stopped) return;
     const next = new Map<string, Terminal>();
-    files.forEach((t, i) => {
-      if (counts[i] === true && newer(t, next.get(t.sessionId))) next.set(t.sessionId, t);
+    files.forEach(({ t, cli }, i) => {
+      if (cli && counts[i] === true && newer(t, next.get(t.sessionId))) next.set(t.sessionId, t);
     });
     this.held = next;
-    const sig = sigOf(next);
-    if (sig === this.sig) return;
+    this.open = new Set(files.filter((f, i) => counts[i] === true).map((f) => f.t.sessionId));
+    this.unsure = new Set(files.filter((f, i) => counts[i] === null).map((f) => f.t.sessionId));
+    const sig = sigOf(next, this.unsure, this.open);
+    const first = !this.scanned;
+    this.scanned = true;
+    if (sig === this.sig && !first) return; // the first scan tells even with no terminal: now it is known
     this.sig = sig;
     for (const fn of this.listeners) fn();
   }
@@ -189,8 +203,14 @@ export class CliTerminals {
     return ok;
   }
 
-  // The pid files that pass the format and kind checks, unverified.
+  // The pid files of terminals (format and kind checks passed), unverified.
   private files(want: (j: Record<string, unknown>) => boolean): Terminal[] {
+    return this.pidFiles(want).filter((f) => f.cli).map((f) => f.t);
+  }
+
+  // Every pid file that passes the format check and isn't a spare, unverified. `cli`: a terminal's
+  // (kind and entrypoint); the others are SDK children and other non-terminal CLIs.
+  private pidFiles(want: (j: Record<string, unknown>) => boolean): { t: Terminal; cli: boolean }[] {
     let names: string[];
     try {
       names = fs.readdirSync(this.dir);
@@ -198,7 +218,7 @@ export class CliTerminals {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') this.once('terminals.unreadable');
       return [];
     }
-    const out: Terminal[] = [];
+    const out: { t: Terminal; cli: boolean }[] = [];
     for (const name of names) {
       if (!NAME.test(name)) continue;
       let j: Record<string, unknown>;
@@ -214,17 +234,17 @@ export class CliTerminals {
         continue;
       }
       if (!want(j)) continue;
+      if (j.spare === true || j.isSpare === true || `${j.pid}.json` !== name) continue;
       // SDK children write pid files too, entrypoint `sdk-ts` (docs/Claude Code terminals.md#quirk-sdk-children-write-pid-files-too)
-      if (j.kind !== 'interactive' || j.entrypoint !== 'cli' || j.spare === true || j.isSpare === true) continue;
-      if (`${j.pid}.json` !== name) continue;
-      out.push({
+      const cli = j.kind === 'interactive' && j.entrypoint === 'cli';
+      out.push({ cli, t: {
         pid: j.pid,
         sessionId: j.sessionId,
         procStart: j.procStart,
         cwd: typeof j.cwd === 'string' ? j.cwd : '',
         status: typeof j.status === 'string' ? j.status : '',
         statusUpdatedAt: typeof j.statusUpdatedAt === 'number' ? j.statusUpdatedAt : 0,
-      });
+      } });
     }
     return out;
   }

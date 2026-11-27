@@ -6,7 +6,7 @@
 //        node extcard.mjs <url> <state-dir> <claude-dir>
 import fs from 'node:fs';
 import path from 'node:path';
-import { shot as shotTo } from './helpers.mjs';
+import { shot as shotTo, elsewhere } from './helpers.mjs';
 
 const Q = 'e1e1e1e1-0000-4000-8000-00000000000a', P = 'e2e2e2e2-0000-4000-8000-00000000000b', D = 'e3e3e3e3-0000-4000-8000-00000000000e';
 const file = (dir, sid) => path.join(dir, 'projects', '-tmp-ext', `${sid}.jsonl`);
@@ -21,6 +21,9 @@ if (process.argv[2] === 'make') {
     for (const r of recs) if (r.timestamp) r.timestamp = new Date(Date.parse(r.timestamp) + shift).toISOString();
     fs.writeFileSync(file(dst, sid), recs.map((r) => JSON.stringify(r) + '\n').join(''));
   }
+  // the other processes that ask (D is Synopia's own, which left its ask behind)
+  elsewhere(dst, 7103, Q, '/Users/fixture/dev/demo');
+  elsewhere(dst, 7104, P, '/Users/fixture/dev/demo');
   process.exit(0);
 }
 

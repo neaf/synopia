@@ -102,6 +102,14 @@ export function writeScript(claudeDir, about, sessions) {
 }
 // A step: a turn of Synopia's process that started `ago` ms before the backend.
 export const running = (ago) => ({ ago, message: { type: 'system', subtype: 'session_state_changed', state: 'running' } });
+// The pid file of a Claude Code another app drives through the SDK (entrypoint `sdk-ts`), which has `sid`
+// open: no terminal to take over, but a live process, so what its transcript shows running still runs.
+export function elsewhere(claudeDir, pid, sid, cwd) {
+  fs.mkdirSync(`${claudeDir}/sessions`, { recursive: true });
+  fs.writeFileSync(`${claudeDir}/sessions/${pid}.json`, JSON.stringify({
+    pid, sessionId: sid, cwd, procStart: 'Mon Nov 23 09:00:00 2026', kind: 'interactive', entrypoint: 'sdk-ts', status: 'busy', statusUpdatedAt: Date.now(),
+  }));
+}
 // The pid file of a Claude Code in a terminal that holds `sid` (docs/Claude Code terminals.md). Under the
 // scripted SDK every pid file in the tree is a live CLI that isn't Synopia's; no real process is asked.
 export function terminal(claudeDir, pid, sid, cwd, status = 'idle') {

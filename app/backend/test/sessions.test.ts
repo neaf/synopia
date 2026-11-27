@@ -12,6 +12,8 @@ import { emit, fakeQuery } from './support/fake-query.ts';
 import { openStore } from '../src/store.ts';
 import { patchUi } from '../src/ui-state.ts';
 import type { Client } from '../src/server.ts';
+import type { TerminalSource } from '../src/session.ts';
+import type { Terminal } from '../src/cli-terminals.ts';
 import type { CanUseTool, SDKSessionInfo } from '@anthropic-ai/claude-agent-sdk';
 
 type Msg = { t: string; [k: string]: unknown };
@@ -22,7 +24,7 @@ const RESULT = { type: 'result', subtype: 'success', is_error: false, terminal_r
 const REAL = '11111111-2222-4333-8444-555555555555';
 const RESET = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 
-function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void; now?: () => number } = {}) {
+function setup(dir?: string, past: SDKSessionInfo[] = [], extra: { idleMs?: number; onWaiting?: (sid: string) => void; now?: () => number; terminals?: TerminalSource } = {}) {
   const root = dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
   const claudeDir = path.join(root, 'claude');
   const stateDir = path.join(root, 'state');
@@ -1115,6 +1117,109 @@ test('sessions: a session whose turn runs in another process reads working, unti
   add({ type: 'system', subtype: 'turn_duration', durationMs: 60000, timestamp: '2026-11-20T10:02:01.000Z' });
   transcripts.poll();
   assert.equal(take('session').at(-1)?.state.status, 'idle');
+});
+
+// The pid-file registry as sessions see it (cli-terminals.ts): nothing known until its first scan.
+// `scanned(sid, pid)`: a terminal holds sid; `scanned(sid, pid, false)`: another app's CLI has it
+// open (not a terminal); `scanned()`: no pid file.
+function fakeTerminals() {
+  const held = new Map<string, Terminal>();
+  const others = new Set<string>();
+  const listeners: (() => void)[] = [];
+  let known = false;
+  const source: TerminalSource = {
+    holder: (sid) => held.get(sid) ?? null,
+    recheck: (sid) => held.get(sid) ?? null,
+    free: (sid) => known && !held.has(sid) && !others.has(sid),
+    onChange: (fn) => listeners.push(fn),
+    end: async () => true,
+  };
+  const scanned = (sid?: string, pid = 0, terminal = true) => {
+    known = true;
+    held.clear();
+    others.clear();
+    if (sid && pid && terminal) held.set(sid, { pid, sessionId: sid, procStart: 'Fri Nov 27 09:00:00 2026', cwd: '/tmp/x', status: 'busy', statusUpdatedAt: 1 });
+    else if (sid && pid) others.add(sid);
+    for (const fn of listeners) fn();
+  };
+  return { source, scanned };
+}
+
+// A past session Synopia drove before it quit: its records, dated now (made up).
+function pastWith(records: object[]) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'synopia-sessions-'));
+  const cwd = path.join(root, 'scratch');
+  const file = writePast(path.join(root, 'claude'), cwd);
+  const base = { sessionId: PAST, cwd, isSidechain: false };
+  for (const r of records) fs.appendFileSync(file, JSON.stringify({ ...base, timestamp: new Date().toISOString(), ...r }) + '\n');
+  return { root, cwd, file };
+}
+const prompt = (uuid: string, text: string) => ({ type: 'user', uuid, message: { role: 'user', content: text } });
+const toolCall = (uuid: string, id: string, name: string, input: object) => ({ type: 'assistant', uuid, message: { id: `m-${uuid}`, role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } });
+
+test('no process holds it: a turn that ended on a permission nobody answered is your turn at once, its background subagent ended', async () => {
+  const { root, cwd, file } = pastWith([
+    prompt('p-3', 'Review the draft in the background, then start a helper session'),
+    toolCall('p-4', 'toolu_bg', 'Agent', { description: 'Review the draft', prompt: 'invented', run_in_background: true }),
+    { type: 'user', uuid: 'p-5', toolUseResult: { status: 'async_launched', agentId: 'cccc0001', description: 'd', prompt: 'p', outputFile: '/tmp/o' }, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bg', content: 'Launched.' }] } },
+    toolCall('p-6', 'toolu_mcp', 'mcp__synopia__start_session', { prompt: 'invented' }),
+    {
+      type: 'user', uuid: 'p-7', toolDenialKind: 'permission-rule', toolDenialUnanswered: 'stream-closed', toolUseResult: 'Error: invented',
+      permissionDecision: { decision: 'reject', source: 'config', reasonType: 'other', ruleSource: 'mcpServerPolicy', reasonCode: 'invented' },
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_mcp', is_error: true, content: 'Tool permission request failed: AbortError: Tool permission stream closed before response received' }] },
+    },
+  ]);
+  const subs = path.join(file.replace(/\.jsonl$/, ''), 'subagents');
+  fs.mkdirSync(subs, { recursive: true });
+  fs.writeFileSync(path.join(subs, 'agent-cccc0001.meta.json'), JSON.stringify({ agentType: 'general-purpose', description: 'Review the draft', toolUseId: 'toolu_bg' }));
+  fs.writeFileSync(path.join(subs, 'agent-cccc0001.jsonl'), JSON.stringify({ type: 'user', uuid: 'c-1', timestamp: new Date().toISOString(), isSidechain: true, agentId: 'cccc0001', message: { role: 'user', content: 'Review the draft.' } }) + '\n');
+  const term = fakeTerminals();
+  const { sessions, transcripts, take } = setup(root, [info(PAST, { cwd })], { terminals: term.source });
+  sessions.start();
+  await sessions.openSession(PAST);
+  transcripts.poll();
+  transcripts.poll();
+  assert.equal(transcripts.get(PAST)?.agents()[0]?.running, true, 'its process may still run: the pid files are not read yet');
+  assert.equal(transcripts.get(PAST)?.turnRunning(Date.now(), 30 * 60_000), false, 'the unanswered permission ended the turn, whatever holds the session');
+  term.scanned();
+  assert.equal(take('session').at(-1)?.state.status, 'idle', 'your turn, not working');
+  const agent = transcripts.get(PAST)?.agents()[0];
+  assert.equal(agent?.running, false, 'the subagent died with its process');
+  assert.equal(agent?.stopped, true);
+  sessions.stop();
+});
+
+test('no process holds it: a transcript cut mid-tool is not working once the pid files say so', async () => {
+  const { root, cwd } = pastWith([prompt('p-3', 'Now run the tests'), toolCall('p-4', 'toolu_cut', 'Bash', { command: 'npm test' })]);
+  const term = fakeTerminals();
+  const { sessions, transcripts, take } = setup(root, [info(PAST, { cwd })], { terminals: term.source });
+  sessions.start();
+  await sessions.openSession(PAST);
+  transcripts.poll();
+  assert.equal(take('session').at(-1)?.state.status, 'busy', 'before the first scan: not known, so it may run elsewhere');
+  term.scanned(PAST, 5151, false);
+  assert.equal(take('session').at(-1)?.state.status ?? 'busy', 'busy', "another app's CLI has it open: it may still run");
+  term.scanned();
+  assert.equal(take('session').at(-1)?.state.status, 'idle');
+  assert.equal(transcripts.get(PAST)?.get('toolu_cut')?.state, 'stopped');
+  sessions.stop();
+});
+
+test('a terminal that holds the session mid-turn keeps it working; once it quits, what it ran ended with it', async () => {
+  const { root, cwd } = pastWith([prompt('p-3', 'Now run the tests'), toolCall('p-4', 'toolu_t', 'Bash', { command: 'npm test' })]);
+  const term = fakeTerminals();
+  term.scanned(PAST, 4242);
+  const { sessions, transcripts, take } = setup(root, [info(PAST, { cwd })], { terminals: term.source });
+  sessions.start();
+  await sessions.openSession(PAST);
+  transcripts.poll();
+  const held = take('session').at(-1)?.state as { status: string; detail: { terminal?: number } };
+  assert.equal(held.status, 'busy');
+  assert.equal(held.detail.terminal, 4242);
+  term.scanned();
+  assert.equal(take('session').at(-1)?.state.status, 'idle');
+  assert.equal(transcripts.get(PAST)?.get('toolu_t')?.state, 'stopped');
+  sessions.stop();
 });
 
 test('bash mode: refused while another process runs the turn, as with a terminal', async () => {

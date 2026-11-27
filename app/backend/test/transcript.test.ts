@@ -625,6 +625,22 @@ test('turn: "for tool use" is a tool you turned down, and Claude carrying on kee
   assert.equal(t.items.at(-1)?.text, '[Request interrupted by user]', 'the page reads this last item as stopped by you');
 });
 
+test('turn: a permission request nobody answered ends it at once; Claude writing again opens it', () => {
+  const t = new Transcript({ home: HOME });
+  t.pushAll([
+    typed('u1', 'Start a helper session', ago(2)),
+    replied('a1', ago(2), [{ type: 'tool_use', id: 'toolu_mcp', name: 'mcp__synopia__start_session', input: { prompt: 'invented' } }]),
+  ]);
+  assert.equal(t.turnRunning(NOW, QUIET), true, 'its tool waits for the answer');
+  t.pushAll([{
+    ...toolResult('r1', ago(1), 'toolu_mcp', { is_error: true, content: 'Tool permission request failed: AbortError: Tool permission stream closed before response received' }),
+    toolDenialKind: 'permission-rule', toolDenialUnanswered: 'stream-closed', permissionDecision: { decision: 'reject', source: 'config' },
+  }]);
+  assert.equal(t.turnRunning(NOW, QUIET), false, 'the asking process went away: your turn, not 30 min of working');
+  t.pushAll([replied('a2', ago(0), [{ type: 'text', text: 'Carrying on.' }])]);
+  assert.equal(t.turnRunning(NOW, QUIET), true);
+});
+
 const askUse = (id: string) => ({ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions: [
   { question: 'Which layout?', header: 'Layout', multiSelect: false, options: [{ label: 'Two columns (Recommended)', description: 'Side by side' }, { label: 'One column', description: '' }] },
 ] } });

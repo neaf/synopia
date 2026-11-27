@@ -26,6 +26,7 @@ Transcript files are in [Claude Code transcripts](Claude%20Code%20transcripts.md
 - The verification is kept per pid and `procStart` while the pid lives; liveness is checked on every scan. A `ps` that fails (timeout, spawn error) leaves the file unknown: not stored, asked again on the next scan. Code: `cli-terminals.ts` `verify`. Test: `cli-terminals.test.ts` "a failed ps leaves the terminal unknown".
 - A live pid whose start time differs from `procStart` (a reused pid, or a changed time format) is logged once as `terminals.startMismatch`. Test: `cli-terminals.test.ts` "a live pid whose start differs".
 - `status` comes from the CLI: idle, busy (also while it retries the API), idle. The `shell` value comes from strings in the CLI binary (constraints review B2), against the no-internals rule; it is `unverified` live. Any value other than `idle` makes a take-over wait, so the unknown value is safe.
+- A session is free when the last scan finished and no live pid file names it, of any kind or entrypoint (a terminal's, another app's SDK child), passing the same start-time and ancestry checks, spares aside; a file whose `ps` failed leaves it not known. Before the first scan nothing is known (the first scan tells the listeners even when it finds nothing). Synopia's own process is known without its file. A free session with no process of Synopia's has nothing running: `session.ts` marks its transcript's process ended ([Claude Code transcripts](Claude%20Code%20transcripts.md#quirk-a-failed-turn-read-from-the-file-alone-looks-running)). A CLI that writes no pid file (see the inherited-variables quirk below) is not seen, so what it runs reads ended. Code: `cli-terminals.ts` `free`, `pidFiles`, `scanOnce`. Test: `cli-terminals.test.ts` "free …", "another app's SDK child …".
 - Whether the CLI deletes its pid file on exit is `unverified`. Liveness and start time are checked on every scan, so a leftover file never counts.
 
 ### Quirk: `procStart` is UTC
@@ -39,7 +40,7 @@ Transcript files are in [Claude Code transcripts](Claude%20Code%20transcripts.md
 
 - Symptom: Synopia's own sessions would show as terminals.
 - Cause: a CLI started by the SDK writes a pid file with `kind: interactive`, `entrypoint: sdk-ts`, the same keys as a terminal's.
-- Workaround: only `entrypoint: cli` counts, and pids under Synopia's own process are skipped.
+- Workaround: only `entrypoint: cli` counts as a terminal, and pids under Synopia's own process are skipped. Another app's SDK child still has the session open, so it keeps the session from being free.
 - Code: `cli-terminals.ts` `files`, `verify` (`descendsFrom`). Test: `cli-terminals.test.ts` "only interactive cli processes count", "Synopia's own children".
 
 ### Quirk: inherited Claude Code variables suppress the file

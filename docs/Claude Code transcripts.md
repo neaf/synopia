@@ -111,7 +111,7 @@ Code: `claude-jsonl.ts` `classify` (attachment), `session.ts` `settleOutbox`. So
 
 ## Turn ends
 
-A turn opens with a prompt you typed (user record, slash command or `queued_command`) and closes with `turn_duration`, `stop_hook_summary` or an interrupt marker.
+A turn opens with a prompt you typed (user record, slash command or `queued_command`) and closes with `turn_duration`, `stop_hook_summary`, an interrupt marker or the result of a permission request nobody answered (below).
 
 | Writer | Writes at a normal turn end |
 |---|---|
@@ -133,8 +133,15 @@ A turn opens with a prompt you typed (user record, slash command or `queued_comm
 
 - Symptom: a session another process drives through the SDK reads working after its turn failed or was interrupted.
 - Cause: such turns write no turn-end record.
-- Workaround: a turn running by the transcript alone ends after `QUIET_MS` (30 min) without a change; the publisher flushes every session each 60 s to notice.
-- Code: `status.ts` `QUIET_MS`, `publisher.ts` `RECHECK_MS`.
+- Workaround: a turn running by the transcript alone ends after `QUIET_MS` (30 min) without a change; the publisher flushes every session each 60 s to notice. Once the pid files show no process has the session open (none of Synopia's, no live pid file of any kind, see [Claude Code terminals](Claude%20Code%20terminals.md#pid-files)), the transcript's process counts as ended as of its last record, at once: a tool with no result, the open turn and its subagents read ended.
+- Code: `status.ts` `QUIET_MS`, `publisher.ts` `RECHECK_MS`; `session.ts` `feedRunning`, `unheld`; `cli-terminals.ts` `free`. Test: `sessions.test.ts` "no process holds it: …", "a terminal that holds the session mid-turn …".
+
+### Quirk: a permission request nobody answered
+
+- Symptom: after Synopia restarts, a session it drove reads working, for 30 min or for ever.
+- Cause: when the process that answers permission requests goes away mid-request (Synopia quit while a card waited), the CLI writes an error `tool_result` for the tool and then nothing: no turn end, no interrupt marker. The user record carries, beside the usual fields, `toolDenialUnanswered` (a string, `stream-closed` seen), `toolDenialKind` (`permission-rule` seen), `permissionDecision` (`{decision: 'reject', source, reasonType, ruleSource, reasonCode}`) and a string `toolUseResult`; the result's text starts with `Tool permission request failed: AbortError`. Other denials have `toolDenialKind` (`user-rejected`, `automode-blocked`, `cancelled`, `permission-rule`) without `toolDenialUnanswered`. Shape-only scan 2026-11-27: 1 such record among the denials.
+- Workaround: an error result with a non-empty `toolDenialUnanswered`, or whose text starts with `Tool permission request failed:`, closes the turn like an interrupt marker; an assistant record after it opens it again.
+- Code: `claude-jsonl.ts` `unansweredOf` (`UserRecord.unanswered`); `transcript.ts` `user`. Test: `claude-jsonl.test.ts` "a permission request nobody answered …", `transcript.test.ts` "turn: a permission request nobody answered …".
 
 ## Interrupts
 

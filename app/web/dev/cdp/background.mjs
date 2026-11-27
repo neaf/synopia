@@ -7,7 +7,7 @@
 // doesn't drive; b types in insert mode. Writes background-asking.png.
 import fs from 'node:fs';
 import path from 'node:path';
-import { records, fresh, keyTable, spySent, writeScript, running } from './helpers.mjs';
+import { records, fresh, keyTable, spySent, writeScript, running, elsewhere } from './helpers.mjs';
 
 const A = 'b0b0b0b0-0000-4000-8000-0000000000b1'; // driven: Synopia's process runs its turn
 const B = 'b0b0b0b0-0000-4000-8000-0000000000b2'; // not driven: its turn runs in another process (the transcript)
@@ -26,6 +26,7 @@ if (process.argv[2] === 'make') {
   fs.writeFileSync(path.join(dir, `${B}.jsonl`),
     you(B, 'b-u1', 0, 'Run the slow tests.')
     + tool(B, 'b-a1', 1, 'toolu_bother', 'Bash', { command: 'sleep 60', description: 'Run the slow tests' }));
+  elsewhere(process.argv[3], 7101, B, '/tmp/synopia-background'); // the other process that runs it
   const task = (tool_use_id, task_id) => ({ message: { type: 'system', subtype: 'task_started', tool_use_id, task_id, description: 'made-up' } });
   // the CLI registers a foreground step as a task about 2 s in: only then can it go
   writeScript(process.argv[3], 'background.mjs: made up', { [A]: { start: true, steps: [running(60000), task('toolu_bsleep', 'bsl1'), task('toolu_bfg', 'abfg1')] } });

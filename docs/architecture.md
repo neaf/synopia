@@ -129,7 +129,7 @@ Shell test: `app/shell/test/DaemonFilesTest.swift` decodes the goldens in `app/s
 2. `server` -> `router`: validate against `protocol.js`, resolve aliases, call `sessions`/`session`/`cards`/`layout`/`ui-state`/`open`/`preview`; reply `ack`. A thrown handler becomes `ack {ok:false}` plus a log line.
 3. `session` drives one `sdk` process. SDK messages flow `sdk` -> `session` (control state) -> `status` (derived state) and `cards` (requests) -> `publisher`.
 4. The CLI writes JSONL. `tail` -> `claude-jsonl` (classify) -> `transcript` (reduce) inside `transcripts` -> `status` (transcript facts) and `publisher` (items). The SDK stream carries only control and live state (R12); the stream preview is cleared when its record lands.
-5. `cli-terminals` watches pid files -> `session` yields or takes over; `macos` gives process facts.
+5. `cli-terminals` watches pid files -> `session` yields or takes over; `macos` gives process facts. `cli-terminals` alone says whether any Claude Code outside Synopia has a session open (`free`); `session` alone knows its own process, and with neither it tells `transcripts` the transcript's process ended (`processEnded`), so nothing reads running.
 6. `publisher` flushes once per change batch: `session` meta (with `state` from `status`), then `agents`/`background`, then `items`. Every module that changes visible state tells the publisher; nobody else sends frames.
 7. `store` persists open list, layout, models, rules, answers, plans, status, ended, written titles, reviewed, settings and UI state. `layout` and `ui-state` own their sections; `store` owns the file.
 8. Shell: `Backend` polls `/api/badge` (cached count from `status`, O(1)) every 2 s on an async session; on loss reads `daemon.json` `handover` to wait for the successor.
@@ -277,7 +277,7 @@ Synopia drives sessions only through the SDK's typed API (`query`, its options, 
 |---|---|---|---|
 | The JSONL transcript records | `claude-jsonl.ts`, `tail.ts` | the only source of diffs (`structuredPatch`), subagent files and full history | the fixtures for each record shape fail first; unknown records are skipped, never fatal |
 | `CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS` | `sdk.ts` (flag), `status.ts` (events) | live running, needs you and idle | status falls back to `send` and `result` |
-| The CLI's pid files `~/.claude/sessions/<pid>.json` | `cli-terminals.ts` | which sessions a terminal holds: yield, take-over, one writer | a file of another shape counts as no terminal, logged once |
+| The CLI's pid files `~/.claude/sessions/<pid>.json` | `cli-terminals.ts` | which sessions a terminal holds: yield, take-over, one writer; which sessions no Claude Code has open (`free`): what their transcripts show running ended | a file of another shape counts as no terminal, logged once |
 | `cancelQueued` on interrupt | `sdk.ts` | so messages queued at an interrupt come back | used only when `system/init` advertises `interrupt_cancel_queued_v1`; else the typed `interrupt()` |
 
 Facts the documented surface leaves open are settled by one scripted check and recorded in the topic doc as shapes, never values.

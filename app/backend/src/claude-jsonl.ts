@@ -108,6 +108,15 @@ function toolUseOf(b: JsonRecord, index: number): ToolUse {
 const CUT_SHORT = /^\[(Request interrupted by user|Tool call interrupted)/;
 const STOP_MARKER = '[Request interrupted by user';
 const TURNED_DOWN_MARKER = '[Request interrupted by user for tool use';
+// A permission request whose answer never came: `toolDenialUnanswered` (a reason word, `stream-closed`
+// seen) beside the error result, whose text starts with this (the text alone counts too).
+const UNANSWERED_TEXT = 'Tool permission request failed:';
+
+function unansweredOf(d: JsonRecord, results: ToolResult[]): string {
+  if (!results.some((r) => r.isError)) return '';
+  if (typeof d.toolDenialUnanswered === 'string' && d.toolDenialUnanswered) return d.toolDenialUnanswered;
+  return results.some((r) => r.isError && r.text.trimStart().startsWith(UNANSWERED_TEXT)) ? 'unknown' : '';
+}
 
 // A tool_result block. `text`: what Claude got (images aren't text). `cutShort`: an error result
 // the CLI wrote for an interrupt.
@@ -155,9 +164,12 @@ export type UserBody =
   | { kind: 'prompt' };
 
 type Base = { uuid: string; ts: string | null; sidechain: boolean };
+// `unanswered`: the record holds the error result of a permission request that never got its answer
+// (the process that would answer went away mid-request), '' otherwise (docs/Claude Code
+// transcripts.md#quirk-a-permission-request-nobody-answered).
 export type UserRecord = Base & {
   kind: 'user'; cwd: string; text: string; images: ImageBlock[]; results: ToolResult[];
-  toolUse: ToolUseResult | null; notes: TaskNote[]; body: UserBody;
+  toolUse: ToolUseResult | null; notes: TaskNote[]; body: UserBody; unanswered: string;
 };
 export type AssistantRecord = Base & {
   kind: 'assistant'; messageId: string; requestedModel: unknown; effort: unknown; blocks: AssistantBlock[];
@@ -227,7 +239,7 @@ function userOf(d: JsonRecord, base: Base, content: unknown): UserRecord {
   const images = imageBlocks(content);
   const body = bodyOf(d, text, images.length, onlyResults);
   const notes = body.kind === 'results' || body.kind === 'bash-input' || body.kind === 'bash-output' || body.kind === 'meta' ? [] : taskNotes(text);
-  return { ...base, kind: 'user', cwd: str(d.cwd), text, images, results, toolUse, notes, body };
+  return { ...base, kind: 'user', cwd: str(d.cwd), text, images, results, toolUse, notes, body, unanswered: unansweredOf(d, results) };
 }
 
 // One raw record (a parsed JSONL line) as a typed one. Record types Synopia doesn't read are `other`.
