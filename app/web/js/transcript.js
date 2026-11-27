@@ -130,7 +130,10 @@ function toolsHTML(run) {
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
-  const cls = run.length === 1 ? esc(run[0].state) : fails ? "failed" : ""; // one step's dot reads its state, as the step's own
+  /* one step's dot reads its state, as the step's own. "done" adds no class: it is the day separator's (.done, its
+     margin and grey), which made a single done step's line 3.5px taller and grey, so it jumped when a second step came
+     (2026-11-27, the user: "Changing from 1 Bash command to 2 Bash commands changes the row height by a pixel or two") */
+  const cls = run.length === 1 ? (run[0].state !== "done" ? esc(run[0].state) : "") : fails ? "failed" : "";
   return `<div class="ln tool ${cls}"><span class="g"${markAt(run[0].ts)}>●</span><details class="fold"><summary${run.some(fgMark) ? " data-fg" : ""}>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
     <div class="body">${run.map(t => {
       const o = objOf(t), row = `<span class="lcorner" aria-hidden="true"></span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(toolName(t))}</span>${o ? "(" : ""}`, o, `${o ? ")" : ""}${editCounts(t)}${t.state === "failed" ? ", failed" : deniedWord(t) ? `, ${deniedWord(t).toLowerCase()}` : t.state === "stopped" ? ", stopped" : t.state === "running" ? ", running" : ""}${t.session ? `: ${startedHTML(t)}` : ""}`)}`, cls = `res ${t.state === "failed" ? "failed" : ""}`;

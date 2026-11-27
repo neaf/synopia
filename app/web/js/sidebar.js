@@ -3,7 +3,7 @@
    actions: `moveSession` and `newGroup` from a drop (dnd.js), `renameGroup` from the name field. Nothing
    here changes the layout itself, so a refused or unsent intent leaves the sidebar as the backend has it. */
 import { store, data, current, select, agentsOf, nowish } from "./state.js";
-import { esc, took, live, age, until } from "./format.js";
+import { esc, live, age, until } from "./format.js";
 import { act } from "./connection.js";
 import { ind, sessionMark, bgMarkKey, kindKey } from "./marks.js";
 import { lineTweens } from "./tween.js";
@@ -31,17 +31,18 @@ export function rowHTML(s) {
 /* The sub-lines: the panel's Main conversation tree, item for item (R4.2, R7.1, 2026-11-27, the user: "Render exactly
    what we have inside the right panel. Even if there's 10 items, 3 levels deep, it's fine."). Each subagent, fork,
    shell and monitor, yours and the refresh too, has its own line under what started it, one level deeper each, in the
-   panel's order, with its name, kind mark and timer. No count lines, no cap. The tree is rail.js's (mainTree). */
+   panel's order, with its name and kind mark. No count lines, no cap. The tree is rail.js's (mainTree). */
 function subLines(s) {
   const lines = (x, d) => [subLine(x, d), ...x.kids.flatMap(y => lines(y, d + 1))];
   return mainTree(s).flatMap(x => lines(x, 0)).join("");
 }
-/* one sub-line: an item of the tree at its depth; a run that waits for input reads "waits" with the pause mark (2026-11-26) */
+/* one sub-line: an item of the tree at its depth, its mark and its name only. No timer and no state word: the mark
+   carries the state, the pause mark for a run that waits for input, the still kind mark for one that waits
+   (2026-11-27, the user: "First subagent is saying waiting -> I know spinner is not moving. Let's remove all the times.") */
 function subLine(x, depth) {
   const k = kindKey(x), at = depth ? ` style="--depth:${depth}"` : "";
   const mark = x.waits ? ind("pause") : x.waiting ? ind("s_" + k) : x.running ? ind("k_" + k) : `${ind(bgMarkKey(x))}${ind("s_" + k)}`;
-  const time = x.waits ? "waits" : x.running ? `${x.waiting ? "waiting, " : ""}${live(x.start, x.ms)}` : took(x.ms);
-  return `<span class="r-agent kc-${k}${x.waits ? " waits" : ""}" data-line="${x.agent ? "a:" : "b:"}${esc(x.key)}"${at}><i class="el"></i>${mark} <b class="kw">${whoHTML(x.who)}${esc(x.name)}</b> ${time}</span>`;
+  return `<span class="r-agent kc-${k}${x.waits ? " waits" : ""}" data-line="${x.agent ? "a:" : "b:"}${esc(x.key)}"${at}><i class="el"></i>${mark} <b class="kw">${whoHTML(x.who)}${esc(x.name)}</b></span>`;
 }
 /* the row's state words, as in the status storyboard: working ones without an age, the rest with one. A command that
    runs has its timer, from its start (status.ts commandOf); idle with background work has no age (R8.2, 2026-11-27) */

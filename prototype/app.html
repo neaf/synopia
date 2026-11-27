@@ -917,15 +917,16 @@ function parseAnswers(a) {
 
 /* ---------- sidebar ---------- */
 let KEYS = [];
-/* the sub-lines: every running item of the panel's tree, each on its own line with its name, moving kind mark and
-   timer, in the panel's order; no count line, no cap (R4.2, 2026-11-27, the user: "Render exactly what we have inside
-   the right panel. Even if there's 10 items, 3 levels deep, it's fine.") */
+/* the sub-lines: every running item of the panel's tree, each on its own line with its name and moving kind mark, in
+   the panel's order; no count line, no cap (R4.2, 2026-11-27, the user: "Render exactly what we have inside the right
+   panel. Even if there's 10 items, 3 levels deep, it's fine."). No timer and no state word: the mark carries the state
+   (2026-11-27, the user: "First subagent is saying waiting -> I know spinner is not moving. Let's remove all the times.") */
 function sideLines(s) {
   const KIND_ORDER = { fork: 0, sub: 1, shell: 2, mon: 3 };
-  const items = [...agentsOf(s).filter(a => !a.finished).map(a => ({ agent: a, name: a.description, start: a.start, ms: agentMs(a) })),
-    ...bgOf(s).filter(b => bgState(b) === "running").map(b => ({ bg: b, name: b.description || b.command, start: b.start, ms: bgMs(b) }))]
+  const items = [...agentsOf(s).filter(a => !a.finished).map(a => ({ agent: a, name: a.description, start: a.start })),
+    ...bgOf(s).filter(b => bgState(b) === "running").map(b => ({ bg: b, name: b.description || b.command, start: b.start }))]
     .sort((p, q) => (KIND_ORDER[kindKey(p)] - KIND_ORDER[kindKey(q)]) || (new Date(p.start) - new Date(q.start)));
-  return items.map(x => `<span class="r-agent kc-${kindKey(x)}"><i class="el"></i>${ind("k_" + kindKey(x))} <b class="kw">${esc(x.name)}</b> ${live(x.start, x.ms)}</span>`).join("");
+  return items.map(x => `<span class="r-agent kc-${kindKey(x)}"><i class="el"></i>${ind("k_" + kindKey(x))} <b class="kw">${esc(x.name)}</b></span>`).join("");
 }
 function rowHTML(s) {
   const st = stateOf(s);
@@ -1110,7 +1111,7 @@ function toolsHTML(run) {
   let text = Object.entries(counts).map(([v, n]) => n === 1 ? (one[v] || `used ${v} once`) : (label[v] || (n => `used ${v} ${n} times`))(n)).join(", ");
   text = text.charAt(0).toUpperCase() + text.slice(1);
   const fails = run.filter(t => t.state === "failed").length, running = run.filter(t => t.state === "running").length;
-  const cls = run.length === 1 ? run[0].state : fails ? "failed" : "";
+  const cls = run.length === 1 ? (run[0].state !== "done" ? run[0].state : "") : fails ? "failed" : ""; // "done" is the day separator's class (.done): no jump (2026-11-27)
   return `<div class="ln tool ${cls}"><span class="g"${markAt(run[0].ts)}>●</span><details class="fold"><summary>${lineHTML("", `<span class="name">${esc(text)}</span>`, `${fails ? ` <span style="color:var(--red)">${fails} failed</span>` : ""}${running ? ` <span style="color:var(--green)">${running} running</span>` : ""} <span class="hint">(click to expand)</span>`)}</summary>
     <div class="body">${run.map(t => `<div class="res ${t.state === "failed" ? "failed" : ""}"><span>⎿</span>${lineHTML(`<span class="name" style="font-weight:400;color:inherit">${esc(t.verb)}</span>${t.obj ? "(" : ""}`, esc(t.obj), `${t.obj ? ")" : ""}${t.state === "failed" ? ", failed" : t.state === "running" ? ", running" : ""}`)}</div>`).join("")}</div></details></div>`;
 }

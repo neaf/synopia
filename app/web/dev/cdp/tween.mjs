@@ -179,7 +179,8 @@ for (const [name, rm] of [['', false], ['reduced motion: ', true]]) {
   const g = await graceState('tw-ag', 'a:tw-ag'), gs = await graceState('tw-rb', 'b:tw-rb');
   check(name + 'grace at 4 s: the panel keeps the subagent and the shell where they were, with their final status', g.kid && g.ended && g.marks === 2 && !g.kidLive && gs.kid && gs.ended && gs.marks === 2 && !gs.kidLive && !g.past, JSON.stringify([g, gs]));
   check(name + 'grace at 4 s: the panel keeps the running order (subagent before shell), the tree first', g.order.indexOf('tw-ag') >= 0 && g.order.indexOf('tw-ag') < g.order.indexOf('tw-rb') && g.before, JSON.stringify(g.order));
-  check(name + 'grace at 4 s: the sidebar keeps the sub-lines, still marks and a frozen duration', g.side && g.sideMarks === 2 && !g.sideLive && gs.side && gs.sideMarks === 2 && /^rail tween check \d/.test(gs.sideText), JSON.stringify([g.sideText, gs.sideText]));
+  // the mark carries the state, no duration (R4.2, 2026-11-27, the user: "Let's remove all the times.")
+  check(name + 'grace at 4 s: the sidebar keeps the sub-lines and their still marks, the name alone, no duration', g.side && g.sideMarks === 2 && !g.sideLive && gs.side && gs.sideMarks === 2 && gs.sideText === 'rail tween check', JSON.stringify([g.sideText, gs.sideText]));
   await sleep(5600 - (Date.now() - t0));
   const e = await graceState('tw-ag', 'a:tw-ag'), es = await graceState('tw-rb', 'b:tw-rb');
   check(name + 'after about 5.3 s: gone from the tree and the sidebar, the shell in Past', !e.kid && !es.kid && !e.side && !es.side && es.past, JSON.stringify([e, es]));

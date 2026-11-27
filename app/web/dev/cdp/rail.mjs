@@ -170,10 +170,14 @@ const sideTree = () => ev(`(() => { const r = document.querySelector('#groups .r
   const grouped = [...r.querySelectorAll('.r-main > *')].map(l => l.textContent.replace(/\\s+/g, ' ').trim()).filter(t => /\\d+ (shells?|monitors?|subagents?|forks?)\\b|\\bor monitors?\\b|\\d+ more\\b/.test(t));
   return { side, panel, grouped }; })()`);
 const same = (st) => st.side.length === st.panel.length && st.side.every((l, i) => l.key === st.panel[i].key && l.depth === st.panel[i].depth && l.name === st.panel[i].name);
+const bare = (st) => st.side.length > 0 && st.side.every((l) => l.text === l.name.replace(/\s+/g, ' ').trim());
 {
   const st = await sideTree();
   check("the sidebar's sub-lines are the panel's tree: each item on its own line, named, at its depth, in its order; no count line", same(st) && st.side.length === 4 && !st.grouped.length
     && st.side.some((l) => l.name === 'Serve the demo' && l.depth === 0), JSON.stringify(st));
+  // the mark carries the state: a sub-line is its mark and its name, no timer and no word (R4.2, 2026-11-27, the user:
+  // "Let's remove all the times.")
+  check('a sub-line reads its name only: no timer, no state word', bare(st), JSON.stringify(st.side));
 }
 check("the main transcript doesn't show them", await ev(`!/Resize the images|Watch the resize log|Optimise the images/.test(document.getElementById('log').textContent)`));
 // ---------- R7.2: a shell or monitor opens in the pane, as a subagent does ----------
@@ -354,7 +358,7 @@ check('a subagent waiting on its own background work stays in the running part w
 check('its own background shell runs under it, with the moving mark', w.shell && w.shellMoves > 0 && !w.pastShell, JSON.stringify(w));
 // motion means an agent is doing something: the main turn is over and background work runs, so the session is idle,
 // still (2026-11-27; your turn until then)
-check('Main conversation counts it, and the session is idle with no moving mark, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Idle' && w.side === 'Idle, 1 running in the background' && w.mainMoves === 0 && w.sideMoves === 0 && /^Run the page bench waiting, /.test(w.sub), JSON.stringify(w));
+check('Main conversation counts it, and the session is idle with no moving mark, in the panel and the sidebar', w.main === '1 running in the background' && w.word === 'Idle' && w.side === 'Idle, 1 running in the background' && w.mainMoves === 0 && w.sideMoves === 0 && w.sub === 'Run the page bench', JSON.stringify(w));
 check('no live line once the main turn is over, though its subagent and shell run', await ev(`!document.querySelector('#log .liveln')`), await ev(`document.querySelector('#log .liveln')?.textContent || ''`));
 await shot('rail-waiting');
 // its shell ends (notified in its own file), it reports: the subagent and its shell go to Past, the shell done, not stopped
@@ -395,8 +399,8 @@ check("its shell is in Past as done, not stopped, and Main conversation runs not
   check('the run under 3 s gets its card once due', await c.until(`!!document.querySelector('.rail .now [data-bg="who-soon"] .who')`, 5000));
   await ev(`__synopia.render('side')`);
   const ws = await sideTree(), wl = (k) => ws.side.find((l) => l.key === k);
-  check('the sidebar shows your runs and the refresh as the panel does: "!" and the command, the refresh waiting', same(ws) && !!wl('who-run') && wl('who-run').name === '!bin/rspec'
-    && !!wl('creds:/tmp/fixture') && /waits$/.test(wl('creds:/tmp/fixture').text) && !wl('who-instant'), JSON.stringify(ws));
+  check('the sidebar shows your runs and the refresh as the panel does: "!" and the command, the refresh waiting (its pause mark, no word)', same(ws) && bare(ws) && !!wl('who-run') && wl('who-run').name === '!bin/rspec'
+    && !!wl('creds:/tmp/fixture') && !/waits/.test(wl('creds:/tmp/fixture').text) && !wl('who-instant'), JSON.stringify(ws));
   await shot('rail-who');
   if (process.env.SYNOPIA_SHOTS) await shotTo(c, path.join(process.env.SYNOPIA_SHOTS, `rail-who-${process.env.SYNOPIA_CDP_THEME === 'dark' ? 'dark' : 'light'}.png`), await ev(`(() => { const r = document.querySelector('.rail').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, 520), scale: 1 }; })()`));
 }
