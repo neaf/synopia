@@ -17,6 +17,7 @@ import { nullLog } from './log.ts';
 import { QUIET_MS, ASK_STALE_MS } from './status.ts';
 import type { Running } from './status.ts';
 import type { Reply } from './open-items.ts';
+import type { Exchange, ExchangeKind, Segment } from './keeper.ts';
 
 export const WINDOW = 160; // the items a view gets, and an `earlier` page
 
@@ -227,6 +228,64 @@ export class Transcripts {
       return Number.isFinite(ms) ? ms : null;
     }
     return null;
+  }
+
+  // The keeper's exchange (FR-ITEM-08): `you`, your last message; `turn`, what came after it in the main
+  // conversation: Claude's text, one line per tool step with its result's first lines (a ledger's step with no
+  // result: the list is given apart), and the subagents' reports with their names and the ids their briefs
+  // owned. `key` names the exchange: your message's id, and for a turn its last item's. Null when the session
+  // isn't open or has no message of yours.
+  exchange(id: string, kind: ExchangeKind): Exchange | null {
+    const t = this.live.get(id)?.t;
+    if (!t) return null;
+    const items = t.items;
+    let at = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.k === 'you' && !it.interrupted && !it.turnedDown && (it.text ?? '').trim()) { at = i; break; }
+    }
+    if (at < 0) return null;
+    const you = items[at];
+    if (kind === 'you') return { kind, key: you.id, segments: [{ src: 'you', text: you.text ?? '' }] };
+    const segments: Segment[] = [];
+    let last = you.id;
+    for (const it of items.slice(at + 1)) {
+      if (it.k === 'claude' && it.text?.trim()) segments.push({ src: 'claude', text: it.text });
+      else if (it.k === 'tool' && it.name !== 'Agent' && it.name !== 'Task') {
+        const step = `${it.name ?? 'Tool'}(${(it.obj ?? '').replace(/\s+/g, ' ').slice(0, 160)})`;
+        const ledger = /(^|\/)open-items\.md$/.test(it.obj ?? '') || it.patch?.ledger;
+        const res = !ledger && it.out?.text ? it.out.text.split('\n').filter((l) => l.trim()).slice(0, 3).join(' / ').slice(0, 300) : '';
+        segments.push({ src: 'tool', text: res ? `${step} -> ${res}` : step });
+      } else if (it.k === 'report' && it.text?.trim()) {
+        const a = it.agent ? t.getAgent(it.agent) : undefined;
+        const owns = a?.toolUseId ? t.ownsOf(a.toolUseId) : [];
+        segments.push({ src: 'report', text: it.text, ...(it.agent ? { agent: it.agent } : {}), name: (a?.description ?? '').replace(/^for review:\s*/i, ''), ...(owns.length ? { owns } : {}) });
+      } else continue;
+      last = it.id;
+    }
+    return { kind, key: `${you.id}:${last}`, segments };
+  }
+
+  // Where the keeper's exchanges are now (open-items.ts asks once per key): your last message with its time,
+  // and, once the main turn is over and Claude wrote after it, the turn's key and its last record's time.
+  exchangeKeys(id: string): { you: { key: string; ms: number } | null; turn: { key: string; ms: number } | null } {
+    const t = this.live.get(id)?.t;
+    const none = { you: null, turn: null };
+    if (!t) return none;
+    const items = t.items;
+    let at = -1;
+    for (let i = items.length - 1; i >= 0; i--) {
+      const it = items[i];
+      if (it.k === 'you' && !it.interrupted && !it.turnedDown && (it.text ?? '').trim()) { at = i; break; }
+    }
+    if (at < 0) return none;
+    const ms = (ts: string | null) => (ts ? Date.parse(ts) || 0 : 0);
+    const you = { key: items[at].id, ms: ms(items[at].ts) };
+    const after = items.slice(at + 1).filter((i) => (i.k === 'claude' && i.text?.trim()) || i.k === 'tool' || i.k === 'report');
+    const claude = after.some((i) => i.k === 'claude');
+    if (!claude || t.turnRunning(Date.now(), QUIET_MS)) return { you, turn: null };
+    const lastIt = after[after.length - 1];
+    return { you, turn: { key: `${you.key}:${lastIt.id}`, ms: ms(lastIt.ts) || you.ms } };
   }
 
   // The main conversation's Claude blocks and subagent reports, in transcript order, for the reply an open
