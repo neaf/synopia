@@ -38,7 +38,6 @@ Never rebuild a page that has ticks or findings without asking the user first.
 `.ai-notes/qa-<slug>/`, following the ai-notes skill (its README, its writing rules, one fact in one place):
 
 - `README.md`: goal, links (test environment, feature, publishing target), files, to-do, open questions, lessons.
-- `open-items.md`: what waits on the user or the agent (a decision about the page, a finding to fix after the session), kept by the [open-items](../open-items/SKILL.md) skill.
 - `sources.md`: each source with its path, the code's commit, the seed command, the environment build, the publishing target and its page location, and "Tool notes".
 - `decisions.md`: each decision the user made about the page, with the date and their reason. The rework reads it first; a decision in it survives every rework unless the user changes it.
 - `rework-log.md`: one dated section per rework: what changed, and the source or decision behind each change.

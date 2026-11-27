@@ -26,14 +26,13 @@ In each area:
 
 - `README.md`, mandatory, the entry point:
   - Goal in one or two lines.
-  - State (start here): the resume point, dated. Where the work stopped, a link to the area's `open-items.md` for what waits on the user or the agent ([open-items](../open-items/SKILL.md)), and a `Next:` line a new session can act on alone. A `Models for this run` table when the work spawns subagents. This section meets the minimum in [state.md](../harness-common/references/state.md); a skill that uses the area may add to it, such as a PR table.
+  - State (start here): the resume point, dated. Where the work stopped, the pending items split between the user and the agent, and a `Next:` line a new session can act on alone. A `Models for this run` table when the work spawns subagents. This section meets the minimum in [state.md](../harness-common/references/state.md); a skill that uses the area may add to it, such as a PR table.
   - Links: dashboards, ticket project (with its id when lookups by name are fragile).
   - Files: one line per file of the area.
   - Workstreams table: `# | workstream | state | notes`. State carries ticket, PR, branch and worktree path.
-  - To do: checklist of work no one waits on (cleanups, ideas). Anything waiting on the user or the agent is an item in `open-items.md`.
-  - Open questions: facts not verified yet. A question for the user is a `Y` item in `open-items.md`.
+  - To do: checklist of follow-ups (post-deploy checks, cleanups, pending decisions).
+  - Open questions: what is not verified yet.
   - Lessons for the next session: pitfalls hit, commands that worked, user corrections.
-- `open-items.md`: the ledger of what waits on the user or the agent, kept by the [open-items](../open-items/SKILL.md) skill.
 - `findings.md`: the first analysis, with raw numbers.
 - One file per workstream or topic, `<topic>.md`: summary, evidence, proposed fix, status.
 - Deliverables for humans (a stakeholder message, a proposal for another team): their own file, marked with the date they were sent.
@@ -60,7 +59,7 @@ In each area:
 When the user asks for a handoff (`/handoff [notes]`, "hand this off", "continue in a new session"), or the work should go on in a fresh session:
 
 1. Write `.ai-notes/<area>/handoff-<slug>.md`, a prompt the new session follows on its own:
-   - Where to read: `open-items.md` first when the area has one, then the area README and the files that matter, with paths.
+   - Where to read: the area README, the files that matter, with paths.
    - The facts: what is verified, with ids, PRs, branches and dates. Mark what is inferred.
    - The task and its stop point: what to do, and where to stop and report.
    - The user's working rules that apply.

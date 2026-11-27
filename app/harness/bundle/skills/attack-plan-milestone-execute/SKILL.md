@@ -86,7 +86,7 @@ Do this in plan mode when your tool has one.
 
 Create `.ai-notes/<area>/` following the `ai-notes` skill:
 
-- `README.md`: its "State (start here)" section holds the PR table (prefix, PR number, ticket, branch, base, status), a link to `open-items.md` for what waits on the user or the agent ([open-items](../open-items/SKILL.md)), the `Models for this run` table and the `Next:` line.
+- `README.md`: its "State (start here)" section holds the PR table (prefix, PR number, ticket, branch, base, status), pending items with who owns each (user or agent), the `Models for this run` table and the `Next:` line.
 - `subagent-rules.md`: the shared rules every PR subagent reads. Start from `resources/subagent-rules-template.md`, fill in the project and the absolute path of the writing-craft `SKILL.md`, and keep its "Learned" section growing.
 
 ### Step 6 — Build the PRs, one fresh subagent per PR
@@ -131,10 +131,9 @@ Create `.ai-notes/<area>/` following the `ai-notes` skill:
 
 At the end of every session, and before the context runs out:
 
-1. Update the notes `README.md` "State (start here)", as the `ai-notes` skill defines it: the date, the PR table with head commits, the `Models for this run` table and the `Next:` line.
-2. Bring `open-items.md` up to date ([open-items](../open-items/SKILL.md)): a `your task` item per human thread with its reply text, a `decision` per question for the user, a follow-up per check left for the next session.
-3. Set each tracker ticket's status to match its PR.
-4. Update the task blocks and the attack plan when a decision changed during the work.
+1. Update the notes `README.md` "State (start here)", as the `ai-notes` skill defines it: the date, the PR table with head commits, the pending items split between the user and the agent (human threads and reply texts among them), the `Models for this run` table and the `Next:` line.
+2. Set each tracker ticket's status to match its PR.
+3. Update the task blocks and the attack plan when a decision changed during the work.
 
 A later session continues with "continue from `.ai-notes/<area>`".
 
@@ -145,7 +144,7 @@ The milestone is ready for human review when:
 - `gh pr list --label <label> --state open --json number,title,isDraft` matches the notes table;
 - `gh pr checks <n>` is green on every PR of every stack;
 - `review_threads.py list --pr <every PR>` shows no `bot` line;
-- every `human` line is an item in `open-items.md`, with its fix commit or its reply text;
+- every `human` line is in the notes pending items, with its fix commit or its reply text;
 - the notes `README.md` says what the user must do next.
 
 If one is not true, say which and why, instead of reporting the milestone as done.

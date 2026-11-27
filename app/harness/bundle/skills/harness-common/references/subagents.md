@@ -18,7 +18,6 @@ A brief is the subagent's whole prompt. It holds:
 3. Every input as an absolute path: files, skill folders, the work folder.
 4. The output path, absolute, when the subagent writes a file.
 5. The return cap: "Reply in at most N words."
-6. When the subagent works on open items ([open-items](../../open-items/SKILL.md)), the ids it owns with their text, as `Open items: Y5 (...), A2 (...)`, and the report lines it returns: `Closed: <id> (<what showed it done>)` for each id it closed, and its questions for the user. It never edits the ledger; the orchestrator records what the report says.
 
 Never add the conversation, a draft the subagent is to check, or the orchestrator's conclusions.
 
