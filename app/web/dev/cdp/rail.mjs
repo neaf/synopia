@@ -235,10 +235,13 @@ for (const [label, q] of [['a subagent view', '.rail .card[data-agent="bbbb0001"
   await typeKeys();
   check(`i, / and a do nothing in ${label}: normal mode, still no box`, (await ev('__synopia.mode()')) === 'normal' && await noBox() && !(await ev('document.getElementById("slash")')));
 }
+// a running shell's view (2026-11-27): Esc stops nothing there; x asks to stop it, on the dock line, and another key takes it away
 await c.key('Escape', { code: 'Escape', vk: 27 }); await sleep(200);
-const asked = await ev(`!!document.querySelector('.dock .composer.asking .int-ask') && getComputedStyle(document.querySelector('.dock')).display !== 'none'`);
+const escAsked = await ev(`!!document.querySelector('.dock .composer.asking')`);
+await c.key('x', { code: 'KeyX', vk: 88 }); await sleep(200);
+const asked = await ev(`/^Stop this shell\\?/.test(document.querySelector('.dock .composer.asking .int-ask')?.textContent || '') && getComputedStyle(document.querySelector('.dock')).display !== 'none'`);
 await c.key('q', { code: 'KeyQ', vk: 81 }); await sleep(200);
-check('Esc still asks to interrupt the session, on the dock line, and another key takes it away', asked && await noBox());
+check('Esc asks nothing in a shell view; x asks "Stop this shell?" on the dock line, and another key takes it away', !escAsked && asked && await noBox());
 const lastRow = await ev(`[...document.querySelectorAll('.rail [data-agent], .rail [data-bg]')].map((e) => e.dataset.agent || e.dataset.bg).at(-1)`);
 await open(`.rail [data-agent="${lastRow}"], .rail [data-bg="${lastRow}"]`);
 await c.key('J', { shift: true, code: 'KeyJ', vk: 74 }); await sleep(300);
